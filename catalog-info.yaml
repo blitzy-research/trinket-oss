@@ -3,7 +3,10 @@ kind: Component
 metadata:
   name: blitzy-trinket-oss
   description: the trinket oss
-  tags: []
+  tags:
+    - audit
+    - documentation
+    - javascript
   annotations:
     github.com/project-slug: Blitzy-Sandbox/blitzy-trinket-oss
     backstage.io/source-location: url:https://github.com/Blitzy-Sandbox/blitzy-trinket-oss/tree/main/

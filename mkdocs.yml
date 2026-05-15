@@ -1,0 +1,9 @@
+site_name: Blitzy fork of the trinket oss
+site_description: An open source, browser-based coding environment designed for education.
+docs_dir: docs
+plugins:
+  - techdocs-core
+nav:
+  - Home: index.md
+  - Setup: setup.md
+  - Overview: overview.md

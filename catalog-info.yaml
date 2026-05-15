@@ -4,9 +4,11 @@ metadata:
   name: blitzy-trinket-oss
   description: the trinket oss
   tags:
-    - audit
-    - documentation
-    - javascript
+  - audit
+  - documentation
+  - javascript
+  - security
+  - web-app
   annotations:
     github.com/project-slug: Blitzy-Sandbox/blitzy-trinket-oss
     backstage.io/source-location: url:https://github.com/Blitzy-Sandbox/blitzy-trinket-oss/tree/main/

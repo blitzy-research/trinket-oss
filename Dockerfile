@@ -1,5 +1,5 @@
-# Use Node 16 LTS (compatible with updated packages)
-FROM node:16-bullseye
+# Use Node 22 LTS (matches .nvmrc and the package.json engines constraint)
+FROM node:22-bookworm
 
 SHELL ["/bin/bash", "-c"]
 
@@ -28,7 +28,7 @@ RUN curl -L --silent -o ./public-components.tgz \
     && tar xzf public-components.tgz \
     && rm public-components.tgz
 
-RUN npm install --legacy-peer-deps
+RUN npm ci
 
 ARG COMMIT_ID
 ARG NODE_ENV

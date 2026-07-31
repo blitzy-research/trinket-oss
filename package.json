@@ -22,6 +22,7 @@
     "archiver": "7.0.1",
     "bcrypt": "6.0.0",
     "bull": "4.16.5",
+    "chokidar": "3.6.0",
     "config": "0.4.37",
     "crypto-js": "4.2.0",
     "csv": "6.6.1",

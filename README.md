@@ -15,7 +15,7 @@ Trinket lets students and educators write and run code directly in the browser, 
 ## Prerequisites
 
 - Docker and Docker Compose
-- Node.js 18+ (for local development without Docker)
+- Node.js 22 LTS and npm 10+ (for local development without Docker) - `.nvmrc` pins it, so `nvm use` selects it
 - MongoDB 5.0+
 - Redis (optional - falls back to in-memory)
 
@@ -70,10 +70,14 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
 
 ### Running without Docker
 
-1. Install dependencies:
+1. Install dependencies from the committed lockfile:
    ```bash
-   npm install
+   nvm use   # selects Node 22 LTS from .nvmrc
+   npm ci
    ```
+
+   The CSS build (`npm run build`) also needs the gitignored `public/components` tree, which the Docker build
+   hydrates from the `public-components.tgz` release asset - see [COMPONENTS.md](COMPONENTS.md).
 
 2. Start MongoDB locally (Redis is optional)
 
@@ -90,7 +94,7 @@ npm test
 
 ## Architecture
 
-- **Backend**: Node.js with Hapi framework
+- **Backend**: Node.js 22 LTS with Hapi framework (@hapi/hapi 21.x)
 - **Database**: MongoDB with Mongoose ODM
 - **Cache/Sessions**: Redis (optional)
 - **Frontend**: AngularJS 1.x

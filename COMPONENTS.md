@@ -4,6 +4,52 @@ Frontend components live in `public/components/` (gitignored, like node_modules)
 
 Run `npm run setup-vendor` to install required components.
 
+## Obtaining the components
+
+`public/components/` is gitignored and is not a tracked source tree. Nothing
+under it is checked in, and it must not be modified or committed. `.bowerrc`
+declares it as the install root (`"directory": "public/components"`).
+
+The tree is distributed as `public-components.tgz`, a 166,464,007-byte asset
+attached to the `v1.1.0` GitHub release. The Docker build downloads and unpacks
+it automatically. For a local, non-Docker checkout, run the same fetch from the
+repository root:
+
+```bash
+curl -L --silent -o ./public-components.tgz \
+  https://github.com/trinketapp/trinket-oss/releases/download/v1.1.0/public-components.tgz \
+  && tar xzf public-components.tgz \
+  && rm public-components.tgz
+```
+
+That archive is a prerequisite for the stylesheet build. On a fresh clone
+`npm run build` fails with `Can't find stylesheet to import.`, because
+`static/scss/base.scss` and `static/scss/embed/embed.scss` both
+`@import "public/components/foundation/scss/foundation"`.
+
+Once the archive is unpacked, a successful build emits exactly two artifacts:
+`public/css/base.css` (265,727 bytes) and `public/css/embed.css`
+(296,352 bytes). No `.css.map` files are emitted alongside them.
+
+### Foundation and the frozen stylesheet layer
+
+Foundation is version 5.5.3, read from
+`public/components/foundation/package.json`, and it is delivered by Bower
+rather than npm: `.bowerrc` sets the install root to `public/components`, and
+no `bower.json` is tracked in this repository. Both
+`static/scss/_settings.scss` and `static/scss/embed/_settings.scss` carry an
+author-written warning that variable names will need checking if Foundation is
+upgraded.
+
+`sass` is held at 1.98.0 and `vite` at 4.5.14 specifically so that this fork
+continues to compile to the same bytes; advancing `sass` past the `@import` and
+legacy JS API removals would break it. The tree emits more than 435 repetitive
+Sass deprecation warnings on each build. Those warnings are tolerated, because
+silencing them would mean touching the frozen stylesheet layer.
+
+The component versions in the tables below describe the contents of the release
+asset, so they must not be changed.
+
 ## Components by Feature
 
 ### Python Embed (`/embed/python`)

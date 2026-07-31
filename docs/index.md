@@ -12,6 +12,14 @@ Trinket lets students and educators write and run code directly in the browser, 
 - **Course creation** - Build interactive coding courses and tutorials
 - **Code sharing** - Share and remix code with others
 
+## Technology
+
+- **Backend** - Node.js 22 LTS with hapi 21
+- **Database** - MongoDB via the Mongoose ODM
+- **Cache/Sessions** - Redis, optional, with an in-memory fallback when disabled
+- **Frontend** - AngularJS 1.x
+- **Code Execution** - Skulpt for Python in the browser; server-side container runners for other languages
+
 ## License
 
 This project is released under CC0 1.0 Universal (Public Domain Dedication). See the [LICENSE](https://github.com/Blitzy-Sandbox/blitzy-trinket-oss/blob/main/LICENSE) file for details.

@@ -32,6 +32,9 @@ function connect() {
   mongoose.connect(connectStr);
 }
 
+// Set explicitly to close the Mongoose 7 notice; true preserves Mongoose 6 behaviour. See docs/PRESERVED-QUIRKS.md.
+mongoose.set('strictQuery', true);
+
 connect();
 
 module.exports = {

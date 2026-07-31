@@ -1,0 +1,3427 @@
+{
+  "$schema": "internal://trinket-oss/test/baseline/responses.v1",
+  "artifact": "responses",
+  "purpose": "The R-6 baseline response corpus and the primary behavior-parity evidence for the Node 22 / hapi 21 modernization: every parameterless GET route of the unmodified application at the base commit, captured over real HTTP together with the mandatory authenticated supplement, so that the migrated server can be replayed against it and proven to have changed nothing observable.",
+  "metadata": {
+    "capturedAt": "2026-07-31T12:01:50.839Z",
+    "finishedAt": "2026-07-31T12:01:52.669Z",
+    "baseCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+    "node": "v22.23.2",
+    "npm": "11.18.0",
+    "nodeEnv": "test",
+    "nodeConfigOverride": {
+      "app": {
+        "start": true,
+        "hostname": "127.0.0.1",
+        "port": 30112,
+        "plugins": {
+          "session": {
+            "cookieOptions": {
+              "password": "baseline-capture-placeholder-not-a-real-secret-0000"
+            }
+          }
+        }
+      }
+    },
+    "capturedBy": "test/baseline/capture.js",
+    "transport": "real HTTP against server.info.uri — server.inject() is NEVER used",
+    "serverUri": "http://127.0.0.1:30112",
+    "dependencyVersions": {
+      "@hapi/hapi": "20.3.0",
+      "joi": "17.13.3",
+      "@hapi/boom": "10.0.1",
+      "accepts": "1.1.4",
+      "@hapi/yar": "11.0.3",
+      "@hapi/inert": "7.1.0",
+      "@hapi/vision": "7.0.3",
+      "mongoose": "6.13.9",
+      "nunjucks": "3.2.4",
+      "marked": "0.3.2"
+    },
+    "throwawayUser": {
+      "email": "baseline-capture@example.com",
+      "username": "baselinecapture",
+      "deletedAfterCapture": true
+    },
+    "cleanCheckoutNotes": "Reproducing this capture on a clean checkout needs three things and no more: (1) `npm ci` against the base-commit lockfile — 642 packages, exit 0 on Node 22; (2) a reachable MongoDB on db.mongo.host/port (config/test.yaml points NODE_ENV=test at database `test`) and a reachable Redis, since config/redis.js treats db.redis.enabled !== false as enabled; (3) a session cookie password of at least 32 characters, or app.js:L50-L66 calls process.exit(1). `npm run build`, which supplies the buildArtifacts digests below, additionally FAILS on a clean checkout until public/components is hydrated from the public-components.tgz asset of release v1.1.0 (measured at exactly 166,464,007 bytes, Foundation 5.5.3); that tree is gitignored and must not be committed.",
+    "captureNotes": [
+      "On `capturedBy`: test/baseline/capture.js is the sibling harness that owns this artifact in the finished repository, and the field names it because that is where regeneration belongs. It did not exist when this corpus was captured — it is produced in the same change by a parallel worker — so the corpus was in fact produced by a throwaway harness implementing exactly the procedure capture.js is specified to implement: boot the unmodified application through require('./app.js') (which exports a Promise), read server.info.uri, issue real HTTP requests with no Accept header, never follow redirects, enforce a 15000 ms per-request timeout, and write with fs.writeFileSync. The throwaway harness is not committed. Any later run of capture.js must reproduce gates.measuredDistribution and every status, location, header key set and body digest below exactly.",
+      "NODE_ENV=test and NODE_CONFIG_PERSIST_ON_CHANGE=N were exported for the capture process. config/test.yaml (which sets app.start:false at L3) was NOT edited and config/local.yaml was NOT created: app.start:true, the bind host and port, and the >=32-character session cookie password required by app.js:L50-L66 were all injected at runtime through the NODE_CONFIG environment variable recorded in nodeConfigOverride.",
+      "nodeConfigOverride deliberately does NOT touch app.url. config/app.config.js:L16-L17 computes config.url from app.url.{protocol,hostname,port}, which config/default.yaml:L30-L33 fixes at https + trinket.dev + (empty port), so config.url is https://trinket.dev independently of the bind host and port. Overriding app.url would have rewritten every absolute Location in locationContract and silently destroyed the absolute-versus-relative distinction this corpus exists to prove.",
+      "The nodeConfigOverride session cookie password is a deliberate non-secret placeholder. It is a capture-time input, not a credential: it seals throwaway sessions for a throwaway user on a loopback port, and the sealed payload it produces is redacted everywhere in this artifact.",
+      "Reproducibility was measured, not assumed: two full independent capture runs produced ZERO differences in status, statusText, location, contentType, isApiRequest, header key sets, header values, Set-Cookie attribute sets or body shape, under the single normalization recorded in normalizationContract.appliedInThisArtifact.",
+      "The corpus was additionally re-captured with @hapi/hapi 21.4.10, joi 18.2.3, accepts 1.3.8 and @hapi/inert 7.1.2 overlaid on the same unmodified source: ZERO differences across all 58 unauthenticated and all 7 authenticated entries. The corpus is therefore dependency-bump invariant, which is what makes it a valid parity baseline for a migrated server running the newer framework. See adjudications.",
+      "No application file was read-modified in producing this artifact, and nothing was added to test/baseline/ beyond the four sanctioned files. The throwaway identity was created through the application's own global User model, logged in over real HTTP via POST /login, and removed with doc.remove() in a finally block; dropDatabase was never called, and a post-capture query against database `test` confirmed the identity is absent."
+    ]
+  },
+  "selectionRule": {
+    "description": "GET routes from the live route table whose path contains no parameter segment",
+    "filter": "row.method === \"GET\" && row.path.indexOf(\"{\") === -1",
+    "derivedFrom": "test/baseline/route-table.json",
+    "rationale": "Reproducible rather than hand-curated: the corpus is a pure function of the registered route table, so it cannot drift with reviewer taste and it re-derives identically on any checkout. Parameterless paths are exactly the set that can be requested without inventing fixture data, which keeps the corpus independent of database state.",
+    "expectedCount": 58,
+    "actualCount": 58,
+    "crossCheckedAgainstLiveTable": true,
+    "liveRouteTableRowCount": 233,
+    "composition": {
+      "routesJsLiteral": 22,
+      "apiRoutesJsLiteral": 12,
+      "languageLandings": 11,
+      "languageTrailingSlash": 11,
+      "staticPages": 2
+    },
+    "compositionNote": "The 11 language landings and 11 trailing-slash pages come from the config/routes.js language loop over the 11 trinketLangs declared in config/constants.js (python, python3, console, music, html, blocks, glowscript, java, glowscript-blocks, R, pygame). The 2 static pages are synthesized by routeParser.js:L742-L765 from lib/views/static/about.html and help.html. Note that /r and /R are distinct rows: /r is a parameterless alias with no pre-handlers, /R is the language landing for the (disabled) R type.",
+    "paths": [
+      "/",
+      "/R",
+      "/R/",
+      "/about",
+      "/account",
+      "/account-deleted",
+      "/activate-account",
+      "/admin",
+      "/api/courses",
+      "/api/exports",
+      "/api/featured-courses",
+      "/api/folders",
+      "/api/trinkets",
+      "/api/trinkets/active",
+      "/api/trinkets/popular",
+      "/api/trinkets/search",
+      "/api/users/assets",
+      "/api/users/resendEmailChange",
+      "/auth/google",
+      "/auth/google/callback",
+      "/blocks",
+      "/blocks/",
+      "/change-email",
+      "/console",
+      "/console/",
+      "/courses/new",
+      "/docs/colors",
+      "/embed/blocks-iframe",
+      "/embed/glowscript-blocks-iframe",
+      "/forgot-pass",
+      "/glowscript",
+      "/glowscript-blocks",
+      "/glowscript-blocks/",
+      "/glowscript/",
+      "/help",
+      "/home",
+      "/html",
+      "/html/",
+      "/java",
+      "/java/",
+      "/login",
+      "/logout",
+      "/music",
+      "/music/",
+      "/pygame",
+      "/pygame/",
+      "/python",
+      "/python/",
+      "/python3",
+      "/python3/",
+      "/r",
+      "/reset-pass",
+      "/signup",
+      "/skulpt",
+      "/verify-email",
+      "/vpython",
+      "/webvpython",
+      "/welcome"
+    ]
+  },
+  "requestPolicy": {
+    "acceptHeader": null,
+    "acceptHeaderRationale": "Derived from the 7x401 gate, not chosen. app.js:L159-L168 computes isApiRequest as path.startsWith(\"/api/\") || accept.includes(\"application/json\") || path.startsWith(\"/partials/\"), and only takes the HTML error branch when !isApiRequest && wantsHtml. Twelve parameterless GETs require a session — seven under /api/ and five not (/account, /admin, /courses/new, /home, /welcome). With no Accept header the seven /api/ routes emit raw 401 and the five non-API routes emit h.redirect(\"/login\").takeover(), which is the measured 7x401. With Accept: application/json every path becomes an API request and all twelve emit 401, i.e. 12 != 7. Sending no Accept header also matches test/helpers/flow.js createRequest, which sets only referer, and it is what makes accepts(request).types([\"html\",\"json\"]) at routeParser.js:L325 return the first offered type \"html\", activating the success.html / fail.redirect branches.",
+    "refererHeader": "https://trinket.dev",
+    "refererRationale": "config.url on every request, matching test/helpers/flow.js:L414 request.set(\"referer\", config.url) so the corpus is indistinguishable from the repository's own client.",
+    "userAgent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+    "userAgentRationale": "Pinned literally because routeParser.js:L29-L39 (isMobile) and L41-L52 (aceOff) sniff the User-Agent and their output reaches the templates. Replay MUST send this exact string. Measured effect of this value: isMobile false, aceOff false.",
+    "userAgentEffect": {
+      "userAgent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+      "isMobile": false,
+      "aceOff": false
+    },
+    "followRedirects": false,
+    "followRedirectsRationale": "config.url is https://trinket.dev, computed at config/app.config.js:L16-L17 from config/default.yaml:L30-L33 and independent of the bind host and port. The redirect helper at routeParser.js:L704-L723 absolutizes any leading-slash target to config.url + target, so most Location values point off-host at the production domain; following one would leave the system under test and require internet access. Non-following is also the repository's own convention — test/helpers/flow.js drives supertest with redirect following disabled, which is why test/lib/api/login.js asserts a raw 302.",
+    "timeoutMs": 15000,
+    "timeoutRationale": "Mandatory. routeParser.js:L568-L570 is `if (result === undefined) { result = await responsePromise; }`, so a handler that neither returns a value nor calls request.success/request.fail waits forever. The timeout converts that into a recorded \"timeout\" outcome for one route instead of a hung run. No route in this corpus hit it.",
+    "headersSent": {
+      "everyRequest": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "authenticatedRequestsAlsoSend": [
+        "cookie"
+      ],
+      "postLoginAlsoSends": {
+        "content-type": "application/json",
+        "content-length": "<byte length of the JSON body>"
+      },
+      "notSent": [
+        "accept",
+        "accept-encoding",
+        "accept-language",
+        "authorization",
+        "x-forwarded-for"
+      ],
+      "notSentNote": "Issued with node:http, which adds only Host and Connection beyond the headers listed above. No Accept and no Accept-Encoding is sent, so no response in this corpus is content-encoded and every content-length is the identity length."
+    }
+  },
+  "normalizationContract": {
+    "description": "The contract replay.js consumes. It names, on one side, the values that are genuinely volatile and may be neutralized before comparison and, on the other, the values that ARE the behavior under test and must be compared literally.",
+    "appliedInThisArtifact": [
+      "The `date` response header is stored as \"<normalized:date>\" on every entry.",
+      "The Expires attribute value appended to the session cookie by app.js:L205-L240 is stored as \"Expires=<normalized:expires>\"; the PRESENCE of the attribute is contractual, the absolute date is not.",
+      "The iron-sealed cookie payload is stored as \"Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>\" wherever it appears — in Set-Cookie response headers AND in the Cookie request header that the authenticated entries replayed; the cookie name and the Fe26.2 prefix are preserved verbatim, because the prefix itself is contractual.",
+      "HTML bodies are stored as a normalized sha256 plus byte counts, title and structural markers — never verbatim. The normalization rules are listed under htmlBodyNormalization.",
+      "Un-normalized (raw) HTML digests are deliberately NOT stored: they were measured to differ between identical runs, so shipping them would manufacture false parity failures."
+    ],
+    "mayBeNormalized": [
+      "the Date response header",
+      "the Connection, Keep-Alive and Transfer-Encoding response headers",
+      "ETag and Last-Modified on statically served assets",
+      "generated MongoDB ObjectIds, timestamps and ISO date strings inside bodies",
+      "CSRF and nonce values",
+      "the payload of the iron-sealed cookie value — everything after the Fe26.2 prefix",
+      "the Expires=<date> value appended by the cookie rewrite (presence is contractual, the date is not)",
+      "the ephemeral port inside any self-referential URL"
+    ],
+    "mustNotBeNormalized": [
+      "the status code",
+      "the content-type",
+      "the cookie name `session` and the Fe26.2 prefix",
+      "the set of Set-Cookie attributes — Expires present only on cookie-declaring routes, SameSite=Lax always, Secure and SameSite=None never, Domain never",
+      "the Cache-Control, Pragma and Expires response headers, and X-Frame-Options",
+      "the literal Location value — absolute versus relative is the whole point",
+      "the set of body keys and the stable scalar values inside Boom payloads",
+      "every 4xx message string"
+    ],
+    "htmlBodyNormalization": {
+      "digest": "sha256 of the UTF-8 body after the rules below, recorded per entry as bodyShape.sha256",
+      "rules": [
+        {
+          "pattern": "cache-prefix-\\d+",
+          "replacement": "cache-prefix-<TS>",
+          "reason": "config/default.yaml app.cachePrefix drives a timestamped cache-busting segment in asset URLs."
+        },
+        {
+          "pattern": "Fe26\\.2\\*[^\"'\\s<]+",
+          "replacement": "<SEAL>",
+          "reason": "an iron-sealed value embedded in markup would differ on every render."
+        },
+        {
+          "pattern": "[0-9a-f]{32}\\+U2FsdGVkX1[A-Za-z0-9+/=]*",
+          "replacement": "<ROLES_TOKEN>",
+          "reason": "lib/util/roles.js:L13 returns token + \"+\" + encrypted and ships it to the browser, which decrypts it at public/js/trinket-roles.js:L10-L11. The AES envelope carries a fresh OpenSSL salt per render. This was the LAST residual run-to-run difference, found by diffing raw authenticated GET /home bodies, and it is a preserved quirk (obfuscation, not security) rather than something to repair."
+        },
+        {
+          "pattern": "U2FsdGVkX1[A-Za-z0-9+/=]+",
+          "replacement": "<AES_ENVELOPE>",
+          "reason": "any other OpenSSL \"Salted__\" envelope reaching the page."
+        },
+        {
+          "pattern": "\\b[0-9a-f]{24}\\b",
+          "replacement": "<OID>",
+          "reason": "generated MongoDB ObjectIds."
+        },
+        {
+          "pattern": "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z",
+          "replacement": "<ISO>",
+          "reason": "ISO timestamps rendered into markup."
+        },
+        {
+          "pattern": "\\b\\d{13}\\b",
+          "replacement": "<EPOCH_MS>",
+          "reason": "millisecond epochs rendered into markup."
+        }
+      ]
+    },
+    "volatilityProof": {
+      "independentRuns": 2,
+      "differences": 0,
+      "note": "Two full capture runs in separate processes against separate ports were compared field by field under exactly the rules above and produced zero differences. Every normalization listed was justified by an observed difference; none was added speculatively."
+    },
+    "prohibition": "Do NOT normalize away a difference in order to make a replay diff pass. Every rule above exists because a value was measured to be volatile between two identical runs. If a replay difference is real, it is an application-code defect and must be reported as one."
+  },
+  "gates": {
+    "documentedDistribution": {
+      "200": 25,
+      "401": 7,
+      "404": 25,
+      "500": 1
+    },
+    "documentedDistributionSource": "Technical Specification section 0.7.5",
+    "measuredDistribution": {
+      "200": 12,
+      "302": 16,
+      "401": 7,
+      "404": 22,
+      "500": 1
+    },
+    "distributionMatchesDocumented": false,
+    "distributionNote": "Measurement outranks prose. The documented tally omits the 3xx class entirely, which the measured corpus shows to be its largest single deviation. See the adjudication \"measured-distribution-supersedes-documented\" for the per-status, per-route derivation. Nothing was changed to make the documented figures true.",
+    "unauthenticatedEntryCount": 58,
+    "authenticatedEntryCount": 7,
+    "singleServerErrorRoute": "GET /api/users/assets",
+    "serverErrorEntryCount": 1,
+    "serverErrorDeliveredAs": "Boom JSON payload, not a rendered 50x.html page",
+    "languageFlagFourOhFours": 20,
+    "languageFlagFourOhFourPaths": [
+      "/R",
+      "/R/",
+      "/blocks",
+      "/blocks/",
+      "/console",
+      "/console/",
+      "/glowscript",
+      "/glowscript-blocks",
+      "/glowscript-blocks/",
+      "/glowscript/",
+      "/html",
+      "/html/",
+      "/java",
+      "/java/",
+      "/music",
+      "/music/",
+      "/pygame",
+      "/pygame/",
+      "/python3",
+      "/python3/"
+    ],
+    "boomJsonFourOhFours": 2,
+    "boomJsonFourOhFourPaths": [
+      "/api/trinkets/active",
+      "/api/trinkets/popular"
+    ],
+    "authRequiredApiUnauthorized": 7,
+    "authRequiredApiUnauthorizedPaths": [
+      "/api/courses",
+      "/api/exports",
+      "/api/featured-courses",
+      "/api/folders",
+      "/api/trinkets",
+      "/api/trinkets/search",
+      "/api/users/resendEmailChange"
+    ],
+    "takeoverRedirectsToLogin": [
+      "/account",
+      "/admin",
+      "/courses/new",
+      "/home",
+      "/welcome"
+    ],
+    "absoluteRedirectCount": 10,
+    "relativeRedirectCount": 6,
+    "xFrameOptionsPaths": [
+      "/",
+      "/login",
+      "/signup"
+    ],
+    "xFrameOptionsNote": "Present on exactly these paths among the 58, all of them 200 responses. config.app.xframeDeny actually declares FIVE entries (/, /login, /signup, /contact, /educators); /contact and /educators are not registered routes at all, so they cannot appear. See the adjudication \"xframe-deny-declares-five-paths\".",
+    "unauthenticatedLoginStatus": 200,
+    "unauthenticatedSignupStatus": 200,
+    "authenticatedLoginStatus": 500,
+    "authenticatedSignupStatus": 500,
+    "authenticatedHomeStatus": 200,
+    "authenticatedAccountStatus": 302,
+    "authenticatedLoginSignupNote": "If a migrated build answers 302 on authenticated GET /login or GET /signup, lib/controllers/pages.js was converted wrongly. Report it as a conversion defect; do NOT adjust this corpus.",
+    "reproducibilityRuns": 2,
+    "reproducibilityDifferences": 0,
+    "dependencyBumpCrossCheck": {
+      "overlaid": {
+        "@hapi/hapi": "21.4.10",
+        "joi": "18.2.3",
+        "accepts": "1.3.8",
+        "@hapi/inert": "7.1.2"
+      },
+      "differences": 0
+    }
+  },
+  "cookieContract": {
+    "name": "session",
+    "sealPrefix": "Fe26.2",
+    "sealPrefixNote": "The raw value begins \"Fe26.2**<mac>*<salt>*...\" — a double asterisk, since the second field is empty. app.js sets maxCookieSize: 0, so the session itself lives server-side in the `sessions` catbox cache (CatboxMongoose.Engine) and the cookie carries only the sealed id.",
+    "ttlMs": 86400000,
+    "ttlNote": "From app.js, which builds the yar options object itself with cache.expiresIn = 24 * 60 * 60 * 1000. This OVERRIDES config/default.yaml's expiresIn: 2147483647, because only password, isSecure and name are read from config.",
+    "effectiveIsSecure": false,
+    "expectedAppendedAttributes": [
+      "Expires"
+    ],
+    "appendedAttributesNote": "The rewrite at app.js:L205-L240 appends \"; Expires=<nextYear UTC>\" and, only when cookieIsSecure is true, \"; SameSite=None; Secure\". config/default.yaml sets cookieOptions.isSecure: false, so cookieIsSecure === false and ONLY Expires is appended. The rewrite is further gated on request.cookie — set by routeParser.js:L354-L356 only when the route declares cookie:true — and on typeof request.response._header === \"function\", and it matches only values whose indexOf(sessionName) === 0.",
+    "sameSiteSecureAppended": false,
+    "domainAttributePresent": false,
+    "domainNote": "config/default.yaml declares cookieOptions.domain: .trinket.dev, but app.js never passes domain to yar, so no Domain attribute is ever emitted. Measured, not inferred.",
+    "measuredAttributesOrdinaryRoute": [
+      "HttpOnly",
+      "SameSite",
+      "Path"
+    ],
+    "measuredAttributesCookieRoute": [
+      "HttpOnly",
+      "SameSite",
+      "Path",
+      "Expires"
+    ],
+    "measuredSetCookieOrdinaryRoute": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/",
+    "measuredSetCookieCookieRoute": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>",
+    "cookieDeclaringRoutes": [
+      "POST /login",
+      "GET /logout",
+      "POST /users",
+      "GET /auth/google/callback",
+      "POST /api/users/login"
+    ],
+    "cookieDeclaringRoutesInThisCorpus": [
+      "GET /logout",
+      "GET /auth/google/callback",
+      "POST /login"
+    ],
+    "routesWithNoSetCookie": [
+      "/R",
+      "/R/",
+      "/about",
+      "/account",
+      "/admin",
+      "/api/courses",
+      "/api/exports",
+      "/api/featured-courses",
+      "/api/folders",
+      "/api/trinkets",
+      "/api/trinkets/active",
+      "/api/trinkets/popular",
+      "/api/trinkets/search",
+      "/api/users/assets",
+      "/api/users/resendEmailChange",
+      "/blocks",
+      "/blocks/",
+      "/console",
+      "/console/",
+      "/courses/new",
+      "/glowscript",
+      "/glowscript-blocks",
+      "/glowscript-blocks/",
+      "/glowscript/",
+      "/help",
+      "/home",
+      "/html",
+      "/html/",
+      "/java",
+      "/java/",
+      "/music",
+      "/music/",
+      "/pygame",
+      "/pygame/",
+      "/python/",
+      "/python3",
+      "/python3/",
+      "/r",
+      "/skulpt",
+      "/vpython",
+      "/webvpython",
+      "/welcome"
+    ],
+    "noSetCookieNote": "A Set-Cookie appears only where the request actually touched the yar session. The two synthesized static pages never touch it (routeParser.js:L742-L765), and the Boom paths that short-circuit before the handler never reach it either.",
+    "doNotOverride": "Do NOT override cookieOptions.isSecure in a capture or replay NODE_CONFIG: that would append \"; SameSite=None; Secure\" and change an observable header."
+  },
+  "locationContract": [
+    {
+      "request": "POST /login (valid credentials)",
+      "status": 302,
+      "location": "https://trinket.dev/home",
+      "kind": "absolute",
+      "mechanism": "request.success -> declarative success.redirect \"/home\" -> routeParser.js:L704-L723 leading-slash branch -> config.url + target"
+    },
+    {
+      "request": "POST /login (invalid credentials)",
+      "status": 302,
+      "location": "https://trinket.dev/login",
+      "kind": "absolute",
+      "mechanism": "request.fail -> declarative fail.redirect \"/login\" -> the same absolutizer"
+    },
+    {
+      "request": "GET /account (authenticated)",
+      "status": 302,
+      "location": "/account/profile",
+      "kind": "relative",
+      "mechanism": "lib/controllers/users.js:L318 return reply().redirect(\"/account/profile\") -> the synthetic builder at routeParser.js:L376-L380 calls h.redirect(url) directly, with NO absolutization"
+    },
+    {
+      "request": "GET /logout (unauthenticated)",
+      "status": 302,
+      "location": "https://trinket.dev/",
+      "kind": "absolute",
+      "mechanism": "top-level redirect \"/\" hoisted to success.redirect by routeParser.js:L297-L300, then absolutized"
+    },
+    {
+      "request": "GET /python/ (unauthenticated)",
+      "status": 302,
+      "location": "https://trinket.dev/python",
+      "kind": "absolute",
+      "mechanism": "language loop route #2 success.redirect \"/<lang>\" -> absolutized"
+    },
+    {
+      "request": "GET /skulpt (unauthenticated)",
+      "status": 302,
+      "location": "https://trinket.dev/python",
+      "kind": "absolute",
+      "mechanism": "alias success.redirect \"/python\" with no pre array -> absolutized"
+    },
+    {
+      "request": "GET /home (unauthenticated)",
+      "status": 302,
+      "location": "/login",
+      "kind": "relative",
+      "mechanism": "lifecycle: app.js:L170 h.redirect(\"/login\").takeover() on a 401 for a non-API HTML request — never sees the absolutizer"
+    },
+    {
+      "request": "GET /account-deleted (unauthenticated)",
+      "status": 302,
+      "location": "/",
+      "kind": "relative",
+      "mechanism": "lib/controllers/users.js:L218 return reply().redirect(\"/\") — the call form again, so a bare \"/\" reaches the wire"
+    },
+    {
+      "request": "GET /change-email (unauthenticated)",
+      "status": 302,
+      "location": "https://trinket.dev/account/email",
+      "kind": "absolute",
+      "mechanism": "validation failure -> fail.redirect \"account/email\" is UNROOTED, so the third absolutizer branch (routeParser.js:L718-L720) applies config.url + \"/\" + target"
+    },
+    {
+      "request": "GET /reset-pass (unauthenticated)",
+      "status": 302,
+      "location": "https://trinket.dev/forgot-pass",
+      "kind": "absolute",
+      "mechanism": "validation failure on the required query key -> fail.redirect \"/forgot-pass\" -> absolutized"
+    },
+    {
+      "request": "GET /auth/google/callback (unauthenticated)",
+      "status": 302,
+      "location": "https://trinket.dev/signup",
+      "kind": "absolute",
+      "mechanism": "fail.redirect \"/signup\" -> absolutized; cookie:true also triggers the Expires rewrite"
+    }
+  ],
+  "errorMappingContract": {
+    "fourXxPassesMessage": true,
+    "fiveXxScrubsMessage": true,
+    "fiveXxScrubbedMessage": "An internal server error occurred",
+    "messageComparisonRule": "Compare every 4xx message string byte for byte — it is client-visible. Treat 5xx message strings as message-invariant: hapi replaces them with the fixed string above, so internal error text cannot be observed and must not be asserted.",
+    "unauthorizedMessages": [
+      "Not logged in",
+      "User not found",
+      "Account disabled",
+      "Auth error"
+    ],
+    "unauthorizedMessagesNote": "Constructed at app.js:L251/L264/L269/L277 as h.unauthenticated(Boom.unauthorized(msg), {credentials:{}}). Every one of the seven 401 bodies in this corpus carries \"Not logged in\" — the no-session branch. The other three require a session whose user is missing, disabled, or whose lookup threw, and are not reachable from an unauthenticated parameterless GET.",
+    "unauthorizedMessageMeasuredInEvery401": "Not logged in",
+    "requestFailWithoutRedirectOrHtmlYields": 200,
+    "requestFailNote": "routeParser.js:L482-L514: request.fail redirects only when responseType === \"html\" && fail.redirect, then renders only when responseType === \"html\" && fail.html && !JSON_EXT.test(pathname); OTHERWISE it falls through to h.response(json), which is HTTP 200 with a JSON body. request.success is symmetric at L474-L478. That is why GET /auth/google answers 200 rather than a 4xx, and it also means a joi validation failure (L537-L540 calls request.fail(request.payload, ...)) can surface as a 200 carrying {flash: {validation: {...}}} whenever the route declares neither fail.redirect nor fail.html.",
+    "validationFailureSurfaces": "Measured in this corpus as an absolute 302 on GET /reset-pass, GET /change-email and GET /verify-email, because each declares a fail.redirect. A rejected input is therefore never a 4xx on these routes — preserving that is what \"validation outcomes unchanged\" means here.",
+    "renderedErrorPagesLackCacheAndFrameHeaders": true,
+    "renderedErrorPagesHeaderNote": "MEASURED REFINEMENT. The rendered branches at app.js:L170-L176 all `return` before the header block at app.js:L182-L190, so the application's Cache-Control string, Pragma, Expires and X-Frame-Options are absent from 404.html and 50x.html responses and from the takeover redirect to /login. They are NOT header-free, however: hapi's own default Cache-Control: no-cache is present. Assert the absence of the application string and of Pragma/Expires/X-Frame-Options, not the absence of Cache-Control.",
+    "applicationCacheControl": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+    "boomCacheControlOverwritten": true,
+    "boomCacheControlNote": "MEASURED REFINEMENT. app.js assigns the application Cache-Control string to response.output.headers on Boom responses, but hapi's response marshalling applies the route cache policy afterwards, so every Boom response in this corpus shows Cache-Control: no-cache while Pragma: no-cache and Expires: 0 do survive. Preserved as measured.",
+    "isApiRequestSplit": "Recorded per entry as isApiRequest, computed exactly as app.js:L160-L162 does: path starts with /api/, or the Accept header includes application/json, or the path starts with /partials/. It decides whether a Boom error emerges as raw JSON or as a rendered HTML error page, and it is the reason GET /api/users/assets yields Boom JSON rather than 50x.html.",
+    "boomMessageVisibilityByBranch": "On the API branch the Boom message is on the wire (the seven 401s carry \"Not logged in\", the two /api/ 404s carry hapi's default \"Not Found\"). On the HTML branch the rendered page REPLACES the payload, so Boom.notFound(\"This trinket type is not available\") from lib/util/helpers.js is never observable — only the 404.html body is.",
+    "thrownVersusReturned": "Thrown and returned Boom values were measured wire-equivalent on this stack, which is what makes the 64 reply(Boom.x()) conversion sites safe in either form. The corpus asserts the wire result, not the syntax that produced it."
+  },
+  "buildArtifacts": {
+    "public/css/base.css": {
+      "bytes": 265727,
+      "sha256": "34f1b6e143bf2af56a27318ef93218de999b4a135df2992cd4df28102ebdd53d"
+    },
+    "public/css/embed.css": {
+      "bytes": 296352,
+      "sha256": "53f47fc73fdef24fcd64051de29722556d02f6d3793f25c7b073a4abf7776079"
+    },
+    "cssMapFilesEmitted": 0,
+    "cssMapNote": "vite.config.mjs sets build.sourcemap: true, yet the build emits zero .css.map files. Measured: after a successful `npm run build`, `find public/css -name \"*.map\"` returns nothing. (The only two *.css.map files anywhere under public/ are vendored inside public/components/foundation/css/ and come from the release tarball, not from the build.) Preserved, not repaired: emitting map files would add new asset URLs.",
+    "measuredWith": {
+      "sass": "1.98.0",
+      "vite": "4.5.14",
+      "exitCode": 0
+    },
+    "heldToolingNote": "sass and vite are deliberately held at these versions so the Foundation 5.5.3 fork keeps compiling to these exact bytes. The build reports two \"435 repetitive deprecation warnings omitted\" summaries from that gitignored fork; they are tolerated because silencing them would mean touching the frozen stylesheet layer.",
+    "precondition": "`npm run build` FAILS on a clean checkout until public/components is hydrated from the public-components.tgz asset of release v1.1.0 (measured at exactly 166,464,007 bytes). These digests were taken immediately after that hydration and a successful build."
+  },
+  "adjudications": [
+    {
+      "id": "request-policy-no-accept-header",
+      "ambiguity": "Which Accept header should the corpus send? The choice silently changes how many routes answer 401.",
+      "evidence": "app.js:L159-L168 makes isApiRequest true for ANY path when the Accept header includes application/json. Twelve parameterless GETs require a session: seven under /api/ and five not. Measured with no Accept header: exactly seven 401s and five takeover redirects to /login. With Accept: application/json all twelve would be 401.",
+      "resolution": "Send NO Accept header at all, matching test/helpers/flow.js createRequest, which sets only referer. Recorded as requestPolicy.acceptHeader = null. This also makes accepts(request).types([\"html\",\"json\"]) return \"html\", which is what activates the success.html and fail.redirect branches inside the shim."
+    },
+    {
+      "id": "redirects-are-not-followed",
+      "ambiguity": "Should the capture follow 3xx responses?",
+      "evidence": "config.url is https://trinket.dev and routeParser.js:L713-L717 absolutizes leading-slash targets to config.url + target, so ten of the sixteen measured 3xx responses point off-host at the production domain. test/helpers/flow.js drives supertest with redirect following disabled, which is why test/lib/api/login.js asserts a raw 302.",
+      "resolution": "Never follow. Record the raw 3xx status and the literal Location. Following even one would leave the system under test, require internet access, and destroy the absolute-versus-relative evidence in locationContract."
+    },
+    {
+      "id": "authenticated-login-and-signup-return-500",
+      "reportBackItem": 3,
+      "ambiguity": "The existing technical specification implies reply.redirect works, which would make authenticated GET /login and GET /signup 302 to /home and /welcome.",
+      "evidence": "Measured with a real session cookie obtained by logging in over real HTTP: BOTH return 500 and render 50x.html (title \"Something went wrong\", byte-identical bodies), while unauthenticated they return 200. Mechanism traced end to end: the synthetic reply at routeParser.js:L360 is a BARE FUNCTION and its chainable builder (L375-L405) exposes redirect only on the object returned by CALLING reply(data), so the Hapi-16 property-form calls reply.redirect(\"/home\") at lib/controllers/pages.js:L17 and reply.redirect(\"/welcome\") at L27 raise TypeError; the single catch-all at routeParser.js:L578-L589 converts it to Boom.badImplementation; app.js:L175 renders 50x.html with the original status.",
+      "resolution": "Baseline wins: the 500 is the contract and is preserved. Converting these two calls to h.redirect(...) would silently \"fix\" them into 302s — a prohibited behavior change on a login page. This corpus is what catches that: if either route answers 302 after the migration, lib/controllers/pages.js was converted wrongly. Report it; do not adjust the corpus."
+    },
+    {
+      "id": "api-users-assets-500-is-boom-json",
+      "reportBackItem": 4,
+      "ambiguity": "The folder brief states the pre-existing 500 at GET /api/users/assets renders 50x.html.",
+      "evidence": "Measured content-type application/json, 96 bytes, body {\"statusCode\":500,\"error\":\"Internal Server Error\",\"message\":\"An internal server error occurred\"}. The path begins with /api/, so isApiRequest is true at app.js:L160-L162 and the HTML branch is skipped entirely. Root cause: config/api_routes.js:L1228 declares validate.query.type = Joi.string().optional() with no auth:\"session\", and lib/controllers/users.js:L466 calls request.query.type.toLowerCase() on the absent value. Also verified: lib/util/helpers.js exports no assetsEnabled pre-handler, so config/default.yaml features.assets:false does not gate this route — the handler is genuinely reached.",
+      "resolution": "The brief is corrected: Boom JSON, not a rendered page. The 500 itself is a preserved pre-existing condition (AAP quirk I14) and is reproduced, not repaired."
+    },
+    {
+      "id": "feature-flag-404s",
+      "reportBackItem": 5,
+      "ambiguity": "Are the language 404s a routing gap or intended behavior, and should the contradictory comment in lib/util/features.js be fixed?",
+      "evidence": "config/default.yaml enables only features.trinkets.python; the other ten of the eleven trinketLangs are false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it only when features.isKnownTrinketType(urlLang) is true, and returns reply(Boom.notFound(\"This trinket type is not available\")) when features.isTrinketTypeEnabled(lang) is false. Inside lib/util/features.js, isTrinketTypeEnabled carries the comment \"Check if explicitly set; default to true if not specified\" and then, for an unrecognised type, \"Unknown types default to disabled for safety\" followed by `return false` — the comment is directly contradicted by the code beneath it. isKnownTrinketType is a bare hasOwnProperty, which is the asymmetry that lets the two predicates disagree. Measured: exactly 20 rendered 404.html responses, the ten disabled languages times the two parameterless language routes.",
+      "resolution": "Intended behavior at baseline and preserved verbatim — the flags, the asymmetry and the contradictory comment all stay. Note that the Boom message is NOT observable on these routes: the rendered 404.html replaces the payload."
+    },
+    {
+      "id": "three-location-patterns",
+      "reportBackItem": 1,
+      "ambiguity": "Are Location values absolute or relative? Twenty-two flow.lastRedirect.pathname assertions and the URL-parsing base-argument decision in test/helpers/flow.js depend on the answer.",
+      "evidence": "All three patterns genuinely occur and are recorded with literal values in locationContract: ABSOLUTE from declarative success/fail redirects, which pass through the absolutizer at routeParser.js:L704-L723 (measured https://trinket.dev/home, /login, /, /python, /signup, /forgot-pass, /account/email, /glowscript, /R); RELATIVE from the synthetic builder's redirect at routeParser.js:L376-L380, which calls h.redirect(url) with no absolutization (measured /account/profile and /); and RELATIVE from the lifecycle at app.js:L170, h.redirect(\"/login\").takeover() (measured /login on all five non-API session routes).",
+      "resolution": "Both forms are contractual and neither may be normalized. Any URL parsing of a Location value must tolerate a relative input, which is exactly why a base argument is required."
+    },
+    {
+      "id": "cookie-rewrite-appends-only-expires",
+      "ambiguity": "The folder brief states the app.js rewrite appends both \"; Expires=<nextYear UTC>\" and \"; SameSite=None; Secure\".",
+      "evidence": "app.js:L203 computes cookieIsSecure = cookieOptions.isSecure !== false and config/default.yaml sets isSecure: false, so cookieIsSecure is false. Measured Set-Cookie on the cookie-declaring GET /logout: attributes [HttpOnly, SameSite, Path, Expires] with SameSite=Lax; on an ordinary route such as GET /: [HttpOnly, SameSite, Path] with NO Expires, because the rewrite is gated on request.cookie. No Secure and no SameSite=None appears anywhere; no Domain appears anywhere, despite config/default.yaml declaring cookieOptions.domain.",
+      "resolution": "The brief is corrected. Only Expires is appended under this configuration, and only on cookie-declaring routes. Recorded in cookieContract with the effective isSecure so the assertion is interpretable. Do not override cookieOptions.isSecure in a capture or replay: that would change an observable header."
+    },
+    {
+      "id": "request-fail-without-redirect-or-html-yields-200",
+      "ambiguity": "Why do several routes answer 200 where a 4xx would be expected?",
+      "evidence": "routeParser.js:L482-L514 shows request.fail falling through to h.response(json) whenever the route declares neither fail.redirect (on the html branch) nor fail.html. Measured: GET /auth/google returns 200 application/json with keys [\"flash\",\"message\"] and message \"Google OAuth is not configured. Please set up Google OAuth credentials.\", because config/default.yaml leaves app.auth.google.clientID empty and the route declares no fail block.",
+      "resolution": "Preserved and documented as a mapping, not a bug. errorMappingContract.requestFailWithoutRedirectOrHtmlYields records the value 200 so replay.js compares the right thing."
+    },
+    {
+      "id": "zero-css-map-files",
+      "reportBackItem": 6,
+      "ambiguity": "vite.config.mjs enables source maps, so .css.map files ought to exist.",
+      "evidence": "Measured after a successful build: public/css contains base.css (265,727 bytes) and embed.css (296,352 bytes) and no .map file at all. The only two *.css.map files anywhere under public/ are vendored inside public/components/foundation/css/ and arrive with the release tarball.",
+      "resolution": "Preserved. The build output is the parity baseline; emitting map files would add new asset URLs. This is also part of why sass 1.98.0 and vite 4.5.14 are deliberately held."
+    },
+    {
+      "id": "measured-distribution-supersedes-documented",
+      "ambiguity": "Technical Specification section 0.7.5 states the 58 baseline outcomes as 25x200, 7x401, 25x404 and 1x500, with no 3xx class.",
+      "evidence": "Measured over real HTTP: {\"200\":12,\"302\":16,\"401\":7,\"404\":22,\"500\":1}. The 7x401 and the single 500 at GET /api/users/assets match exactly. The deviation is entirely accounted for: (a) sixteen routes are 3xx, a class the documented tally omits — five non-API session routes take the app.js:L170 takeover redirect to /login; four aliases (/r, /skulpt, /vpython, /webvpython) carry success.redirect and NO pre array, so no feature-flag pre-handler can run; GET /logout carries a top-level redirect; GET /python/ is the language loop's trailing-slash redirect; GET /auth/google/callback uses fail.redirect; and GET /reset-pass, GET /change-email and GET /verify-email fail a required-query validation into a fail.redirect. (b) 404s measure 22, not 25: the 20 feature-flag language pages plus two Boom-JSON 404s at /api/trinkets/active and /api/trinkets/popular, whose cause is helpers.validLang deriving urlLang \"api/trinkets/active\" and finding it absent from Trinket.schema.path(\"lang\").enumValues. (c) 200s measure 12, not 25, because thirteen of the documented 200s are in fact the 3xx above and two of the presumed language 200s are 404s.",
+      "resolution": "Measurement wins. gates.measuredDistribution is the contract, gates.documentedDistribution is retained beside it for traceability, and gates.distributionMatchesDocumented is false. No application code was altered, the request policy was not bent, and the 58-route filter was not re-scoped to make the documented figures true.",
+      "measuredRoutesByStatus": {
+        "200": [
+          "/",
+          "/about",
+          "/activate-account",
+          "/auth/google",
+          "/docs/colors",
+          "/embed/blocks-iframe",
+          "/embed/glowscript-blocks-iframe",
+          "/forgot-pass",
+          "/help",
+          "/login",
+          "/python",
+          "/signup"
+        ],
+        "302": [
+          "/account",
+          "/account-deleted",
+          "/admin",
+          "/auth/google/callback",
+          "/change-email",
+          "/courses/new",
+          "/home",
+          "/logout",
+          "/python/",
+          "/r",
+          "/reset-pass",
+          "/skulpt",
+          "/verify-email",
+          "/vpython",
+          "/webvpython",
+          "/welcome"
+        ],
+        "401": [
+          "/api/courses",
+          "/api/exports",
+          "/api/featured-courses",
+          "/api/folders",
+          "/api/trinkets",
+          "/api/trinkets/search",
+          "/api/users/resendEmailChange"
+        ],
+        "404": [
+          "/R",
+          "/R/",
+          "/api/trinkets/active",
+          "/api/trinkets/popular",
+          "/blocks",
+          "/blocks/",
+          "/console",
+          "/console/",
+          "/glowscript",
+          "/glowscript-blocks",
+          "/glowscript-blocks/",
+          "/glowscript/",
+          "/html",
+          "/html/",
+          "/java",
+          "/java/",
+          "/music",
+          "/music/",
+          "/pygame",
+          "/pygame/",
+          "/python3",
+          "/python3/"
+        ],
+        "500": [
+          "/api/users/assets"
+        ]
+      }
+    },
+    {
+      "id": "capture-point-is-the-true-base-commit",
+      "ambiguity": "Which commit is \"the base commit\" for a corpus produced inside a batch whose earlier workers have already committed? The sibling test/baseline/route-table.json was captured at the dependency-manifest commit rather than at the pre-run commit.",
+      "evidence": "The pre-run commit is 2f8712a112db46f923918c4507c75abc732d83d0. The next commit, cd9838994947ad91e02c1680341e2592b92a10cd, changes ONLY package.json and package-lock.json (git diff --name-status confirms two files), and sha256 comparison shows app.js, lib/util/routeParser.js, lib/controllers/pages.js, lib/controllers/users.js, lib/util/helpers.js, lib/util/features.js, config/routes.js, config/api_routes.js, config/default.yaml, config/constants.js and config/test.yaml byte-identical between the two. Crucially, cd98389 is NOT RUNNABLE with its own declared dependencies: it removes tab and optimist while lib/util/routeParser.js:L3 still requires them, so booting it fails with \"Cannot find module 'tab'\". The commit after that modifies app.js and deletes lib/auth/passport.js, so it is not a baseline at all.",
+      "resolution": "Capture from the true base commit 2f8712a with its OWN dependency set (npm ci against the base lockfile: 642 packages, @hapi/hapi 20.3.0, joi 17.13.3, accepts 1.1.4, marked 0.3.2 fork). Since the application source is byte-identical to cd98389, this corpus and the sibling route-table.json describe the same code, and selectionRule.crossCheckedAgainstLiveTable records that the parameterless-GET set derived from that artifact equals the set derived from the live table."
+    },
+    {
+      "id": "corpus-is-dependency-bump-invariant",
+      "ambiguity": "A corpus captured on hapi 20.3.0 / joi 17.13.3 might diverge from a hapi 21 / joi 18 replay for reasons that belong to the dependency bump rather than to the code migration, which would make every such difference ambiguous.",
+      "evidence": "The entire capture was re-run with @hapi/hapi 21.4.10, joi 18.2.3, accepts 1.3.8 and @hapi/inert 7.1.2 overlaid on the SAME unmodified base source: ZERO differences across all 58 unauthenticated and all 7 authenticated entries in status, statusText, location, content-type, isApiRequest, header key sets, header values, Set-Cookie attribute sets and body shape.",
+      "resolution": "The ambiguity is removed by measurement rather than by argument: any difference a replay finds against the migrated server is attributable to the code migration, not to the framework or validator bump. Recorded in gates.dependencyBumpCrossCheck."
+    },
+    {
+      "id": "xframe-deny-declares-five-paths",
+      "ambiguity": "The folder brief states config/default.yaml app.xframeDeny lists exactly three paths.",
+      "evidence": "It lists FIVE: /, /login, /signup, /contact and /educators. /contact and /educators are not registered routes at all, so they cannot appear in any response. Measured among the 58: X-Frame-Options: deny on exactly /, /login and /signup, all 200s (and also on POST /login, which is a non-Boom response on a listed path).",
+      "resolution": "The observable claim stands and is asserted as measured; the config figure in the brief is corrected here. Nothing in config/default.yaml was touched."
+    },
+    {
+      "id": "rendered-error-pages-keep-hapi-default-cache-control",
+      "ambiguity": "The folder brief states rendered 404.html and 50x.html responses carry no Cache-Control at all.",
+      "evidence": "Measured header key set on a rendered 404: cache-control, connection, content-length, content-type, date, keep-alive, vary — with cache-control: no-cache, hapi's default. Pragma, Expires and X-Frame-Options are genuinely absent, because app.js:L170-L176 returns before the header block at L182-L190. Separately, Boom responses that DO reach that block still show cache-control: no-cache, because hapi's marshalling applies the route cache policy after the extension assigns the application string to response.output.headers; Pragma: no-cache and Expires: 0 survive there.",
+      "resolution": "Assert the absence of the application Cache-Control string and of Pragma/Expires/X-Frame-Options — not the absence of the header itself. Both refinements are recorded in errorMappingContract and preserved as measured."
+    },
+    {
+      "id": "api-trinkets-active-and-popular-404-via-validlang",
+      "ambiguity": "Two /api/ routes answer 404 for no documented reason, which could be mistaken for a routing gap or for a feature flag.",
+      "evidence": "GET /api/trinkets/active and GET /api/trinkets/popular inherit auth mode=try and carry pre [helpers.trinketTypeEnabled, helpers.validLang]. trinketTypeEnabled passes because isKnownTrinketType(\"api\") is false, so no lang is adopted. validLang then strips the leading and trailing slash to get urlLang \"api/trinkets/active\" and, finding it absent from Trinket.schema.path(\"lang\").enumValues, returns Boom.notFound() with no message. Because the path is under /api/ the Boom is delivered as JSON with hapi's default message \"Not Found\".",
+      "resolution": "Recorded as measured and preserved. These are the two 404s that make the measured 404 tally 22 rather than the 20 that the feature flags alone explain, and they are counted separately in gates.boomJsonFourOhFours."
+    },
+    {
+      "id": "roles-token-is-the-only-residual-volatility",
+      "ambiguity": "Authenticated GET /home did not reproduce byte for byte between runs even after ObjectId, ISO-date and cache-prefix normalization, which could have been read as nondeterministic rendering.",
+      "evidence": "Diffing the two raw bodies isolated a single differing line: the hidden roles input, whose value is lib/util/roles.js:L13's token + \"+\" + AES envelope. The envelope carries a fresh OpenSSL salt on every render. Nothing else in the document differed.",
+      "resolution": "Neutralize exactly that value in the HTML normalization and leave the mechanism alone. Shipping the client the key it needs to decrypt the payload is obfuscation rather than security, and repairing it is out of scope; the corpus records the volatility and preserves the behavior."
+    }
+  ],
+  "unauthenticated": [
+    {
+      "method": "GET",
+      "path": "/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "14076",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding",
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 14076,
+        "normalizedBytes": 13806,
+        "sha256": "8e9f7a01c740999c81aff7e5b7975a23cec875750d22b6cd7af50156033a7f76",
+        "title": "Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "config/routes.js:L17 `GET / pages.index` with html:index.html. pages.index calls request.success({footer:true}); responseType is html (no Accept header => accepts() returns the first offered type), so routeParser.js:L446-L459 renders the template. Path is listed in config/default.yaml app.xframeDeny, so app.js:L188-L190 adds X-Frame-Options: deny."
+    },
+    {
+      "method": "GET",
+      "path": "/R",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.R: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('R') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('R') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/R/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.R: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('R') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('R') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/about",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "13534",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 13534,
+        "normalizedBytes": 13273,
+        "sha256": "5553e344cf909168ba8eb1c28cdf8ca24b05d7eec48ba8bdcb31134df3b30e8d",
+        "title": "About Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "Synthesized static page. routeParser.js:L742-L765 reads lib/views/static/*.html at parse time and registers one native async (request,h) handler per file returning h.view(...). It never touches request.yar, which is why no Set-Cookie is emitted. Registered FIRST, before the 178 declared routes (routeParser.js:L244)."
+    },
+    {
+      "method": "GET",
+      "path": "/account",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "location": "/login"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "/login",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "auth mode=required strategies=[\"session\"]. With no session cookie the scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in')), and because the path is not under /api/ and no Accept header was sent, app.js:L169-L171 takes the HTML branch and answers h.redirect('/login').takeover(). The Location is RELATIVE because takeover bypasses the absolutizer at routeParser.js:L704-L723, and the takeover also exits extension #1 before the header block at app.js:L182-L190, so Cache-Control falls back to hapi's default no-cache and Pragma/Expires/X-Frame-Options are absent."
+    },
+    {
+      "method": "GET",
+      "path": "/account-deleted",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "/",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ]
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": "/",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "lib/controllers/users.js:L216-L219 `deleted` sets a flash then returns reply().redirect('/'). That is the CALL form of the synthetic reply, whose builder at routeParser.js:L376-L380 calls h.redirect(url) directly with NO absolutization — hence a RELATIVE Location. Contrast GET /logout, whose declarative success.redirect goes through the absolutizer and is absolute."
+    },
+    {
+      "method": "GET",
+      "path": "/activate-account",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "12742",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 12742,
+        "normalizedBytes": 12481,
+        "sha256": "c910cc85c7c11b2b3af4d1a85b1a1e71f24632b6fe37e6971f3284209d936bea",
+        "title": "Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "config/routes.js:L306-L318. validate.query.key is Joi.string().allow('').optional(), so the missing key still validates and the handler renders users/activateaccount.html. The sibling GET /reset-pass declares the same query field as .required() and therefore fails validation instead — the pair is the clearest illustration of the validation-outcome contract."
+    },
+    {
+      "method": "GET",
+      "path": "/admin",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "location": "/login"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "/login",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "auth mode=required strategies=[\"session\"]. With no session cookie the scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in')), and because the path is not under /api/ and no Accept header was sent, app.js:L169-L171 takes the HTML branch and answers h.redirect('/login').takeover(). The Location is RELATIVE because takeover bypasses the absolutizer at routeParser.js:L704-L723, and the takeover also exits extension #1 before the header block at app.js:L182-L190, so Cache-Control falls back to hapi's default no-cache and Pragma/Expires/X-Frame-Options are absent."
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 401,
+      "statusText": "Unauthorized",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "67",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 67,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        },
+        "body": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        }
+      },
+      "notes": "auth mode=required strategies=[\"session\"] AND the path begins with /api/. The scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in'), {credentials:{}}); isApiRequest is true, so app.js:L168 skips the HTML branch entirely and the raw Boom reaches the client as JSON. The message is client-visible because hapi passes 4xx messages through unchanged — this is one of the seven entries the 7x401 gate counts, and it is why the capture must not send Accept: application/json (that would make all twelve session routes answer 401 instead of seven)."
+    },
+    {
+      "method": "GET",
+      "path": "/api/exports",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 401,
+      "statusText": "Unauthorized",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "67",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 67,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        },
+        "body": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        }
+      },
+      "notes": "auth mode=required strategies=[\"session\"] AND the path begins with /api/. The scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in'), {credentials:{}}); isApiRequest is true, so app.js:L168 skips the HTML branch entirely and the raw Boom reaches the client as JSON. The message is client-visible because hapi passes 4xx messages through unchanged — this is one of the seven entries the 7x401 gate counts, and it is why the capture must not send Accept: application/json (that would make all twelve session routes answer 401 instead of seven)."
+    },
+    {
+      "method": "GET",
+      "path": "/api/featured-courses",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 401,
+      "statusText": "Unauthorized",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "67",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 67,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        },
+        "body": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        }
+      },
+      "notes": "auth mode=required strategies=[\"session\"] AND the path begins with /api/. The scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in'), {credentials:{}}); isApiRequest is true, so app.js:L168 skips the HTML branch entirely and the raw Boom reaches the client as JSON. The message is client-visible because hapi passes 4xx messages through unchanged — this is one of the seven entries the 7x401 gate counts, and it is why the capture must not send Accept: application/json (that would make all twelve session routes answer 401 instead of seven)."
+    },
+    {
+      "method": "GET",
+      "path": "/api/folders",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 401,
+      "statusText": "Unauthorized",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "67",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 67,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        },
+        "body": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        }
+      },
+      "notes": "auth mode=required strategies=[\"session\"] AND the path begins with /api/. The scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in'), {credentials:{}}); isApiRequest is true, so app.js:L168 skips the HTML branch entirely and the raw Boom reaches the client as JSON. The message is client-visible because hapi passes 4xx messages through unchanged — this is one of the seven entries the 7x401 gate counts, and it is why the capture must not send Accept: application/json (that would make all twelve session routes answer 401 instead of seven)."
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 401,
+      "statusText": "Unauthorized",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "67",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 67,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        },
+        "body": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        }
+      },
+      "notes": "auth mode=required strategies=[\"session\"] AND the path begins with /api/. The scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in'), {credentials:{}}); isApiRequest is true, so app.js:L168 skips the HTML branch entirely and the raw Boom reaches the client as JSON. The message is client-visible because hapi passes 4xx messages through unchanged — this is one of the seven entries the 7x401 gate counts, and it is why the capture must not send Accept: application/json (that would make all twelve session routes answer 401 instead of seven)."
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets/active",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "60",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 60,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 404,
+          "error": "Not Found",
+          "message": "Not Found"
+        },
+        "body": {
+          "statusCode": 404,
+          "error": "Not Found",
+          "message": "Not Found"
+        }
+      },
+      "notes": "Not an auth failure and not a trinket-type flag: this route inherits auth mode=try and carries pre [helpers.trinketTypeEnabled, helpers.validLang]. trinketTypeEnabled passes because isKnownTrinketType('api') is false so no lang is adopted, but validLang (lib/util/helpers.js) strips the leading and trailing slash to get urlLang 'api/trinkets/active', which is not in Trinket.schema.path('lang').enumValues, so it returns Boom.notFound() with no message. /api/ is an API request, so the Boom is delivered as JSON with hapi's default message \"Not Found\" rather than as a rendered 404.html."
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets/popular",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "60",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 60,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 404,
+          "error": "Not Found",
+          "message": "Not Found"
+        },
+        "body": {
+          "statusCode": 404,
+          "error": "Not Found",
+          "message": "Not Found"
+        }
+      },
+      "notes": "Not an auth failure and not a trinket-type flag: this route inherits auth mode=try and carries pre [helpers.trinketTypeEnabled, helpers.validLang]. trinketTypeEnabled passes because isKnownTrinketType('api') is false so no lang is adopted, but validLang (lib/util/helpers.js) strips the leading and trailing slash to get urlLang 'api/trinkets/active', which is not in Trinket.schema.path('lang').enumValues, so it returns Boom.notFound() with no message. /api/ is an API request, so the Boom is delivered as JSON with hapi's default message \"Not Found\" rather than as a rendered 404.html."
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets/search",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 401,
+      "statusText": "Unauthorized",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "67",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 67,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        },
+        "body": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        }
+      },
+      "notes": "auth mode=required strategies=[\"session\"] AND the path begins with /api/. The scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in'), {credentials:{}}); isApiRequest is true, so app.js:L168 skips the HTML branch entirely and the raw Boom reaches the client as JSON. The message is client-visible because hapi passes 4xx messages through unchanged — this is one of the seven entries the 7x401 gate counts, and it is why the capture must not send Accept: application/json (that would make all twelve session routes answer 401 instead of seven)."
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/assets",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 500,
+      "statusText": "Internal Server Error",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "96",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 96,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 500,
+          "error": "Internal Server Error",
+          "message": "An internal server error occurred"
+        },
+        "body": {
+          "statusCode": 500,
+          "error": "Internal Server Error",
+          "message": "An internal server error occurred"
+        }
+      },
+      "notes": "PRESERVED PRE-EXISTING 500 (AAP quirk I14). config/api_routes.js:L1228 declares the route with validate.query.type = Joi.string().optional() and NO auth:'session'. lib/controllers/users.js:L466 then does request.query.type.toLowerCase().split(',') || [], so an absent type throws TypeError on undefined.toLowerCase(). The single catch-all at routeParser.js:L578-L589 converts it to Boom.badImplementation, and because the path begins with /api/ the isApiRequest test at app.js:L160-L162 is true and the HTML branch is SKIPPED — so it is delivered as the standard Boom JSON body, NOT as a rendered 50x.html. hapi scrubs the 5xx message to \"An internal server error occurred\". There is no assetsEnabled pre-handler anywhere, so config/default.yaml features.assets:false does not gate this route; the handler is genuinely reached. REPRODUCE, DO NOT REPAIR."
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/resendEmailChange",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 401,
+      "statusText": "Unauthorized",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "67",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache"
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": true,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 67,
+        "isArray": false,
+        "keys": [
+          "error",
+          "message",
+          "statusCode"
+        ],
+        "keyCount": 3,
+        "stableScalars": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        },
+        "body": {
+          "statusCode": 401,
+          "error": "Unauthorized",
+          "message": "Not logged in"
+        }
+      },
+      "notes": "auth mode=required strategies=[\"session\"] AND the path begins with /api/. The scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in'), {credentials:{}}); isApiRequest is true, so app.js:L168 skips the HTML branch entirely and the raw Boom reaches the client as JSON. The message is client-visible because hapi passes 4xx messages through unchanged — this is one of the seven entries the 7x401 gate counts, and it is why the capture must not send Accept: application/json (that would make all twelve session routes answer 401 instead of seven)."
+    },
+    {
+      "method": "GET",
+      "path": "/auth/google",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "96",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ]
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 96,
+        "isArray": false,
+        "keys": [
+          "flash",
+          "message"
+        ],
+        "keyCount": 2,
+        "stableScalars": {
+          "message": "Google OAuth is not configured. Please set up Google OAuth credentials."
+        },
+        "flashKeys": [],
+        "body": {
+          "message": "Google OAuth is not configured. Please set up Google OAuth credentials.",
+          "flash": {}
+        }
+      },
+      "notes": "auth:false (config/routes.js:L528-L533). config/default.yaml:L325-L328 leaves app.auth.google.clientID empty, so the controller takes the not-configured branch and calls request.fail({message: ...}). The route declares NO fail block, so request.fail falls all the way through routeParser.js:L509-L513 to h.response(json) — HTTP 200 with a JSON body carrying the failure message and the flash bag. This is the counter-intuitive mapping recorded in errorMappingContract.requestFailWithoutRedirectOrHtmlYields."
+    },
+    {
+      "method": "GET",
+      "path": "/auth/google/callback",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/signup",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+        ]
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path",
+          "Expires"
+        ]
+      ],
+      "location": "https://trinket.dev/signup",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "auth:false, cookie:true, success.redirect '{redirectTo}', fail.redirect '/signup' (config/routes.js:L534-L546). With no OAuth code the controller fails, so the declarative fail.redirect is absolutized to https://trinket.dev/signup, and cookie:true makes the app.js:L205-L240 rewrite append \"; Expires=<nextYear UTC>\"."
+    },
+    {
+      "method": "GET",
+      "path": "/blocks",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.blocks: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('blocks') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('blocks') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/blocks/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.blocks: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('blocks') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('blocks') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/change-email",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/account/email",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ]
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": "https://trinket.dev/account/email",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "VALIDATION FAILURE. config/api_routes.js:L1339-L1354 declares validate.query.key = Joi.string().required() with success.redirect and fail.redirect both 'account/email' — UNROOTED, so the third absolutizer branch (routeParser.js:L718-L720) applies config.url + '/' + target, giving https://trinket.dev/account/email."
+    },
+    {
+      "method": "GET",
+      "path": "/console",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.console: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('console') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('console') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/console/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.console: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('console') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('console') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/courses/new",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "location": "/login"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "/login",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "auth mode=required strategies=[\"session\"]. With no session cookie the scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in')), and because the path is not under /api/ and no Accept header was sent, app.js:L169-L171 takes the HTML branch and answers h.redirect('/login').takeover(). The Location is RELATIVE because takeover bypasses the absolutizer at routeParser.js:L704-L723, and the takeover also exits extension #1 before the header block at app.js:L182-L190, so Cache-Control falls back to hapi's default no-cache and Pragma/Expires/X-Frame-Options are absent."
+    },
+    {
+      "method": "GET",
+      "path": "/docs/colors",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "251015",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 251015,
+        "normalizedBytes": 250754,
+        "sha256": "8cb18723dbc79a10f3b465f02f34f3d13889aef5108ab5a6eb2d4837c32f42b6",
+        "title": "Colors",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "config/routes.js:L524-L527 `GET /docs/colors pages.index` with html:docs/colors.html — the same controller as GET / but a different template."
+    },
+    {
+      "method": "GET",
+      "path": "/embed/blocks-iframe",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "8170",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 8170,
+        "normalizedBytes": 8170,
+        "sha256": "3447fead03ac228a9285e5a53e9422dec5efaa76f1f80227f9832887844a8271",
+        "title": null,
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "config/routes.js:L422-L429 declares only `html` and NO pre array, so helpers.trinketTypeEnabled never runs and the blocks feature flag cannot gate it. trinket.index (lib/controllers/trinket.js:L33-L58) is pure and always calls request.success(data) — it has no Boom path and no language lookup — so this renders 200 even though config/default.yaml sets features.trinkets.blocks: false."
+    },
+    {
+      "method": "GET",
+      "path": "/embed/glowscript-blocks-iframe",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "7493",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 7493,
+        "normalizedBytes": 7259,
+        "sha256": "bcf8ef7159a2369472a64e15d9f99e420fb1fb93ff0ad1d7d033b567a0c95df1",
+        "title": null,
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "config/routes.js:L422-L429 declares only `html` and NO pre array, so helpers.trinketTypeEnabled never runs and the blocks feature flag cannot gate it. trinket.index (lib/controllers/trinket.js:L33-L58) is pure and always calls request.success(data) — it has no Boom path and no language lookup — so this renders 200 even though config/default.yaml sets features.trinkets.blocks: false."
+    },
+    {
+      "method": "GET",
+      "path": "/forgot-pass",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "12606",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 12606,
+        "normalizedBytes": 12345,
+        "sha256": "4b11e2f89ce2a69a2cc62f7fa2a17f9c62b376506fbfa63a0997be14b2d4e3e0",
+        "title": "Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "config/routes.js `GET /forgot-pass pages.forgotPasswordForm` with html:users/forgotpass.html and no required query fields."
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.glowscript: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('glowscript') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('glowscript') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript-blocks",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.glowscript-blocks: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('glowscript-blocks') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('glowscript-blocks') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript-blocks/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.glowscript-blocks: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('glowscript-blocks') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('glowscript-blocks') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.glowscript: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('glowscript') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('glowscript') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/help",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "13961",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 13961,
+        "normalizedBytes": 13700,
+        "sha256": "595c5a6273ef3b86bd45d5f0ebac2d8717653eaa2cd8cef1efdd6dd9f506a1a1",
+        "title": "Help",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "Synthesized static page. routeParser.js:L742-L765 reads lib/views/static/*.html at parse time and registers one native async (request,h) handler per file returning h.view(...). It never touches request.yar, which is why no Set-Cookie is emitted. Registered FIRST, before the 178 declared routes (routeParser.js:L244)."
+    },
+    {
+      "method": "GET",
+      "path": "/home",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "location": "/login"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "/login",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "auth mode=required strategies=[\"session\"]. With no session cookie the scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in')), and because the path is not under /api/ and no Accept header was sent, app.js:L169-L171 takes the HTML branch and answers h.redirect('/login').takeover(). The Location is RELATIVE because takeover bypasses the absolutizer at routeParser.js:L704-L723, and the takeover also exits extension #1 before the header block at app.js:L182-L190, so Cache-Control falls back to hapi's default no-cache and Pragma/Expires/X-Frame-Options are absent."
+    },
+    {
+      "method": "GET",
+      "path": "/html",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.html: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('html') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('html') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/html/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.html: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('html') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('html') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/java",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.java: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('java') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('java') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/java/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.java: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('java') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('java') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/login",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "13484",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding",
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 13484,
+        "normalizedBytes": 13223,
+        "sha256": "fe77f3db9309df12057c2328e061ca3f7ac4a9e754b64966a9f02035174edee0",
+        "title": "Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "UNAUTHENTICATED. pages.login (lib/controllers/pages.js:L15-L24) takes the else branch and calls request.success(), rendering login.html. Path is in app.xframeDeny so X-Frame-Options: deny is present. See the authenticated array for the same route at 500 — that divergence is the flagship R-6 adjudication."
+    },
+    {
+      "method": "GET",
+      "path": "/logout",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+        ]
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path",
+          "Expires"
+        ]
+      ],
+      "location": "https://trinket.dev/",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "config/routes.js:L63-L68 carries a TOP-LEVEL `redirect : '/'` which routeParser.js:L297-L300 hoists into success.redirect, plus `cookie : true`. users.logout clears the session and calls request.success(), so the absolutizer at routeParser.js:L713-L717 turns '/' into config.url + '/' = https://trinket.dev/. Because the route declares cookie:true, routeParser.js:L354-L356 sets request.cookie and the rewrite at app.js:L205-L240 appends \"; Expires=<nextYear UTC>\" to the session cookie."
+    },
+    {
+      "method": "GET",
+      "path": "/music",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.music: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('music') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('music') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/music/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.music: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('music') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('music') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/pygame",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.pygame: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('pygame') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('pygame') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/pygame/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.pygame: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('pygame') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('pygame') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/python",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "14187",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 14187,
+        "normalizedBytes": 13926,
+        "sha256": "e6afbb9b6444a8ea19c1148d9478fe5c32a067f10e1f7d0d06ce0dad4ca317ba",
+        "title": "Your Python Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "Language loop route #1 (config/routes.js:L556-L570): `GET /<lang> trinket.index`, html trinket/<lang>/<lang>.html, pre [helpers.trinketTypeEnabled, {method: helpers.findFeaturedTrinkets, assign: featuredTrinkets}]. python is the ONLY trinket type enabled in config/default.yaml, so isTrinketTypeEnabled returns true and the page renders."
+    },
+    {
+      "method": "GET",
+      "path": "/python/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/python",
+        "pragma": "no-cache"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "https://trinket.dev/python",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "Language loop route #2 (config/routes.js:L572-L580): `GET /<lang>/ pages.index` with success.redirect '/<lang>' and pre [trinketTypeEnabled, validLang]. Both pre-handlers pass for python, so the declarative redirect fires and is absolutized to https://trinket.dev/python."
+    },
+    {
+      "method": "GET",
+      "path": "/python3",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.python3: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('python3') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('python3') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #1, GET /<lang>.)"
+    },
+    {
+      "method": "GET",
+      "path": "/python3/",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 404,
+      "statusText": "Not Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1545",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1545,
+        "normalizedBytes": 1545,
+        "sha256": "bd3587ea12a41eb258ceb62cecb435ee72a0dd38ff5b5a920bfb97c83a193b60",
+        "title": "Page not found",
+        "markers": {
+          "notFoundPage": true,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FEATURE-FLAG 404. config/default.yaml sets features.trinkets.python3: false. helpers.trinketTypeEnabled (lib/util/helpers.js:L211-L236) derives urlLang from the first path segment, adopts it because features.isKnownTrinketType('python3') is true, then returns reply(Boom.notFound('This trinket type is not available')) because features.isTrinketTypeEnabled('python3') is false. The path is not under /api/ and no Accept header was sent, so app.js:L172-L173 renders 404.html with status 404 — which REPLACES the Boom payload, so the message string never reaches the wire. Because that branch returns before app.js:L182-L190, the response carries hapi's default Cache-Control: no-cache and no Pragma/Expires/X-Frame-Options. lib/util/features.js is the root cause and is preserved verbatim, including the L33 comment \"default to true if not specified\" that its own trailing `return false` contradicts. (language loop route #2, GET /<lang>/, whose success.redirect never runs because the pre-handler short-circuits first.)"
+    },
+    {
+      "method": "GET",
+      "path": "/r",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/R",
+        "pragma": "no-cache"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "https://trinket.dev/R",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "config/routes.js:L490-L494 alias with success.redirect '/R' and NO pre array. Absolutized to https://trinket.dev/R. Note the target /R is itself a 404 in this configuration (R is disabled) — the redirect is emitted regardless, and following it is exactly what the no-follow policy avoids."
+    },
+    {
+      "method": "GET",
+      "path": "/reset-pass",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/forgot-pass",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ]
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": "https://trinket.dev/forgot-pass",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "VALIDATION FAILURE, not a handler decision. config/routes.js:L276-L288 declares validate.query.key = Joi.string().required() and fail.redirect '/forgot-pass'. No key was sent, so the joi bridge at routeParser.js:L517-L541 collects the error, persists flash('validation', ...) and calls request.fail(request.payload, ...). request.fail takes the responseType===html && fail.redirect branch (routeParser.js:L488-L497) and absolutizes to https://trinket.dev/forgot-pass. A rejected input therefore surfaces as a 302, never as a 4xx."
+    },
+    {
+      "method": "GET",
+      "path": "/signup",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "13677",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding",
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 13677,
+        "normalizedBytes": 13416,
+        "sha256": "bd2c3ad4cf95e1032cae852b8dde3e71ef2f7e19ff347fda7d29dc0e82a61e8a",
+        "title": "Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "UNAUTHENTICATED. pages.signup (lib/controllers/pages.js:L25-L37) takes the else branch and renders signup.html. In app.xframeDeny. See the authenticated array for the same route at 500."
+    },
+    {
+      "method": "GET",
+      "path": "/skulpt",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/python",
+        "pragma": "no-cache"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "https://trinket.dev/python",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "config/routes.js:L444-L448 alias with success.redirect '/python' and NO pre array, so no feature-flag pre-handler runs. Absolutized."
+    },
+    {
+      "method": "GET",
+      "path": "/verify-email",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/account/email",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ]
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": "https://trinket.dev/account/email",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "VALIDATION FAILURE, identical shape to GET /change-email: config/api_routes.js:L1372-L1387, key required, unrooted 'account/email' redirect on both success and fail."
+    },
+    {
+      "method": "GET",
+      "path": "/vpython",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/glowscript",
+        "pragma": "no-cache"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "https://trinket.dev/glowscript",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "config/routes.js:L466-L470 alias with success.redirect '/glowscript' and NO pre array. Absolutized. The target /glowscript is a 404 because glowscript is disabled — preserved as measured."
+    },
+    {
+      "method": "GET",
+      "path": "/webvpython",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/glowscript",
+        "pragma": "no-cache"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "https://trinket.dev/glowscript",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "config/routes.js:L478-L482 alias with success.redirect '/glowscript' and NO pre array. Absolutized."
+    },
+    {
+      "method": "GET",
+      "path": "/welcome",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "location": "/login"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": null,
+      "setCookieAttributes": null,
+      "location": "/login",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "auth mode=required strategies=[\"session\"]. With no session cookie the scheme at app.js:L243-L281 returns h.unauthenticated(Boom.unauthorized('Not logged in')), and because the path is not under /api/ and no Accept header was sent, app.js:L169-L171 takes the HTML branch and answers h.redirect('/login').takeover(). The Location is RELATIVE because takeover bypasses the absolutizer at routeParser.js:L704-L723, and the takeover also exits extension #1 before the header block at app.js:L182-L190, so Cache-Control falls back to hapi's default no-cache and Pragma/Expires/X-Frame-Options are absent."
+    }
+  ],
+  "authenticated": [
+    {
+      "method": "POST",
+      "path": "/login",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "content-type": "application/json",
+        "content-length": "73"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/home",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+        ],
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path",
+          "Expires"
+        ]
+      ],
+      "location": "https://trinket.dev/home",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "Login over REAL HTTP through the application's own route — no fabricated cookie, no bypass. config/routes.js:L46-L62: cookie:true, success.redirect '/home', fail.redirect '/login', pre [helpers.lowerUserFields], validate.payload {email required, password}. request.success routes through the absolutizer, so the Location is ABSOLUTE (https://trinket.dev/home), and cookie:true triggers the app.js:L205-L240 rewrite which appends \"; Expires=<nextYear UTC>\" and, because cookieOptions.isSecure is false, appends NEITHER SameSite=None NOR Secure. /login is in app.xframeDeny so this non-Boom response also carries X-Frame-Options: deny.",
+      "state": "login-flow (valid credentials)"
+    },
+    {
+      "method": "POST",
+      "path": "/login",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "content-type": "application/json",
+        "content-length": "81"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/login",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+        ],
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path",
+          "Expires"
+        ]
+      ],
+      "location": "https://trinket.dev/login",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "Same route with a wrong password. fail.redirect '/login' also goes through the absolutizer, so a failed login is an ABSOLUTE 302 to https://trinket.dev/login carrying the persisted failure/payload/query flash keys — not a 401. The cookie rewrite fires here too because cookie:true is declared on the route, not on the outcome.",
+      "state": "login-flow (invalid credentials)"
+    },
+    {
+      "method": "GET",
+      "path": "/login",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "cookie": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>"
+      },
+      "status": 500,
+      "statusText": "Internal Server Error",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1600",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1600,
+        "normalizedBytes": 1600,
+        "sha256": "a50bf9c765dbf2ea8720179c7602107fddbc7b2389aaaadb2342cc0d3cc38953",
+        "title": "Something went wrong",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": true,
+          "hasDoctype": true
+        }
+      },
+      "notes": "FLAGSHIP R-6 QUIRK — authenticated GET /login returns 500 and renders 50x.html, while the same route returns 200 unauthenticated. lib/controllers/pages.js:L16-L17 does `if (request.auth.isAuthenticated) return reply.redirect('/home');` — the Hapi-16 PROPERTY form. The synthetic reply at routeParser.js:L360 is a BARE FUNCTION; its chainable builder (L375-L405) exposes redirect only on the object returned by CALLING reply(data), so reply.redirect is undefined and the call raises TypeError. The single catch-all at routeParser.js:L578-L589 converts it to Boom.badImplementation, and app.js:L175 renders 50x.html with the original status. Converting this to h.redirect(...) would silently turn it into a 302 — a prohibited behavior change on a login page. If a migrated build answers 302 here, lib/controllers/pages.js was converted wrongly; report it rather than editing this corpus.",
+      "state": "authenticated"
+    },
+    {
+      "method": "GET",
+      "path": "/signup",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "cookie": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>"
+      },
+      "status": 500,
+      "statusText": "Internal Server Error",
+      "headers": {
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "content-length": "1600",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "keep-alive": "timeout=5",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 1600,
+        "normalizedBytes": 1600,
+        "sha256": "a50bf9c765dbf2ea8720179c7602107fddbc7b2389aaaadb2342cc0d3cc38953",
+        "title": "Something went wrong",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": true,
+          "hasDoctype": true
+        }
+      },
+      "notes": "The second half of the flagship quirk: lib/controllers/pages.js:L26-L27 does `return reply.redirect('/welcome');` in the same property form, producing the identical TypeError -> Boom.badImplementation -> 50x.html at 500. The rendered body is byte-identical to the authenticated /login body, as the shared normalized digest shows.",
+      "state": "authenticated"
+    },
+    {
+      "method": "GET",
+      "path": "/home",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "cookie": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "18126",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 18126,
+        "normalizedBytes": 17206,
+        "sha256": "f7d1e5d3c27b175cfebf0a57431fd541d8a836c9e008e40884c475feb82972b0",
+        "title": "Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "With a session the auth scheme authenticates, pages.home (lib/controllers/pages.js:L42-L55) finds no recent trinkets for the throwaway user and calls request.success({trinkets: []}), rendering home.html. The only volatile content in this body is the client-shipped roles token from lib/util/roles.js (a fresh OpenSSL salt per render), which the HTML normalization neutralizes.",
+      "state": "authenticated"
+    },
+    {
+      "method": "GET",
+      "path": "/account",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "cookie": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "/account/profile",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ]
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": "/account/profile",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "RELATIVE redirect. lib/controllers/users.js:L314-L319 `account` sees no request.params.accountPage and returns reply().redirect('/account/profile') — the CALL form, which reaches h.redirect() directly with no absolutization (routeParser.js:L376-L380). This is the measured evidence that absolute and relative Location values genuinely coexist, which is what the URL-parsing base-argument decision in test/helpers/flow.js depends on.",
+      "state": "authenticated"
+    },
+    {
+      "method": "GET",
+      "path": "/logout",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "cookie": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+        ]
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path",
+          "Expires"
+        ]
+      ],
+      "location": "https://trinket.dev/",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "The same top-level `redirect : '/'` + cookie:true declaration as the unauthenticated case, exercised with a live session: the session is cleared and reset, and the ABSOLUTE https://trinket.dev/ redirect is emitted with \"; Expires=<nextYear UTC>\" appended to the session cookie.",
+      "state": "authenticated"
+    }
+  ]
+}

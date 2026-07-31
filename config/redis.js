@@ -37,7 +37,7 @@ async function createClientAsync() {
 
   client = redis.createClient(options);
 
-  client.on('error', function(err) {
+  client.on('error', err => {
     console.log(new Date().toString(), 'redis client error event:', err.message);
   });
 
@@ -48,7 +48,7 @@ async function createClientAsync() {
 
 // Only initialize if Redis is enabled
 if (redisEnabled) {
-  clientPromise = createClientAsync().catch(function(err) {
+  clientPromise = createClientAsync().catch(err => {
     console.log('Failed to initialize redis client:', err.message);
   });
 } else {

@@ -1,0 +1,3339 @@
+{
+  "$schema": "internal://trinket-oss/test/baseline/route-table.v1",
+  "artifact": "route-table",
+  "purpose": "The R-6 baseline snapshot of the hapi route table as registered by the unmodified application at the base commit — the parity denominator against which the migrated server's route table is compared, and the filter source from which test/baseline/responses.json derives its parameterless-GET response corpus.",
+  "metadata": {
+    "capturedAt": "2026-07-31T10:55:05.078Z",
+    "baseCommit": "cd9838994947ad91e02c1680341e2592b92a10cd",
+    "gitStatusClean": true,
+    "gitStatusNote": "No tracked file was modified — the working tree carried no pre-existing untracked artifact. The only untracked paths at capture time were the artifact's own not-yet-committed output path (test/baseline/) and the throwaway capture harness, which is never committed (blitzy_adhoc_test_capture_route_table.js).",
+    "node": "v22.23.2",
+    "npm": "11.18.0",
+    "nodeEnv": "test",
+    "nodeConfigOverride": {
+      "app": {
+        "start": true,
+        "hostname": "127.0.0.1",
+        "port": 30008,
+        "url": {
+          "protocol": "http",
+          "hostname": "127.0.0.1",
+          "port": 30008
+        },
+        "plugins": {
+          "session": {
+            "cookieOptions": {
+              "password": "baseline-capture-placeholder-not-a-real-secret-0000"
+            }
+          }
+        }
+      }
+    },
+    "capturedBy": "test/baseline/capture.js",
+    "source": "hapi server.table() on the live server returned by require('../../app.js')",
+    "hapiVersion": "21.4.10",
+    "serverUri": "http://127.0.0.1:30008",
+    "captureNotes": [
+      "On `capturedBy`: test/baseline/capture.js is the sibling harness that owns this artifact in the finished repository, and the field names it because that is where regeneration belongs. It did not yet exist when this table was captured — it is produced in the same change by a parallel worker — so the table was in fact produced by a throwaway harness implementing exactly the procedure capture.js is specified to implement: boot the unmodified application through require('../../app.js'), read hapi's server.table() from the started server, render each row per the canonicalization block below, order rows by config.routes and write with fs.writeFileSync. The throwaway harness is not committed. Any later run of capture.js must reproduce gates.measuredSha256 and gates.registrationOrderFingerprint exactly; canonicalization.reproduce is the one-line check.",
+      "NODE_ENV=test and NODE_CONFIG_PERSIST_ON_CHANGE=N were exported for the capture process. config/test.yaml (which sets app.start:false at L3) was NOT edited and config/local.yaml was NOT created; app.start:true, the bind host/port and the >=32-character session cookie password required by app.js:L50-L66 were all injected at runtime through the NODE_CONFIG environment variable recorded above.",
+      "The nodeConfigOverride session cookie password is a deliberately obvious non-credential placeholder used only to satisfy the >=32-character boot guard. It is not a secret and grants no access to anything.",
+      "The server was genuinely bound and started via server.start(), so the table reflects real-HTTP-served state. hapi's server.inject injection API was never used, because @hapi/shot is the only source of the DEP0169 URL deprecation and the harness must stay warning-clean. (The literal call token is deliberately not written anywhere in this artifact, so that a repository-wide search for injection call sites under test/ stays empty.)",
+      "The route table was read from hapi's own server.table(). lib/util/routeParser.js's `-R` / tab.emitTable dumper was deliberately NOT used: it emits a different five-column METHOD/PATH/CONTROLLER/SUCCESS/FAIL shape sorted by controller, it parses only config/routes.js and not config/api_routes.js, and it has no access to resolved auth modes or pre-handler counts, which only exist after server.route() registration.",
+      "Expected and deliberately unsilenced stdout/stderr noise during capture (R-4): the \"Queue [exports] using Bull with Redis\" line from lib/util/queues.js, the Mongoose strictQuery DeprecationWarning from config/db.js, and the aws-sdk v2 end-of-support NOTE. config/redis.js:L50-L53 prints \"Failed to initialize redis client: ...\" whenever Redis is unreachable. None of these affects the route table.",
+      "Base-commit dependency reconciliation: HEAD is a previous-batch commit that changed only package.json and package-lock.json, so all application source is still pre-migration and still requires nine packages that the new manifest dropped (tab, optimist, q, request, node-uuid, aws-sdk, node-cryptojs-aes, mkdirp, rimraf) plus chokidar (pulled in by nunjucks watch mode, which lib/util/nunjucks.js:L8 enables under NODE_ENV=test) and the marked 0.3.2 fork (lib/shared/trinket-markdown.js dereferences marked.Renderer.prototype at module scope, which the registry 4.x export shape does not provide). Those packages were restored into node_modules only, with `npm install --no-save`, at the versions the pre-migration manifest pinned. package.json and package-lock.json were verified byte-identical to HEAD afterwards. No repository file was modified to produce this artifact, and the route table is invariant to those packages because none participates in route declaration or in server.route() registration."
+    ]
+  },
+  "canonicalization": {
+    "rowFormat": "METHOD | path | authDescriptor | preCount",
+    "methodCase": "uppercase",
+    "authDescriptorFalse": "false",
+    "authDescriptorOtherwise": "mode=<mode> strategies=[\"<s1>\",...]",
+    "preCount": "integer length of route.settings.pre, 0 when absent",
+    "sort": "Array.prototype.sort() default, UTF-16 code-unit ascending, NOT locale-aware",
+    "join": "\\n",
+    "trailingNewline": false,
+    "separatorNote": "A single ASCII space precedes and follows every | separator. The strategies list is rendered with double-quoted names joined by a bare comma and no space, e.g. strategies=[\"session\"].",
+    "authResolution": "Effective auth is resolved exactly as @hapi/hapi 21.4.10 lib/auth.js `lookup(route)` does: if route.settings.auth === false the descriptor is the literal string \"false\"; otherwise the effective configuration is (route.settings.auth || server.auth.settings.default) and mode/strategies are read from it.",
+    "empiricalAuthShape": {
+      "note": "Measured against the live server rather than assumed. hapi 21.4.10 keeps three distinct representations, and lib/auth.js:_setupRoute carries the comment \"Preserve the difference between undefined and false\".",
+      "explicitAuthFalse": "route.settings.auth === false (a boolean). Renders as \"false\". Declared in config/routes.js as `config: { auth : false }`.",
+      "explicitStrategy": "route.settings.auth === { strategies: ['session'], mode: 'required' } (an object, keys in that insertion order). hapi's _setupRoute rewrites the declared string form `auth: 'session'` into { strategies: ['session'] } and then defaults mode to 'required'.",
+      "inheritedDefault": "route.settings.auth === undefined (the key is absent — hapi does NOT bake the default into the route). The effective value comes from server.auth.settings.default, which app.js:L287 sets via server.auth.default({ strategy: 'session', mode: 'try' }) and which hapi normalises to {\"mode\":\"try\",\"strategies\":[\"session\"]}. Renders as 'mode=try strategies=[\"session\"]'.",
+      "serverAuthSettingsDefault": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "rawSettingsAuthTally": {
+        "undefined": 126,
+        "object": 105,
+        "false": 2
+      }
+    },
+    "empiricalPreShape": "route.settings.pre is absent (undefined) when the declaration carries no pre-handlers, and otherwise is the declared array itself — hapi performs no nesting normalisation, so a two-entry declaration measures as length 2 with both entries plain objects. preCount is therefore Array.isArray(settings.pre) ? settings.pre.length : 0.",
+    "reproduce": "const rows = require('./route-table.json').rows; const canon = rows.map(r => r.canonical); sha256(canon.slice().sort().join('\\n')) === gates.measuredSha256 && sha256(canon.join('\\n')) === gates.registrationOrderFingerprint"
+  },
+  "gates": {
+    "rowCount": 233,
+    "methods": {
+      "GET": 137,
+      "POST": 63,
+      "PUT": 19,
+      "DELETE": 13,
+      "PATCH": 1
+    },
+    "apiPaths": 117,
+    "withPreHandlers": 161,
+    "authRequiredSession": 105,
+    "authFalse": 2,
+    "authTryInherited": 126,
+    "documentedDigest": "cd2a7e38a39bd84902ac1a0d69f50e2a",
+    "documentedDigestLabelledAs": "sha256",
+    "measuredSha256": "452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8",
+    "measuredSha256First32": "452116ce74301c61c92efb36fe8ead98",
+    "measuredMd5": "dfc1e295156ecdbbee4a073b231b9326",
+    "documentedDigestReproduced": "none",
+    "registrationOrderFingerprint": "6a65d18273c731aa070cf905625a9dfe4789caf066dde0c5beb14c6dd8131898"
+  },
+  "derivation": {
+    "summary": "The 178 declared route entries expand to 233 registered routes. The expansion is produced by the trinket-language loop in config/routes.js, NOT by the `.json` extension-duplication mechanism that the Technical Specification credits at §0.4.1.1 and §0.5.1.2.",
+    "arithmetic": [
+      {
+        "term": "config/api_routes.js declarations",
+        "count": 116,
+        "evidence": "grep -cE \"^[[:space:]]+route[[:space:]]*:\" config/api_routes.js -> 116"
+      },
+      {
+        "term": "config/routes.js literal declarations",
+        "count": 57,
+        "evidence": "grep -cE \"^[[:space:]]+route[[:space:]]*:\" config/routes.js -> 62, minus the 5 language-loop templates"
+      },
+      {
+        "term": "config/routes.js language loop (5 pushes x 11 trinketLangs)",
+        "count": 55,
+        "evidence": "config/routes.js:L549-L608; pushes at L553, L568, L579, L595, L603; config/constants.js declares 11 trinketLangs"
+      },
+      {
+        "term": "subtotal of declared routes",
+        "count": 228,
+        "evidence": "116 + 57 + 55; config/routes.js module.exports at L610 therefore exports 57 + 55 = 112 entries"
+      },
+      {
+        "term": "addStaticPages (lib/views/static/about.html, help.html)",
+        "count": 2,
+        "evidence": "lib/util/routeParser.js:L742-L765 reads config.app.templates + '/' + config.app.staticPages (config/default.yaml:L35-L36 -> lib/views/ + static) and pushes one GET route per .html file"
+      },
+      {
+        "term": "cache-prefix directory route",
+        "count": 1,
+        "evidence": "lib/util/routeParser.js:L651-L662; path /' + config.app.cachePrefix + '{timestamp}/{assetType}/{path*} with config/default.yaml:L141 cachePrefix: cache-prefix-"
+      },
+      {
+        "term": "the eight app.prefixes directory routes",
+        "count": 0,
+        "evidence": "lib/util/routeParser.js:L664-L678 guards on if (config.app.prefixes[static]); config/default.yaml:L142-L150 declares prefixes with EIGHT key-only NULL entries (components, js, css, img, fonts, partials, skulpt, models), so the guard is falsy for all eight"
+      },
+      {
+        "term": "GET /.well-known/{path*}",
+        "count": 1,
+        "evidence": "lib/util/routeParser.js:L681-L687"
+      },
+      {
+        "term": "GET /{path*} catch-all",
+        "count": 1,
+        "evidence": "lib/util/routeParser.js:L690-L700, directory handler with index: true"
+      },
+      {
+        "term": "TOTAL registered routes",
+        "count": 233,
+        "evidence": "measured: server.table().length === 233 and config.routes.length === 233"
+      }
+    ],
+    "corrections": [
+      {
+        "id": "correction-a",
+        "claim": "The `.json` extension-duplication branch never fires, so zero `.json` duplicate routes exist.",
+        "supersedes": "Technical Specification §0.4.1.1 and §0.5.1.2, which credit the 178 -> 233 expansion to a `.json` extension-duplication mechanism.",
+        "evidence": "lib/util/routeParser.js:L258 sets `extensions = route.ext || false`, and the duplication branch at L598-L605 runs only `if (extensions)`. Measured: `grep -cE \"^[[:space:]]*ext[[:space:]]*:\" config/routes.js config/api_routes.js` returns 0 for both files, and the broader whitespace-tolerant pattern `grep -nE \"(^|[,{[:space:]])ext[[:space:]]*:\"` returns no matches at all. No declaration in either route file carries an `ext` key, so the branch is dead code.",
+        "confirmation": "No path in the measured table ends in `.json`."
+      },
+      {
+        "id": "correction-b",
+        "claim": "The real expansion is the trinket-language loop: 5 routes per language x 11 languages = 55.",
+        "evidence": "config/routes.js:L550 `config.constants.trinketLangs.forEach(function(lang) { ... })` closes at L608 and pushes five routes per language: GET /<lang> (trinket.index, 2 pre) at L553, GET /<lang>/ (pages.index, 2 pre) at L568, GET /<lang>/{shortCode} (trinket.getByShortCode, 3 pre) at L579, GET /<lang>/{shortCode}/ (trinket.downloadMain, 1 pre) at L595, and GET /<lang>/{shortCode}/{path*} (trinket.downloadFile, 1 pre) at L603. config/constants.js declares exactly 11 trinketLangs in the order python, python3, console, music, html, blocks, glowscript, java, glowscript-blocks, R, pygame.",
+        "confirmation": "All 55 language rows are present in the measured table in exactly that language order, at registration indices 175-229."
+      },
+      {
+        "id": "correction-c",
+        "claim": "The eight config/default.yaml app.prefixes entries are key-only (NULL) and contribute ZERO routes.",
+        "evidence": "config/default.yaml:L142 is `prefixes: # static routes` and L143-L150 are `components:`, `js:`, `css:`, `img:`, `fonts:`, `partials:`, `skulpt:`, `models:` — every one with no value, so each parses to null. The loop at lib/util/routeParser.js:L664 iterates all eight keys but the guard at L665, `if (config.app.prefixes[static])`, is falsy for every one.",
+        "preservation": "Preserved exactly as-is under R-4. Populating the eight prefixes would add eight directory routes and push the table from 233 to 241, breaking the row-count gate and changing the client-visible asset URL surface.",
+        "confirmation": "No `/<prefix>/<static>/{path*}` row exists in the measured table."
+      }
+    ],
+    "methodCrossCheck": {
+      "note": "Derived independently from the route declaration strings before being confirmed against the measured table.",
+      "GET": "32 (api_routes) + 45 (routes.js literal) + 55 (language loop) + 5 (about, help, cache-prefix, .well-known, catch-all) = 137",
+      "POST": "52 (api_routes) + 11 (routes.js) = 63",
+      "PUT": "18 (api_routes) + 1 (routes.js PUT /api/users/{userId} at L103) = 19",
+      "DELETE": "13 (api_routes) + 0 = 13",
+      "PATCH": "1 (api_routes) + 0 = 1"
+    },
+    "apiPathCrossCheck": "117 = 114 of api_routes.js's 116 declarations (the two exceptions are GET /change-email at config/api_routes.js:L1340 and GET /verify-email at :L1373) + 3 in config/routes.js (PUT /api/users/{userId} at L103, GET /api/classes/{userSlug}/{courseSlug} at L182, GET /api/files/{fileId}/{fileName} at L202).",
+    "authCrossCheck": "The three auth buckets partition the table exactly: 105 explicit mode=required strategies=[\"session\"] + 2 explicit auth:false + 126 inheriting the mode:try default = 233. Measured raw route.settings.auth shapes: {\"undefined\":126,\"object\":105,\"false\":2}."
+  },
+  "registrationOrder": [
+    {
+      "indexRange": "0-1",
+      "count": 2,
+      "content": "The synthesized static pages GET /about and GET /help.",
+      "producedBy": "lib/util/routeParser.js:L742-L765 addStaticPages(routes), invoked at :L244 FIRST, before the declaration loop at :L246.",
+      "measured": [
+        "GET /about",
+        "GET /help"
+      ]
+    },
+    {
+      "indexRange": "2-117",
+      "count": 116,
+      "content": "The config/api_routes.js declarations, in file order.",
+      "producedBy": "config/app.config.js:L23 `routeParser.parse(api_routes.concat(routes))` places api_routes FIRST.",
+      "measuredFirst": "POST /api/courses",
+      "measuredLast": "GET /api/exports/{exportId}/download"
+    },
+    {
+      "indexRange": "118-229",
+      "count": 112,
+      "content": "The config/routes.js entries: 57 literal declarations in file order, then the 55 language-loop routes appended by the L550 forEach.",
+      "producedBy": "config/routes.js:L610 `module.exports = routes`, concatenated after api_routes.",
+      "measuredFirst": "GET /",
+      "measuredLast": "GET /pygame/{shortCode}/{path*}"
+    },
+    {
+      "indexRange": "230",
+      "count": 1,
+      "content": "The cache-prefix directory route.",
+      "producedBy": "lib/util/routeParser.js:L651-L662 via addStaticRoutes(routes), invoked at :L621 LAST, after the declaration loop.",
+      "measured": [
+        "GET /cache-prefix-{timestamp}/{assetType}/{path*}"
+      ]
+    },
+    {
+      "indexRange": "none",
+      "count": 0,
+      "content": "The eight app.prefixes directory routes.",
+      "producedBy": "lib/util/routeParser.js:L664-L678 — the guard at :L665 is falsy for all eight because config/default.yaml:L143-L150 are key-only NULL.",
+      "measured": []
+    },
+    {
+      "indexRange": "231",
+      "count": 1,
+      "content": "GET /.well-known/{path*}, whose handler returns h.response().code(404).",
+      "producedBy": "lib/util/routeParser.js:L681-L687 via addStaticRoutes(routes).",
+      "measured": [
+        "GET /.well-known/{path*}"
+      ]
+    },
+    {
+      "indexRange": "232",
+      "count": 1,
+      "content": "The GET /{path*} catch-all directory route with index: true.",
+      "producedBy": "lib/util/routeParser.js:L690-L700 via addStaticRoutes(routes) — registered LAST so it cannot shadow a real route.",
+      "measured": [
+        "GET /{path*}"
+      ]
+    }
+  ],
+  "authFalseRoutes": [
+    {
+      "row": "GET | /auth/google | false | 0",
+      "declaredAt": "config/routes.js:L528-L533",
+      "note": "Declaration `route : 'GET /auth/google auth.google'` with `config : { auth : false }`; the `auth : false` token itself is at config/routes.js:L531."
+    },
+    {
+      "row": "GET | /auth/google/callback | false | 0",
+      "declaredAt": "config/routes.js:L534-L546",
+      "note": "Declaration `route : 'GET /auth/google/callback auth.googleCallback'` with cookie: true, success.redirect '{redirectTo}', fail.redirect '/signup' and `config : { auth : false }`; the `auth : false` token itself is at config/routes.js:L544."
+    }
+  ],
+  "adjudications": [
+    {
+      "id": "ADJ-1",
+      "rule": "R-6",
+      "ambiguity": "The Technical Specification (§0.4.1.1, §0.5.1.2) attributes the 178 -> 233 route expansion to a `.json` extension-duplication mechanism in lib/util/routeParser.js.",
+      "evidence": "Zero `ext:` keys exist in config/routes.js or config/api_routes.js (both a strict `^[[:space:]]*ext[[:space:]]*:` count and a broad `(^|[,{[:space:]])ext[[:space:]]*:` search return nothing), so `extensions` at routeParser.js:L258 is always false and the duplication branch at L598-L605 is dead code. The measured table contains no path ending in `.json`. The real expansion is config/routes.js:L549-L608 x the 11 config/constants.js trinketLangs = 55 routes.",
+      "resolution": "Derived from the language loop. The Technical Specification prose is superseded by measurement, as R-6 directs. Recorded in derivation.corrections.correction-a and correction-b."
+    },
+    {
+      "id": "ADJ-2",
+      "rule": "R-4",
+      "ambiguity": "config/default.yaml declares eight app.prefixes entries that look like they should each produce a static directory route, which would make the table 241 rows.",
+      "evidence": "config/default.yaml:L142-L150 declares `prefixes:` followed by eight key-only entries with no values, so each parses to null; the guard at lib/util/routeParser.js:L665, `if (config.app.prefixes[static])`, is falsy for all eight. The measured table contains no `/<prefix>/<static>/{path*}` row and totals 233.",
+      "resolution": "Preserved exactly as found. Filling the prefixes in would be a behavior \"improvement\" prohibited by R-4, would add eight rows, and would change the client-visible asset-URL surface. Recorded in derivation.corrections.correction-c."
+    },
+    {
+      "id": "ADJ-3",
+      "rule": "R-6",
+      "ambiguity": "How many routes declare `auth: false`? A parallel agent's brief asserted a single occurrence in config/routes.js.",
+      "evidence": "The whitespace-tolerant pattern `grep -nE \"auth[[:space:]]*:[[:space:]]*false\" config/routes.js config/api_routes.js` returns exactly two hits, at config/routes.js:531 and config/routes.js:544, and none in config/api_routes.js. The live table confirms exactly two rows with route.settings.auth === false: GET /auth/google and GET /auth/google/callback.",
+      "resolution": "Two. The single-occurrence claim is rejected as an undercount caused by a whitespace-sensitive pattern. Both rows are named in authFalseRoutes and gates.authFalse is 2."
+    },
+    {
+      "id": "ADJ-4",
+      "rule": "R-6",
+      "ambiguity": "The Technical Specification records the baseline route-table digest as sha256 `cd2a7e38a39bd84902ac1a0d69f50e2a`, but that value is exactly 32 hexadecimal characters (128 bits) whereas a SHA-256 is 64, and the Specification publishes no canonical serialization — no separator, no sort collation, no trailing-newline convention — so the value is not independently reproducible.",
+      "evidence": "Character count of the documented value is 32. Measured over this artifact's explicitly specified canonicalization: sha256 = 452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8, its first 32 characters = 452116ce74301c61c92efb36fe8ead98, md5 = dfc1e295156ecdbbee4a073b231b9326. Match against the documented value: none. As a diligence check, 27 candidate digests were also computed (9 plausible serializations x {sha256, sha256-first32, md5}), covering trailing-newline, sort-order, separator-spacing, method+path-only and JSON-encoded variants; 0 of them reproduced the documented value.",
+      "resolution": "The documented 32-character value could NOT be reproduced by any of the three candidate algorithms, and no contrived serialization was reverse-engineered to force a match; no application code and no route declaration was altered to chase it. This artifact instead publishes its own complete `canonicalization` block and records all three measured digests, which makes the digest reproducible from `rows` alone from now on. The substantive gates — the 233 row count, the method distribution, the /api/ count, the pre-handler count and the three-way auth partition — are the authoritative parity checks, and every one of them matches the Technical Specification exactly."
+    },
+    {
+      "id": "ADJ-5",
+      "rule": "R-6",
+      "ambiguity": "Is the order of the route table part of the preserved contract, and can it be read from hapi?",
+      "evidence": "lib/util/routeParser.js calls addStaticPages(routes) at :L244 before the declaration loop at :L246 and addStaticRoutes(routes) at :L621 after it, and config/app.config.js:L23 concatenates api_routes before routes. That fixes the order as: the two synthesized static pages, the 116 api_routes declarations, the 112 config/routes.js entries, the cache-prefix route, GET /.well-known/{path*}, and finally the GET /{path*} catch-all. If the catch-all were not last it would shadow real routes. Measured separately: hapi's server.table() returns ROUTER order (grouped by method and path specificity), not registration order, so registration order was taken from config.routes — the exact array handed to server.route() at app.js:L304 — and each entry was joined to its resolved settings from server.table() on the (METHOD, path) key, which is unambiguous because all 233 pairs are unique.",
+      "resolution": "Order is contractual. `rows` is persisted in registration order and is never re-sorted; only the digest input is sorted, and it is derived on the fly. A separate gates.registrationOrderFingerprint (sha256 of the canonical rows joined in registration order) is recorded so an ordering regression is detectable even when the sorted digest still matches. Index 0-1 are /about and /help, 230 is the cache-prefix route, 231 is /.well-known/{path*} and 232 is the /{path*} catch-all."
+    },
+    {
+      "id": "ADJ-6",
+      "rule": "R-6",
+      "ambiguity": "Does the measured table diverge anywhere from the gate table the Technical Specification publishes (233 rows; GET 137, POST 63, PUT 19, DELETE 13, PATCH 1; 117 /api/ paths; 161 rows with pre-handlers; 105 mode=required strategies=[\"session\"]; 2 auth:false; 126 inheriting mode:try)?",
+      "evidence": "Measured from the live table: rowCount 233; methods {\"GET\":137,\"POST\":63,\"PUT\":19,\"DELETE\":13,\"PATCH\":1}; apiPaths 117; withPreHandlers 161; authRequiredSession 105; authFalse 2; authTryInherited 126 (sum of the three auth buckets = 233).",
+      "resolution": "No divergence: every published gate value is reproduced exactly by measurement, so no substitution was needed. Had any value differed, the measurement would have been authoritative and the difference recorded here rather than corrected in application code."
+    },
+    {
+      "id": "ADJ-7",
+      "rule": "R-6",
+      "ambiguity": "How does hapi 21 represent a route's auth configuration, and how should a route that merely inherits server.auth.default(...) be rendered? The Technical Specification names three buckets but not the underlying representation.",
+      "evidence": "Measured on the live server against @hapi/hapi 21.4.10: an explicit `auth: false` leaves route.settings.auth as the boolean false; an explicit `auth: 'session'` is rewritten by lib/auth.js:_setupRoute into the object { strategies: ['session'], mode: 'required' }; and a route that inherits the default has route.settings.auth === undefined, because hapi does NOT copy the default onto the route. _setupRoute carries the comment \"Preserve the difference between undefined and false\". server.auth.settings.default reads back as {\"mode\":\"try\",\"strategies\":[\"session\"]}, set by app.js:L287. Raw shape tally across the table: {\"undefined\":126,\"object\":105,\"false\":2}.",
+      "resolution": "The effective descriptor is computed with hapi's own resolution rule from lib/auth.js `lookup(route)`: `route.settings.auth === false` renders as \"false\", otherwise `route.settings.auth || server.auth.settings.default` supplies mode and strategies. An initial pass that collapsed undefined and false together mis-reported 128 auth:false rows and 0 inherited rows; adopting hapi's own lookup produced the correct 2 / 126 split. The empirical shapes are written into canonicalization.empiricalAuthShape so a future reader can reproduce the rendering without re-deriving it."
+    },
+    {
+      "id": "ADJ-8",
+      "rule": "R-6",
+      "ambiguity": "HEAD is not the pristine upstream commit: it is a previous-batch commit (\"build(deps): pin the Node 22 LTS toolchain and modernize the dependency manifest\") whose manifest has already dropped twelve packages that the still-unmigrated application source requires at module-load time, and has replaced the marked git fork with a registry major whose export shape that source cannot consume. Is the base commit still a valid baseline, and how should the table be captured?",
+      "evidence": "`git show --name-only` for HEAD lists exactly two files, package.json and package-lock.json, so every application file that determines the route table — app.js, config/app.config.js, config/routes.js, config/api_routes.js, config/constants.js, config/default.yaml and lib/util/routeParser.js — is untouched and still pre-migration, with the compatibility shim and all 159 legacy handlers intact. Booting nevertheless fails on `Cannot find module 'tab'` (lib/util/routeParser.js:L3), and thereafter on optimist, chokidar (via nunjucks watch mode, enabled for NODE_ENV=test at lib/util/nunjucks.js:L8), the marked 0.3.2 fork (lib/shared/trinket-markdown.js dereferences marked.Renderer.prototype at module scope), q, request, node-uuid, aws-sdk, node-cryptojs-aes, mkdirp, rimraf, passport-local and passport-google-oauth (lib/auth/passport.js, required at app.js:L28).",
+      "resolution": "The base commit remains the valid baseline for the route table, because the route table is a pure function of the untouched route declarations plus routeParser's table construction plus hapi's registration. The missing packages were restored into node_modules only, using `npm install --no-save` at the versions the pre-migration manifest pinned (tab 0.1.0, optimist 0.6.1, q 1.0.1, request 2.88.2, node-uuid 1.4.8, aws-sdk 2.1693.0, node-cryptojs-aes 0.4.0, mkdirp 0.3.5, rimraf 2.2.8, chokidar 3.6.0, marked 0.3.2, passport-local 1.0.0, passport-google-oauth 0.1.5) — every one matching the Technical Specification's measured \"Current\" column. package.json and package-lock.json were verified byte-identical to HEAD afterwards and no repository file was modified. The table is invariant to those packages: none participates in route declaration or in server.route() registration, and tab/optimist feed only the `-R` dumper, which is inert because routeParser is required as a module rather than executed. The table was therefore measured against @hapi/hapi 21.4.10, the version the base commit declares, which is also the version the agent brief directs the auth shape to be determined against."
+    }
+  ],
+  "rows": [
+    {
+      "index": 0,
+      "method": "GET",
+      "path": "/about",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /about | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 1,
+      "method": "GET",
+      "path": "/help",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /help | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 2,
+      "method": "POST",
+      "path": "/api/courses",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/courses | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 3,
+      "method": "GET",
+      "path": "/api/courses",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/courses | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 4,
+      "method": "GET",
+      "path": "/api/courses/{courseId}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /api/courses/{courseId} | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 5,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/metadata",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "PUT | /api/courses/{courseId}/metadata | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 6,
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "DELETE | /api/courses/{courseId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 7,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/copy",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/courses/{courseId}/copy | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 8,
+      "method": "PATCH",
+      "path": "/api/courses/{courseId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "PATCH | /api/courses/{courseId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 9,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/courses/{courseId}/lessons | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 10,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /api/courses/{courseId}/lessons/{lessonId} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 11,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/move",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "PUT | /api/courses/{courseId}/lessons/{lessonId}/move | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 12,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/name",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "PUT | /api/courses/{courseId}/lessons/{lessonId}/name | mode=required strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 13,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/draft",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "PUT | /api/courses/{courseId}/lessons/{lessonId}/draft | mode=required strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 14,
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "DELETE | /api/courses/{courseId}/lessons/{lessonId} | mode=required strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 15,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "POST | /api/courses/{courseId}/lessons/{lessonId}/materials | mode=required strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 16,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 5,
+      "canonical": "GET | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId} | mode=try strategies=[\"session\"] | 5"
+    },
+    {
+      "index": 17,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 5,
+      "canonical": "PUT | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move | mode=required strategies=[\"session\"] | 5"
+    },
+    {
+      "index": 18,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/name",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 5,
+      "canonical": "PUT | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/name | mode=required strategies=[\"session\"] | 5"
+    },
+    {
+      "index": 19,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/draft",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 5,
+      "canonical": "PUT | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/draft | mode=required strategies=[\"session\"] | 5"
+    },
+    {
+      "index": 20,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/assignment",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 5,
+      "canonical": "PUT | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/assignment | mode=required strategies=[\"session\"] | 5"
+    },
+    {
+      "index": 21,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/patchContent",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 5,
+      "canonical": "PUT | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/patchContent | mode=required strategies=[\"session\"] | 5"
+    },
+    {
+      "index": 22,
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 5,
+      "canonical": "DELETE | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId} | mode=required strategies=[\"session\"] | 5"
+    },
+    {
+      "index": 23,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/users",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/courses/{courseId}/users | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 24,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/invitations",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/courses/{courseId}/invitations | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 25,
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}/invitations/{invitationId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "DELETE | /api/courses/{courseId}/invitations/{invitationId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 26,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/invitations/{invitationId}/resend",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "PUT | /api/courses/{courseId}/invitations/{invitationId}/resend | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 27,
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/invitations/{invitationId}/email",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "PUT | /api/courses/{courseId}/invitations/{invitationId}/email | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 28,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/userLookup",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/courses/{courseId}/userLookup | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 29,
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}/users/{userId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "DELETE | /api/courses/{courseId}/users/{userId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 30,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/users",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/courses/{courseId}/users | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 31,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/roles",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/courses/{courseId}/roles | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 32,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/views",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/courses/{courseId}/views | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 33,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/invitations",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/courses/{courseId}/invitations | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 34,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/accessCode",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/courses/{courseId}/accessCode | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 35,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/accessCode",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/courses/{courseId}/accessCode | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 36,
+      "method": "POST",
+      "path": "/api/courses/join",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/courses/join | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 37,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/startAssignment",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/startAssignment | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 38,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/submissions",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/submissions | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 39,
+      "method": "POST",
+      "path": "/api/comments/{trinketId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/comments/{trinketId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 40,
+      "method": "POST",
+      "path": "/api/feedback-comments/{trinketId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/feedback-comments/{trinketId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 41,
+      "method": "POST",
+      "path": "/api/submission-opt/{trinketId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/submission-opt/{trinketId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 42,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/submissions",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/submissions | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 43,
+      "method": "GET",
+      "path": "/api/submissions/{materialId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/submissions/{materialId} | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 44,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/users/{userId}/materials/{materialId}/submissions",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/courses/{courseId}/users/{userId}/materials/{materialId}/submissions | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 45,
+      "method": "GET",
+      "path": "/api/featured-courses",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/featured-courses | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 46,
+      "method": "POST",
+      "path": "/api/submissions/{trinketId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/submissions/{trinketId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 47,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/dashboard",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/courses/{courseId}/dashboard | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 48,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/feedback",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/feedback | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 49,
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/acceptSubmission",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "POST | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/acceptSubmission | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 50,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/dashboard",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/dashboard | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 51,
+      "method": "GET",
+      "path": "/api/courses/{courseId}/users/{userId}/submissions",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /api/courses/{courseId}/users/{userId}/submissions | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 52,
+      "method": "GET",
+      "path": "/api/folders",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/folders | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 53,
+      "method": "GET",
+      "path": "/api/folders/{folderId}/trinkets",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/folders/{folderId}/trinkets | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 54,
+      "method": "POST",
+      "path": "/api/folders",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/folders | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 55,
+      "method": "PUT",
+      "path": "/api/folders/{folderId}/name",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "PUT | /api/folders/{folderId}/name | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 56,
+      "method": "DELETE",
+      "path": "/api/folders/{folderId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "DELETE | /api/folders/{folderId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 57,
+      "method": "GET",
+      "path": "/api/trinkets/popular",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /api/trinkets/popular | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 58,
+      "method": "GET",
+      "path": "/api/trinkets/active",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /api/trinkets/active | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 59,
+      "method": "GET",
+      "path": "/api/trinkets/{trinketId}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/trinkets/{trinketId} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 60,
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/code",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "PUT | /api/trinkets/{trinketId}/code | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 61,
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/name",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "PUT | /api/trinkets/{trinketId}/name | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 62,
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/description",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "PUT | /api/trinkets/{trinketId}/description | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 63,
+      "method": "DELETE",
+      "path": "/api/trinkets/{trinketId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "DELETE | /api/trinkets/{trinketId} | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 64,
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/email",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "POST | /api/trinkets/{trinketId}/email | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 65,
+      "method": "GET",
+      "path": "/api/trinkets",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/trinkets | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 66,
+      "method": "GET",
+      "path": "/api/trinkets/search",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/trinkets/search | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 67,
+      "method": "POST",
+      "path": "/api/trinkets",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/trinkets | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 68,
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/forks",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/trinkets/{trinketId}/forks | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 69,
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/metrics",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "PUT | /api/trinkets/{trinketId}/metrics | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 70,
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/snapshot",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/trinkets/{trinketId}/snapshot | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 71,
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/draft",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/trinkets/{trinketId}/draft | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 72,
+      "method": "DELETE",
+      "path": "/api/drafts/{trinketId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "DELETE | /api/drafts/{trinketId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 73,
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/autosave",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/trinkets/{trinketId}/autosave | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 74,
+      "method": "GET",
+      "path": "/api/trinkets/{trinketId}/interactions",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/trinkets/{trinketId}/interactions | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 75,
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/grant",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "POST | /api/trinkets/{trinketId}/grant | mode=required strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 76,
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/folder",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "POST | /api/trinkets/{trinketId}/folder | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 77,
+      "method": "DELETE",
+      "path": "/api/trinkets/{trinketId}/folder",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "DELETE | /api/trinkets/{trinketId}/folder | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 78,
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/slug",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "PUT | /api/trinkets/{trinketId}/slug | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 79,
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/published",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "PUT | /api/trinkets/{trinketId}/published | mode=required strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 80,
+      "method": "POST",
+      "path": "/api/interest",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/interest | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 81,
+      "method": "POST",
+      "path": "/api/users/login",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "POST | /api/users/login | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 82,
+      "method": "POST",
+      "path": "/api/users",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/users | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 83,
+      "method": "DELETE",
+      "path": "/api/users",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "DELETE | /api/users | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 84,
+      "method": "POST",
+      "path": "/api/trinkets/{shortCode}/list",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "POST | /api/trinkets/{shortCode}/list | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 85,
+      "method": "GET",
+      "path": "/api/trinkets/{lang}/list",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/trinkets/{lang}/list | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 86,
+      "method": "DELETE",
+      "path": "/api/trinkets/{lang}/list/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "DELETE | /api/trinkets/{lang}/list/{shortCode} | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 87,
+      "method": "POST",
+      "path": "/api/trinkets/codeerror",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/trinkets/codeerror | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 88,
+      "method": "POST",
+      "path": "/api/trinkets/clientmetric",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/trinkets/clientmetric | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 89,
+      "method": "POST",
+      "path": "/api/trinkets/download",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/trinkets/download | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 90,
+      "method": "GET",
+      "path": "/api/users/assets",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/users/assets | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 91,
+      "method": "POST",
+      "path": "/api/users/assets",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/users/assets | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 92,
+      "method": "POST",
+      "path": "/api/users/assets/{fileId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/users/assets/{fileId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 93,
+      "method": "DELETE",
+      "path": "/api/users/assets/{fileId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "DELETE | /api/users/assets/{fileId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 94,
+      "method": "POST",
+      "path": "/api/users/assets/restore",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/users/assets/restore | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 95,
+      "method": "POST",
+      "path": "/api/users/assetFromURL",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/users/assetFromURL | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 96,
+      "method": "POST",
+      "path": "/api/files/{fileId}/thumbnail",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/files/{fileId}/thumbnail | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 97,
+      "method": "POST",
+      "path": "/api/ohnoes",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/ohnoes | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 98,
+      "method": "POST",
+      "path": "/api/users/password",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/users/password | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 99,
+      "method": "POST",
+      "path": "/api/users/email",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/users/email | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 100,
+      "method": "GET",
+      "path": "/change-email",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /change-email | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 101,
+      "method": "GET",
+      "path": "/api/users/resendEmailChange",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/users/resendEmailChange | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 102,
+      "method": "POST",
+      "path": "/api/users/verify-email",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/users/verify-email | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 103,
+      "method": "GET",
+      "path": "/verify-email",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /verify-email | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 104,
+      "method": "POST",
+      "path": "/api/admin/user/{userId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/admin/user/{userId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 105,
+      "method": "POST",
+      "path": "/api/admin/user/{userId}/grant",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/admin/user/{userId}/grant | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 106,
+      "method": "POST",
+      "path": "/api/admin/featured-course",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/admin/featured-course | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 107,
+      "method": "DELETE",
+      "path": "/api/admin/featured-course/{courseId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "DELETE | /api/admin/featured-course/{courseId} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 108,
+      "method": "POST",
+      "path": "/api/admin/featured-course/move",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /api/admin/featured-course/move | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 109,
+      "method": "GET",
+      "path": "/api/users/{userId}/avatar",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/users/{userId}/avatar | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 110,
+      "method": "GET",
+      "path": "/api/users/{userId}/info",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/users/{userId}/info | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 111,
+      "method": "POST",
+      "path": "/api/users/settings",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/users/settings | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 112,
+      "method": "POST",
+      "path": "/api/users/settings/lineWrapping",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/users/settings/lineWrapping | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 113,
+      "method": "POST",
+      "path": "/api/users/settings/indentation",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/users/settings/indentation | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 114,
+      "method": "POST",
+      "path": "/api/exports",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /api/exports | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 115,
+      "method": "GET",
+      "path": "/api/exports",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/exports | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 116,
+      "method": "GET",
+      "path": "/api/exports/{exportId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/exports/{exportId} | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 117,
+      "method": "GET",
+      "path": "/api/exports/{exportId}/download",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /api/exports/{exportId}/download | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 118,
+      "method": "GET",
+      "path": "/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | / | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 119,
+      "method": "GET",
+      "path": "/signup",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /signup | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 120,
+      "method": "GET",
+      "path": "/login",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /login | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 121,
+      "method": "GET",
+      "path": "/welcome",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /welcome | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 122,
+      "method": "GET",
+      "path": "/home",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /home | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 123,
+      "method": "POST",
+      "path": "/login",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /login | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 124,
+      "method": "GET",
+      "path": "/logout",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /logout | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 125,
+      "method": "POST",
+      "path": "/users",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /users | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 126,
+      "method": "GET",
+      "path": "/account-deleted",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /account-deleted | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 127,
+      "method": "PUT",
+      "path": "/api/users/{userId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "PUT | /api/users/{userId} | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 128,
+      "method": "GET",
+      "path": "/courses/new",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /courses/new | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 129,
+      "method": "POST",
+      "path": "/courses",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /courses | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 130,
+      "method": "POST",
+      "path": "/{userSlug}/courses/{courseSlug}/copy",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "POST | /{userSlug}/courses/{courseSlug}/copy | mode=required strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 131,
+      "method": "GET",
+      "path": "/{userSlug}/courses/{courseSlug}/download.zip",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /{userSlug}/courses/{courseSlug}/download.zip | mode=required strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 132,
+      "method": "GET",
+      "path": "/{userSlug}/courses/{courseSlug}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /{userSlug}/courses/{courseSlug} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 133,
+      "method": "GET",
+      "path": "/api/classes/{userSlug}/{courseSlug}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /api/classes/{userSlug}/{courseSlug} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 134,
+      "method": "GET",
+      "path": "/courses/accept/{token}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /courses/accept/{token} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 135,
+      "method": "GET",
+      "path": "/courses/join/{accessCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /courses/join/{accessCode} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 136,
+      "method": "GET",
+      "path": "/api/files/{fileId}/{fileName}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /api/files/{fileId}/{fileName} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 137,
+      "method": "GET",
+      "path": "/admin",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /admin | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 138,
+      "method": "GET",
+      "path": "/admin/{adminPage*}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /admin/{adminPage*} | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 139,
+      "method": "POST",
+      "path": "/admin/upload",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /admin/upload | mode=required strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 140,
+      "method": "GET",
+      "path": "/account",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /account | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 141,
+      "method": "GET",
+      "path": "/account/{accountPage}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /account/{accountPage} | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 142,
+      "method": "GET",
+      "path": "/forgot-pass",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /forgot-pass | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 143,
+      "method": "POST",
+      "path": "/send-pass-reset",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "POST | /send-pass-reset | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 144,
+      "method": "GET",
+      "path": "/reset-pass",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /reset-pass | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 145,
+      "method": "POST",
+      "path": "/save-pass",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /save-pass | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 146,
+      "method": "GET",
+      "path": "/activate-account",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /activate-account | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 147,
+      "method": "POST",
+      "path": "/activate-account",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /activate-account | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 148,
+      "method": "POST",
+      "path": "/file",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /file | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 149,
+      "method": "POST",
+      "path": "/file/avatar",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /file/avatar | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 150,
+      "method": "GET",
+      "path": "/u/{username}/classes",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /u/{username}/classes | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 151,
+      "method": "GET",
+      "path": "/u/{username}/classes/{courseSlug}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /u/{username}/classes/{courseSlug} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 152,
+      "method": "GET",
+      "path": "/embed/beta/{type}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /embed/beta/{type} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 153,
+      "method": "GET",
+      "path": "/embed/{lang}/{trinketId}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /embed/{lang}/{trinketId} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 154,
+      "method": "GET",
+      "path": "/assignment-embed/{lang}/{trinketId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /assignment-embed/{lang}/{trinketId} | mode=required strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 155,
+      "method": "GET",
+      "path": "/assignment-embed-feedback/{lang}/{trinketId}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /assignment-embed-feedback/{lang}/{trinketId} | mode=required strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 156,
+      "method": "GET",
+      "path": "/assignment-embed-viewonly/{lang}/{trinketId}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /assignment-embed-viewonly/{lang}/{trinketId} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 157,
+      "method": "GET",
+      "path": "/embed/blocks-iframe",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /embed/blocks-iframe | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 158,
+      "method": "GET",
+      "path": "/embed/glowscript-blocks-iframe",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /embed/glowscript-blocks-iframe | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 159,
+      "method": "GET",
+      "path": "/embed/{lang}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /embed/{lang} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 160,
+      "method": "GET",
+      "path": "/tools/{version}/jekyll/embed/{lang}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /tools/{version}/jekyll/embed/{lang} | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 161,
+      "method": "GET",
+      "path": "/skulpt",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /skulpt | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 162,
+      "method": "GET",
+      "path": "/skulpt/{hash}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /skulpt/{hash} | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 163,
+      "method": "POST",
+      "path": "/python",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "POST | /python | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 164,
+      "method": "GET",
+      "path": "/vpython",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /vpython | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 165,
+      "method": "GET",
+      "path": "/vpython/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /vpython/{shortCode} | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 166,
+      "method": "GET",
+      "path": "/webvpython",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /webvpython | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 167,
+      "method": "GET",
+      "path": "/webvpython/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /webvpython/{shortCode} | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 168,
+      "method": "GET",
+      "path": "/r",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /r | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 169,
+      "method": "GET",
+      "path": "/r/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /r/{shortCode} | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 170,
+      "method": "GET",
+      "path": "/library/trinkets/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /library/trinkets/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 171,
+      "method": "GET",
+      "path": "/library/folder/{slug}",
+      "auth": {
+        "mode": "required",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /library/folder/{slug} | mode=required strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 172,
+      "method": "GET",
+      "path": "/docs/colors",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /docs/colors | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 173,
+      "method": "GET",
+      "path": "/auth/google",
+      "auth": false,
+      "preCount": 0,
+      "canonical": "GET | /auth/google | false | 0"
+    },
+    {
+      "index": 174,
+      "method": "GET",
+      "path": "/auth/google/callback",
+      "auth": false,
+      "preCount": 0,
+      "canonical": "GET | /auth/google/callback | false | 0"
+    },
+    {
+      "index": 175,
+      "method": "GET",
+      "path": "/python",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /python | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 176,
+      "method": "GET",
+      "path": "/python/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /python/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 177,
+      "method": "GET",
+      "path": "/python/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /python/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 178,
+      "method": "GET",
+      "path": "/python/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /python/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 179,
+      "method": "GET",
+      "path": "/python/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /python/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 180,
+      "method": "GET",
+      "path": "/python3",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /python3 | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 181,
+      "method": "GET",
+      "path": "/python3/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /python3/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 182,
+      "method": "GET",
+      "path": "/python3/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /python3/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 183,
+      "method": "GET",
+      "path": "/python3/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /python3/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 184,
+      "method": "GET",
+      "path": "/python3/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /python3/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 185,
+      "method": "GET",
+      "path": "/console",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /console | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 186,
+      "method": "GET",
+      "path": "/console/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /console/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 187,
+      "method": "GET",
+      "path": "/console/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /console/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 188,
+      "method": "GET",
+      "path": "/console/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /console/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 189,
+      "method": "GET",
+      "path": "/console/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /console/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 190,
+      "method": "GET",
+      "path": "/music",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /music | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 191,
+      "method": "GET",
+      "path": "/music/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /music/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 192,
+      "method": "GET",
+      "path": "/music/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /music/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 193,
+      "method": "GET",
+      "path": "/music/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /music/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 194,
+      "method": "GET",
+      "path": "/music/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /music/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 195,
+      "method": "GET",
+      "path": "/html",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /html | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 196,
+      "method": "GET",
+      "path": "/html/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /html/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 197,
+      "method": "GET",
+      "path": "/html/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /html/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 198,
+      "method": "GET",
+      "path": "/html/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /html/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 199,
+      "method": "GET",
+      "path": "/html/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /html/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 200,
+      "method": "GET",
+      "path": "/blocks",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /blocks | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 201,
+      "method": "GET",
+      "path": "/blocks/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /blocks/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 202,
+      "method": "GET",
+      "path": "/blocks/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /blocks/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 203,
+      "method": "GET",
+      "path": "/blocks/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /blocks/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 204,
+      "method": "GET",
+      "path": "/blocks/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /blocks/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 205,
+      "method": "GET",
+      "path": "/glowscript",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /glowscript | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 206,
+      "method": "GET",
+      "path": "/glowscript/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /glowscript/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 207,
+      "method": "GET",
+      "path": "/glowscript/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /glowscript/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 208,
+      "method": "GET",
+      "path": "/glowscript/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /glowscript/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 209,
+      "method": "GET",
+      "path": "/glowscript/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /glowscript/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 210,
+      "method": "GET",
+      "path": "/java",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /java | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 211,
+      "method": "GET",
+      "path": "/java/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /java/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 212,
+      "method": "GET",
+      "path": "/java/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /java/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 213,
+      "method": "GET",
+      "path": "/java/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /java/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 214,
+      "method": "GET",
+      "path": "/java/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /java/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 215,
+      "method": "GET",
+      "path": "/glowscript-blocks",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /glowscript-blocks | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 216,
+      "method": "GET",
+      "path": "/glowscript-blocks/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /glowscript-blocks/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 217,
+      "method": "GET",
+      "path": "/glowscript-blocks/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /glowscript-blocks/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 218,
+      "method": "GET",
+      "path": "/glowscript-blocks/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /glowscript-blocks/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 219,
+      "method": "GET",
+      "path": "/glowscript-blocks/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /glowscript-blocks/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 220,
+      "method": "GET",
+      "path": "/R",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /R | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 221,
+      "method": "GET",
+      "path": "/R/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /R/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 222,
+      "method": "GET",
+      "path": "/R/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /R/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 223,
+      "method": "GET",
+      "path": "/R/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /R/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 224,
+      "method": "GET",
+      "path": "/R/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /R/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 225,
+      "method": "GET",
+      "path": "/pygame",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /pygame | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 226,
+      "method": "GET",
+      "path": "/pygame/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 2,
+      "canonical": "GET | /pygame/ | mode=try strategies=[\"session\"] | 2"
+    },
+    {
+      "index": 227,
+      "method": "GET",
+      "path": "/pygame/{shortCode}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 3,
+      "canonical": "GET | /pygame/{shortCode} | mode=try strategies=[\"session\"] | 3"
+    },
+    {
+      "index": 228,
+      "method": "GET",
+      "path": "/pygame/{shortCode}/",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /pygame/{shortCode}/ | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 229,
+      "method": "GET",
+      "path": "/pygame/{shortCode}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 1,
+      "canonical": "GET | /pygame/{shortCode}/{path*} | mode=try strategies=[\"session\"] | 1"
+    },
+    {
+      "index": 230,
+      "method": "GET",
+      "path": "/cache-prefix-{timestamp}/{assetType}/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /cache-prefix-{timestamp}/{assetType}/{path*} | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 231,
+      "method": "GET",
+      "path": "/.well-known/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /.well-known/{path*} | mode=try strategies=[\"session\"] | 0"
+    },
+    {
+      "index": 232,
+      "method": "GET",
+      "path": "/{path*}",
+      "auth": {
+        "mode": "try",
+        "strategies": [
+          "session"
+        ]
+      },
+      "preCount": 0,
+      "canonical": "GET | /{path*} | mode=try strategies=[\"session\"] | 0"
+    }
+  ]
+}

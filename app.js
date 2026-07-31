@@ -25,7 +25,6 @@ const Vision         = require('@hapi/vision');
 const Yar            = require('@hapi/yar');
 const config         = require('./config/app.config');
 const Helpers        = require('./lib/util/helpers');
-const Authentication = require('./lib/auth/passport.js');
 // gleak is not compatible with Node 16+ (uses GLOBAL which was removed)
 // Use a no-op fallback for now
 let gleak;

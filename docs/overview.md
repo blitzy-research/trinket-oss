@@ -4,7 +4,7 @@ Trinket is a browser-based coding environment for education. This page describes
 
 ## Architecture
 
-- **Backend**: Node.js with the Hapi framework
+- **Backend**: Node.js 22 LTS with the Hapi framework (@hapi/hapi 21.x)
 - **Database**: MongoDB via the Mongoose ODM
 - **Cache/Sessions**: Redis (optional - in-memory fallback when disabled)
 - **Frontend**: AngularJS 1.x
@@ -22,6 +22,7 @@ trinket-oss/
 │   └── api_routes.js   # API routes
 ├── lib/
 │   ├── controllers/    # Route handlers
+│   ├── http/           # hapi request lifecycle (response contract, error map)
 │   ├── models/         # MongoDB models
 │   ├── util/           # Utilities
 │   └── views/          # Nunjucks templates

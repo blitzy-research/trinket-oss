@@ -18,7 +18,7 @@ R-3 imposes three obligations, and this file is how each is met.
 - **Every replaced or major-bumped package.** Completeness is auditable rather than asserted: the dependency name
   sets of the base-commit `package.json` and the committed `package.json` were extracted and diffed, and every name
   in the symmetric difference appears below. The base commit declared **58 runtime and 11 development**
-  dependencies; the committed manifest declares **38 runtime and 9 development** dependencies.
+  dependencies; the committed manifest declares **39 runtime and 9 development** dependencies.
 - **The mandatory triple.** Every entry states the original, the replacement, and a reason classified as exactly one
   of **`dead`**, **`incompatible`** or **`security`**. No fourth code is used, and no replaced or major-bumped
   package is left unclassified.
@@ -40,22 +40,27 @@ tempting upgrade was refused* should read that catalogue; this document records 
 
 | Measure | Base commit | Committed |
 |---|---|---|
-| Runtime dependencies | 58 | **38** |
+| Runtime dependencies | 58 | **39** |
 | Development dependencies | 11 | **9** |
 | `engines` block | **absent entirely** | present |
 | `overrides` block | **absent entirely** | present, 2 entries |
 | `package-lock.json` | present, lockfileVersion 3 | regenerated, lockfileVersion 3, committed |
 
-The net runtime reduction of 20 is 22 removals set against 2 additions, and those 22 removals decompose exactly, with
+The net runtime reduction of 19 is 22 removals set against 3 additions, and those 22 removals decompose exactly, with
 no remainder:
 
 - **11** declared but never required, deleted outright — Rubric 4
 - **2** passport strategies made dead by the deletion of `lib/auth/passport.js`, deleted outright — Rubric 4
 - **7** replaced by a Node built-in or by a local module, so no package took their place — Rubric 3
 - **2** replaced by a newly added maintained package — Rubric 3
-- offset by **only 2 additions**: `@aws-sdk/client-s3` 3.1098.0 and `crypto-js` 4.2.0
+- offset by **only 3 additions**: `@aws-sdk/client-s3` 3.1098.0, `@aws-sdk/s3-request-presigner` 3.1098.0 and
+  `crypto-js` 4.2.0
 
-That is 22 removals against 2 additions: `58 - 22 + 2 = 38`. The development reduction is simply the 2 dead
+Two originals were replaced by three packages because **AWS SDK v3 is modular where v2 was monolithic**: the single
+`aws-sdk` package covered both S3 operations and presigned-URL generation, and v3 deliberately splits presigning into
+its own package. Both halves of that one replacement are therefore required — see Rubric 3 and deviation 6 below.
+
+That is 22 removals against 3 additions: `58 - 22 + 3 = 39`. The development reduction is simply the 2 dead
 development packages removed with nothing added: `11 - 2 = 9`.
 
 **There are no private-registry packages.** Every dependency resolves from the public npm registry, with exactly one
@@ -101,7 +106,8 @@ find a discrepancy with no explanation.
 | 2 | one `overrides` entry | **two** entries: `brace-expansion` 5.0.9 and `minimatch` 10.2.6 | The `brace-expansion` pin alone leaves the resolver free to select a `minimatch` that reintroduces the same transitive chain; pinning both closes it deterministically |
 | 3 | 11 development dependencies remaining | **9** | The projection carried the base figure forward without subtracting the 2 dead development packages it enumerated itself. `11 - 2 = 9` |
 | 4 | `chokidar` among the dead removals | **retained** at 3.6.0 | Measured root cause below. It is a genuine runtime requirement that a require scan cannot see |
-| 5 | 12 dead runtime removals and 8 replaced-by-built-in | **11** dead runtime removals, **7** replaced by a built-in or local module, **2** replaced by a newly added package | A direct consequence of item 4, plus the fact that 2 of the 9 replaced packages were succeeded by newly added packages rather than by built-ins. The totals still reconcile exactly: 22 removed, 2 added, 38 runtime |
+| 5 | 12 dead runtime removals and 8 replaced-by-built-in | **11** dead runtime removals, **7** replaced by a built-in or local module, **2** replaced by a newly added package | A direct consequence of item 4, plus the fact that 2 of the 9 replaced packages were succeeded by newly added packages rather than by built-ins. The totals still reconcile exactly: 22 removed, 3 added, 39 runtime |
+| 6 | 2 packages added — `@aws-sdk/client-s3` and `crypto-js` | **3** packages added: `@aws-sdk/s3-request-presigner` 3.1098.0 as well | **The projection missed that AWS SDK v3 is modular.** v2's single `aws-sdk` package served presigned URLs synchronously through `client.getSignedUrl('getObject', {...})`, which `lib/controllers/users.js` uses for the export-download redirect. v3 ships **no synchronous presigner and no presigner at all** in `@aws-sdk/client-s3` — an enumeration of that package's **707** exports found **zero** presign-related symbols. The only alternative was hand-rolling SigV4 presigning, a large security-sensitive change that would breach R-1 far more than one official package does. The addition is near-zero-footprint and was measured as such: the presigner pins to the **exact same version** as the client, and **all six** of its dependencies were already in the tree as transitive dependencies of the client, so regenerating the lockfile added **1** package, removed **0**, and changed **0** resolved versions. `npm audit --omit=dev` is unchanged at `{critical: 0, high: 0, moderate: 3}` |
 
 **Item 4 in full, because it is the one correction that changes a classification.** `chokidar` has **zero** direct
 require sites across all 96 scanned JavaScript files, which is precisely why the plan classified it dead. It is
@@ -227,11 +233,13 @@ successor, which is unusable from CommonJS for the same reason.
 
 **Reason for this rubric: `dead` or `incompatible`.** A package appears here only when the same package could not be
 carried forward at all. Seven were replaced by a Node built-in or by a local module, so no package took their place;
-two were replaced by a newly added maintained package; one was never installed in the first place.
+two were replaced by a newly added maintained package — three packages in total, because the AWS SDK v3 replacement is
+split across two modular packages; one was never installed in the first place.
 
 | Original package | Version at base commit | Replacement | Target | Reason | Verification and notes |
 |---|---|---|---|---|---|
-| `aws-sdk` | 2.1693.0 | **`@aws-sdk/client-s3`** | **3.1098.0** | `incompatible` | **Gate-mandated, not discretionary.** Requiring the v2 SDK on Node 22 fires a **real `process.on('warning')` event with `name === "NOTE"`** — not a plain console write — which the zero-deprecation-warning boot gate forbids. v2's `AWS.config.update` global singleton has **no v3 equivalent**, so `config/aws.js` moves to per-client `S3Client` configuration, consumed by `lib/util/file.js` and `lib/workers/exports.js` |
+| `aws-sdk` *(S3 operations)* | 2.1693.0 | **`@aws-sdk/client-s3`** | **3.1098.0** | `incompatible` | **Gate-mandated, not discretionary.** Requiring the v2 SDK on Node 22 fires a **real `process.on('warning')` event with `name === "NOTE"`** — not a plain console write — which the zero-deprecation-warning boot gate forbids. v2's `AWS.config.update` global singleton has **no v3 equivalent**, so `config/aws.js` moves to per-client `S3Client` configuration. It is consumed at **7 call sites in 3 files** — `lib/util/file.js`, `lib/workers/exports.js` and `lib/controllers/users.js` — covering `PutObjectCommand`, `GetObjectCommand` and `DeleteObjectCommand` |
+| `aws-sdk` *(presigned URLs)* | 2.1693.0 | **`@aws-sdk/s3-request-presigner`** | **3.1098.0** | `incompatible` | **The second half of the same replacement, because v3 is modular where v2 was monolithic.** v2 generated presigned URLs **synchronously** via `client.getSignedUrl('getObject', {Bucket, Key, Expires: 3600})`, used for the export-download redirect in `lib/controllers/users.js`. `@aws-sdk/client-s3` contains **no presigner at all** — zero presign-related symbols among its 707 exports — and v3 offers no synchronous form, so the accessor is now asynchronous and `config/aws.js` exposes it as `getSignedDownloadUrl(params, expiresIn)` returning a `Promise<string>`. **Parity was measured before the swap was accepted:** the generated URL is the same virtual-hosted-style, SigV4-signed URL v2 produced — `<bucket>.s3.<region>.amazonaws.com/<key>` with `X-Amz-Algorithm=AWS4-HMAC-SHA256` and `X-Amz-Expires=3600`. Pinned to the **same version** as the client, and all six of its dependencies were already present transitively, so the lockfile gained **1** package with **0** resolved-version changes |
 | `request` | 2.88.2 | the global **`fetch`** built into Node 22 | *(no package added)* | `dead` | Formally deprecated upstream and unmaintained. Affects `lib/controllers/auth.js`, `lib/controllers/users.js` and `lib/util/recaptcha.js`, all of which were being converted to async/await anyway |
 | `q` | 1.0.1 | native **`Promise`**, `Promise.all`, `Promise.allSettled` | *(no package added)* | `dead` | Classified `dead` **not because it is vulnerable, but because the language subsumed it.** The async conversion removes its last consumer as a side effect: the four `Q.defer()` sites plus the `Q.all` and `Q.allSettled` calls in `lib/workers/exports.js`, and the usage in `test/helpers/mail.js` |
 | `node-uuid` | 1.4.8 | **`node:crypto`** `randomUUID()` | *(no package added)* | `dead` | Superseded by its own successor package and then by the platform. One call site, at `lib/controllers/users.js:L22` |
@@ -242,10 +250,12 @@ two were replaced by a newly added maintained package; one was never installed i
 | `rimraf` | 2.2.8 | **`fs.promises.rm`** with `{recursive: true, force: true}` | *(no package added)* | `incompatible` | **Not `dead` — actively maintained.** `rimraf` 4 and above dropped the callback form entirely, which is the form used at `lib/controllers/courses.js:L8` |
 | `catbox-redis` *(unscoped)* | **never installed** | the in-repo **`lib/util/catbox-mongoose.js`** engine | *(no package added)* | `dead` | **Declared nowhere and installed nowhere** — the direct cause of the immediate `npm test` failure on the suite's first module load, `Cannot find module 'catbox-redis'` at `test/helpers/catbox-redis.js:L1`. The helper is repointed at the catbox engine the application actually uses. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.7 |
 
-**Only two packages are added to the manifest by this entire modernization: `@aws-sdk/client-s3` 3.1098.0 and
-`crypto-js` 4.2.0.** Everything else in this document is a bump, a removal, or a move to a Node built-in or a local
-module. The two additions are exactly the two cases where a Node built-in could not do the job: S3 access, and an
-AES envelope that had to stay byte-compatible with a frozen browser decryptor.
+**Only three packages are added to the manifest by this entire modernization: `@aws-sdk/client-s3` 3.1098.0,
+`@aws-sdk/s3-request-presigner` 3.1098.0 and `crypto-js` 4.2.0.** Everything else in this document is a bump, a
+removal, or a move to a Node built-in or a local module. The additions cover exactly the two cases where a Node
+built-in could not do the job — S3 access, and an AES envelope that had to stay byte-compatible with a frozen browser
+decryptor — and S3 access needs two of them only because AWS SDK v3 splits presigning out of the client package.
+The plan projected two additions; the third is recorded as deviation 6 above, with the measurement that justifies it.
 
 ## Rubric 4 — Removed: declared but never required
 
@@ -366,9 +376,11 @@ and `sass` with `vite`, whose output is the two byte-comparable CSS artifacts.
 moderate, 37 high and 18 critical**. Restricted to production dependencies, `npm audit --omit=dev` reported **59
 findings — 15 critical, 27 high and 17 moderate — across 42 distinct production packages**.
 
-**Target, measured.** An isolated install of the complete 38-package production target set, together with the
-`overrides` pins, measured **`{critical: 0, high: 0, moderate: 3}`**. Re-run against the committed manifest and
-lockfile in a working checkout, `npm audit --omit=dev` reports the same result:
+**Target, measured.** An isolated install of the complete production target set, together with the
+`overrides` pins, measured **`{critical: 0, high: 0, moderate: 3}`**. Adding `@aws-sdk/s3-request-presigner` — the
+39th runtime dependency, recorded as deviation 6 above — left that result **unchanged**, as its six dependencies were
+already resolved in the tree. Re-run against the committed manifest and lockfile in a working checkout,
+`npm audit --omit=dev` reports the same result:
 
 ```json
 { "info": 0, "low": 0, "moderate": 3, "high": 0, "critical": 0, "total": 3 }

@@ -58,7 +58,7 @@ because it is the number at which the behavior was measured.
 
 ## 1. The thirteen catalogued quirks
 
-All thirteen were verified at the cited lines against the base commit. The four numbered items in section 1.14 are
+All thirteen were verified at the cited lines against the base commit. The five numbered items in section 1.14 are
 further preserved conditions of the same kind, recorded so that they are not mistaken for oversights either.
 
 | # | Quirk | Primary evidence |
@@ -407,9 +407,9 @@ is exactly why `.mocharc.json` must carry `"exit": true` — see adjudication 3.
 to make the explicit exit unnecessary, quietly coupling two unrelated decisions and changing how the process
 terminates.
 
-### 1.14 Four further preserved conditions
+### 1.14 Five further preserved conditions
 
-These four are the same kind of deliberate decision as the thirteen above and are recorded so that they are not
+These five are the same kind of deliberate decision as the thirteen above and are recorded so that they are not
 mistaken for oversights.
 
 **A. The pre-existing 500 at `GET /api/users/assets`.** One of the 58 responses in the baseline corpus is a 500,
@@ -439,6 +439,30 @@ is declared at **L37** and mounted by no service. The `links:` keys at **L14-L16
 `links` has been a no-op in Compose v2 and later for years — service discovery happens over the shared
 `trinket` network. Both are **preserved**: removing them is cleanup, and the file's in-scope change is confined to
 the service images that the runtime bump requires.
+
+**E. The session cache's TTL index is inert, and lazy per-read expiry is what actually works.**
+`lib/util/catbox-mongoose.js:L19-L22` declares `sessionSchema.index({ stored: 1 }, { expireAfterSeconds: 0,
+partialFilterExpression: { ttl: { $exists: true } } })` under the comment *"TTL index - automatically delete expired
+sessions"* — but `stored` is declared at **L11** as `{ type: Number, default: Date.now }`, and MongoDB's TTL monitor
+only acts on fields whose value is a `Date` (or an array of Dates). **The server therefore never reaps a single
+session document.** Measured against the live `mongo:6` container: after `set(key, value, 1)` and a 30 ms wait the
+document was **still present** in the collection, and only the subsequent `get()` removed it.
+`db.sessions.getIndexes()` shows `stored_1` with `expireAfterSeconds: 0` and the partial filter exactly as declared,
+while every document simultaneously matches `{ stored: { $type: 'number' } }` and none matches
+`{ stored: { $type: 'date' } }`. Real expiry is the lazy per-read check at **L87** —
+`if (record.ttl && (Date.now() - record.stored) > record.ttl)` — which deletes the record and returns `null`, so an
+expired session is only cleared when it is read again.
+
+**Both halves are preserved**, and both sites carry an inline comment pointing here. Typing `stored` as a `Date` "so
+that the index works" would break three things at once. It would change the **persisted document shape**, which the
+storage-format invariant freezes. It would move expiry from lazy-on-read to eager-server-side, changing when a
+session stops being readable — a behavior change on the login path, where `app.js:L102`'s `maxCookieSize: 0` means
+**100% of session state lives in this collection**. And it would break `@hapi/catbox` 12.1.1's own arithmetic:
+`node_modules/@hapi/catbox/lib/client.js` computes `const expires = result.stored + result.ttl` on the value this
+engine returns, so a `Date` there would concatenate instead of add, yielding `ttl: NaN` and a cache that reports
+every expired entry as a live hit. The `Number` typing is a **requirement of the consumer**, not an oversight —
+which is the strongest possible argument for leaving it alone. Dropping the unused index instead would be
+straightforward cleanup, and cleanup is what R-1 forbids.
 
 ## 2. The three deliberate browser-versus-server version skews
 

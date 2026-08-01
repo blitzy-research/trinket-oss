@@ -7,3 +7,5 @@ nav:
   - Home: index.md
   - Setup: setup.md
   - Overview: overview.md
+  - Dependency Migration Inventory: MIGRATION-DEPENDENCY-INVENTORY.md
+  - Preserved Quirks: PRESERVED-QUIRKS.md

@@ -56,8 +56,21 @@ defaults.content = {
   content: 'test content'
 };
 
+// dependency swap - `diff` moves 1.0.8 -> 9.0.0 (see the delivered dependency inventory).
+// R-6 ADJUDICATION. flow.addNewMaterial posts defaults.material, which carries no `content`, so
+// lib/controllers/course.js#updateMaterial applies this patch to an EMPTY base. The previous
+// literal used an abbreviated hunk header ('@@ -1 +1,2 @@') whose context line does not exist in
+// an empty base; diff 1.0.8's header regex could not parse that form at all, so it skipped context
+// verification entirely and spliced the added lines in at index 0, which is the only reason the
+// stale patch ever applied. No client emits that shape. The literal below is byte-for-byte what
+// the browser's pinned jsdiff 1.0.8 - see config/default.yaml and
+// public/js/courseEditor/controllers/materialControl.js:L321 - emits for the real first edit on an
+// empty page, createPatch(id, '', 'test content\nNo newline at end of file\n'). Measured against
+// BOTH diff 1.0.8 and diff 9.0.0, applyPatch('', patch) returns exactly
+// 'test content\nNo newline at end of file\n', so the existing assertion in test/lib/api/course.js
+// is unchanged and unweakened and the fixture now pins the real production patch shape.
 defaults.patch = {
-  patch: '@@ -1 +1,2 @@\n test content\n+No newline at end of file\n'
+  patch: '@@ -1,0 +1,2 @@\n+test content\n+No newline at end of file\n'
 }
 
 defaults.file = {

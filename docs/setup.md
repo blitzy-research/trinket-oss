@@ -6,7 +6,7 @@ This guide walks through the prerequisites, configuration, and commands needed t
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - Git
-- Node.js 18+ (only required for local development without Docker)
+- Node.js 22 LTS and npm 10+ (only required for local development without Docker)
 - MongoDB 5.0+ (runs inside Docker by default)
 - Redis (optional - falls back to in-memory store when disabled)
 
@@ -67,14 +67,45 @@ Without email configured, password reset is unavailable but users can still regi
 
 ## Running without Docker
 
-1. Install dependencies:
+1. Select the Node version:
    ```bash
-   npm install
+   nvm use   # selects Node 22 LTS from .nvmrc
    ```
 
-2. Start MongoDB locally (Redis is optional).
+   `.npmrc` sets `engine-strict=true`, so `npm ci` refuses to run on any other Node major. The canonical clean
+   install is `nvm use 22` followed by `git clean -xfd && npm ci`.
 
-3. Run the application:
+2. Install dependencies from the committed lockfile:
+   ```bash
+   npm ci
+   ```
+
+   `npm ci` installs strictly from `package-lock.json` (lockfileVersion 3), which is what keeps the install
+   reproducible.
+
+3. Fetch the frontend components:
+   ```bash
+   curl -L --silent -o ./public-components.tgz \
+     https://github.com/trinketapp/trinket-oss/releases/download/v1.1.0/public-components.tgz \
+     && tar xzf public-components.tgz \
+     && rm public-components.tgz
+   ```
+
+   `public/components/` is gitignored, so a fresh clone has to unpack this 166,464,007-byte `v1.1.0` release
+   asset - the same one the Docker build downloads - before `npm run build` can resolve the Foundation
+   stylesheets it imports. See `COMPONENTS.md` for the full component inventory.
+
+4. Build the stylesheets:
+   ```bash
+   npm run build
+   ```
+
+   This emits exactly two artifacts, `public/css/base.css` and `public/css/embed.css`. It also prints 435+ Sass
+   deprecation warnings from the vendored Foundation fork; those warnings are expected and tolerated.
+
+5. Start MongoDB locally (Redis is optional).
+
+6. Run the application:
    ```bash
    node app.js
    ```

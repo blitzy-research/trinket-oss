@@ -5,6 +5,10 @@
 #
 # Usage: ./test/smoke-test.sh [base_url]
 # Default: http://localhost:3001
+# Note: 3001 does not match docker-compose.yml's 3000:3000 publish or the Dockerfile's EXPOSE 3000.
+# That mismatch pre-dates this modernization and is preserved deliberately, not corrected; see
+# docs/PRESERVED-QUIRKS.md (quirk 6) for the reasoning.
+# To probe a default docker-compose stack, pass the base URL: ./test/smoke-test.sh http://localhost:3000
 #
 
 BASE_URL="${1:-http://localhost:3001}"

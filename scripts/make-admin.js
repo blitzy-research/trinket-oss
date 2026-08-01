@@ -25,67 +25,69 @@ require('../config/db');
 var User = require('../lib/models/user');
 var Roles = require('../lib/models/roles');
 
-function makeAdmin() {
-  // findByLogin searches by email or username
-  User.findByLogin(email.toLowerCase(), function (err, user) {
-    if (err) {
-      console.error('Database error:', err.message);
-      process.exit(1);
-    }
+async function makeAdmin() {
+  var user;
 
-    if (!user) {
-      console.error('User not found with email:', email);
-      console.error('Make sure the user has registered first.');
-      process.exit(1);
-    }
+  // Two try/catch blocks are deliberate: the lookup failure and every later failure
+  // report different message prefixes, so collapsing them into a single catch would
+  // change observable output. See docs/PRESERVED-QUIRKS.md.
+  try {
+    // findByLogin searches by email or username
+    user = await User.findByLogin(email.toLowerCase());
+  } catch (err) {
+    console.error('Database error:', err.message);
+    process.exit(1);
+  }
 
-    // Check if already admin
-    if (user.hasRole('admin')) {
-      console.log('User', user.email, 'is already an admin.');
-      process.exit(0);
-    }
+  if (!user) {
+    console.error('User not found with email:', email);
+    console.error('Make sure the user has registered first.');
+    process.exit(1);
+  }
 
-    Roles.getPermissions('admin')
-      .then(function (permissions) {
-        console.log('Got admin permissions');
+  // Check if already admin
+  if (user.hasRole('admin')) {
+    console.log('User', user.email, 'is already an admin.');
+    process.exit(0);
+  }
 
-        // Find site context or create it
-        var siteRoleIndex = _.findIndex(user.roles, function (r) {
-          return r.context === 'site';
-        });
+  try {
+    var permissions = await Roles.getPermissions('admin');
+    console.log('Got admin permissions');
 
-        if (siteRoleIndex >= 0) {
-          console.log('Found existing site role');
-          if (user.roles[siteRoleIndex].roles.indexOf('admin') < 0) {
-            user.roles[siteRoleIndex].roles.push('admin');
-          }
-          user.roles[siteRoleIndex].permissions = _.union(
-            user.roles[siteRoleIndex].permissions || [],
-            permissions || [],
-          );
-        } else {
-          console.log('creating new site role entry');
-          user.roles.push({
-            context: 'site',
-            roles: ['admin'],
-            permissions: permissions || [],
-            thru: {},
-            limits: {},
-          });
-        }
+    // Find site context or create it
+    var siteRoleIndex = _.findIndex(user.roles, function (r) {
+      return r.context === 'site';
+    });
 
-        return user.save();
-      })
-      .then(function (savedUser) {
-        console.log('Success! User', savedUser.email, 'is now an admin.');
-        console.log('They can access /admin after logging in.');
-        process.exit(0);
-      })
-      .catch(function (err) {
-        console.error('Error:', err.message);
-        process.exit(1);
+    if (siteRoleIndex >= 0) {
+      console.log('Found existing site role');
+      if (user.roles[siteRoleIndex].roles.indexOf('admin') < 0) {
+        user.roles[siteRoleIndex].roles.push('admin');
+      }
+      user.roles[siteRoleIndex].permissions = _.union(
+        user.roles[siteRoleIndex].permissions || [],
+        permissions || [],
+      );
+    } else {
+      console.log('creating new site role entry');
+      user.roles.push({
+        context: 'site',
+        roles: ['admin'],
+        permissions: permissions || [],
+        thru: {},
+        limits: {},
       });
-  });
+    }
+
+    var savedUser = await user.save();
+    console.log('Success! User', savedUser.email, 'is now an admin.');
+    console.log('They can access /admin after logging in.');
+    process.exit(0);
+  } catch (err) {
+    console.error('Error:', err.message);
+    process.exit(1);
+  }
 }
 
 // Handle connection - may already be open or connecting

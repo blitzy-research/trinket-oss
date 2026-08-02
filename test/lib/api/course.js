@@ -172,7 +172,7 @@ module.exports = function() {
         // `lib/models/lesson.js#publicSpec`. Both files are byte-identical at the base commit for this
         // logic (`git diff 2f8712a -- lib/models/model.js` is empty; the lesson diff touches only `copy`),
         // the DELETE route declaration is unchanged, and `course.deleteMaterial` still hands the saved
-        // lesson to `request.success`. Measured over real HTTP: 200 with `lesson.materials === []`.
+        // lesson to the success responder. Measured over real HTTP: 200 with `lesson.materials === []`.
         // Asserting the empty array is strictly stronger than asserting absence - it proves the material
         // really was pulled - and matches the base wire shape. See docs/PRESERVED-QUIRKS.md.
         it('should allow me to delete materials', function(done) {

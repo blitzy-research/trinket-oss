@@ -243,6 +243,20 @@ function replayRouteTable(server, committedTable) {
 // Response-corpus replay
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * The measured assignment entries with their origin rebased onto the corpus origin, so the two gate
+ * maps are computed from exactly the values compareCorpus() compares. The origin appears both in the
+ * Location and, percent-encoded, in the request path — see capture.js#rebaseEntryOrigin.
+ */
+function rebaseAssignmentSection(measured, committedCorpus) {
+  var from = capture.liveAppUrlOrigin(),
+      to   = (committedCorpus.metadata && committedCorpus.metadata.appUrlOrigin) || null;
+
+  return (measured.assignmentNext || []).map(function(entry) {
+    return capture.rebaseEntryOrigin(entry, from, to);
+  });
+}
+
 function replayResponses(server, committedCorpus) {
   return capture.captureCorpus(server, committedCorpus).then(function(measured) {
     var differences = capture.compareCorpus(committedCorpus, measured);
@@ -281,6 +295,20 @@ function replayResponses(server, committedCorpus) {
                    committedCorpus.gates.unauthenticatedEntryCount, measured.unauthenticated.length);
     pushDifference(differences, 'responses', 'gates.authenticatedEntryCount',
                    committedCorpus.gates.authenticatedEntryCount, measured.authenticated.length);
+    // The assignment `next` supplement (review finding P3-1). gates.assignmentNextLocations is the gate
+    // that finding would have tripped: the two consuming hops carry the destination itself, so a build
+    // that discards a same-origin absolute destination answers the declared success.redirect there.
+    // Rebased onto the corpus origin first, exactly as the entries themselves are.
+    pushDifference(differences, 'responses', 'gates.assignmentNextEntryCount',
+                   committedCorpus.gates.assignmentNextEntryCount,
+                   (measured.assignmentNext || []).length);
+    pushDifference(differences, 'responses', 'gates.assignmentNextStatuses',
+                   committedCorpus.gates.assignmentNextStatuses,
+                   capture.assignmentNextStatusMap(rebaseAssignmentSection(measured, committedCorpus)));
+    pushDifference(differences, 'responses', 'gates.assignmentNextLocations',
+                   committedCorpus.gates.assignmentNextLocations,
+                   capture.assignmentNextLocationMap(rebaseAssignmentSection(measured,
+                                                                            committedCorpus)));
     pushDifference(differences, 'responses', 'selectionRule.expectedCount',
                    committedCorpus.selectionRule.expectedCount, measured.unauthenticated.length);
     pushDifference(differences, 'responses', 'selectionRule.paths',
@@ -401,6 +429,7 @@ function main() {
       summary.responses = {
         unauthenticated      : result.measured.unauthenticated.length,
         authenticated        : result.measured.authenticated.length,
+        assignmentNext       : (result.measured.assignmentNext || []).length,
         measuredDistribution : capture.resolvedStatusDistribution(result.measured.unauthenticated),
         firstHopDistribution : capture.statusDistribution(result.measured.unauthenticated),
         rolesTokens          : result.measured.rolesTokenObservations
@@ -408,6 +437,7 @@ function main() {
 
       console.log('replay.js: responses unauthenticated=' + summary.responses.unauthenticated +
                   ' authenticated=' + summary.responses.authenticated +
+                  ' assignmentNext=' + summary.responses.assignmentNext +
                   ' resolvedDistribution=' + JSON.stringify(summary.responses.measuredDistribution) +
                   ' firstHopDistribution=' + JSON.stringify(summary.responses.firstHopDistribution));
 
@@ -443,6 +473,7 @@ module.exports = {
   canonicalRow                : canonicalRow,
   canonicalizeLiveTable       : canonicalizeLiveTable,
   registrationOrderCanonical  : registrationOrderCanonical,
+  rebaseAssignmentSection     : rebaseAssignmentSection,
   replayRouteTable            : replayRouteTable,
   replayResponses             : replayResponses,
   sha256                      : sha256,

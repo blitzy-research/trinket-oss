@@ -123,6 +123,37 @@ var THROWAWAY = {
   wrongPassword : 'definitely-not-the-password'
 };
 
+/**
+ * The assignment `next` flow, mirroring responses.json#assignmentNextContract.
+ *
+ * `destinationPath` is the path half of the destination the frozen assignment UI produces:
+ * public/partials/directives/trinket-assignment.js registers `.filter('escape', …)` as
+ * window.encodeURIComponent at L8 and scope.goto (L334-L339) sends
+ * next = encodeURIComponent($window.location.href), while public/js/trinket-config.js#getUrl
+ * (L34-L39) targets config.protocol + '://' + config.apphostname. The wire shape is therefore a
+ * percent-encoded ABSOLUTE same-origin URL, and the query and fragment are part of it because
+ * location.href carries both.
+ *
+ * The ORIGIN half is deliberately not a literal here: it is taken from the live configuration by
+ * candidate() so the flow is driven against whatever origin the process is actually configured
+ * for, and the comparison rebases it back onto metadata.appUrlOrigin (see rebaseEntryOrigin).
+ *
+ * `signup` is a SECOND throwaway identity, needed because POST /users creates a user: the login
+ * leg reuses THROWAWAY, and this one is removed before and after the signup leg so the leg starts
+ * from the same state every time.
+ */
+var ASSIGNMENT = {
+  destinationPath : '/u/instructor/classes/algebra-1?assignment=7#work',
+  rootRelative    : '/courses/algebra-1',
+  signup          : {
+    formName : 'sign-up',
+    fullname : 'assignment next',
+    username : 'assignmentnext',
+    email    : 'assignment-next@example.com',
+    password : 'assignmentNext!234'
+  }
+};
+
 /** Fields compared per entry by compareCorpus(). Prose (`notes`, `state`) is never compared. */
 var COMPARED_FIELDS = [
   'requestHeaders',
@@ -1014,7 +1045,164 @@ function captureAuthenticated(server, rules) {
   });
 }
 
-/** Measures the whole corpus: the 58 parameterless GETs plus the 7-entry authenticated supplement. */
+// ---------------------------------------------------------------------------------------------
+// The assignment `next` supplement (review finding P3-1)
+// ---------------------------------------------------------------------------------------------
+
+/** The absolute same-origin destination the frozen assignment UI would send, on the live origin. */
+function assignmentDestination() {
+  return liveAppUrlOrigin() + ASSIGNMENT.destinationPath;
+}
+
+/** `/login?next=<percent-encoded candidate>`, exactly as trinketConfig.getUrl builds it. */
+function assignmentEntryPath(page, candidate) {
+  return page + '?next=' + encodeURIComponent(candidate);
+}
+
+/** Removes the signup identity, so the signup leg starts from the same state on every run. */
+function removeAssignmentSignupUser() {
+  return Promise.resolve(User.findById(ASSIGNMENT.signup.email)).then(function(existing) {
+    return existing ? existing.remove() : undefined;
+  }).catch(function() {
+    return undefined;
+  });
+}
+
+/**
+ * One assignment leg: GET the entry page so the session persists `next`, then perform the action
+ * that consumes it. Both hops are recorded, because the contract has two halves — the entry hop
+ * must answer normally while storing the destination, and the consuming hop must emit it.
+ *
+ * No redirect chain is followed. The consuming hop's Location is the measurement, and following it
+ * would leave this contract behind and start measuring whatever page the destination resolves to,
+ * which depends on database state the assignment flow does not own.
+ */
+function captureAssignmentLeg(server, rules, entries, leg) {
+  var entryPath = assignmentEntryPath(leg.page, leg.candidate),
+      cookie    = null;
+
+  return httpRequest(server, { method : 'GET', path : entryPath }).then(function(response) {
+    entries.push(buildEntry('GET', entryPath, response, rules, leg.entryState));
+    cookie = extractSessionCookie(response);
+
+    if (!cookie) {
+      throw new Error('capture.js: GET ' + entryPath + ' did not set a session cookie, so the ' +
+                      'assignment `next` destination cannot have been persisted.');
+    }
+
+    return httpRequest(server, {
+      method      : leg.method,
+      path        : leg.action,
+      payload     : leg.payload,
+      contentType : 'application/json',
+      headers     : { cookie : cookie }
+    });
+  }).then(function(response) {
+    entries.push(buildEntry(leg.method, leg.action, response, rules, leg.consumeState));
+  });
+}
+
+/**
+ * The assignment `next` supplement, in exactly the recorded order. Every entry here is a case the
+ * migrated tree must reproduce byte-for-byte; the three deliberate SEC-4 deviations (off-origin and
+ * scheme-relative destinations, which the base commit echoed straight back) are recorded in
+ * responses.json#assignmentNextContract.securityDeviations and asserted live by
+ * test/lib/api/route-parity.js instead, because by construction they do NOT replay.
+ *
+ *   [0][1] login  — absolute same-origin destination, persisted then consumed
+ *   [2][3] login  — root-relative destination, the shape that already round-tripped
+ *   [4]    login  — no destination at all, so the declared success.redirect answers
+ *   [5][6] signup — absolute same-origin destination through POST /users
+ *   [7]    oauth  — GET /auth/google under the SHIPPED configuration, which answers before it
+ *                   reaches `next`; the configured persistence leg needs a runtime configuration
+ *                   change and therefore lives in route-parity.js, never in a capture.
+ */
+function captureAssignmentNext(server, rules) {
+  var entries   = [],
+      absolute  = assignmentDestination(),
+      loginBody = JSON.stringify({ email : THROWAWAY.email, password : THROWAWAY.password });
+
+  function signupBody(candidate) {
+    return JSON.stringify({
+      formName : ASSIGNMENT.signup.formName,
+      fullname : ASSIGNMENT.signup.fullname,
+      username : ASSIGNMENT.signup.username,
+      email    : ASSIGNMENT.signup.email,
+      password : ASSIGNMENT.signup.password,
+      next     : candidate
+    });
+  }
+
+  return createThrowawayUser().then(function() {
+    return captureAssignmentLeg(server, rules, entries, {
+      page         : '/login',
+      candidate    : absolute,
+      method       : 'POST',
+      action       : '/login',
+      payload      : loginBody,
+      entryState   : 'assignment-next (login entry, absolute same-origin)',
+      consumeState : 'assignment-next (login consumed, absolute same-origin)'
+    });
+  }).then(function() {
+    return captureAssignmentLeg(server, rules, entries, {
+      page         : '/login',
+      candidate    : ASSIGNMENT.rootRelative,
+      method       : 'POST',
+      action       : '/login',
+      payload      : loginBody,
+      entryState   : 'assignment-next (login entry, root-relative)',
+      consumeState : 'assignment-next (login consumed, root-relative)'
+    });
+  }).then(function() {
+    // No entry hop and no cookie: nothing was ever persisted, so the declared success.redirect
+    // '/home' answers. This is the control that proves the destination and not the flow is what
+    // moves the Location.
+    return httpRequest(server, {
+      method      : 'POST',
+      path        : '/login',
+      payload     : loginBody,
+      contentType : 'application/json'
+    }).then(function(response) {
+      entries.push(buildEntry('POST', '/login', response, rules,
+                              'assignment-next (login consumed, no destination persisted)'));
+    });
+  }).then(function() {
+    return removeAssignmentSignupUser();
+  }).then(function() {
+    return captureAssignmentLeg(server, rules, entries, {
+      page         : '/signup',
+      candidate    : absolute,
+      method       : 'POST',
+      action       : '/users',
+      payload      : signupBody(absolute),
+      entryState   : 'assignment-next (signup entry, absolute same-origin)',
+      consumeState : 'assignment-next (signup consumed, absolute same-origin)'
+    });
+  }).then(function() {
+    return httpRequest(server, {
+      method : 'GET',
+      path   : assignmentEntryPath('/auth/google', absolute)
+    }).then(function(response) {
+      entries.push(buildEntry('GET', assignmentEntryPath('/auth/google', absolute), response, rules,
+                              'assignment-next (oauth entry, shipped configuration)'));
+    });
+  }).then(function() {
+    return removeAssignmentSignupUser();
+  }, function(err) {
+    return removeAssignmentSignupUser().then(function() { throw err; });
+  }).then(function() {
+    return removeThrowawayUser();
+  }).then(function() {
+    return entries;
+  });
+}
+
+/**
+ * Measures the whole corpus: the 58 parameterless GETs, the 7-entry authenticated supplement and the
+ * 8-entry assignment `next` supplement. The order is contractual — the assignment supplement runs
+ * LAST because it creates and removes two identities of its own, and running it before the
+ * authenticated supplement would leave a different datastore behind than the one that was recorded.
+ */
 function captureCorpus(server, corpus) {
   var committed = corpus || loadCommittedCorpus(),
       rules     = htmlNormalizationRules(committed),
@@ -1028,9 +1216,13 @@ function captureCorpus(server, corpus) {
 
     return captureAuthenticated(server, rules);
   }).then(function(entries) {
-    measured.authenticated        = entries;
+    measured.authenticated = entries;
+
+    return captureAssignmentNext(server, rules);
+  }).then(function(entries) {
+    measured.assignmentNext         = entries;
     measured.rolesTokenObservations = ROLES_TOKEN_OBSERVATIONS.slice();
-    measured.finishedAt           = new Date().toISOString();
+    measured.finishedAt             = new Date().toISOString();
 
     return measured;
   });
@@ -1117,6 +1309,25 @@ function rebaseOrigin(value, fromOrigin, toOrigin) {
 }
 
 /**
+ * The same rewrite for an origin that is EMBEDDED in a value rather than leading it, in both the raw
+ * and the percent-encoded spelling. Only the assignment `next` entries need it: their request path
+ * carries the destination in its query string, so `/login?next=https%3A%2F%2Ftrinket.dev%2Fu%2F…`
+ * would otherwise be compared against an origin the process was never configured for. Exactly the
+ * origin is rewritten and nothing else, so the path, query and fragment of the destination stay
+ * byte-compared — including the percent-encoding itself, which is part of what the frozen producer
+ * emits.
+ */
+function rebaseEmbeddedOrigin(value, fromOrigin, toOrigin) {
+  if (typeof value !== 'string' || !fromOrigin || !toOrigin || fromOrigin === toOrigin) {
+    return value;
+  }
+
+  return value
+    .split(fromOrigin).join(toOrigin)
+    .split(encodeURIComponent(fromOrigin)).join(encodeURIComponent(toOrigin));
+}
+
+/**
  * A shallow copy of one measured entry with every Location rebased onto the corpus origin. Both places a
  * Location appears are covered: the dedicated `location` field and the `headers` bag, which
  * normalizeResponseHeaders() deliberately keeps literal.
@@ -1131,6 +1342,9 @@ function rebaseEntryOrigin(entry, fromOrigin, toOrigin) {
   Object.keys(entry).forEach(function(key) { copy[key] = entry[key]; });
 
   copy.location = rebaseOrigin(entry.location, fromOrigin, toOrigin);
+  // The request path carries an origin only in the assignment `next` entries; for every other entry
+  // this is a no-op, because no other recorded path contains one.
+  copy.path     = rebaseEmbeddedOrigin(entry.path, fromOrigin, toOrigin);
 
   if (Array.isArray(entry.redirectChain)) {
     copy.redirectChain = entry.redirectChain.map(function(hop) {
@@ -1226,7 +1440,12 @@ function compareCorpus(committed, measured) {
   };
 
   return compareSection('unauthenticated', committed.unauthenticated, measured.unauthenticated, rebase)
-    .concat(compareSection('authenticated', committed.authenticated, measured.authenticated, rebase));
+    .concat(compareSection('authenticated', committed.authenticated, measured.authenticated, rebase))
+    // The assignment supplement is compared exactly as hard as the other two sections. An older
+    // artifact that predates the section has no entries to compare, and `|| []` keeps it replayable
+    // rather than reporting eight phantom differences.
+    .concat(compareSection('assignmentNext', committed.assignmentNext || [],
+                           measured.assignmentNext || [], rebase));
 }
 
 /** The FIRST-HOP status distribution of the 58 unauthenticated entries, keyed by status code. */
@@ -1305,6 +1524,32 @@ function authenticatedStatusMap(entries, reading) {
   return map;
 }
 
+/** `<state> -> <status>` for the assignment supplement; `state` is what distinguishes its two hops. */
+function assignmentNextStatusMap(entries) {
+  var map = {};
+
+  (entries || []).forEach(function(entry) {
+    map[entry.method + ' ' + entry.path.split('?')[0] + ' ' + String(entry.state || '')] = entry.status;
+  });
+
+  return map;
+}
+
+/**
+ * `<state> -> <Location>` for the assignment supplement. This is the gate the P3-1 regression would
+ * have tripped: the two consuming hops carry the destination itself, and a build that discarded it
+ * would answer the declared success.redirect here instead.
+ */
+function assignmentNextLocationMap(entries) {
+  var map = {};
+
+  (entries || []).forEach(function(entry) {
+    map[String(entry.state || '')] = entry.location;
+  });
+
+  return map;
+}
+
 
 // ---------------------------------------------------------------------------------------------
 // Writing — deliberately hard to do by accident
@@ -1333,10 +1578,18 @@ function mergeMeasuredIntoCommitted(committed, measured) {
   var merged        = JSON.parse(JSON.stringify(committed)),
       notRecomputed = [];
 
-  ['unauthenticated', 'authenticated'].forEach(function(section) {
+  ['unauthenticated', 'authenticated', 'assignmentNext'].forEach(function(section) {
+    if (!committed[section]) {
+      return;
+    }
+
     merged[section] = committed[section].map(function(entry, index) {
-      var source = measured[section][index],
+      var source = (measured[section] || [])[index],
           target = JSON.parse(JSON.stringify(entry));
+
+      if (!source) {
+        return target;
+      }
 
       COMPARED_FIELDS.forEach(function(field) {
         target[field] = source[field];
@@ -1367,12 +1620,17 @@ function mergeMeasuredIntoCommitted(committed, measured) {
   merged.gates.redirectResolution              = redirectResolutionDistribution(measured.unauthenticated);
   merged.gates.authenticatedFirstHopStatuses   = authenticatedStatusMap(measured.authenticated, 'firstHop');
   merged.gates.authenticatedResolvedStatuses   = authenticatedStatusMap(measured.authenticated, 'resolved');
+  merged.gates.assignmentNextEntryCount        = (measured.assignmentNext || []).length;
+  merged.gates.assignmentNextStatuses          = assignmentNextStatusMap(measured.assignmentNext);
+  merged.gates.assignmentNextLocations         =
+    assignmentNextLocationMap(measured.assignmentNext);
 
   var recomputed = [
     'measuredDistribution', 'unauthenticatedEntryCount', 'authenticatedEntryCount',
     'firstHopStatusDistribution', 'resolvedStatusDistribution', 'hopCountHistogram',
     'redirectingRouteCount', 'redirectingRoutePaths', 'redirectResolution',
-    'authenticatedFirstHopStatuses', 'authenticatedResolvedStatuses'
+    'authenticatedFirstHopStatuses', 'authenticatedResolvedStatuses',
+    'assignmentNextEntryCount', 'assignmentNextStatuses', 'assignmentNextLocations'
   ];
 
   Object.keys(merged.gates).forEach(function(key) {
@@ -1442,6 +1700,7 @@ function main() {
 
     console.log('capture.js: unauthenticated=' + measured.unauthenticated.length +
                 ' authenticated=' + measured.authenticated.length +
+                ' assignmentNext=' + measured.assignmentNext.length +
                 ' distribution=' + JSON.stringify(statusDistribution(measured.unauthenticated)));
     console.log('capture.js: roles tokens structurally verified before normalization: ' +
                 measured.rolesTokenObservations.length + ' ' +
@@ -1512,6 +1771,7 @@ module.exports = {
   POLICY                   : POLICY,
   RUNTIME                  : RUNTIME,
   THROWAWAY                : THROWAWAY,
+  ASSIGNMENT               : ASSIGNMENT,
   COMPARED_FIELDS          : COMPARED_FIELDS,
   ROLES_TOKEN_INVARIANTS   : ROLES_TOKEN_INVARIANTS,
   loadCommittedCorpus      : loadCommittedCorpus,
@@ -1540,11 +1800,17 @@ module.exports = {
   findThrowawayUser        : findThrowawayUser,
   createThrowawayUser      : createThrowawayUser,
   removeThrowawayUser      : removeThrowawayUser,
+  extractSessionCookie     : extractSessionCookie,
   captureAuthenticated     : captureAuthenticated,
+  assignmentDestination    : assignmentDestination,
+  assignmentEntryPath      : assignmentEntryPath,
+  removeAssignmentSignupUser : removeAssignmentSignupUser,
+  captureAssignmentNext    : captureAssignmentNext,
   captureCorpus            : captureCorpus,
   appUrlOrigin             : appUrlOrigin,
   liveAppUrlOrigin         : liveAppUrlOrigin,
   rebaseOrigin             : rebaseOrigin,
+  rebaseEmbeddedOrigin     : rebaseEmbeddedOrigin,
   rebaseEntryOrigin        : rebaseEntryOrigin,
   compareSection           : compareSection,
   compareCorpus            : compareCorpus,
@@ -1555,6 +1821,8 @@ module.exports = {
   redirectResolutionDistribution : redirectResolutionDistribution,
   authenticatedEntryLabel  : authenticatedEntryLabel,
   authenticatedStatusMap   : authenticatedStatusMap,
+  assignmentNextStatusMap  : assignmentNextStatusMap,
+  assignmentNextLocationMap : assignmentNextLocationMap,
   isRedirectStatus         : isRedirectStatus,
   classifyHopTarget        : classifyHopTarget,
   followRedirectChain      : followRedirectChain,

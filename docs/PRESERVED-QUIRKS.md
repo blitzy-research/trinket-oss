@@ -1250,9 +1250,12 @@ test-suite restoration. Because nothing consumes the alias any longer, **both** 
 were deleted from `app.js`, which is what completes AAP G3; re-measured on the delivered tree,
 `grep -rn '\.fail(' app.js config/ lib/ scripts/ test/` returns zero promise call sites. Section 7.9 carries this
 corrected census. The response contract is a separate concern that did not disappear with the alias: the responders
-are published on the per-request toolkit as `h.respond` and `h.reject`, and `request.success` / `request.fail`
-remain as aliases of exactly those two functions (`lib/util/routeParser.js`), so the handful of call sites still
-spelled the base-commit way behave identically.
+are published on the per-request toolkit as `h.respond` and `h.reject`, and that is the only spelling any call site
+uses — measured comment-stripped on the delivered tree, **156** `h.respond(` and **64** `h.reject(` calls, 218 of
+them in `lib/controllers/`. The shim's `request.success` / `request.fail` decorations were therefore retired from
+`lib/util/routeParser.js` as well, completing AAP G2: the same comment-stripped scan across `app.js`, `config/`,
+`lib/`, `scripts/` and `test/` returns **zero** executable occurrences of either name, so the removal is
+wire-neutral and nothing is left spelled the base-commit way.
 
 **Why it matters.** The monkey-patches may only be removed once every genuine consumer is converted. Counting the
 73 response-contract calls as promise consumers would have made removal look impossible; counting them as
@@ -2763,13 +2766,41 @@ until restart. One request by one visitor redirected every later visitor off-sit
 **Origin.** Baseline. The write-back is verbatim from the base commit's failure responder, and the raw
 `h.redirect(next)` is the base commit's raw-toolkit redirect.
 
-**The remediation.** Two helpers in `lib/http/redirect.js`: `internalDestination(v)` returns `v` unchanged when it is
-a non-empty string beginning with exactly one `/` and carrying no backslash and no control character, and `null`
-otherwise; `confineToOrigin(v)` strips control characters and collapses a leading run of separators to a single `/`.
-The failure responder now computes a **request-local** target instead of mutating the declaration, and confines the
-interpolated result when the declared template is root-relative. `next` is filtered where it is persisted —
-`pages.js#login`, `pages.js#signup`, `auth.js#google` — and again where it is consumed — `users.js#login`,
-`users.js#create`, `auth.js#googleCallback`. Six boundaries in total.
+**The remediation.** Two helpers in `lib/http/redirect.js`: `internalDestination(v, request)` returns `v`
+**unchanged** when it is unambiguously this application's own destination, and `null` otherwise; `confineToOrigin(v)`
+strips control characters and collapses a leading run of separators to a single `/`. The failure responder now
+computes a **request-local** target instead of mutating the declaration, and confines the interpolated result when the
+declared template is root-relative. `next` is filtered where it is persisted — `pages.js#login`, `pages.js#signup`,
+`auth.js#google` — and again where it is consumed — `users.js#login`, `users.js#create`,
+`auth.js#googleCallback`. Six boundaries in total.
+
+Two destination shapes qualify, and both are returned byte-for-byte: a string beginning with **exactly one** `/`, and
+an **absolute `http(s)` URL whose parsed host is one of this application's own** — `config.url`,
+`config.app.url.hostname[:port]`, or `request.info.host`, plus exactly one additional DNS label in front of one of
+them when `config.app.usersubdomains` is on. Everything else is refused: off-origin absolute URLs, the userinfo
+disguise whose real host is off-origin (`https://trinket.dev@evil.example` parses to host `evil.example`), the
+suffix lookalike (`https://trinket.dev.evil.example`), scheme-relative `//host`, the backslash form browsers
+normalize into it, non-`http(s)` schemes, any value carrying a control character, and bare relative values that would
+resolve against whatever path the browser happens to be on. Trusting the request's own `Host` is what makes the flow
+behave the same in development (`localhost:3000`) and under `supertest` (an ephemeral port) as it does in production;
+it cannot be abused, because an attacker cannot set a victim's `Host` header and a `Location` back to the host the
+client already addressed is by definition not off-origin.
+
+**Correction — review finding P3-1.** The first version of this filter accepted **only** the single-leading-slash
+shape, and that was too narrow: it refused a legitimate same-origin destination and broke the assignment flow.
+`public/partials/directives/trinket-assignment.js` registers `.filter('escape', …)` as `window.encodeURIComponent`
+at `L8` and `scope.goto` at `L334-L339` sends `next = escape($window.location.href)` through
+`trinketConfig.getUrl`, which builds `config.protocol + '://' + config.apphostname + path`
+(`public/js/trinket-config.js:L34-L39`) — so the only shape that producer can emit is a **percent-encoded absolute
+same-origin URL**, carrying a query and a fragment because `location.href` carries both. `public/**` is frozen by
+the preservation directives, so the server is what has to accept it. Re-measured at base commit `2f8712a` over real
+HTTP, twice: `GET /login?next=<absolute same-origin URL>` followed by `POST /login` answered `302` with `Location` =
+that URL **byte-for-byte, fragment included**; `GET /signup?next=<same>` followed by `POST /users` did the same; and
+with OAuth credentials injected, `GET /auth/google` persisted it and the same value came back out. The absolute
+same-origin shape is therefore baseline behavior and is restored. The flow is now shipped evidence —
+`test/baseline/responses.json#assignmentNext` (eight entries measured at the base commit, replayed field by field by
+`test/baseline/replay.js`) and `#assignmentNextContract`, with live coverage in
+`test/lib/api/route-parity.js`.
 
 **The one design decision worth stating explicitly.** The helpers are **not** applied inside `redirect()` itself.
 The fourth branch of that function's absolutization cascade lets an already-absolute `http(s)` URL through untouched,
@@ -2777,10 +2808,14 @@ and `auth.js#google` depends on it to hand the browser its `accounts.google.com`
 redirect would have broken Google sign-in. Enforcement therefore sits only at the boundaries where the destination is
 genuinely user-controlled.
 
-**What the remediation deliberately did not change, with the measurement.** Legitimate root-relative destinations are
-byte-identical before and after — `next=/courses` still emits `Location: /courses`, and
+**What the remediation deliberately did not change, with the measurement.** Every legitimate destination is
+byte-identical before and after. Root-relative: `next=/courses` still emits `Location: /courses`, and
 `next=/account/profile?a=1#f` still emits that exact string, both as raw relative Location headers, preserving the
-raw-toolkit-redirect behavior. Every rejected destination lands in the **same** branch an absent `next` already took,
+raw-toolkit-redirect behavior. Absolute same-origin, the shape the assignment producer emits:
+`next=https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work` still emits that exact string, query and
+fragment intact, through `POST /login`, through `POST /users` and through the OAuth persistence leg — measured against
+the base commit in all three, with zero field differences across all twelve compared fields of all eight recorded
+entries. Every rejected destination lands in the **same** branch an absent `next` already took,
 emitting the declarative `success.redirect` `/home`. For the interpolated failure target a stronger statement holds:
 for `formName` ∈ {`signup`, `sign-up`, `welcome`, `courses/new`} the post-remediation Location is **identical to the
 base commit's own Location on its first request after a restart** — 4 of 4 — so each request now behaves exactly as
@@ -3105,32 +3140,42 @@ the note under "How to read this catalogue". The labels below exist only in the 
 in this section alone are **migrated-frame** numbers. Where the same behavior is catalogued elsewhere, that entry keeps
 its base-commit citation and is linked from the right-hand column.
 
-**What this section is not.** It maps, and where no other entry exists it describes. It changes no code: every label
-below is preserved exactly as written, and nothing in `lib/util/routeParser.js`, `lib/http/responseContract.js`,
-`lib/util/helpers.js` or `lib/util/mailer.js` was touched in order to add it.
+**What this section is not.** It maps, and where no other entry exists it describes. It changes no code: nothing in
+`lib/util/routeParser.js`, `lib/http/responseContract.js`, `lib/util/helpers.js` or `lib/util/mailer.js` was touched in
+order to add it.
+
+**The labels are now this document's own names, and `Site` is a historical pointer.** Each private scheme existed as a
+literal in-code token when this section was written. The comment pass that followed rewrote those comments to name
+their behavior in prose — the house style described in 5.5 — and retired every token: re-measured on the delivered
+tree, `Q-A6`, `Q-errfalsy`, `Q-A1`, `Q-A3a`, `QUIRK 1` through `QUIRK 6` and `(Q1)` through `(Q5)` each return
+**zero** in-code occurrences. The tables are kept because for several of these mechanisms they are the only catalogue
+entry, but read the labels as this document's names rather than as strings to grep for, and read `Site` as the line a
+label occupied while it existed — later edits have moved those lines, so each mechanism is located by its
+description.
 
 ### 5.1 `lib/util/routeParser.js` — the `Q-` scheme
 
 | Label | Site | What it preserves | Catalogue home |
 |---|---|---|---|
-| `Q-A6` | L169 | There are exactly **two** responders, `request.success` and `request.fail`, and there must never be a third. A `catch` responder is undefined at baseline, and two branches of `lib/controllers/folders.js` invoke one — so they raise a `TypeError` that the centralized error map turns into a **500**. Publishing a third responder would silently convert that baseline failure into a working response. | **This row**, paired with `responseContract`'s `QUIRK 6` in 4.2, which is the same quirk seen from the other side |
+| `Q-A6` | the responder block inside `parseRoutes`' handler | There are exactly **two** responders — published on the per-request toolkit as `h.respond` and `h.reject`, and spelled `request.success` / `request.fail` at the base commit — and there must never be a third. A `catch` responder is undefined at baseline, and two branches of `lib/controllers/folders.js` invoke one — so they raise a `TypeError` that the centralized error map turns into a **500**. Publishing a third responder would silently convert that baseline failure into a working response. The base-commit request-level spelling was itself retired once every controller had migrated; 3.14 carries that measurement. | **This row**, paired with `responseContract`'s `QUIRK 6` in 5.2, which is the same quirk seen from the other side |
 | `Q-errfalsy` | L226 | `ErrorMap.toResponse()` keeps the source's truthiness guard, so a **falsy** caught value yields `undefined` and the handler returns `undefined`. Whatever `toResponse()` gives back is returned as-is; adding a fallback would change the baseline mapping. | **Section 3.10**, which governs the same error sink |
 | `Q-A1` | L236, against the two-parameter declaration now in `lib/http/preHandlers.js` | `convertPreHandlers` is declared `(pre, server)` and called with **one** argument, so `server` is permanently `undefined`. Provably inert, because the string-form wrapper declares its own `var server = request.server;` and never reads the parameter. | **Section 1.11** (base frame: `lib/util/routeParser.js:L594` against `L71`), with the adjudication at **section 3.11** |
 | `Q-A3a` | L249 | The `.json` extension-duplication block is **inert** — no declaration in either route file carries an `ext` key — and is preserved as code rather than deleted. | **Appendix**, "How 178 declarations become 233 routes", `correction-a` |
 
 ### 5.2 `lib/http/responseContract.js` — the numbered `QUIRK n` scheme
 
-The module header at **L71-L84** enumerates all six in one place. That list is authoritative for the numbering, and
-each number then appears once more at its own site.
+The module header enumerated all six in one place and that list is authoritative for the numbering. Both the header
+list and the per-site numerals were replaced with prose by the comment pass described in the framing note above, so
+the numbers below are this document's and each row is located by its description.
 
 | Label | Site | What it preserves | Catalogue home |
 |---|---|---|---|
-| `QUIRK 1` | L393 | `reject()` interpolates `fail.redirect` back **into** the closed-over `fail` object, so an interpolated value persists into later requests — a cross-request state leak, preserved. | **This row** |
+| `QUIRK 1` | `reject()`'s HTML-redirect branch | **Historically:** `reject()` interpolated `fail.redirect` back **into** the closed-over `fail` object, so an interpolated value persisted into later requests — a cross-request state leak, which this row originally recorded as preserved. **Remediated:** SEC-4 established the leak is reachable through `POST /users`' unconstrained `formName`, so the interpolation now lands in a request-local `target` and every request re-interpolates the declared template exactly as the first request after a restart did. Nothing writes to the declaration objects at request time any more; the only writes they ever see are `routeParser`'s parse-time `route.html` / `route.redirect` hoists. | **4.4**, which carries the measured evidence and the disposition; this row records the historical shape |
 | `QUIRK 2` | L424 | `reject()` never sets a status, so a failure answers **HTTP 200** carrying `data.status === "error"` rather than a 4xx. | **This row**; the measured evidence is `test/baseline/responses.json`'s adjudication `request-fail-without-redirect-or-html-yields-200` |
 | `QUIRK 3` | L379 | `reject()`'s log line prints `"<inspected value> undefined"` whenever the responder is used directly as a promise rejection handler. | **This row** |
 | `QUIRK 4` | L278 | A bare `request.yar.flash()` **drains** the flash bag — it is a mutation, not a read. | **This row** |
 | `QUIRK 5` | L160 | `addUserContext()`'s `emailEnabled` rule — `hasFrom && (hasAWS \|\| hasMailgun)`, kept as the **raw truthiness expression** rather than a boolean — disagrees with `lib/util/mailer.js#isConfigured()`, which requires `from` **and** `host`. The two rules stay disagreeing. | **This row**; see 4.4 for the numeral collision |
-| `QUIRK 6` | L206 | There is **no third responder**. Two controller branches depend on its absence to produce their baseline 500. | **This row** — the same quirk as `routeParser`'s `Q-A6` in 4.1 |
+| `QUIRK 6` | L206 | There is **no third responder**. Two controller branches depend on its absence to produce their baseline 500. | **This row** — the same quirk as `routeParser`'s `Q-A6` in 5.1 |
 
 ### 5.3 `lib/util/helpers.js` — the `(Qn)` scheme
 

@@ -6,9 +6,10 @@
 // returns ZERO promise call sites (the last 8 lived in test/lib/models/plugins/roles.js and are now
 // `.catch(`, and lib/workers/exports.js's 5 went the same way with the worker migration), and the
 // `spread` census found none at all. The `.fail(` occurrences under lib/views/ are jQuery Deferred
-// calls in browser markup, not consumers of this alias, and the `request.fail` decorations are the
-// unrelated declarative response contract in lib/http/responseContract.js. Mongoose 6 returns native
-// promises, so the "Mongoose 6 compatibility" rationale the patches carried no longer holds. See
+// calls in browser markup, not consumers of this alias, and the declarative response contract - an
+// unrelated concern - publishes its rejection responder as `h.reject`, never as a `.fail(` call, now
+// that the shim's `request.fail` decoration is retired. Mongoose 6 returns native promises, so the
+// "Mongoose 6 compatibility" rationale the patches carried no longer holds. See
 // docs/MIGRATION-DEPENDENCY-INVENTORY.md.
 
 // initialize the global logger

@@ -383,5 +383,375 @@ module.exports = function() {
         normalized.normalized.should.contain('<title>Trinket</title>');
       });
     });
+
+    /**
+     * P3-1 — the assignment `next` destination contract.
+     *
+     * The frozen assignment UI is the only producer of this flow and it can only produce ONE shape:
+     * public/partials/directives/trinket-assignment.js registers `.filter('escape', ...)` as
+     * window.encodeURIComponent (L8) and scope.goto (L334-L339) sends
+     * next = escape($window.location.href) to trinketConfig.getUrl, which builds
+     * config.protocol + '://' + config.apphostname + path (public/js/trinket-config.js:L34-L39). The
+     * destination is therefore an ABSOLUTE same-origin URL carrying a query and a fragment, and
+     * public/** is out of scope, so the server is what has to accept it.
+     *
+     * Measured at base commit 2f8712a and recorded in responses.json#assignmentNext, which replay.js
+     * compares field by field. This suite drives the same three entry points LIVE — login, signup and
+     * the OAuth persistence leg — and adds the off-origin refusals, which by construction do NOT
+     * replay and therefore cannot live in the corpus.
+     */
+    describe('the assignment `next` destination contract (P3-1, TR2, TR4)', function() {
+      var absolute      = liveOrigin + capture.ASSIGNMENT.destinationPath,
+          rootRelative  = capture.ASSIGNMENT.rootRelative,
+          credentials   = {
+            email    : capture.THROWAWAY.email,
+            password : capture.THROWAWAY.password
+          };
+
+      before(function() {
+        this.timeout(60000);
+
+        return capture.removeAssignmentSignupUser().then(function() {
+          return capture.createThrowawayUser();
+        });
+      });
+
+      after(function() {
+        this.timeout(60000);
+
+        return capture.removeAssignmentSignupUser().then(function() {
+          return capture.removeThrowawayUser();
+        });
+      });
+
+      /** The recorded entry for one hop of the flow, found by the tail of its `state` label. */
+      function recordedHop(label) {
+        var found = corpus.assignmentNext.filter(function(entry) {
+          return String(entry.state).indexOf(label) !== -1;
+        });
+
+        found.length.should.eql(1);
+
+        return found[0];
+      }
+
+      /** The entry hop, in the frozen producer's exact wire shape, under the capture policy. */
+      function entryHop(page, candidate, host) {
+        var call = get(capture.assignmentEntryPath(page, candidate));
+
+        return host ? call.set('host', host) : call;
+      }
+
+      function postHop(path, body, cookie, host) {
+        var call = supertest(server.listener)
+          .post(path)
+          .set('referer', capture.POLICY.referer)
+          .set('user-agent', capture.POLICY.userAgent)
+          .set('accept-encoding', 'identity')
+          .redirects(0);
+
+        if (cookie) { call = call.set('cookie', cookie); }
+        if (host)   { call = call.set('host', host); }
+
+        return call.send(body);
+      }
+
+      /**
+       * Persist a destination through an entry page, then consume it. Resolves with the consuming
+       * hop's response. Both the entry status and the presence of a session cookie are asserted, not
+       * assumed: a flow that never reached the persisting branch would silently "agree" with every
+       * refusal expectation below and prove nothing. `options.entryStatus` exists because the entry
+       * hop is not always a 200 — a CONFIGURED GET /auth/google answers 302 to Google while storing
+       * the destination on the way past.
+       */
+      function driveFlow(page, candidate, action, body, options) {
+        var settings = options || {};
+
+        return new Promise(function(resolve, reject) {
+          entryHop(page, candidate, settings.host).end(function(err, entry) {
+            if (err) { return reject(err); }
+
+            var cookie = capture.extractSessionCookie({ headers : entry.headers });
+
+            try {
+              entry.statusCode.should.eql(settings.entryStatus || 200);
+              should.exist(cookie);
+            }
+            catch (assertion) {
+              return reject(assertion);
+            }
+
+            postHop(action, body, cookie, settings.host).end(function(postErr, consumed) {
+              return postErr ? reject(postErr) : resolve(consumed);
+            });
+          });
+        });
+      }
+
+      function loginWith(candidate, host) {
+        return driveFlow('/login', candidate, '/login', credentials, { host : host });
+      }
+
+      function signupWith(candidate) {
+        return capture.removeAssignmentSignupUser().then(function() {
+          return driveFlow('/signup', candidate, '/users', {
+            formName : capture.ASSIGNMENT.signup.formName,
+            fullname : capture.ASSIGNMENT.signup.fullname,
+            username : capture.ASSIGNMENT.signup.username,
+            email    : capture.ASSIGNMENT.signup.email,
+            password : capture.ASSIGNMENT.signup.password,
+            next     : candidate
+          });
+        });
+      }
+
+      describe('the frozen producer this contract exists for', function() {
+        it('still sends an encodeURIComponent-escaped absolute href as ?next=', function() {
+          var producer = require('fs').readFileSync(
+            require('path').join(__dirname, '..', '..', '..', 'public', 'partials', 'directives',
+                                 'trinket-assignment.js'), 'utf8');
+
+          // If any of these three stops being true the producer has changed shape and the contract
+          // below has to be re-measured rather than trusted.
+          producer.should.contain('window.encodeURIComponent');
+          producer.should.contain('?next=');
+          producer.should.contain('$window.location.href');
+        });
+      });
+
+      describe('a same-origin absolute destination survives byte-for-byte', function() {
+        it('POST /login answers 302 to the destination, query and fragment included', function() {
+          this.timeout(30000);
+
+          return loginWith(absolute).then(function(response) {
+            response.statusCode.should.eql(302);
+            response.headers.location.should.eql(absolute);
+            // Not the declared success.redirect: that is the regression this test exists to catch.
+            response.headers.location.should.not.eql(liveOrigin + '/home');
+            // TR4 — the cookie contract of this cookie:true route is unchanged by the destination,
+            // asserted against the attribute set the corpus recorded for this very hop, which ends
+            // in the Expires that the app.js:L205-L240 rewrite appends.
+            [].concat(response.headers['set-cookie']).map(capture.setCookieAttributeNames)
+              .should.eql(recordedHop('login consumed, absolute same-origin').setCookieAttributes);
+          });
+        });
+
+        it('POST /users answers 302 to the same destination rather than to /welcome', function() {
+          this.timeout(30000);
+
+          return signupWith(absolute).then(function(response) {
+            response.statusCode.should.eql(302);
+            response.headers.location.should.eql(absolute);
+            response.headers.location.should.not.eql(liveOrigin + '/welcome');
+          });
+        });
+
+        it('accepts an absolute destination on the Host the client itself addressed', function() {
+          this.timeout(30000);
+
+          // request.info.host is one of the three allowed origins, which is what makes the flow work
+          // when the address in use differs from config.app.url — localhost in development, an
+          // ephemeral supertest port here. An attacker cannot set a victim's Host header, and a
+          // Location back to the host the client already addressed cannot leave that origin.
+          var host    = 'assignment-host.example:1234',
+              onHost  = 'http://' + host + capture.ASSIGNMENT.destinationPath;
+
+          return loginWith(onHost, host).then(function(response) {
+            response.statusCode.should.eql(302);
+            response.headers.location.should.eql(onHost);
+          });
+        });
+
+        it('POST /login echoes a root-relative destination unchanged, still relative', function() {
+          this.timeout(30000);
+
+          return loginWith(rootRelative).then(function(response) {
+            response.statusCode.should.eql(302);
+            response.headers.location.should.eql(rootRelative);
+          });
+        });
+
+        it('falls back to the declared success.redirect when nothing was persisted', function(done) {
+          this.timeout(30000);
+
+          postHop('/login', credentials, null).end(function(err, response) {
+            if (err) { return done(err); }
+
+            response.statusCode.should.eql(302);
+            response.headers.location.should.eql(liveOrigin + '/home');
+            done();
+          });
+        });
+      });
+
+      /**
+       * The SEC-4 refusals. Every candidate here was echoed straight back into a Location at the base
+       * commit; responses.json#assignmentNextContract.securityDeviations records the three measured
+       * baseline values. They are asserted here rather than in the corpus precisely because they are
+       * the cases that must NOT replay.
+       */
+      describe('an off-origin destination is refused, leaving the declared fallback', function() {
+        [
+          { label : 'an off-origin absolute URL',        candidate : 'https://evil.example/steal' },
+          { label : 'a scheme-relative URL',             candidate : '//evil.example/steal' },
+          { label : 'the backslash form of one',         candidate : '/\\evil.example/steal' },
+          { label : 'a userinfo disguise',               candidate : 'https://trinket.dev@evil.example/x' },
+          { label : 'a subdomain-suffix lookalike',      candidate : 'https://trinket.dev.evil.example/x' },
+          { label : 'a javascript: scheme',              candidate : 'javascript:alert(1)' },
+          { label : 'a bare relative value',             candidate : 'courses/algebra-1' }
+        ].forEach(function(refusal) {
+          it('POST /login ignores ' + refusal.label, function() {
+            this.timeout(30000);
+
+            return loginWith(refusal.candidate).then(function(response) {
+              response.statusCode.should.eql(302);
+              response.headers.location.should.eql(liveOrigin + '/home');
+              response.headers.location.should.not.contain('evil.example');
+            });
+          });
+        });
+
+        it('POST /users ignores an off-origin absolute URL', function() {
+          this.timeout(30000);
+
+          return signupWith('https://evil.example/steal').then(function(response) {
+            response.statusCode.should.eql(302);
+            response.headers.location.should.eql(liveOrigin + '/welcome');
+          });
+        });
+      });
+
+      /**
+       * The OAuth leg. GET /auth/google returns before it reaches `next` when
+       * config.app.auth.google.clientID is null, which is why responses.json records only that
+       * outcome and why the persistence leg is driven here: the three credential keys are set for the
+       * duration of this block and restored afterwards, so no YAML is edited and no other suite sees
+       * the change. POST /login reads the same session slot the callback reads
+       * (lib/controllers/auth.js#googleCallback -> redirectTo -> success.redirect '{redirectTo}'),
+       * which is what makes the persisted value observable without Google credentials.
+       */
+      describe('the OAuth persistence leg', function() {
+        var google   = require('config').app.auth.google,
+            original = {};
+
+        before(function() {
+          original = {
+            clientID     : google.clientID,
+            clientSecret : google.clientSecret,
+            callbackURL  : google.callbackURL
+          };
+          google.clientID     = 'route-parity-client-id.apps.googleusercontent.com';
+          google.clientSecret = 'route-parity-client-secret';
+          google.callbackURL  = liveOrigin + '/auth/google/callback';
+        });
+
+        after(function() {
+          google.clientID     = original.clientID;
+          google.clientSecret = original.clientSecret;
+          google.callbackURL  = original.callbackURL;
+        });
+
+        it('answers 200 with no Location under the SHIPPED configuration', function(done) {
+          this.timeout(30000);
+
+          var saved = google.clientID;
+
+          google.clientID = original.clientID;
+          get(capture.assignmentEntryPath('/auth/google', absolute)).end(function(err, response) {
+            google.clientID = saved;
+
+            if (err) { return done(err); }
+
+            // The preserved failure-responder quirk: no fail.redirect and no fail.html, so the 200
+            // that responses.json#assignmentNext entry [7] records is what comes back.
+            response.statusCode.should.eql(200);
+            should.not.exist(response.headers.location);
+            done();
+          });
+        });
+
+        it('persists a same-origin absolute destination and hands it back byte-for-byte', function() {
+          this.timeout(30000);
+
+          return driveFlow('/auth/google', absolute, '/login', credentials, { entryStatus : 302 })
+            .then(function(response) {
+              response.statusCode.should.eql(302);
+              response.headers.location.should.eql(absolute);
+            });
+        });
+
+        it('does not persist an off-origin destination', function() {
+          this.timeout(30000);
+
+          return driveFlow('/auth/google', 'https://evil.example/steal', '/login', credentials,
+                           { entryStatus : 302 })
+            .then(function(response) {
+              response.statusCode.should.eql(302);
+              response.headers.location.should.eql(liveOrigin + '/home');
+            });
+        });
+
+        it('redirects to Google itself, which is deliberately NOT confined to this origin', function(done) {
+          this.timeout(30000);
+
+          get(capture.assignmentEntryPath('/auth/google', absolute)).end(function(err, response) {
+            if (err) { return done(err); }
+
+            // lib/http/redirect.js does not confine declarative redirects, precisely so this one
+            // still reaches accounts.google.com; only the user-controlled `next` is filtered.
+            response.statusCode.should.eql(302);
+            response.headers.location.indexOf('https://accounts.google.com/o/oauth2/v2/auth?')
+              .should.eql(0);
+            done();
+          });
+        });
+
+        it('answers the declared fail.redirect when the callback arrives with no code', function(done) {
+          this.timeout(30000);
+
+          get('/auth/google/callback').end(function(err, response) {
+            if (err) { return done(err); }
+
+            response.statusCode.should.eql(302);
+            response.headers.location.should.eql(liveOrigin + '/signup');
+            done();
+          });
+        });
+      });
+
+      /** The recorded section has to agree with the gates that summarize it, as elsewhere. */
+      describe('the recorded evidence agrees with its own gates', function() {
+        it('recomputes the entry count, status map and Location map from the entries', function() {
+          corpus.assignmentNext.length.should.eql(corpus.gates.assignmentNextEntryCount);
+          capture.assignmentNextStatusMap(corpus.assignmentNext)
+            .should.eql(corpus.gates.assignmentNextStatuses);
+          capture.assignmentNextLocationMap(corpus.assignmentNext)
+            .should.eql(corpus.gates.assignmentNextLocations);
+        });
+
+        it('records the destination itself on both consuming hops', function() {
+          var destination = corpusOrigin + corpus.gates.assignmentNextDestinationPath;
+
+          corpus.gates.assignmentNextConsumedDestination.should.eql(destination);
+          corpus.gates.assignmentNextLocations['assignment-next (login consumed, absolute same-origin)']
+            .should.eql(destination);
+          corpus.gates.assignmentNextLocations['assignment-next (signup consumed, absolute same-origin)']
+            .should.eql(destination);
+          corpus.gates.assignmentNextLocations['assignment-next (login consumed, root-relative)']
+            .should.eql(capture.ASSIGNMENT.rootRelative);
+        });
+
+        it('names all three deliberate SEC-4 deviations with both measured values', function() {
+          var deviations = corpus.assignmentNextContract.securityDeviations.cases;
+
+          deviations.length.should.eql(3);
+          deviations.forEach(function(deviation) {
+            deviation.baselineLocation.should.contain('evil.example');
+            deviation.currentLocation.should.not.contain('evil.example');
+            deviation.currentLocation.indexOf(corpusOrigin).should.eql(0);
+          });
+        });
+      });
+    });
   });
 };

@@ -8,7 +8,7 @@ module.exports = {
       // R-6 ADJUDICATION. Stubbing `send` alone is not a complete mail double, because every mail-sending
       // handler is fronted by a configuration guard: `lib/controllers/users.js:286` (sendPassReset) and the
       // six sibling guards at users.js:1055/1121/1199, course.js:928/986 and trinket.js:871 all begin with
-      // `if (!mailer.isConfigured()) return request.fail(...)`. Those guards are present at the base commit
+      // `if (!mailer.isConfigured()) return h.reject(...)`. Those guards are present at the base commit
       // too (measured: `git show 2f8712a:lib/controllers/users.js` line 229 is byte-identical), and
       // `config/default.yaml` - which is frozen - ships `app.mail.from` and `app.mail.host` as empty
       // strings with no override in config/test.yaml, so `isConfigured()` is falsy under test and

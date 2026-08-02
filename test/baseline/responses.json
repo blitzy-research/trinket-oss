@@ -169,6 +169,16 @@
       "locationDriftFromPreviousRevision": 0,
       "throwawayUserDeletedAfterCapture": true,
       "note": "The redirect-resolution pass this record describes is now part of the harness itself: test/baseline/capture.js follows the chain after recording the first hop, and test/baseline/replay.js re-derives every resolved gate below on each run, so the two readings are regenerable rather than hand-recorded."
+    },
+    "assignmentNextCapture": {
+      "reason": "Review finding P3-1: the same-origin ABSOLUTE destination the frozen assignment UI produces was being discarded, and this corpus recorded no entry that would have caught it. The eight-entry assignmentNext section closes that gap.",
+      "capturedFrom": "The SAME isolated pristine export of base commit 2f8712a described by metadata.captureCheckout (git archive 2f8712a | tar -x, 520 of 520 tracked files, dependencies installed from that commit's own package-lock.json with npm ci -- @hapi/hapi 20.3.0, joi 17.13.3, marked 0.3.2, i.e. the pre-migration stack WITH the hand-written compatibility shim).",
+      "procedure": "test/baseline/capture.js#captureAssignmentNext was copied into that checkout unchanged and driven by a throwaway driver that boots the base-commit app.js and calls it directly. The section is therefore measured by the code that now owns its regeneration, not transcribed by hand.",
+      "transport": "real HTTP over node:http against server.info.uri -- server.inject() is NEVER used",
+      "nodeConfigOverride": "app.start true, app.hostname 127.0.0.1, an explicit port, the placeholder session cookie password, db.mongo.database \"test\" and app.url https://trinket.dev -- supplied through NODE_CONFIG exactly as the rest of the capture is. No YAML was edited in either tree.",
+      "identities": "The login legs reuse metadata.throwawayUser. The signup leg needs a SECOND identity because POST /users creates a user: assignment-next@example.com / assignmentnext, removed before and after the leg so it starts from the same state on every run. Both are removed when the section finishes.",
+      "headParity": "The identical procedure was then run against the migrated tree. All 8 entries agreed on all 12 compared fields -- requestHeaders, status, statusText, headers, contentType, setCookie, setCookieAttributes, location, isApiRequest, bodyShape, redirectChain and resolved -- for a total of ZERO field differences, HTML body digests included.",
+      "redirectPolicy": "Deliberately NOT followed for this section. The consuming hop's Location IS the measurement, and following it would stop measuring this contract and start measuring whatever page the destination resolves to, which depends on datastore state the assignment flow does not own. The entries carry no redirectChain and no resolved reading, and the two gates read the first hop."
     }
   },
   "selectionRule": {
@@ -707,7 +717,31 @@
         "conclusion": "pages.home calls Trinket.findRecentByOwner and home.html:L38 iterates the result, so this entry IS state-sensitive. Every other entry — all 58 unauthenticated and the other 6 authenticated — is byte-identical under the change. That is why metadata.throwawayUser pins ownedTrinkets: 0 alongside the identity fields, and why the baseline is captured against a freshly dropped database.",
         "passNote": "Both figures in this experiment come from the earlier first-hop-only pass, in which nothing had consumed the session flash before this entry was requested. The recorded entry now carries the flash-consumed render -- 18055 raw / 17135 normalized bytes, sha256 a207e0fc271ba246033db9fa4bdd7546c9eb98112ddb5ed800559912e77c368d -- because the POST /login chain is followed first under requestPolicy.redirectPolicy. The experiment is a PAIRED comparison and its conclusion is unaffected: both arms were measured in the same pass, and the +322 raw / +322 normalized byte delta is the measured effect of the owned Trinket. See the adjudication \"flash-is-consumed-by-the-followed-login-hop\"."
       }
-    }
+    },
+    "assignmentNextEntryCount": 8,
+    "assignmentNextStatuses": {
+      "GET /login assignment-next (login entry, absolute same-origin)": 200,
+      "POST /login assignment-next (login consumed, absolute same-origin)": 302,
+      "GET /login assignment-next (login entry, root-relative)": 200,
+      "POST /login assignment-next (login consumed, root-relative)": 302,
+      "POST /login assignment-next (login consumed, no destination persisted)": 302,
+      "GET /signup assignment-next (signup entry, absolute same-origin)": 200,
+      "POST /users assignment-next (signup consumed, absolute same-origin)": 302,
+      "GET /auth/google assignment-next (oauth entry, shipped configuration)": 200
+    },
+    "assignmentNextLocations": {
+      "assignment-next (login entry, absolute same-origin)": null,
+      "assignment-next (login consumed, absolute same-origin)": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
+      "assignment-next (login entry, root-relative)": null,
+      "assignment-next (login consumed, root-relative)": "/courses/algebra-1",
+      "assignment-next (login consumed, no destination persisted)": "https://trinket.dev/home",
+      "assignment-next (signup entry, absolute same-origin)": null,
+      "assignment-next (signup consumed, absolute same-origin)": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
+      "assignment-next (oauth entry, shipped configuration)": null
+    },
+    "assignmentNextConsumedDestination": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
+    "assignmentNextDestinationPath": "/u/instructor/classes/algebra-1?assignment=7#work",
+    "assignmentNextNote": "The gate review finding P3-1 would have tripped. gates.assignmentNextLocations pins the Location of every hop in the flow, and the two consuming hops carry the destination itself: a build that discards a same-origin absolute destination answers https://trinket.dev/home and https://trinket.dev/welcome there instead. The maps are recomputed from the entries by capture.js#assignmentNextStatusMap and #assignmentNextLocationMap, so neither can drift from the entries it summarizes. Both readings are FIRST HOP, because this section is deliberately not redirect-resolved -- see metadata.assignmentNextCapture.redirectPolicy."
   },
   "cookieContract": {
     "name": "session",
@@ -906,6 +940,68 @@
       "mechanism": "fail.redirect \"/signup\" -> absolutized; cookie:true also triggers the Expires rewrite"
     }
   ],
+  "assignmentNextContract": {
+    "purpose": "The `next` destination contract, measured end to end. It exists because review finding P3-1 recorded that a SAME-ORIGIN ABSOLUTE destination -- the only shape the frozen assignment UI can produce -- was being refused, and because no entry in this corpus would have detected that.",
+    "producer": {
+      "file": "public/partials/directives/trinket-assignment.js",
+      "filter": "L8 registers .filter('escape', ...) as window.encodeURIComponent",
+      "goto": "L334-L339: next = escape($window.location.href), then trinketConfig.getUrl(\"/\" + path + \"?next=\" + next)",
+      "urlBuilder": "public/js/trinket-config.js:L34-L39 -- config.protocol + '://' + config.apphostname + path",
+      "invokedFrom": "public/partials/directives/trinket-assignment.html:L56, the \"Create an account\" and \"login\" links shown to an unauthenticated learner on an assignment",
+      "consequence": "The wire shape is /login?next=<percent-encoded ABSOLUTE same-origin URL>, and the URL carries both a query and a fragment because location.href does. It is frozen client code: the preservation directives place public/** out of scope, so the server is what has to accept it."
+    },
+    "destination": {
+      "path": "/u/instructor/classes/algebra-1?assignment=7#work",
+      "recordedAbsolute": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
+      "originIsParametric": "Only the PATH half is fixed. capture.js#assignmentDestination() prefixes capture.liveAppUrlOrigin(), so the flow is always driven against the origin the process is actually configured for, and capture.js#rebaseEntryOrigin rewrites that origin -- in the Location and in the percent-encoded copy embedded in the request path -- back onto metadata.appUrlOrigin before the comparison. Everything past the origin stays byte-compared, the percent-encoding included. Without this the section would fail on a developer checkout carrying the config/local.yaml that docs/setup.md tells them to create, while nothing about behavior had changed."
+    },
+    "routeDeclarations": {
+      "GET /login": "config/routes.js:L25-L34 -- validate.query.next is Joi.string().optional() (L31), so the absolute URL is accepted by validation before the handler ever sees it",
+      "GET /signup": "config/routes.js:L22-L24 -- no query validation at all",
+      "POST /login": "config/routes.js:L46-L62 -- cookie:true, success.redirect '/home', fail.redirect '/login'",
+      "POST /users": "config/routes.js:L70-L98 -- cookie:true, success.redirect '/welcome', fail.redirect '/{formName}', with next declared Joi.string().allow('').optional() at L88",
+      "GET /auth/google": "config/routes.js:L528-L533 -- auth false, no success declaration",
+      "GET /auth/google/callback": "config/routes.js:L534-L546 -- cookie:true, success.redirect '{redirectTo}', fail.redirect '/signup'"
+    },
+    "filter": {
+      "module": "lib/http/redirect.js#internalDestination",
+      "accepts": "a value beginning with exactly one \"/\" (returned without any parsing), and an absolute http(s) URL whose parsed host is one of this application's own -- config.url, config.app.url.hostname[:port] or request.info.host -- plus, when config.app.usersubdomains is on, exactly one additional DNS label in front of one of them. An accepted value is returned UNCHANGED, which is what makes the Location byte-for-byte.",
+      "refuses": "off-origin absolute URLs, the userinfo disguise whose real host is off-origin (https://trinket.dev@evil.example parses to host evil.example), scheme-relative \"//host\", the backslash form browsers normalize into it, non-http(s) schemes, any value containing a control character, and bare relative values that would resolve against whatever path the browser happens to be on."
+    },
+    "securityDeviations": {
+      "rule": "These three cases are the ONLY places where this section deliberately does not reproduce the base commit, so they are recorded here rather than as replayed entries -- a replayed entry would make test/baseline/replay.js report a difference on every run for behavior that is intentionally closed. They are asserted LIVE instead, by test/lib/api/route-parity.js, so they are gated by a test rather than by prose.",
+      "finding": "SEC-4 (CWE-601, open redirect), remediated before this finding was raised",
+      "cases": [
+        {
+          "candidate": "https://evil.example/steal",
+          "flow": "GET /login?next=<candidate> then POST /login",
+          "baselineLocation": "https://evil.example/steal",
+          "currentLocation": "https://trinket.dev/home",
+          "reason": "The base commit echoed an attacker-supplied off-origin destination straight into a Location on a login page. The destination is now simply not persisted, which leaves the session exactly as it is for a visitor who supplied no `next` at all, so the declared success.redirect '/home' answers."
+        },
+        {
+          "candidate": "//evil.example/steal",
+          "flow": "GET /login?next=<candidate> then POST /login",
+          "baselineLocation": "//evil.example/steal",
+          "currentLocation": "https://trinket.dev/home",
+          "reason": "The scheme-relative form of the same hole: a browser resolves it against the current scheme and leaves the origin."
+        },
+        {
+          "candidate": "https://evil.example/steal",
+          "flow": "GET /signup?next=<candidate> then POST /users",
+          "baselineLocation": "https://evil.example/steal",
+          "currentLocation": "https://trinket.dev/welcome",
+          "reason": "The signup half of the same hole; the declared success.redirect '/welcome' answers instead."
+        }
+      ]
+    },
+    "oauthLeg": {
+      "shippedConfiguration": "GET /auth/google answers before it reaches `next` when config.app.auth.google.clientID is null, so entry [7] records that outcome: HTTP 200 with a JSON body, the preserved failure-responder quirk. Nothing is persisted.",
+      "configuredMeasurement": "Measured separately at the base commit with Google configured AT RUNTIME and restored afterwards (no YAML edited): GET /auth/google?next=<absolute> answers 302 to accounts.google.com AND persists the destination, and consuming it -- POST /login shares the same session slot the callback reads -- answers 302 with the destination byte-for-byte. The off-origin candidate answered https://evil.example/steal at the base commit and now answers the declared fallback. GET /auth/google/callback with no code answered 302 https://trinket.dev/signup in both trees.",
+      "whyNotCaptured": "Reproducing it requires mutating config.app.auth mid-capture. Keeping the capture procedure free of global-state mutation matters more than recording an eighth entry, so the configured leg is driven live by test/lib/api/route-parity.js, which saves and restores the three credential keys around its own block.",
+      "callbackConsumption": "lib/controllers/auth.js#googleCallback reads the persisted value and hands it to the responder as redirectTo, which GET /auth/google/callback turns into a Location through its success.redirect '{redirectTo}' declaration. That is why the value stored by /auth/google is filtered when it is stored AND when it is consumed."
+    }
+  },
   "errorMappingContract": {
     "fourXxPassesMessage": true,
     "fiveXxScrubsMessage": true,
@@ -1119,6 +1215,14 @@
       "ambiguity": "Following POST /login changes which request renders the post-login flash, so GET /home measures 18055 bytes where the previous no-follow revision recorded 18126. Is that a behavior difference that the corpus should refuse?",
       "evidence": "Measured on the integrated tree in a SINGLE capture pass, twice, with identical results: the followed hop of POST /login (valid credentials) renders /home at 18126 bytes with the flash, and the later direct GET /home renders the same route at 18055 bytes without it - a 71-byte delta that is exactly the flash markup. request.yar flash storage is single-read at the base commit too (lib/http/responseContract.js injects json.flash from request.yar.flash(), which clears it), so the application behaves identically; only the arrival order of the two /home requests differs. The previous revision recorded 18126 for the direct GET because nothing had consumed the flash first. w-008's revision recorded 18126 for the direct GET and 18055 for its resolved reading of the same 0-hop entry, which no single pass can reproduce - the two numbers came from two different runs.",
       "resolution": "Record what one pass actually measures. bodyShape and resolved for this entry are both 18055, the followed login hop carries the 18126 reading, and neither the corpus selection nor any application code was touched. This is the only value in the corpus that the follow policy changes; every other one of the 58 unauthenticated and 7 authenticated entries is byte-identical across the two policies, which is itself recorded as metadata.recapture.firstHopDriftFromPreviousRevision = 0."
+    },
+    {
+      "id": "assignment-next-absolute-same-origin-is-part-of-the-baseline",
+      "rule": "R-6",
+      "ambiguity": "Is a same-origin ABSOLUTE `next` destination part of the baseline HTTP contract, or is the root-relative form the whole of it? The SEC-4 remediation had read it as root-relative only, which is what review finding P3-1 recorded.",
+      "evidence": "Settled by measurement at base commit 2f8712a, twice, over real HTTP. GET /login?next=<absolute same-origin URL> followed by POST /login answered 302 with Location = the absolute URL byte-for-byte, fragment included; GET /signup?next=<same> followed by POST /users did the same; and with Google configured, GET /auth/google persisted it and the same value came back out. The base-commit mechanism is visible in the shim: the synthetic reply builder called h.redirect(url) verbatim, and lib/http/redirect.js's fourth branch leaves an already-absolute http(s) target untouched. The producer cannot emit anything else -- it sends encodeURIComponent(window.location.href).",
+      "resolution": "The absolute same-origin shape IS baseline behavior and is restored, byte-for-byte, including the user-subdomain form when config.app.usersubdomains is on. The off-origin, scheme-relative, backslash and control-character shapes stay refused; those three are the only deliberate deviations and are recorded in assignmentNextContract.securityDeviations with their measured baseline values.",
+      "consequence": "Eight replayed entries in assignmentNext, three new gates, and live coverage in test/lib/api/route-parity.js that drives login, signup and the OAuth persistence leg through the frozen producer's exact wire shape. The identical procedure on the migrated tree produced zero field differences against these entries."
     }
   ],
   "unauthenticated": [
@@ -4733,6 +4837,414 @@
         "hops": 1,
         "stoppedBecause": "terminal"
       }
+    }
+  ],
+  "assignmentNext": [
+    {
+      "method": "GET",
+      "path": "/login?next=https%3A%2F%2Ftrinket.dev%2Fu%2Finstructor%2Fclasses%2Falgebra-1%3Fassignment%3D7%23work",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "13484",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding",
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 13484,
+        "normalizedBytes": 13223,
+        "sha256": "fe77f3db9309df12057c2328e061ca3f7ac4a9e754b64966a9f02035174edee0",
+        "title": "Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "The entry hop of the flow the frozen assignment UI produces. public/partials/directives/trinket-assignment.js registers `.filter('escape', ...)` as window.encodeURIComponent at L8 and scope.goto at L334-L339 sends next = encodeURIComponent($window.location.href) to trinketConfig.getUrl, which builds config.protocol + '://' + config.apphostname + path (public/js/trinket-config.js:L34-L39). The destination is therefore an ABSOLUTE same-origin URL carrying both a query and a fragment, because location.href carries both. lib/controllers/pages.js#login stores it in the session and answers the ordinary 200 login page; the body is byte-identical to the plain GET /login entry in the unauthenticated section, because neither the handler nor lib/views/login.html renders `next`.",
+      "state": "assignment-next (login entry, absolute same-origin)"
+    },
+    {
+      "method": "POST",
+      "path": "/login",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "cookie": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>",
+        "content-type": "application/json",
+        "content-length": "73"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+        ],
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path",
+          "Expires"
+        ]
+      ],
+      "location": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "THE measurement of review finding P3-1. lib/controllers/users.js#login reads the persisted value and hands it to h.redirect(), so the Location is the destination itself, BYTE-FOR-BYTE, query and fragment included -- not the declared success.redirect '/home' (config/routes.js:L46-L62). A build that answers https://trinket.dev/home here has discarded a legitimate same-origin destination, which is exactly the regression P3-1 recorded. cookie:true triggers the app.js:L205-L240 rewrite, so the Set-Cookie attribute set is the same one the authenticated supplement records.",
+      "state": "assignment-next (login consumed, absolute same-origin)"
+    },
+    {
+      "method": "GET",
+      "path": "/login?next=%2Fcourses%2Falgebra-1",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "13484",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding",
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 13484,
+        "normalizedBytes": 13223,
+        "sha256": "fe77f3db9309df12057c2328e061ca3f7ac4a9e754b64966a9f02035174edee0",
+        "title": "Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "The shape that round-tripped even while P3-1 was open, kept as the control that isolates the difference to the destination's SHAPE rather than to the flow. A single leading slash is returned unchanged by lib/http/redirect.js#internalDestination without any parsing at all.",
+      "state": "assignment-next (login entry, root-relative)"
+    },
+    {
+      "method": "POST",
+      "path": "/login",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "cookie": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>",
+        "content-type": "application/json",
+        "content-length": "73"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "/courses/algebra-1",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+        ],
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path",
+          "Expires"
+        ]
+      ],
+      "location": "/courses/algebra-1",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "A RELATIVE Location, and deliberately so: the value is emitted exactly as it was supplied, so an in-application path stays in-application. This is the same relative-versus-absolute distinction the locationContract block records for GET /account.",
+      "state": "assignment-next (login consumed, root-relative)"
+    },
+    {
+      "method": "POST",
+      "path": "/login",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "content-type": "application/json",
+        "content-length": "73"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/home",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+        ],
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path",
+          "Expires"
+        ]
+      ],
+      "location": "https://trinket.dev/home",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "No entry hop and no cookie, so nothing was ever persisted and the declared success.redirect '/home' answers, absolutized by lib/http/redirect.js to config.url + '/home'. Together with the two consuming hops above this proves the Location moves with the persisted destination and with nothing else.",
+      "state": "assignment-next (login consumed, no destination persisted)"
+    },
+    {
+      "method": "GET",
+      "path": "/signup?next=https%3A%2F%2Ftrinket.dev%2Fu%2Finstructor%2Fclasses%2Falgebra-1%3Fassignment%3D7%23work",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "13677",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ],
+        "vary": "accept-encoding",
+        "x-frame-options": "deny"
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "html",
+        "bytes": 13677,
+        "normalizedBytes": 13416,
+        "sha256": "bd2c3ad4cf95e1032cae852b8dde3e71ef2f7e19ff347fda7d29dc0e82a61e8a",
+        "title": "Trinket",
+        "markers": {
+          "notFoundPage": false,
+          "serverErrorPage": false,
+          "hasDoctype": true
+        }
+      },
+      "notes": "The signup half of the same producer contract. lib/controllers/pages.js#signup filters the value it PERSISTS while passing request.query.next through to the template context unchanged; that context key reaches no rendered byte, because lib/views/signup.html was measured to contain no reference to `next` at all.",
+      "state": "assignment-next (signup entry, absolute same-origin)"
+    },
+    {
+      "method": "POST",
+      "path": "/users",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)",
+        "cookie": "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>",
+        "content-type": "application/json",
+        "content-length": "227"
+      },
+      "status": 302,
+      "statusText": "Found",
+      "headers": {
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "0",
+        "content-type": "text/html; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "location": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+        ]
+      },
+      "contentType": "text/html; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/; Expires=<normalized:expires>"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path",
+          "Expires"
+        ]
+      ],
+      "location": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "empty",
+        "bytes": 0
+      },
+      "notes": "POST /users declares `next` as Joi.string().allow('').optional() and success.redirect '/welcome' (config/routes.js:L70-L90), and lib/controllers/users.js#create hands the accepted destination to the responder as json.redirectTo, which wins over the declaration (lib/http/responseContract.js: `(json && json.redirectTo) || success.redirect`). The Location is therefore the destination byte-for-byte and NOT https://trinket.dev/welcome.",
+      "state": "assignment-next (signup consumed, absolute same-origin)"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/google?next=https%3A%2F%2Ftrinket.dev%2Fu%2Finstructor%2Fclasses%2Falgebra-1%3Fassignment%3D7%23work",
+      "requestHeaders": {
+        "referer": "https://trinket.dev",
+        "user-agent": "trinket-oss-baseline-capture/1.0 (R-6 parity harness)"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "headers": {
+        "accept-ranges": "bytes",
+        "cache-control": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "connection": "keep-alive",
+        "content-length": "96",
+        "content-type": "application/json; charset=utf-8",
+        "date": "<normalized:date>",
+        "expires": "0",
+        "keep-alive": "timeout=5",
+        "pragma": "no-cache",
+        "set-cookie": [
+          "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+        ]
+      },
+      "contentType": "application/json; charset=utf-8",
+      "setCookie": [
+        "session=Fe26.2*<REDACTED_IRON_SEAL_PAYLOAD>; HttpOnly; SameSite=Lax; Path=/"
+      ],
+      "setCookieAttributes": [
+        [
+          "HttpOnly",
+          "SameSite",
+          "Path"
+        ]
+      ],
+      "location": null,
+      "isApiRequest": false,
+      "bodyShape": {
+        "kind": "json",
+        "bytes": 96,
+        "isArray": false,
+        "keys": [
+          "flash",
+          "message"
+        ],
+        "keyCount": 2,
+        "stableScalars": {
+          "message": "Google OAuth is not configured. Please set up Google OAuth credentials."
+        },
+        "flashKeys": [],
+        "body": {
+          "message": "Google OAuth is not configured. Please set up Google OAuth credentials.",
+          "flash": {}
+        }
+      },
+      "notes": "GET /auth/google under the SHIPPED configuration, where config.app.auth.google.clientID is null: lib/controllers/auth.js#google returns before it reaches `next` at all, and the failure responder answers HTTP 200 with a JSON body rather than a 4xx -- the preserved quirk catalogued for request.fail. The persistence leg itself therefore cannot be reached without configuring Google, which needs a runtime configuration change and is asserted live by test/lib/api/route-parity.js instead of being captured here. Both /auth/google and /auth/google/callback are already among the 58 frozen parameterless GET paths.",
+      "state": "assignment-next (oauth entry, shipped configuration)"
     }
   ]
 }

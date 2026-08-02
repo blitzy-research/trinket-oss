@@ -16,7 +16,12 @@ Trinket lets students and educators write and run code directly in the browser, 
 
 - **Backend** - Node.js 22 LTS with hapi 21
 - **Database** - MongoDB via the Mongoose ODM
-- **Cache/Sessions** - Redis, optional, with an in-memory fallback when disabled
+- **Sessions** - iron-sealed cookies via hapi's Yar plugin, backed by **MongoDB**, not Redis. The server registers a
+  `sessions` cache whose engine is the in-repo `lib/util/catbox-mongoose.js`, so sessions survive a restart with no
+  Redis involved and Redis being switched off does not sign anyone out
+- **Application cache/queues** - Redis, genuinely optional, with an in-memory fallback when disabled: the store layer
+  under `lib/util/store/` serves the same operations from memory, and every background queue but the export queue is
+  hard-disabled regardless
 - **Frontend** - AngularJS 1.x
 - **Code Execution** - Skulpt for Python in the browser; server-side container runners for other languages
 

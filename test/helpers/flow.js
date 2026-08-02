@@ -1,10 +1,25 @@
 var _        = require('underscore'),
     server   = require('supertest'),
-    url      = require('url'),
+    // Dependency swap: `require('url')` is retired here. Its only use was `url.parse(location).pathname`
+    // below, and the deprecated parser is replaced by the proven pathname helper rather than by
+    // `URL.parse`, for the reason recorded at that call site.
+    legacyUrl = require('../../lib/util/legacyUrl'),
     querystring = require('querystring'),
     defaults = require('./defaults'),
     config   = require('../../config/app.config'),
     app      = require('../../app.js');
+
+// `app.js` exports a PROMISE, not the server - a direct consequence of its awaited plugin registration and
+// awaited start - so `app.listener` is `undefined` and the base commit's eager
+// `this.agent = server(app.listener)` produced an agent that threw
+// `TypeError: Cannot read properties of undefined (reading 'address')` on its first request. The server is
+// captured here as the promise resolves and the agent is built lazily on first use; the root hook in
+// test/setup.js awaits the same promise before any test runs, so a request can never outrun it.
+var resolvedServer = null;
+
+app.then(function(server) {
+  resolvedServer = server;
+});
 
 // public interface
 var methods = {
@@ -142,8 +157,20 @@ var methods = {
       .end(this.setLastResponse(cb));
   },
 
+  // R-6 ADJUDICATION. `config/api_routes.js:40` validates this query as `Joi.boolean().optional()`, and
+  // `yes` is not a boolean literal Joi has ever coerced: measured against BOTH the base commit's joi
+  // 17.13.3 and the target joi 18.2.3, `'yes'` is REJECTED with the byte-identical message
+  // `"outline" must be a boolean` while `'true'` is accepted and coerced to `true`. The request therefore
+  // never reached lib/controllers/course.js:76 at the base commit either - the route answered its
+  // validation flash instead - which is why every `When I edit an existing course` test then read
+  // `flow.lastResponse.body.data` as undefined. The real browser client sends the boolean, not `yes`:
+  // public/js/courseEditor/course.js:15, public/js/courseEditor/controllers/root.js:147,
+  // public/js/courseEditor/controllers/materialControl.js:91 and public/js/classPage/app.js:57 all pass
+  // `{ outline : true }`, which Angular serializes as `outline=true`. This corrects the request to the
+  // production shape, exactly as the `defaults.patch` fixture above was corrected; no server behaviour and
+  // no assertion changes.
   getCourseWithOutline : function(id, cb) {
-    return this.get('/api/courses/' + id + '?outline=yes')
+    return this.get('/api/courses/' + id + '?outline=true')
       .end(this.setLastResponse(cb));
   },
 
@@ -396,7 +423,14 @@ var methods = {
       self.lastError    = err;
       self.wasOk        = err ? false : true;
       if (res && res.redirect) {
-        self.lastRedirect = url.parse(res.headers.location)
+        // Dependency swap. Every assertion in the suite reads `lastRedirect.pathname` and nothing else -
+        // 23 call sites across test/lib/api/** - and the `Location` values this application emits are
+        // frequently RELATIVE ('/login', '/home', '/reset-pass'), for which the non-throwing static
+        // `URL.parse()` returns NULL. The proven helper is used instead: `lib/util/legacyUrl.js#pathname`
+        // reproduces the retired parser's pathname derivation byte-for-byte, verified by the differential
+        // suite in test/lib/util/legacy-pathname.js, so these assertions compare exactly what they
+        // compared at the base commit.
+        self.lastRedirect = { pathname : legacyUrl.pathname(res.headers.location) };
       }
 
       self.lastContentType = res.headers['content-type'];
@@ -406,8 +440,32 @@ var methods = {
   }
 }
 
+/**
+ * Returns the supertest agent, building it on first use from the resolved server's listener.
+ *
+ * The listener is a plain http.Server that is never `listen`-ed here, because `config/test.yaml` sets
+ * `app.start: false` and `app.js` honours it. supertest binds an unlistened server to an ephemeral port
+ * itself, which is what keeps parallel clones from colliding - measured on this tree: `GET /about` answers
+ * 200 through exactly this path.
+ *
+ * @param {Object} flow The Flow instance to attach the agent to.
+ * @returns {Object} The supertest agent.
+ */
+function agentFor(flow) {
+  if (!flow.agent) {
+    if (!resolvedServer) {
+      throw new Error('flow: app.js exports a promise that has not resolved yet; test/setup.js registers ' +
+        'a root hook which awaits it before any test runs.');
+    }
+
+    flow.agent = server(resolvedServer.listener);
+  }
+
+  return flow.agent;
+}
+
 function createRequest(flow, type, url) {
-  var request = flow.agent[type](url);
+  var request = agentFor(flow)[type](url);
   if (flow.activeUser && flow.cookies[flow.activeUser]) {
     request.set('cookie', flow.cookies[flow.activeUser]);
   }
@@ -416,7 +474,8 @@ function createRequest(flow, type, url) {
 }
 
 function Flow() {
-  this.agent      = server(app.listener);
+  // Built lazily by agentFor(); see the note at the top of this file.
+  this.agent      = null;
   this.activeUser = 'user';
   this.cookies    = {};
 

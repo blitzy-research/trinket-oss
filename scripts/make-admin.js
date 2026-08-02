@@ -28,9 +28,8 @@ var Roles = require('../lib/models/roles');
 async function makeAdmin() {
   var user;
 
-  // Two try/catch blocks are deliberate: the lookup failure and every later failure
-  // report different message prefixes, so collapsing them into a single catch would
-  // change observable output. See docs/PRESERVED-QUIRKS.md.
+  // Two try/catch blocks are deliberate: the lookup failure and every later failure report
+  // different message prefixes, so collapsing them into one catch would change the output.
   try {
     // findByLogin searches by email or username
     user = await User.findByLogin(email.toLowerCase());

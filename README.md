@@ -15,7 +15,12 @@ Trinket lets students and educators write and run code directly in the browser, 
 ## Prerequisites
 
 - Docker and Docker Compose
-- Node.js 22 LTS and npm 10+ (for local development without Docker) - `.nvmrc` pins it, so `nvm use` selects it
+- Node.js 22 LTS and npm 10 or 11 (for local development without Docker) - `.nvmrc` pins Node, so `nvm use` selects it,
+  and `package.json` `engines` declares `node >=22.12.0 <23.0.0` with `npm >=10.0.0`. Node 22.23.2 ships npm 10.9.8, so
+  a stock Node 22 LTS install already satisfies both; `.npmrc` sets `engine-strict=true`, so a Node outside that range
+  makes `npm ci` fail rather than warn. The npm constraint carries no upper bound on purpose: with
+  `engine-strict=true`, an upper bound would make every npm command fail wherever npm 11 is the shipped default, and
+  the committed `lockfileVersion` 3 installs identically under npm 10 and npm 11
 - MongoDB 5.0+
 - Redis (optional - falls back to in-memory)
 
@@ -76,12 +81,25 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
    npm ci
    ```
 
-   The CSS build (`npm run build`) also needs the gitignored `public/components` tree, which the Docker build
-   hydrates from the `public-components.tgz` release asset - see [COMPONENTS.md](COMPONENTS.md).
+2. Build the stylesheets:
+   ```bash
+   npm run build
+   ```
 
-2. Start MongoDB locally (Redis is optional)
+   `npm run build` first hydrates the gitignored `public/components` tree from the pinned
+   `public-components.tgz` release asset - the same archive the Docker build downloads - and skips that step
+   when the tree is already there, so `git clean -xfd && npm ci && npm run build` works on a clean checkout.
+   See [COMPONENTS.md](COMPONENTS.md).
 
-3. Run the application:
+3. Write `config/local.yaml` and set a session secret of at least 32 characters. It is gitignored, so
+   `git clean -xfd` deletes it and `app.js` then exits at startup - copy it again after any clean:
+   ```bash
+   cp config/local.example.yaml config/local.yaml
+   ```
+
+4. Start MongoDB locally (Redis is optional)
+
+5. Run the application:
    ```bash
    node app.js
    ```

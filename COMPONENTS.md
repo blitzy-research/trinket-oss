@@ -12,18 +12,56 @@ declares it as the install root (`"directory": "public/components"`).
 
 The tree is distributed as `public-components.tgz`, a 166,464,007-byte asset
 attached to the `v1.1.0` GitHub release. The Docker build downloads and unpacks
-it automatically. For a local, non-Docker checkout, run the same fetch from the
-repository root:
+it automatically.
+
+For a local, non-Docker checkout there is nothing to fetch by hand:
+`npm run build` runs `scripts/hydrate-components.js` before Vite, and that
+script unpacks the same pinned `v1.1.0` asset. It checks the archive against a
+recorded byte length and SHA-256 digest before unpacking anything, and it exits
+immediately when the tree is already present - so
+`git clean -xfd && npm ci && npm run build` works from a clean checkout, and
+repeat builds cost nothing.
+
+To hydrate from a local copy of the archive rather than over the network - on an
+air-gapped machine, or from a shared cache - point `TRINKET_COMPONENTS_TARBALL`
+at it. The byte length and the digest are still verified:
 
 ```bash
-curl -L --silent -o ./public-components.tgz \
-  https://github.com/trinketapp/trinket-oss/releases/download/v1.1.0/public-components.tgz \
-  && tar xzf public-components.tgz \
-  && rm public-components.tgz
+TRINKET_COMPONENTS_TARBALL=/path/to/public-components.tgz npm run build
 ```
 
-That archive is a prerequisite for the stylesheet build. On a fresh clone
-`npm run build` fails with `Can't find stylesheet to import.`, because
+The equivalent manual fetch, run from the repository root, is what both that
+script and the Docker build perform:
+
+```bash
+curl --fail --show-error --location --silent -o ./public-components.tgz \
+  https://github.com/trinketapp/trinket-oss/releases/download/v1.1.0/public-components.tgz
+```
+
+Verify the archive before unpacking it, so that a truncated transfer or an HTTP
+error page saved under the archive's name cannot be extracted over your tree:
+
+```bash
+echo '58422c0d0c7d25c1e6fdd1e014ff690f41c899257703e416e85a0fb0a926181f  public-components.tgz' \
+  | sha256sum --check
+```
+
+Only once that prints `public-components.tgz: OK`, unpack and clean up:
+
+```bash
+tar xzf public-components.tgz && rm public-components.tgz
+```
+
+`--fail` makes `curl` exit non-zero on an HTTP error rather than writing the
+error body into the output file, `--show-error` keeps the reason visible despite
+`--silent`, and `--location` follows the redirect GitHub serves for release
+assets. The digest is of the `v1.1.0` asset - 166,464,007 bytes - and does not
+change; on a mismatch, delete the file and download it again instead of
+extracting it.
+
+That archive is a hard prerequisite for the stylesheet build. With the tree
+absent, `npm run build:css` - which calls Vite directly and therefore skips the
+hydration step - fails with `Can't find stylesheet to import.`, because
 `static/scss/base.scss` and `static/scss/embed/embed.scss` both
 `@import "public/components/foundation/scss/foundation"`.
 
@@ -34,12 +72,22 @@ Once the archive is unpacked, a successful build emits exactly two artifacts:
 ### Foundation and the frozen stylesheet layer
 
 Foundation is version 5.5.3, read from
-`public/components/foundation/package.json`, and it is delivered by Bower
-rather than npm: `.bowerrc` sets the install root to `public/components`, and
-no `bower.json` is tracked in this repository. Both
-`static/scss/_settings.scss` and `static/scss/embed/_settings.scss` carry an
-author-written warning that variable names will need checking if Foundation is
-upgraded.
+`public/components/foundation/package.json`, and it is delivered by Bower rather
+than npm. Both `static/scss/_settings.scss` and
+`static/scss/embed/_settings.scss` carry an author-written warning that variable
+names will need checking if Foundation is upgraded.
+
+**Where the Bower metadata actually lives.** This is worth stating precisely,
+because two statements about it can look contradictory. The **only tracked Bower
+artifact in the repository is `.bowerrc`**, which sets the install root
+(`"directory": "public/components"`) and lists `ignoredDependencies`. There is
+**no tracked `bower.json`** - no manifest naming the components or their
+versions is checked in anywhere. The per-component manifests do exist, but only
+**inside the hydrated tree**: unpacking the release archive produces a
+`.bower.json` in each component directory - 24 of them - and because
+`public/components/` is gitignored, none of those is tracked either. So the
+component set is described by the archive's own contents, not by anything in
+version control.
 
 `sass` is held at 1.98.0 and `vite` at 4.5.14 specifically so that this fork
 continues to compile to the same bytes; advancing `sass` past the `@import` and
@@ -47,8 +95,47 @@ legacy JS API removals would break it. The tree emits more than 435 repetitive
 Sass deprecation warnings on each build. Those warnings are tolerated, because
 silencing them would mean touching the frozen stylesheet layer.
 
-The component versions in the tables below describe the contents of the release
-asset, so they must not be changed.
+## About the version numbers in the tables below
+
+The tables that follow are **pre-existing documentation and are left exactly as
+they are.** They are not modified here, because changing them is not one of the
+sanctioned kinds of change in this migration, and because nothing in the runtime
+reads them.
+
+What they are **not** is a certified inventory of the release archive. When the
+hydrated tree is compared against them, the authority for what is actually
+installed is each component's **`public/components/<name>/.bower.json`
+`_release`** field, written by Bower at install time, and on that comparison
+**three rows disagree**:
+
+| Component | Version in the table below | `.bower.json` `_release` in the hydrated tree |
+|---|---|---|
+| skulpt | 0.11.1.34 | **0.11.1.33** |
+| blockly | v20211018 | **v20180924** |
+| vpython-glowscript | 3.2.2 | **3.1.0** |
+
+Three further rows differ in kind rather than in value, and are **not**
+disagreements:
+
+- **viewerjs** - the table says `v0.2.1` and `_release` says `0.2.1`. The same
+  version, written with and without the tag's `v` prefix.
+- **marked** and **midi** - the table says `master`, which is a branch rather
+  than a version. `_release` records the commit that branch resolved to at
+  install time, so the two fields are describing different things. (The `marked`
+  commit recorded there, `55ea8249`, is the same fork commit the base commit's
+  `package-lock.json` pinned for the **npm** `marked` dependency - a separate
+  artifact, catalogued as a deliberate browser-versus-server skew in
+  [docs/PRESERVED-QUIRKS.md](docs/PRESERVED-QUIRKS.md) section 2.)
+
+The remaining nine rows match their `_release` exactly. One row, **Processing.js**,
+records `?` for both repository and version; the hydrated tree answers both -
+`_release` is `1.6.12` and the homepage is the `trinketapp/processing-js` fork -
+and that answer is recorded here rather than written into the table.
+
+**The practical rule: to know what is installed, read the `.bower.json` in the
+component's directory.** Treat the tables as the feature-by-feature map they are
+good at being - which component serves which embed - rather than as a version
+manifest.
 
 ## Components by Feature
 
@@ -117,5 +204,8 @@ Eventually, features should be toggleable so users can skip unnecessary dependen
 ## Notes
 
 - Most components are Trinket forks with customizations
-- Original bower.json preserved for reference but bower is deprecated
+- Bower is deprecated. No `bower.json` is preserved in this repository - the only
+  tracked Bower artifact is `.bowerrc`, and the per-component `.bower.json`
+  manifests exist only inside the gitignored hydrated tree. See *Where the Bower
+  metadata actually lives* above.
 - Components should be cloned/downloaded via setup script, not committed

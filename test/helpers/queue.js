@@ -1,10 +1,9 @@
 var sinon   = require('sinon'),
     queues  = require('../../lib/util/queues'),
-    // Load-safe accessor probe. `db.redis.bullqueues` is the one-element list `[exports]`
-    // (config/default.yaml:L385-L386), so lib/util/queues.js generates an accessor for `exports` alone
-    // and `snapshots` is undefined - the bare `queues.snapshots()` call threw a TypeError at module load.
-    // The fallback mirrors the `NoOpQueue` that a `snapshots` accessor would have returned, because
-    // `snapshots` is one of the nine hard-disabled queues. See docs/PRESERVED-QUIRKS.md section 3.11.
+    // `db.redis.bullqueues` lists `exports` alone, so lib/util/queues.js generates no `snapshots`
+    // accessor and a bare call would throw a TypeError at module load. The guard is required, and the
+    // fallback mirrors the `NoOpQueue` that accessor would return.
+    // See docs/PRESERVED-QUIRKS.md section 3.11.
     snapshotQueue = typeof queues.snapshots === 'function' ? queues.snapshots() : {
       name    : 'snapshots',
       process : function() {},
@@ -17,9 +16,9 @@ module.exports = {
   snapshotQueue : snapshotQueue,
   stub : function() {
     before(function() {
-      // PRESERVED QUIRK: the fake returns a hand-rolled SYNCHRONOUS single-argument thenable, never
-      // `Promise.resolve()` - a real promise defers resolution to a microtask and would reorder execution
-      // for any caller. The unused `data` parameter is preserved too. See docs/PRESERVED-QUIRKS.md 3.11.
+      // The fake returns a hand-rolled synchronous single-argument thenable, never `Promise.resolve()`,
+      // which would defer to a microtask and reorder execution for any caller. The unused `data`
+      // parameter is preserved. See docs/PRESERVED-QUIRKS.md section 3.11.
       sinon.stub(snapshotQueue, 'add').callsFake(function(data) {
         return {
           then : function(f) {

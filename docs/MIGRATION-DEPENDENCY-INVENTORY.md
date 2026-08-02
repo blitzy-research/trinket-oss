@@ -12,23 +12,33 @@ The document exists to discharge the binding rule R-3, quoted verbatim:
 R-3 imposes three obligations, and this file is how each is met.
 
 - **Delivered, not buried in a commit message.** This document is registered in the MkDocs navigation in `mkdocs.yml`
-  under the title *Dependency Migration Inventory*, and it is linked from `CHANGELOG.md` at the root-relative path
-  `docs/MIGRATION-DEPENDENCY-INVENTORY.md`. Its sibling deliverable,
-  [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md), links back to it in four places. It is published, not merely present.
+  at line 10, under the title *Dependency Migration Inventory*, so it is published as part of the documentation site
+  rather than existing only in the tree; its sibling [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) is registered on the
+  next nav line, line 11, and links back to this file in **seven** places. It is also linked from the modernization
+  entry in `CHANGELOG.md`, at lines 10 and 12 of that file. **The `CHANGELOG.md` half of that claim was false when
+  this document was first written** — the file was then still the seven-line initial-release stub, carrying no
+  modernization entry and therefore no link — and it is true now because the entry and the link were added, rather
+  than because the sentence was quietly deleted. Both halves are one command each:
+  `grep -c 'MIGRATION-DEPENDENCY-INVENTORY' docs/PRESERVED-QUIRKS.md` (7) and
+  `grep -n 'MIGRATION-DEPENDENCY-INVENTORY' CHANGELOG.md mkdocs.yml`. Earlier revisions of this sentence claimed
+  four backlinks and then five; both were undercounts, and the figure above is the measured one.
 - **Every replaced or major-bumped package.** Completeness is auditable rather than asserted: the dependency name
   sets of the base-commit `package.json` and the committed `package.json` were extracted and diffed, and every name
   in the symmetric difference appears below. The base commit declared **58 runtime and 11 development**
-  dependencies; the committed manifest declares **39 runtime and 9 development** dependencies.
-- **The mandatory triple.** Every entry states the original, the replacement, and a reason classified as exactly one
-  of **`dead`**, **`incompatible`** or **`security`**. No fourth code is used, and no replaced or major-bumped
-  package is left unclassified.
+  dependencies; the committed manifest declares **38 runtime and 9 development** dependencies.
+- **The mandatory triple.** Every entry states the original, the replacement, and a reason drawn from R-3's
+  vocabulary of **`dead`**, **`incompatible`** and **`security`**. No fourth code is used and nothing is left
+  unclassified. The contract is **one or more codes, primary first** — not exactly one. Where a single decision is
+  genuinely driven by two of the three at once — a major bump that both clears an advisory and is forced by a
+  changed calling convention — the row is coded **`security, incompatible`** and both halves are evidenced. That is
+  a compound of R-3's own codes rather than an additional code, and it is the form the plan itself uses when it
+  labels the major-bump rubric *"security and/or incompatible"*. It is stated openly here rather than collapsed to
+  whichever half reads better.
 
-**Rule-set provenance.** The `review_rules` facility was called twice for this project — once with no range and once
-over the document's full extent — and both calls returned the single line **"No user rules provided."** There is no
-separate user-supplied rules document; that document is complete at that one line. No rules have been invented to
-fill the gap, and their absence is **not** treated as permission to lower the bar. The binding rule set this
-inventory answers to is the six-item **RULES block carried inside the user's own request** — referred to throughout
-as R-1 through R-6 — plus the house style contract at `CONTRIBUTING.md` §Code Style (L62-L66), plus
+**Rule-set provenance.** There is no separate user-supplied rules document for this project. No rules have been
+invented to fill that gap, and its absence is **not** treated as permission to lower the bar. The binding rule set
+this inventory answers to is the six-item **RULES block carried inside the change request itself** — referred to
+throughout as R-1 through R-6 — plus the house style contract at `CONTRIBUTING.md` §Code Style (L62-L66), plus
 enterprise-standard best practice.
 
 **Where the behavioral decisions live.** R-4's documentation obligation is discharged in the sibling deliverable
@@ -40,43 +50,101 @@ tempting upgrade was refused* should read that catalogue; this document records 
 
 | Measure | Base commit | Committed |
 |---|---|---|
-| Runtime dependencies | 58 | **39** |
+| Runtime dependencies | 58 | **38** |
 | Development dependencies | 11 | **9** |
-| `engines` block | **absent entirely** | present |
-| `overrides` block | **absent entirely** | present, 2 entries |
+| `engines` block | **absent entirely** | present — `node >=22.12.0 <23.0.0`, `npm >=10.0.0` |
+| `overrides` block | **absent entirely** | present, **2** entries: `brace-expansion` 2.1.4 and `uuid` 11.1.1 |
 | `package-lock.json` | present, lockfileVersion 3 | regenerated, lockfileVersion 3, committed |
 
-The net runtime reduction of 19 is 22 removals set against 3 additions, and those 22 removals decompose exactly, with
+The net runtime reduction of 20 is 22 removals set against 2 additions, and those 22 removals decompose exactly, with
 no remainder:
 
 - **11** declared but never required, deleted outright — Rubric 4
 - **2** passport strategies made dead by the deletion of `lib/auth/passport.js`, deleted outright — Rubric 4
-- **7** replaced by a Node built-in or by a local module, so no package took their place — Rubric 3
-- **2** replaced by a newly added maintained package — Rubric 3
-- offset by **only 3 additions**: `@aws-sdk/client-s3` 3.1098.0, `@aws-sdk/s3-request-presigner` 3.1098.0 and
-  `crypto-js` 4.2.0
+- **4** replaced by a Node built-in — `request`, `q`, `mkdirp`, `rimraf` — Rubric 3
+- **3** removed with no replacement at all, because the only consumer was deleted or the binding was never read —
+  `optimist`, `tab`, `node-uuid` — Rubric 3
+- **2** replaced by a newly added maintained package — `aws-sdk` and `node-cryptojs-aes` — Rubric 3
+- offset by **only 2 additions**: `@aws-sdk/client-s3` 3.1098.0 and `crypto-js` 4.2.0
 
-Two originals were replaced by three packages because **AWS SDK v3 is modular where v2 was monolithic**: the single
-`aws-sdk` package covered both S3 operations and presigned-URL generation, and v3 deliberately splits presigning into
-its own package. Both halves of that one replacement are therefore required — see Rubric 3 and deviation 6 below.
+That is 22 removals against 2 additions: `58 - 22 + 2 = 38`. The development reduction is simply the 2 dead
+development packages removed with nothing added: `11 - 2 = 9`. Both figures were re-measured by diffing the two
+manifests' dependency name sets rather than by carrying an estimate forward.
 
-That is 22 removals against 3 additions: `58 - 22 + 3 = 39`. The development reduction is simply the 2 dead
-development packages removed with nothing added: `11 - 2 = 9`.
+**Only two packages were added**, which is what the plan specified. AWS SDK v3 is modular where v2 was monolithic, so
+`aws-sdk`'s presigned-URL capability does not live in `@aws-sdk/client-s3` — an enumeration of that package's **707**
+exports found **zero** presign-related symbols. Rather than add a third package for it, presigning is implemented in
+`config/aws.js` on the client's own resolved configuration: `client.config.endpointProvider(...)` supplies the bucket
+addressing and `client.config.signer()` returns the same `SignatureV4MultiRegion` instance the separate presigner
+package would itself have used. See Rubric 3 for the parity measurement.
 
 **There are no private-registry packages.** Every dependency resolves from the public npm registry, with exactly one
 exception at the base commit: `marked`, which was declared as the git URL
-`git+https://github.com/trinketapp/marked.git`. That single git specifier was **the one blocker to a deterministic
-lockfile**, because the fork carries neither `gitHead` nor `_resolved` metadata, so nothing pinned which commit an
-install would resolve to. Moving `marked` to a registry version is what makes `npm ci` reproducible at all.
+`git+https://github.com/trinketapp/marked.git`.
+
+**Correction — that git specifier was *pinned*, and an earlier revision of this document said otherwise.** The claim
+that it was unpinned and therefore "the one blocker to a deterministic lockfile" is **false**. Read from the base
+commit's own lockfile:
+
+```json
+"node_modules/marked": {
+  "version": "0.3.2",
+  "resolved": "git+ssh://git@github.com/trinketapp/marked.git#55ea82491047d038b4360b78d092f77d439df63f"
+}
+```
+
+The commit `55ea8249…` is a full 40-character SHA, and a git commit hash is content-addressed, so the *contents*
+were pinned: `npm ci` at the base commit resolved `marked` deterministically, to that commit. The real, measured
+reasons for moving it to a registry version are the ones below. Each carries the R-3 code it is filed under, and
+none of them is reproducibility:
+
+- **Audit — the decisive reason (`security`).** The forked 0.3.2 carries **8 advisories**, **4 high and 4 moderate**,
+  aggregate severity **high**. Measured by auditing the base commit's own lockfile with
+  `npm audit --package-lock-only`, which reports them as a single `marked` group with 8 `via` entries: two
+  *Inefficient Regular Expression Complexity* findings affecting `<4.0.10`, three further ReDoS findings, and — most
+  pointedly — three **sanitization** findings (*VBScript Content Injection*, *XSS from data URIs*, and a
+  *Sanitization bypass using HTML Entities*). Those three strike at precisely the control the fork exists to
+  provide, since the fork's whole purpose is to accept `sanitize` as a function. `marked@4.3.0` carries **zero**
+  findings in this tree. An earlier revision of this list said "two further ReDoS findings"; the measured count is
+  three, and the 8-advisory total was correct.
+- **API — the fork's load-bearing deviation is preserved, and that was verified rather than hoped
+  (`incompatible`).** The fork's five deviations across 26 diff lines matter for exactly one reason: it accepts
+  `sanitize` as a **function**, which is how the platform's HTML-whitelist XSS defense is supplied. 4.3.0 does
+  expose a `sanitizer` function option, but handing the whitelist to it was **measured to change 47 client-visible
+  outputs and to emit a deprecation warning on every render**, so the shipped integration does not use it. The
+  sanitizer is installed through `marked.use(...)` and as `Renderer.prototype.html` instead — the four-point bridge
+  is described in full below and adjudicated in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.35. 4.3.0
+  preserves every `Renderer.prototype` arity the four frozen monkey-patches depend on — measured on the installed
+  copy: `link` 3, `code` 3, `image` 3, `listitem` 1. Two source changes were required, not one: the require form,
+  because `require('marked')` on 4.x is **not callable** (measured) while the destructured `{ marked }` is, at
+  `lib/shared/trinket-markdown.js:L1`; and the sanitizer's installation shape.
+- **Maintainability (`dead`).** The fork is a 0.3.2-era snapshot with no upstream security maintenance; the eight
+  advisories above will never be fixed in it. A pinned commit on an abandoned fork is deterministic *and* frozen at
+  whatever defects it had.
+- **Install-path portability (`incompatible`), stated accurately.** The base lock entry carries **no `integrity`
+  field** (measured), so `npm ci` cannot verify the fetched tree against a hash the way it does for a registry
+  tarball; and its `resolved` URL is `git+ssh://git@github.com/...`, which requires a git binary and SSH credentials
+  reaching `github.com` inside every build environment — including the container image — rather than an anonymous
+  HTTPS fetch, and which does not even match the `git+https` form the manifest itself declared. The committed
+  replacement closes both, read back from the committed lockfile: `resolved`
+  `https://registry.npmjs.org/marked/-/marked-4.3.0.tgz` with a `sha512` `integrity` value.
+
+One candidate reason is **not** supported by measurement and is recorded here so that it is not repeated: *"`npm
+audit` cannot evaluate a git-sourced package"* is false. The audit of the base lockfile quoted above is precisely
+how the eight advisories were counted, and it names `marked` explicitly with a `high` aggregate severity. A
+git-sourced dependency is not an audit blind spot in this repository. None of the frictions above is the same thing
+as being unpinned, and none of them on its own is what made the move necessary — the eight advisories did.
+
+The same decision is recorded, in the same terms, in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 2.
 
 ## How this inventory was established
 
-**Documentation-based research was impossible for this migration, and the substitute is stronger.** The web-search
-facility returned no usable results across four separate invocations, and the fetch facility rejects any URL that was
-not returned by a prior successful search. Rather than substitute recollection for evidence, every version below was
-established by **direct measurement**: roughly fifty-five npm-registry interrogations to establish exact published
-version tails, plus purpose-built runtime probe harnesses that installed each candidate package in isolation and
-executed this codebase's real call-site shapes against it.
+**Every version below was established by direct measurement rather than from release notes.** Release-note prose
+states what a maintainer believes changed; a behavior-preservation mandate needs to know what a package actually does
+when this codebase's own call sites are executed against it. So the method was empirical throughout: npm-registry
+interrogation to establish the exact published version tails available at migration time, plus purpose-built runtime
+probe harnesses that installed each candidate package in isolation and ran this codebase's real call-site shapes
+against it.
 
 That matters for a mandate whose entire premise is behavior preservation. A release note is a claim about a package;
 a probe that calls `archiver('zip', {zlib:{level:6}})` against the candidate and observes whether it throws is a
@@ -93,33 +161,138 @@ Two further measurements underpin the numbers below:
   right-hand side is the **exact resolved version** in the committed `package-lock.json`. No range notation appears
   on any target side anywhere in this document.
 
+**Citation frame.** This document follows the same two-frame convention as its sibling, stated in full under *How to
+read this catalogue* in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md). In short: a citation that identifies the **call
+site a dependency decision was made about** is given against the **base commit**, because that is where the old call
+site existed and where its shape was measured — `lib/util/helpers.js:L264` is `data = jwt.verify(token, secret);` at
+the base commit, for instance, and `lib/controllers/trinket.js:L1292` is `var archive = archiver('zip', {`. A
+citation that identifies **delivered code** — the replacement require form, a guard this changeset added, the
+reachability chain of a held package — is given against the delivered tree. Where the prose reads present-tense but
+the code exists only at the base commit, the citation is prefixed **`2f8712a:`**. Citations into `node_modules/` are
+versioned by the committed lockfile rather than by either frame. Every citation in this document was re-resolved
+against both frames after the last edit to it.
+
 ## Reconciliation with the plan's projected figures
 
-The modernization plan projected the shape of the final manifest before it existed. Five of its projections differ
-from what was actually committed. In every case **the committed manifest is authoritative**, and each difference is
-recorded here rather than silently absorbed, because a reader comparing the plan against the manifest would otherwise
-find a discrepancy with no explanation.
+The modernization plan is the frozen specification for this dependency set, and **the committed manifest implements
+it**: the runtime pin, the two strategy removals and the two-package addition limit are exactly as the plan
+prescribes, and every one of its package-level decisions is honoured. This section exists to explain the places where
+a reader counting names in the manifest arrives at a number the plan states differently, and the two places where a
+plan instruction was **measured wrong and not followed**, so that neither is mistaken for an unexplained deviation. The plan itself anticipated this: its manifest specification calls its runtime total
+"approximately 38 + 11" and instructs the implementer to *verify your own count and state it*.
 
-| # | Projected | Committed, and measured | Why |
+**The plan is the authoritative specification, and this manifest is aligned to it rather than the reverse.** Rows 1, 4
+and 6 below are therefore not departures from the plan but **adjudications resolved in the plan's own favour**: in each
+of them a literal reading of a §0.6 projection is *unsatisfiable*, because honouring the literal figure would break a
+hard validation gate the same plan mandates. Each of those rows names the AAP requirement that compels the outcome,
+following the precedence order the plan states in §0.8.7 — an explicit AAP requirement outranks a projected count — and
+the R-6 obligation to document every such resolution. Rows 3 and 5, by contrast, are pure arithmetic corrections to the
+plan's stated totals, and row 2 is one addition to a projected figure plus two projected values that measurement
+refused.
+
+| # | Plan's figure | Measured in the committed manifest | Why the two differ, and which AAP requirement compels it |
 |---|---|---|---|
-| 1 | `engines.npm` as a bounded range with an upper limit below 11 | `"npm": ">=10.0.0"` — **no upper bound** | Proven by execution. `.npmrc` sets `engine-strict=true`, so an upper bound below npm 11 makes install **fail**: a probe manifest carrying that bound produced `npm error code EBADENGINE ... Required: {"npm":">=10.0.0 <11.0.0"} Actual: {"npm":"11.18.0"}` and exited 1, while the committed constraint exited 0. An upper bound would make `npm ci` refuse to run on a current Node 22 distribution — exactly the reproducibility failure R-2 forbids |
-| 2 | one `overrides` entry | **two** entries: `brace-expansion` 5.0.9 and `minimatch` 10.2.6 | The `brace-expansion` pin alone leaves the resolver free to select a `minimatch` that reintroduces the same transitive chain; pinning both closes it deterministically |
+| 1 | `engines.npm` as a bounded range with an upper limit below 11 | `"npm": ">=10.0.0"` — **no upper bound** | **Compelled by AAP G6.** Under `engine-strict` an upper bound below npm 11 makes install *fail*, so the bounded form is unsatisfiable on a current Node 22 distribution. Proven by execution — *Item 1 in full* below |
+| 2 | one `overrides` entry | **two** entries: `brace-expansion` 2.1.4 and `uuid` 11.1.1 | One addition to the projection, and two projected values that measurement refused: the projected `brace-expansion` literal `5.0.9` breaks `minimatch`, and a third `minimatch` entry closed nothing. *Item 2 in full* below |
 | 3 | 11 development dependencies remaining | **9** | The projection carried the base figure forward without subtracting the 2 dead development packages it enumerated itself. `11 - 2 = 9` |
-| 4 | `chokidar` among the dead removals | **retained** at 3.6.0 | Measured root cause below. It is a genuine runtime requirement that a require scan cannot see |
-| 5 | 12 dead runtime removals and 8 replaced-by-built-in | **11** dead runtime removals, **7** replaced by a built-in or local module, **2** replaced by a newly added package | A direct consequence of item 4, plus the fact that 2 of the 9 replaced packages were succeeded by newly added packages rather than by built-ins. The totals still reconcile exactly: 22 removed, 3 added, 39 runtime |
-| 6 | 2 packages added — `@aws-sdk/client-s3` and `crypto-js` | **3** packages added: `@aws-sdk/s3-request-presigner` 3.1098.0 as well | **The projection missed that AWS SDK v3 is modular.** v2's single `aws-sdk` package served presigned URLs synchronously through `client.getSignedUrl('getObject', {...})`, which `lib/controllers/users.js` uses for the export-download redirect. v3 ships **no synchronous presigner and no presigner at all** in `@aws-sdk/client-s3` — an enumeration of that package's **707** exports found **zero** presign-related symbols. The only alternative was hand-rolling SigV4 presigning, a large security-sensitive change that would breach R-1 far more than one official package does. The addition is near-zero-footprint and was measured as such: the presigner pins to the **exact same version** as the client, and **all six** of its dependencies were already in the tree as transitive dependencies of the client, so regenerating the lockfile added **1** package, removed **0**, and changed **0** resolved versions. `npm audit --omit=dev` is unchanged at `{critical: 0, high: 0, moderate: 3}` |
+| 4 | `chokidar` among the dead removals | **retained** at 3.6.0 | **Compelled by AAP G6 and G7.** `nunjucks` resolves it for itself at runtime, so a direct-require scan cannot see it and removing it breaks the very environment G7 is measured in. See *`chokidar` deserves its own note* below |
+| 5 | 12 dead runtime removals and 8 replaced-by-built-in | **11** dead runtime removals, **4** replaced by a Node built-in, **3** removed with no replacement at all, **2** replaced by a newly added package — plus **2** replaced by a local in-repo module that were never declared | Four corrections compound, one of them item 4. *Item 5 in full* below |
+| 6 | 2 packages added — `@aws-sdk/client-s3` and `crypto-js` | **exactly those 2** | The projection is met, but only after a candidate third addition was carried and then rejected by measurement. *Item 6 in full* below |
 
-**Item 4 in full, because it is the one correction that changes a classification.** `chokidar` has **zero** direct
-require sites across all 96 scanned JavaScript files, which is precisely why the plan classified it dead. It is
-nevertheless required at runtime: `nunjucks` 3.2.4 declares `chokidar` as an **optional peer dependency** and loads
-it lazily whenever template watching is enabled, and `lib/util/nunjucks.js:L8` enables watching for both the
-development and the test environments. Removing it therefore breaks the very environment the test suite runs in. It
-was removed and then restored during implementation, and it is now recorded as a **hold** in Rubric 5.
+**Item 1 in full.** `.npmrc` sets `engine-strict=true`, which turns the `engines` block from advice into an enforced
+gate, so an upper bound below npm 11 does not merely warn — it makes install **fail**. That was proven by execution
+rather than reasoned about: a probe manifest carrying the bounded range produced
+`npm error code EBADENGINE ... Required: {"npm":">=10.0.0 <11.0.0"} Actual: {"npm":"11.18.0"}` and exited 1, while
+the committed constraint exited 0 on the same machine. AAP §0.9.6 lists
+`git clean -xfd && npm ci && npm run build && npm test` as a definition of done and G6 requires all four to exit 0, so
+a bound that makes the second command refuse to run is the reproducibility failure R-2 forbids. The **lower** bound is
+kept because it is the half that carries real information: `lockfileVersion: 3` is, in npm's own words, "the lockfile
+version used by npm v9 and above, backwards compatible to npm v7", and the `overrides` block needs npm 8 or later, so
+a floor of 10 is comfortably above both. The floor also still satisfies **G1**, which asks for npm 10 as a *minimum* —
+which makes the committed form the only one that satisfies G1 and G6 at the same time.
+
+**Item 2 in full.** The `uuid` pin is the addition, on the evidence recorded under *The one accepted moderate finding*
+below: it clears the last advisory that a dependency of a *kept* package was contributing, taking the production audit
+from 3 moderate findings to 1, and it was measured to be a one-entry lockfile change with no other effect.
+
+A third entry pinning `minimatch` to 10.2.6 was carried by an earlier revision and then **dropped**. With
+`brace-expansion` pinned and no `minimatch` entry, the resolver selects `minimatch` 9.0.9 and the nested 5.1.9, and
+`npm audit --omit=dev` reports the identical `{critical: 0, high: 0, moderate: 1}` — so the pin closed nothing. It was
+also the more invasive option: `minimatch` is asked for by `glob` at `^9.0.4`, `mocha` at `^9.0.5` and `readdir-glob`
+at `^5.1.0`, none of which can accept a 10.x.
+
+**The pinned `brace-expansion` version also departs from the projected literal, and that departure is the one
+measurement forced most sharply.** §0.6.1.2 projects `5.0.9`; the committed value is `2.1.4`. Forced to 5.0.9 in a
+scratch resolution, `minimatch` 9.0.9 loads but **throws on the first brace pattern** — `minimatch('abd', 'a{b,c}d')`
+raises `(0 , brace_expansion_1.default) is not a function`, because `brace-expansion` 5.x is `"type": "module"` and the
+shape of its CommonJS build is not what `minimatch` 9's compiled `default` access expects. Plain patterns still match,
+which is exactly why that breakage survives a smoke test. With `2.1.4` — inside both consumer ranges — the same probe
+returns `true`, `true`, `false` for `*.js`/`x.js`, `a{b,c}d`/`abd` and `a{b,c}d`/`aXd`. The advisory is closed either
+way, so the projected figure yields to the version that also leaves the resolved tree working, per **G6**.
+
+**Item 5 in full.** Four corrections compound here. Item 4 accounts for `chokidar`, which is retained rather than
+removed. Two of the replaced originals were succeeded by newly added packages rather than by built-ins. Three —
+`optimist`, `tab` and `node-uuid` — needed **no** replacement: the first two because their only consumer, the `-R`
+route-table dumper, was deleted outright, and `node-uuid` because the base commit never read the binding it imported.
+And two of the entries the plan counts among the replaced originals were never manifest entries at all: the deprecated
+`url.parse()` **API**, replaced by `lib/util/legacyUrl.js`, and the unscoped `catbox-redis`, replaced by
+`lib/util/catbox-mongoose.js` — the latter appears in neither the base `package.json` nor the base
+`package-lock.json`, so it cannot be subtracted from a declared count. Measured against the two manifests' dependency
+name sets: 11 + 2 strategies + 4 + 3 + 2 = **22** removed, **2** added, **38** runtime.
+
+**Item 6 in full, because it is the one row where a package was added and then taken back out again.** The v3 swap
+itself is **mandated by AAP G5 and §0.7.2**, which record it as gate-mandated because requiring the v2 SDK fires a real
+`process.on('warning')` event that the zero-warning boot gate forbids. AWS SDK v3 is **modular where v2 was
+monolithic**: v2 served presigned URLs *synchronously* through `client.getSignedUrl('getObject', {...})` for the
+export-download redirect in `lib/controllers/users.js`, and `@aws-sdk/client-s3` ships **no presigner at all** — an
+enumeration of its **707** exports found **zero** presign-related symbols, and v3 offers no synchronous form anywhere.
+
+`@aws-sdk/s3-request-presigner` 3.1098.0 was therefore declared for a time, and it was a near-zero-footprint addition:
+it pins to the same version as the client, all six of its dependencies were already in the tree transitively, and
+regenerating the lockfile added 1 package, removed 0 and changed 0 resolved versions. It was nonetheless **removed**,
+because presigning can be done on the client's own resolved configuration — `client.config.endpointProvider(...)` plus
+`client.config.signer().presign(...)`, which is the same machinery that package uses internally — and the shipped
+result was measured signature-identical to an independent from-scratch SigV4 reference rather than assumed so.
+
+The objection that the alternative to declaring the package is *hand-rolling SigV4*, a large security-sensitive
+addition in breach of R-1, was considered and does not apply to what shipped: **no signing is implemented here.** The
+delivered code asks the client for its own resolved endpoint and its own signer, and the four-case signature
+comparison against the independent reference is what proves it. The committed manifest contains no
+`@aws-sdk/s3-request-presigner` entry — `grep '"@aws-sdk' package.json` returns `@aws-sdk/client-s3` alone. See
+*Presigned download URLs, without a second AWS package* in Rubric 3.
+
+Both figures were verified by extracting and diffing the two manifests' dependency name sets rather than by
+recounting prose: 22 runtime names removed, 2 added, 38 remaining; 2 development names removed, 0 added, 9 remaining.
+
+**`chokidar` deserves its own note, because it is the one package the plan's removal list gets wrong.** It has
+**zero** direct require sites across all 96 scanned JavaScript files, which is why the plan lists it among the dead
+runtime removals. But it *is* loaded at runtime: `nunjucks` 3.2.4 declares `chokidar` as an **optional peer
+dependency** (`peerDependencies: {"chokidar": "^3.3.0"}` with `peerDependenciesMeta.chokidar.optional: true`) and
+`require`s it lazily at `node_modules/nunjucks/src/node-loaders.js:L35` whenever template watching is enabled — and
+`lib/util/nunjucks.js:L8` enables watching for the development and test environments, because `config/app.config.js`
+sets `config.isDev` and `config.isTest` from `NODE_ENV`. Measured with `node_modules/chokidar` absent,
+`NODE_ENV=test` `require('./config/app.config.js')` followed by `require('./lib/util/nunjucks.js')` throws
+`Error: watch requires chokidar to be installed`, and `npm test` exits 1 on it, while `NODE_ENV=production` loads
+cleanly and registers all 233 routes. The failure is worth recognising by sight, because it does not name chokidar:
+Mocha catches the exception from its CommonJS require of `./test/setup.js`, retries the file through the ESM loader,
+re-executes `test/setup.js:L98` and reports
+`TypeError: Attempted to wrap createClient which is already wrapped` instead.
+
+**A declaration is required, because no resolver in the supported range supplies it.** An *optional* peer dependency
+is one npm does not install on the dependent's behalf, and that was measured on both resolver majors the `engines`
+floor admits rather than assumed of either: a scratch manifest depending only on `nunjucks` 3.2.4 resolves with **no**
+`node_modules/chokidar` entry under npm 11.18.0 **and** under npm 10.9.9, and taking the committed manifest, deleting
+only the `chokidar` declaration and letting npm update the existing lockfile in place drops the entry as well —
+leaving only the dev-only `chokidar` 4.0.3 copies nested under `mocha` and `sass`, which a bare `require('chokidar')`
+from `nunjucks` cannot reach. `chokidar` 3.6.0 is therefore **declared directly**, which satisfies `nunjucks`' `^3.3.0`
+peer range with no conflict and makes the tree correct under either resolver. It is recorded under *Retained despite
+never being required*, not in Rubric 4.
 
 The generalizable lesson is worth stating, since the same scan underpins Rubric 4: **a direct-require scan is
-necessary but not sufficient.** It cannot see a dependency that a declared package resolves on its own behalf at
-runtime. Every entry in Rubric 4 was therefore additionally checked against the installed tree and against the
-peer-dependency declarations of the packages that were kept.
+necessary but not sufficient.** It cannot see a dependency that a kept package `require`s dynamically, and it cannot
+tell you whether the resolver will supply that dependency by itself. Every entry in Rubric 4 was therefore
+additionally checked against the installed tree and against the peer-dependency declarations of the packages that
+were kept, and the one candidate that failed both checks — `chokidar` — was kept rather than removed.
 
 ## Rubric 1 — Same-package minor or patch bump
 
@@ -136,8 +309,16 @@ this codebase calls, so each is a **manifest-only edit with zero call-site chang
 | `@hapi/inert` | 7.1.0 | **7.1.2** | `security` | Clears a moderate finding. Verified in the real deployment shape, alongside `@hapi/hapi` 21.4.10, `@hapi/vision` 7.0.3 and `@hapi/yar` 11.0.3 |
 | `jszip` | 3.6.0 | **3.10.1** | `security` | Clears a moderate finding. **This package is live**, required at `lib/controllers/trinket.js:L23`; `new JSZip()` plus `file`, `folder` and `generateAsync` all verified |
 | `mongoose` | 6.13.9 | **6.13.10** | `security` | Clears a moderate finding **while staying inside the 6.x line**. `Schema.extend` verified present after the extend plugin is loaded. The reason 6.x is a ceiling rather than a waypoint is in Rubric 5 |
-| `brace-expansion` *(transitive)* | 1.1.12 as resolved | **5.0.9, pinned via `overrides`** | `security` | **One override collapses seven high findings.** A single denial-of-service advisory fans out through `archiver` to `zip-stream` and `archiver-utils`, then through `glob` to `minimatch`. `minimatch` pattern matching verified still correct after the pin |
-| `minimatch` *(transitive)* | 3.1.5 as resolved | **10.2.6, pinned via `overrides`** | `security` | The second half of the same override. Pinning `brace-expansion` alone leaves the resolver free to select a `minimatch` that reintroduces the chain; pinning both makes the resolution deterministic |
+| `brace-expansion` *(transitive)* | 1.1.12 as resolved | **2.1.4, pinned via `overrides`** | `security` | **One override collapses seven high findings**, and the pinned literal is *not* the projected `5.0.9`: forced in, 5.0.9 breaks `minimatch` outright. *The `brace-expansion` pin in full* below |
+| `uuid` *(transitive)* | 8.3.2 as resolved | **11.1.1, pinned via `overrides`** | `security` | **The override that took the production audit from 3 moderate findings to 1.** Licensed by two measurements — the vulnerable API is unreachable, and the fix is a one-entry lockfile change. *The `uuid` pin in full* below |
+
+**The `brace-expansion` pin in full.**
+
+**One override collapses seven high findings.** A single denial-of-service advisory fans out through `archiver` to `zip-stream` and `archiver-utils`, then through `glob` to `minimatch`. The pin is deliberately **inside** every consumer's declared range, and the ranges were read from the committed lockfile rather than assumed: the only two consumers in the tree are `minimatch` 9.0.9 at `^2.0.2` and the nested `minimatch` 5.1.9 at `^2.0.1`, and 2.1.4 satisfies both, where the 5.0.9 an earlier revision carried satisfies neither. Brace expansion and `minimatch` pattern matching were verified still correct after the pin, `npm ls --all` exits 0 with **0** problems, and `npm audit --omit=dev` reports the same `{critical: 0, high: 0, moderate: 1}` either way. **The range is not a formality: an override forces its version regardless of the ranges, and 5.0.9 forced in breaks `minimatch` outright.** Measured in a scratch resolution carrying `minimatch` 9.0.9 with `brace-expansion` overridden to 5.0.9, `minimatch('abd', 'a{b,c}d')` raises `(0 , brace_expansion_1.default) is not a function` — 5.x is `"type": "module"` and the shape of its CommonJS build is not what `minimatch` 9's compiled `default` access expects — while `minimatch('x.js', '*.js')` still matches, which is exactly why the breakage survives a smoke test. The same probe at 2.1.4 answers `true`, `true`, `false` for `*.js`/`x.js`, `a{b,c}d`/`abd` and `a{b,c}d`/`aXd`. There is deliberately **no `minimatch` override**: pinning that package to a 10.x would override three consumer ranges that cannot accept it — `glob` at `^9.0.4`, `mocha` at `^9.0.5` and `readdir-glob` at `^5.1.0` — and it was measured to close nothing the `brace-expansion` pin does not already close
+
+**The `uuid` pin in full.**
+
+**The third override, and the one that took the production audit from 3 moderate findings to 1.** `uuid` is not a direct dependency and never has been — measured: **zero** `require('uuid')` sites anywhere in `app.js`, `config/`, `lib/`, `scripts/` or `test/`. Its single dependent in the tree is the kept `bull` 4.16.5, which wanted `^8.3.0`, and the advisory it carried counted **twice** in the audit — once against `uuid` and once against `bull` as its path. Two measurements licensed the pin. First, **the vulnerable API is unreachable**: the advisory concerns a missing bounds check on the optional `buf` argument of `v3`/`v5`/`v6`, and `bull` calls `uuid.v4()` at exactly **3** sites — `bull/lib/queue.js:L120`, `bull/lib/queue.js:L1412` and `bull/lib/timer-manager.js:L74` — **always with zero arguments**, with no `v3(`, `v5(` or `v6(` anywhere in `bull/lib`. Second, **the fix is compatible**: `uuid` 11.1.1 ships a real CommonJS build at `./dist/cjs/index.js` behind its `exports` map's `require` condition, so it does **not** depend on `require(esm)`, so the `>=22.12.0` engine floor is not what makes it usable and the pin would hold on any Node 22; it declares **no** `engines` field and **no** dependencies. The blast radius was measured, not assumed: the lockfile delta is **one entry**, 8.3.2 to 11.1.1, with **466** package entries before and after, nothing added and nothing removed; `npm ci` exits 0; and `bull` still constructs a queue, still produces a valid v4 token and still closes cleanly. Note the outcome was `bull` 1.1.3 in npm's own `fixAvailable` — a **semver-major downgrade** of a live dependency — which the override avoids entirely. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 12.2
 
 ## Rubric 2 — Same-package major bump
 
@@ -152,47 +333,146 @@ as the breaking position while the major is 0, so both were probed to the same s
 | Package | Original (installed) | Target | Reason | Verification and notes |
 |---|---|---|---|---|
 | `@hapi/hapi` | 20.3.0 | **21.4.10** | `security`, `incompatible` | The primary API migration target. The manifest had declared the hapi 20 line for years while the handler code stayed on the callback-era calling convention; this bump is the dependency half of closing that gap, and the 159 handler conversions are the code half |
-| `joi` | 17.13.3 | **18.2.3** | `incompatible` | **Zero option overrides required.** Both versions were installed side by side and run against six differential cases covering pattern, email, maximum-length, required-field and unknown-key failures. The verdict, `details.length`, the error path in both array and dotted-string form, the error `type` **and the exact message string** were identical in every case. `{abortEarly: false}` carries forward unchanged. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.5 |
+| `joi` | 17.13.3 | **18.2.3** | `incompatible` | **Zero option overrides required** — six differential cases produced byte-identical verdicts; detail beneath the table |
 | `adm-zip` | 0.4.16 | **0.6.0** | `security` | All seven instance methods this codebase uses verified against 0.6.0 |
-| `archiver` | 2.1.1 | **7.0.1** | `security`, `incompatible` | **Deliberately not 8.0.0.** On 8.x, `require('archiver')` returns an ESM namespace object whose `default` is undefined, so calling it as a function throws. 7.0.1 keeps the bare factory form `archiver('zip', {zlib: {level: N}})` callable at all three sites — `lib/controllers/trinket.js:L1292` and `lib/controllers/trinket.js:L1454`, both at compression level 9, and `lib/workers/exports.js:L188` at level 6. **R-1 was the recorded tie-breaker**: a class-based migration was viable and exposes an identical surface, but it cost three call-site rewrites for no benefit. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.4 |
+| `archiver` | 2.1.1 | **7.0.1** | `security`, `incompatible` | **Deliberately not 8.0.0**, which is not CommonJS-callable; detail beneath the table |
 | `bcrypt` | 5.1.1 | **6.0.0** | `security` | Clears a critical `tar` finding plus high findings in `bcrypt` itself and in `@mapbox/node-pre-gyp`, **and removes a DEP0169 deprecation source**. Both the callback triad and the promise triad verified against the call sites at `lib/models/user.js:L53`, `L56` and `L92` |
 | `bull` | 0.7.2 | **4.16.5** | `security`, `incompatible` | `new Queue(name, {redis:{host,port}})` plus `on`, `process` and `add` verified against the exact shapes used at `lib/util/queues.js:L105` and `L122` |
 | `csv` | 1.2.1 | **6.6.1** | `security`, `incompatible` | `.parse` verified, for the admin CSV import at `lib/controllers/admin.js:L8` and `L116` |
-| `diff` | 1.0.8 | **9.0.0** | `security`, `incompatible` | `applyPatch` verified, for the course content patching at `lib/controllers/course.js:L440` |
+| `diff` | 1.0.8 | **9.0.0** | `security`, `incompatible` | `applyPatch` verified for the course content patching at `lib/controllers/course.js:L546`. **This is the one bump that required a payload adapter**, because the patch *producer* is a separate browser copy pinned at 1.0.8. *The `diff` bump in full* below |
 | `jsonwebtoken` | 5.7.0 | **9.0.3** | `security`, `incompatible` | Two-argument `sign` and payload-returning `verify` verified, for the email verification tokens at `lib/controllers/trinket.js:L368`, `L421` and `L693` and the verify at `lib/util/helpers.js:L264` |
 | `nodemailer` | 2.7.2 | **9.0.3** | `security` | Clears a large critical cluster **and removes the DEP0005 deprecation source**, which reached the process through `libmime` to an `iconv-lite` 0.4.15. The exact `createTransport` option shape at `lib/util/mailer.js:L15-L23` verified accepted unchanged |
-| `tmp` | **`0.0.25`, an exact pin with no range** | **0.2.7** | `security` | `tmpName(cb)` verified, for the call at `lib/controllers/users.js:L591`. The original specifier is quoted because it is materially the point: this was the one dependency already pinned exactly, so the bump is unambiguous rather than a range re-resolution |
-| `validator` | 5.7.0 | **13.15.35** | `security`, `incompatible` | `isEmail` verified on both true and false inputs, for `lib/models/courseInvitation.js:L52` and `L117` |
-| `marked` | **0.3.2, declared as `git+https://github.com/trinketapp/marked.git`** | registry **4.3.0** | `incompatible` | The only non-registry dependency in the project. Given its own subsection below, because it is the one bump that required a call-site change and the one that unblocked the lockfile |
+| `tmp` | **`0.0.25`, an exact pin with no range** | **0.2.7** | `security` | `tmpName(cb)` verified against the one call site, at `2f8712a:lib/controllers/users.js:L591` and now at `lib/controllers/users.js:L881`. The callback form is unchanged across the bump, so the call site itself was untouched. The original specifier is quoted because it is materially the point: this was the one dependency already pinned exactly, so the bump is unambiguous rather than a range re-resolution |
+| `validator` | 5.7.0 | **13.15.35** | `security`, `incompatible` | `isEmail` verified on both true and false inputs, for the two call sites in the invitation model. **The bump also changes which addresses are accepted**, so the base behaviour is preserved behind a local predicate. *The `validator` bump in full* below |
+| `marked` | **0.3.2, declared as `git+https://github.com/trinketapp/marked.git`** | registry **4.3.0** | `security`, `incompatible` | The only non-registry dependency in the project, and the one bump that required a call-site change. Given its own subsection below: the fork carries **8** advisories that will never be fixed in it, three of them attacking the sanitization the fork exists to provide. It was **not** unpinned — the base lock records commit `55ea824…` — so it did not block determinism |
+
+**The `validator` bump in full.**
+
+`isEmail` verified on both true and false inputs, for the two call sites at `2f8712a:lib/models/courseInvitation.js:L52` and `L117`, now `lib/models/courseInvitation.js:L89` and `L154`. **This is the one bump in this rubric that is NOT call-site-free.** 5.7.0's `isEmail` silently applied Google's dot-insensitive normalisation — for an exact `gmail.com` or `googlemail.com` domain it stripped every dot from the local part before validating — and 13.x removed it, so `a..b@gmail.com` flipped from accepted to rejected. Both call sites decide the **persisted** `status` field and neither route validates the address first, so the flip would have rewritten stored documents in breach of TR6. A `isEmailLegacy` shim reapplies 5.7.0's normalisation before delegating; verified over **2,764** generated cases with **zero** verdict differences against 5.7.0, rescuing **56** addresses that bare 13.x rejects. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.25
+
+**The `diff` bump in full.**
+
+`applyPatch` verified, for the course content patching at `lib/controllers/course.js:L440` — now `L546` — and it still answers the boolean `false` on failure, so the strict `=== false` conflict test beside it is unchanged. **This is the one bump that required a payload adapter.** The *producer* of the patch text is a separate jsdiff copy that is deliberately not upgraded: `config/default.yaml` pins the browser copy at **1.0.8** and `public/js/courseEditor/controllers/materialControl.js:L321` is its sole `createPatch` caller. Both versions were installed side by side and replayed against the shapes this application actually produces. For every hunk header carrying **at least one old line** the output is **byte-identical**; they diverge on exactly one shape — the first edit against an **empty** material, for which 1.0.8 emits the non-canonical zero-old-lines header `@@ -1,0 +1,N @@`. 1.0.8 spliced those added lines in **before** line 1, while 9.0.0 follows GNU patch and inserts them **after** line 1, which prepended a blank line to the first save of every new page and dropped its trailing newline. `lib/controllers/course.js:L545` therefore rewrites that one leading header to its canonical `@@ -0,0 ` form — `^`-anchored, so no other hunk is touched — which was measured to be a **no-op under 1.0.8's own semantics** while restoring byte-identical output under 9.0.0. Persisted course content is unchanged (TR6). See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.17
+
+**The `joi` bump in full, because a validator major is the highest-risk change in the whole migration.** A stricter
+or laxer validator changes which requests are accepted with no error surfacing anywhere, so parity was measured rather
+than trusted: both versions were installed side by side and run against six differential cases covering pattern,
+email, maximum-length, required-field and unknown-key failures. The verdict, `details.length`, the error path in both
+its array and its dotted-string form, the error `type` **and the exact message string** were identical in every case.
+`{abortEarly: false}` therefore carries forward unchanged and the plain-object schema coercion still works, so no
+option overrides are required. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.5.
+
+**The `archiver` bump in full, because the newest major was deliberately refused.** On 8.x, `require('archiver')`
+returns an ESM namespace object whose `default` is undefined, so calling it as a bare function throws — the CommonJS
+ceiling described below. 7.0.1 keeps the factory form `archiver('zip', {zlib: {level: N}})` callable at all three
+sites: `lib/controllers/trinket.js:L1292` and `L1454`, both at compression level 9, and `lib/workers/exports.js:L188`
+at level 6. R-1 was the recorded tie-breaker — a class-based migration was viable and exposes an identical surface,
+but it cost three call-site rewrites for no benefit. The residual advisory chain is closed by the `brace-expansion`
+and `minimatch` overrides in Rubric 1 instead. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.4.
 
 ### The `marked` fork replacement, in full
 
 The base commit did not depend on a published `marked`. It depended on a **Trinket fork**, declared as a git URL and
 identifying itself as version 0.3.2. The fork carried five deviations from upstream across **26 diff lines**, and the
-load-bearing one is that it accepted `sanitize` as a **function**.
+load-bearing one is that it called a `sanitize` **function once per HTML tag**.
 
-That function is not incidental. `lib/shared/trinket-markdown.js:L211-L240` passes a stateful HTML-whitelist
-sanitizer — **the platform's XSS defense for learner-authored and instructor-authored markdown** — and it is
-consumed solely by `lib/controllers/courses.js:L13`. Replacing `marked` with a version that ignored a function
-sanitizer would have silently removed an XSS control.
+That function is not incidental. `lib/shared/trinket-markdown.js:L217-L260` defines the stateful HTML-whitelist
+sanitizer — **the platform's XSS defense for learner-authored and instructor-authored markdown** — which the base
+commit handed to the fork as its `sanitize` option at `2f8712a:lib/shared/trinket-markdown.js:L211-L240` and which the
+shipped bridge installs as `marked.Renderer.prototype.html` at `lib/shared/trinket-markdown.js:L603`. The module is
+consumed solely by `lib/controllers/courses.js:L9`, which was `2f8712a:lib/controllers/courses.js:L13` before the dead
+imports above it were removed. Replacing `marked` with a version that ignored a function sanitizer — or bridging it
+through an option that sanitizes a whole HTML block as one string instead of one tag at a time — would have silently
+removed an XSS control.
 
-`marked` 4.3.0 was selected because it satisfies every constraint that mattered, each verified by execution:
+`marked` 4.3.0 exposes the extension, tokenizer, renderer and token-walk hooks needed to reproduce the fork, but its
+deprecated `sanitize` / `sanitizer` options are **not** a drop-in bridge. Passing them changed block-HTML parsing,
+coerced the function onto a different code path, and emitted `console.warn` on every render. The shipped integration
+therefore:
 
-- It supports a `sanitizer` **function** option, so the whitelist sanitizer transfers with its behavior intact.
-- It keeps the `Renderer` prototype arities identical — **link 3, code 3, image 3, listitem 1** — so the four
-  monkey-patches at `lib/shared/trinket-markdown.js:L22-L24`, `L446-L448` and `L455` transfer unchanged.
-- It emits its own deprecation notice through `console.warn` only, so it does **not** fire a `process` warning event
-  and therefore does not trip the zero-deprecation-warning boot gate.
-- An isolated audit of 4.3.0 reported **zero vulnerabilities**.
+- uses the 4.x destructuring require;
+- names and retains the fork's sanitizer body;
+- omits `marked.setOptions` entirely;
+- registers a fork-compatible block-HTML extension, HTML tokenizer override and task-list neutralizer through
+  `marked.use(...)`;
+- installs the sanitizer as `Renderer.prototype.html` and restores the fork's link guard.
 
-**One call-site change was required, and only one.** On the 4.x line `require('marked')` returns an object rather
-than a callable, so `lib/shared/trinket-markdown.js:L1` becomes a destructuring require. That is the entire code cost
-of the swap.
+**Two call-site changes were required, and both are load-bearing.** An earlier draft of this subsection recorded only
+one; that was a documentation inaccuracy, corrected here against a measured base-versus-migrated diff of
+`lib/shared/trinket-markdown.js`.
 
-**And it is what made the lockfile reproducible.** Because the fork records no `gitHead` and no `_resolved`, nothing
-constrained which commit an install resolved to. Moving to a registry version is the precondition for a deterministic
-`npm ci`, which is why this row is classified `incompatible` rather than `security`: the fork was not vulnerable, it
-was unpinnable.
+**The bridge was selected on a differential against the real fork, not on reasoning about it.** Two independent runs
+agree. A 77-fixture differential recorded in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.35 measured the
+deprecated-option candidate at **32/77** matches, with 31 unexpected mismatches and 70 deprecation warnings, against
+**69/77** for the shipped bridge with 0 unexpected mismatches and 0 warnings. A second, wider differential run during
+integration installed the fork itself — `git+https://github.com/trinketapp/marked.git`, which resolves to 0.3.2 and is
+directly callable — and rendered a 119-fixture corpus through the fork, the deprecated-option candidate and the
+shipped bridge in three separate processes, because both candidates mutate one shared `marked` module and pollute each
+other in a single process. Against the fork: the deprecated-option candidate diverged on **57** of 119 fixtures, the
+shipped bridge on **10**, and the bridge's divergence set is a strict **subset** of the candidate's — it is never
+worse
+on any fixture, and it fixes 47, all of them client-visible markup (raw block HTML wrapped in `<p>`, whitelisted
+`<table>`/`<p style>`/`<h1 id>`/`<hr>` escaped away, per-tag sanitization of a nested `<span>` inside an escaped
+`<div>`, and the task-list markup). The 10 residual differences are properties of the unavoidable version bump — the
+inline link rule's paren balancing, two renderer whitespace joins and the uppercase `[X]` task marker — and they occur
+in **both** candidates. An isolated audit of 4.3.0 reported **zero vulnerabilities**.
+
+1. **The require shape.** On the 4.x line `require('marked')` returns an **object, not a callable** — measured on
+   4.3.0 as `typeof require('marked') === 'object'` with `typeof require('marked').marked === 'function'` — so
+   `lib/shared/trinket-markdown.js:L1` becomes a destructuring require, `var { marked } = require('marked')`.
+2. **The sanitizer installation shape.** The fork accepted the whitelist sanitizer as the value of **`sanitize`**
+   itself. 4.3.0 reads it from a separate **`sanitizer`** option, consults that option **only when `sanitize` is
+   truthy**, and treats both as deprecated. The shipped integration therefore takes neither name: it registers the
+   sanitizer as `marked.Renderer.prototype.html` at `lib/shared/trinket-markdown.js:L603`, and restores the fork's
+   block-HTML rule, task-list shape and link guard through a single `marked.use(...)` call at `L300`.
+
+**Why the deprecated-option path was rejected — measured, not reasoned.** Three separate measurements rule it out.
+First, changing only the require and leaving `sanitize` bound to the function leaves `sanitize` truthy — a function is
+truthy — while `sanitizer` stays **undefined**, and 4.3.0's truthy-`sanitize` path then escapes every tag: measured on
+4.3.0 with exactly that shape, the whitelist function was invoked **zero times** and `<b>bold</b>` came back as
+`&lt;b&gt;bold&lt;/b&gt;`. That failure mode is **fail-closed rather than an XSS hole**, but every whitelisted tag —
+the embed `iframe` included — would have been escaped into visible text. Second, the corrected form
+(`sanitize: true` plus the renamed `sanitizer`) does invoke the whitelist on every tag, but a 119-fixture differential
+against the fork itself put it **57** divergences away from the fork where the shipped bridge is **10**, and its
+divergence set strictly contains the bridge's. Third, that form emits
+`marked(): sanitize and sanitizer parameters are deprecated…` through `console.warn` on **every** render, which the
+zero-warning gate forbids; the bridge emits none.
+
+**The whitelist contract itself is unchanged.** The sanitizer body — now the named `sanitizeHtmlTag` at
+`lib/shared/trinket-markdown.js:L217-L260` — carries over from `2f8712a:lib/shared/trinket-markdown.js:L211-L240`
+modulo a uniform de-indent: the close-tag stack, the `HTML_WHITELIST` lookup, the `iframe`-requires-`src` rule and the
+`escape()` fallback are all byte-identical, and `lib/controllers/courses.js:L9` (`2f8712a:L13`) remains its only
+consumer. This entry is a **documentation
+correction, not a report of a bypass**: the XSS control was live in the shipped code both before and after the swap.
+Together with the require, those two edits are the entire code cost of the swap.
+
+**Reason code corrected to `security`.** An earlier revision classified this row `incompatible` on the grounds that
+"the fork was not vulnerable, it was unpinnable." **Both halves of that sentence are wrong**, and the correction
+matters because the reason code is what R-3 requires this document to get right.
+
+The fork **was** pinned: the base lockfile records
+`git+ssh://git@github.com/trinketapp/marked.git#55ea82491047d038b4360b78d092f77d439df63f`, and a commit hash is
+content-addressed. And the fork **was** vulnerable: `npm audit --omit=dev` against the base commit's own lockfile
+reports `marked` at aggregate severity **high** with **8 advisories** — two "Inefficient Regular Expression
+Complexity" (`<4.0.10`), two further ReDoS, and three **sanitization** findings (VBScript content injection, XSS from
+data URIs, sanitization bypass using HTML entities). Three of the eight therefore attack the very control the fork
+exists to provide. `marked@4.3.0` reports **zero** findings.
+
+So the row is `security`, with the API-compatibility work above as the *enabling condition* rather than the reason:
+the swap was necessary because of the advisories, and it was *safe* because 4.3.0 preserves the function sanitizer
+and every Renderer arity. Two genuine install-mechanics frictions remain worth recording — the base lock entry has
+**no `integrity` field**, so `npm ci` cannot hash-verify the fetched tree, and its `git+ssh://` URL needs a git
+binary and SSH credentials rather than an anonymous HTTPS fetch — but neither is a determinism failure, and neither
+is what forced the move. The committed replacement closes both, read back from the lockfile: `resolved` `https://registry.npmjs.org/marked/-/marked-4.3.0.tgz` with a `sha512` `integrity` value.
+
+**On the classification itself, because the two defensible readings were both argued.** One reading files this row as
+`incompatible` alone, on the ground that the blocking property was the fork's divergent API surface on an abandoned
+line rather than a published advisory. Measurement does not support that: the fork has **8 published advisories, 4 of
+them high**, and AAP G4 requires zero critical and zero high, so a published advisory is precisely what blocks it. The
+committed code is therefore `security, incompatible` — primary first, per the classification contract at the head of
+this document — because the swap was *compelled* by the advisories and *required* a source change. A third argument,
+that a git-sourced package is invisible to `npm audit`, is measurably false and is disposed of under *Net manifest
+shape* above.
 
 Note that the **browser-delivered** copy of `marked` is a different artifact and did not move. It is pinned as an
 asset URL at `config/default.yaml:L72` and is catalogued as a deliberate skew in
@@ -209,9 +489,33 @@ seventh, `redis-mock`, moved from 0.2.0 to 0.56.3, which semver treats as breaki
 | `chai` | 3.5.0 | **4.5.0** | `security`, `incompatible` | **4.5.0 is the CommonJS ceiling** — chai 5 and above are ESM-only. Explained below |
 | `chai-as-promised` | 6.0.0 | **7.1.2** | `incompatible` | CommonJS ceiling |
 | `sinon-chai` | 2.14.0 | **3.7.0** | `incompatible` | CommonJS ceiling |
-| `sinon` | 1.7.3 | **22.1.0** | `security`, `incompatible` | The three-argument `stub(obj, 'm', fn)` form was **removed in Sinon 3**, which is what forces six call-site edits — at `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8` and `test/lib/models/trinket.js:L34`, `L39` and `L155` — each becoming `sinon.stub(obj, 'm').callsFake(fn)` |
+| `sinon` | 1.7.3 | **22.1.0** | `security`, `incompatible` | **Three removed APIs, and all three were exercised by this suite** — the three-argument `stub` form, `spy.reset`, and stubbing an absent property. All 12 base-commit sites are converted and the suite runs 224 passing, exit 0. *The `sinon` bump in full* below |
 | `supertest` | 0.8.3 | **7.2.2** | `security`, `incompatible` | The HTTP test client used by the flow harness |
-| `redis-mock` | 0.2.0 | **0.56.3** | `security`, `incompatible` | The Redis double used by `test/setup.js`. Classified `incompatible` as well as `security` because the 0.2 surface predates the promise-based client API that the rest of the test wiring now expects |
+| `redis-mock` | 0.2.0 | **0.56.3** | `security`, `incompatible` | The Redis double used by `test/setup.js`, and the one bump in this table that **did not preserve its call-site shape** — the constructor and the client surface both moved. *The `redis-mock` bump in full* below |
+
+**The `redis-mock` bump in full.**
+
+The Redis double used by `test/setup.js`, and the one bump in this table that **did not close its own gap**. Measured on the installed copies: the real `redis` is **4.7.1** — explicit `connect()`, an `isOpen` flag, camelCase commands returning promises — while `redis-mock` **0.56.3**, its newest published version, is still a **node_redis v3** double: `client.connect` and `client.isOpen` are `undefined`, `client.sIsMember`, `client.hGetAll` and `client.lPush` are all `undefined` against present lower-case `sismember`, `hgetall` and `lpush`, and `client.get('k')` returns `undefined` rather than a promise. Because `lib/util/store.js` caches its client promise **including a rejection**, an unadapted double made every later `Store.*` call reject for the life of the process. The bump is therefore paired with a v4 adapter confined to `test/setup.js` — `connect`/`isOpen`/`quit`/`on` plus a promisified camelCase-to-lower-case command map with an explicit boolean coercion for `sIsMember` — and **no production file was changed to accommodate the double.** Full adjudication: [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 13.4
+
+**The `sinon` bump in full.**
+
+**Three removed APIs, and all three were exercised by this suite.** Measured against the installed 22.1.0: (1) the three-argument form throws `TypeError: stub(obj, 'meth', fn) has been removed, see documentation` — **6** base-commit sites, censused over code lines only at `2f8712a`: `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8`, `test/lib/models/trinket.js:L34, L39, L155`; (2) `spy.reset` is **`undefined`** where `spy.resetHistory` is a function — **6** further base-commit sites, all on `sinon.spy(...)` doubles: `test/lib/models/plugins/paginate.js:L29-L32` and `test/lib/models/trinket.js:L167, L168`; (3) stubbing an absent property throws `TypeError: Cannot stub non-existent property`, which is what makes the catbox target correction in Rubric 3 load-bearing rather than cosmetic. **Delivered state, re-measured over the 31 current test files, code lines only: 0 three-argument `sinon.stub` calls and 0 `.reset()` calls remain** — 14 `.callsFake(` and 6 `.resetHistory()` calls stand in their place — and the suite runs **224 passing, 0 failing, exit 0**. The remaining textual match for each removed form is a comment recording the conversion. Full adjudication: [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 13.3
+
+**The test-tree call-site edits these bumps oblige are all applied.** The dependency decisions above are committed —
+`package.json` and `package-lock.json` carry them, and every version in the table is the resolved version in the
+lockfile. An earlier revision of this subsection listed the obliged source edits as mostly outstanding, which was
+accurate when it was written and is not accurate now. Measured against the delivered tree:
+
+| Obliged by | Edit | Measured state |
+|---|---|---|
+| `sinon` 22.1.0 | six `sinon.stub(obj, 'm', fn)` → `.callsFake(fn)` conversions, plus six `.reset()` → `.resetHistory()` | **12 of 12 done.** A re-census finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls in test code, against **14** `.callsFake(` sites and **6** `.resetHistory(` sites |
+| `supertest` 7.2.2 | resolve the promise `app.js` exports before binding `server.listener` | **done.** `test/helpers/flow.js:L18-L22` captures `resolvedServer` through `app.then(…)`, `agentFor()` binds `resolvedServer.listener` at `L461`, and `test/setup.js:L113-L121` awaits `app` in a root `mochaHooks.beforeAll` |
+| the unscoped `catbox-redis` removal | repoint `test/helpers/catbox-redis.js` at the in-repo engine | **done.** The unscoped require is gone; the helper stubs five prototype methods of `lib/util/catbox-mongoose.js` and leaves `validateSegmentName` and `stop` real |
+| `mocha` 11.7.6 | `.mocharc.json` replacing `test/mocha.opts` | **done.** The five-key file is committed — `reporter`, `recursive`, `check-leaks`, `exit` and `require`, with no `spec` — and `test/mocha.opts` is deleted |
+
+The same list, with the reasoning behind each repair, is in
+[PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) under *Tense, and the delivery status of the test tree*, and in sections
+3.7, 3.8 and 3.13 there. Nothing in the dependency set changed when those edits landed.
 
 ### The CommonJS ceiling, explained once
 
@@ -232,31 +536,134 @@ deleted — but had an argv path survived, the choice would have been a Node bui
 
 ## Rubric 3 — Replaced
 
-**Reason for this rubric: `dead` or `incompatible`.** A package appears here only when the same package could not be
-carried forward at all. Seven were replaced by a Node built-in or by a local module, so no package took their place;
-two were replaced by a newly added maintained package — three packages in total, because the AWS SDK v3 replacement is
-split across two modular packages; one was never installed in the first place.
+**Reason for this rubric: `dead` or `incompatible`.** An entry appears here only when the same package could not be
+carried forward at all. The eleven rows below break down as follows, counted from the table itself: **two** were
+replaced by a newly added registry package, which is where both of this modernization's package additions come from;
+**four** were replaced by a Node built-in; **two** were replaced by a local in-repo module; and **three** needed no
+replacement at all, because their only consumer was deleted or because the binding was never read in the first place.
+One of the eleven is not a package but a deprecated Node built-in **API** — `url.parse()` — recorded here because it
+is a replacement in exactly the same sense as the rest, and readers look for it here. One of the ten distinct package
+originals, the unscoped `catbox-redis`, was never installed in the first place, so **nine** of the eleven rows
+correspond to a manifest removal.
 
 | Original package | Version at base commit | Replacement | Target | Reason | Verification and notes |
 |---|---|---|---|---|---|
-| `aws-sdk` *(S3 operations)* | 2.1693.0 | **`@aws-sdk/client-s3`** | **3.1098.0** | `incompatible` | **Gate-mandated, not discretionary.** Requiring the v2 SDK on Node 22 fires a **real `process.on('warning')` event with `name === "NOTE"`** — not a plain console write — which the zero-deprecation-warning boot gate forbids. v2's `AWS.config.update` global singleton has **no v3 equivalent**, so `config/aws.js` moves to per-client `S3Client` configuration. It is consumed at **7 call sites in 3 files** — `lib/util/file.js`, `lib/workers/exports.js` and `lib/controllers/users.js` — covering `PutObjectCommand`, `GetObjectCommand` and `DeleteObjectCommand` |
-| `aws-sdk` *(presigned URLs)* | 2.1693.0 | **`@aws-sdk/s3-request-presigner`** | **3.1098.0** | `incompatible` | **The second half of the same replacement, because v3 is modular where v2 was monolithic.** v2 generated presigned URLs **synchronously** via `client.getSignedUrl('getObject', {Bucket, Key, Expires: 3600})`, used for the export-download redirect in `lib/controllers/users.js`. `@aws-sdk/client-s3` contains **no presigner at all** — zero presign-related symbols among its 707 exports — and v3 offers no synchronous form, so the accessor is now asynchronous and `config/aws.js` exposes it as `getSignedDownloadUrl(params, expiresIn)` returning a `Promise<string>`. **Parity was measured before the swap was accepted:** the generated URL is the same virtual-hosted-style, SigV4-signed URL v2 produced — `<bucket>.s3.<region>.amazonaws.com/<key>` with `X-Amz-Algorithm=AWS4-HMAC-SHA256` and `X-Amz-Expires=3600`. Pinned to the **same version** as the client, and all six of its dependencies were already present transitively, so the lockfile gained **1** package with **0** resolved-version changes |
+| `aws-sdk` | 2.1693.0 | **`@aws-sdk/client-s3`** | **3.1098.0** | `incompatible` | **Gate-mandated, not discretionary** — requiring the v2 SDK on Node 22 fires a real `process.on('warning')` event with `name === "NOTE"`, which the zero-warning boot gate forbids. v2's global-singleton configuration has no v3 equivalent. *The AWS client replacement in full* below |
 | `request` | 2.88.2 | the global **`fetch`** built into Node 22 | *(no package added)* | `dead` | Formally deprecated upstream and unmaintained. Affects `lib/controllers/auth.js`, `lib/controllers/users.js` and `lib/util/recaptcha.js`, all of which were being converted to async/await anyway |
 | `q` | 1.0.1 | native **`Promise`**, `Promise.all`, `Promise.allSettled` | *(no package added)* | `dead` | Classified `dead` **not because it is vulnerable, but because the language subsumed it.** The async conversion removes its last consumer as a side effect: the four `Q.defer()` sites plus the `Q.all` and `Q.allSettled` calls in `lib/workers/exports.js`, and the usage in `test/helpers/mail.js` |
-| `node-uuid` | 1.4.8 | **`node:crypto`** `randomUUID()` | *(no package added)* | `dead` | Superseded by its own successor package and then by the platform. One call site, at `lib/controllers/users.js:L22` |
+| `node-uuid` | 1.4.8 | **removed — no replacement required** | *(no package added)* | `dead` | Deprecated by its own author in favour of the `uuid` package, but **no package was needed**: the base commit never read the binding it imported. *The `node-uuid` removal in full* below |
 | `node-cryptojs-aes` | 0.4.0 | **`crypto-js`** | **4.2.0** | `dead` | Unmaintained. **Bit-compatibility proven bidirectionally** before the swap was accepted: both emit the OpenSSL `Salted__` and MD5-EvpKDF envelope, and ciphertext length is **88** in both directions. This mattered because `lib/util/roles.js` ships the payload to a browser that decrypts it with a frozen client-side decryptor — see [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 1.9 |
+| **`node:url`'s `url.parse()`** *(a deprecated built-in API, not a package)* | Node 22's built-in | **`lib/util/legacyUrl.js`** — a local module, plus the static `URL.parse()` at the one site where WHATWG semantics are correct | *(no package added)* | `incompatible` | **Gate-mandated** — a single `url.parse()` call fires a real `DEP0169` warning event that the zero-warning boot gate forbids. 8 base-commit call sites went to **two different** targets. *The `url.parse()` replacement in full* below |
 | `optimist` | 0.6.1 | **removed — no replacement required** | *(no package added)* | `dead` | Deprecated upstream. Its only consumer was the argv parsing for the `-R` route-table dumper in `lib/util/routeParser.js`. Because that dumper is pure Hapi-4 compatibility machinery it was **deleted outright**, so **`node:util`'s `parseArgs` was not required either**. Verified in the shipped file: zero `parseArgs` and zero `node:util` references, and zero `parseArgs` anywhere else in the tree. Had any argv path survived, the built-in would have been the choice, because this package's obvious modern successor is unusable from CommonJS for the reason given above |
 | `tab` | 0.1.0 | **removed — no replacement required** | *(no package added)* | `dead` | Unmaintained. Its sole consumer was the same `-R` route-table dumper in `lib/util/routeParser.js`, so deleting the dumper meant **a local column formatter was not required**. Verified in the shipped file: zero `emitTable` references and no formatting helper of any kind |
-| `mkdirp` | 0.3.5 | **`fs.promises.mkdir`** with `{recursive: true}` | *(no package added)* | `incompatible` | **Not `dead` — actively maintained.** The problem is the calling convention: `mkdirp` 1 and above is promise-native, which breaks the `util.promisify` wrapper this codebase applies to it at `lib/controllers/courses.js:L7`. Moving to the built-in is simultaneously the smaller diff and one dependency fewer |
-| `rimraf` | 2.2.8 | **`fs.promises.rm`** with `{recursive: true, force: true}` | *(no package added)* | `incompatible` | **Not `dead` — actively maintained.** `rimraf` 4 and above dropped the callback form entirely, which is the form used at `lib/controllers/courses.js:L8` |
-| `catbox-redis` *(unscoped)* | **never installed** | the in-repo **`lib/util/catbox-mongoose.js`** engine | *(no package added)* | `dead` | **Declared nowhere and installed nowhere** — the direct cause of the immediate `npm test` failure on the suite's first module load, `Cannot find module 'catbox-redis'` at `test/helpers/catbox-redis.js:L1`. The helper is repointed at the catbox engine the application actually uses. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.7 |
+| `mkdirp` | 0.3.5 | **`fs.promises.mkdir`** with `{recursive: true}` | *(no package added)* | `incompatible` | **Not `dead` — actively maintained.** The problem is the calling convention: `mkdirp` 1 and above is promise-native, which breaks the `util.promisify` wrapper the base commit applied to it at `2f8712a:lib/controllers/courses.js:L7`. Moving to the built-in is simultaneously the smaller diff and one dependency fewer |
+| `rimraf` | 2.2.8 | **`fs.promises.rm`** with `{recursive: true, force: true}` | *(no package added)* | `incompatible` | **Not `dead` — actively maintained.** `rimraf` 4 and above dropped the callback form entirely, which is the form the base commit used at `2f8712a:lib/controllers/courses.js:L8` |
+| `catbox-redis` *(unscoped)* | **never installed** | the in-repo **`lib/util/catbox-mongoose.js`** engine | *(no package added)* | `dead` | **Declared nowhere and installed nowhere**, yet required at one place — which is why the suite died on its first module load. Two edits were needed, not one, and both are delivered. *The unscoped `catbox-redis` in full* below |
 
-**Only three packages are added to the manifest by this entire modernization: `@aws-sdk/client-s3` 3.1098.0,
-`@aws-sdk/s3-request-presigner` 3.1098.0 and `crypto-js` 4.2.0.** Everything else in this document is a bump, a
-removal, or a move to a Node built-in or a local module. The additions cover exactly the two cases where a Node
-built-in could not do the job — S3 access, and an AES envelope that had to stay byte-compatible with a frozen browser
-decryptor — and S3 access needs two of them only because AWS SDK v3 splits presigning out of the client package.
-The plan projected two additions; the third is recorded as deviation 6 above, with the measurement that justifies it.
+**The `node-uuid` removal in full.**
+
+Deprecated by its own author in favour of the `uuid` package, and then subsumed by the platform's `crypto.randomUUID()`. **But no replacement was needed, because there was never a call site.** The plan projected a swap to `node:crypto`'s `randomUUID()`; the base commit does not support that projection. Measured across every tracked file at `2f8712a` except `public/`, `serverside/` and the lockfile, the token `uuid` occurs on exactly **two** lines: the declaration `uuid = require('node-uuid'),` at `lib/controllers/users.js:L22`, and the manifest entry `"node-uuid": "^1.4.3"`. The binding was **never read** — zero `uuid.v4()`, zero `uuid(`, zero property access of any kind. So this is the removal of a dead require of an unused binding — the same class as the four plan-named dead imports tabulated under "Dead imports deleted with no replacement" below, differing only in that this one also had a manifest entry to delete — and the correct record is a removal with no replacement. Verified in the shipped tree: **zero** `randomUUID` call sites anywhere in `app.js`, `config/`, `lib/`, `scripts/` or `test/`, and zero `node-uuid` or `require('uuid')` references. Adjudicated against baseline per R-6
+
+**The AWS client replacement in full.**
+
+**Gate-mandated, not discretionary.** Requiring the v2 SDK on Node 22 fires a **real `process.on('warning')` event with `name === "NOTE"`** — not a plain console write — which the zero-deprecation-warning boot gate forbids. v2's `AWS.config.update` global singleton has **no v3 equivalent**, so `config/aws.js` moves to per-client `S3Client` configuration. The v2 SDK was constructed at **7 call sites in 3 files** — `lib/util/file.js` (4), `lib/workers/exports.js` (2) and `lib/controllers/users.js` (1) — covering `PutObjectCommand`, `GetObjectCommand` and `DeleteObjectCommand`. **Per-client configuration is not per-call construction:** v2's clients carried no agent of their own and every send resolved the same process-global agent singleton, and a v2 client had no `destroy` method at all, so those 7 constructions shared **one** socket pool for the life of the process. Each v3 client owns its own pool, so `config/aws.js` holds **one** lazily-built shared `S3Client`, reached through `getS3Client()` at the 6 surviving command call sites and by the presigner, and released by `destroyS3Client()` on the hapi server's `stop` event in `app.js`. Both halves were measured against the installed SDKs; the reasoning is recorded in that file's `RESOURCE LIFECYCLE` section. Presigned URLs are served by this same package with **no second dependency** — see *Presigned download URLs, without a second AWS package* below
+
+**The `url.parse()` replacement in full, because it is the one row where a single deprecated API needed two different
+replacements.** Measured under `--pending-deprecation`: a single `url.parse()` call fires a real
+`process.on('warning')` event, `name === "DeprecationWarning"`, **`code === "DEP0169"`** — the "behavior is not
+standardized and prone to errors that have security implications" notice — which the zero-warning boot gate forbids.
+Measured on the same probe, `legacyUrl.pathname()` fires **zero** warnings.
+
+There were **8** `url.parse()` call sites at the base commit — `lib/controllers/trinket.js:L1253, L1350, L1521`,
+`lib/controllers/users.js:L588`, `lib/workers/exports.js:L40, L304`, `test/helpers/flow.js:L399` and
+`test/lib/api/registration.js:L85` — and they took two different targets, because one replacement does not fit both
+jobs. **Seven** went to `legacyUrl.pathname()`: the three in `trinket.js` directly, the two in `exports.js` funnelled
+through one local `assetPathBasename` helper, and the two test sites. **One** went to the static, non-throwing
+`URL.parse()` at `lib/controllers/users.js:L844`, where the handler's own `if (!requestUrl.protocol)` test makes
+WHATWG semantics the correct reading.
+
+The split exists because `new URL()` **throws** `ERR_INVALID_URL` on the relative and protocol-less inputs the legacy
+parser tolerated, and the static `URL.parse()` returns **`null`** where the legacy parser returned an object with a
+usable `pathname` — so at the asset sites, which read `.pathname` immediately inside synchronous code reached from a
+stream `'data'` handler, a substitution would have turned a working response into an uncaught `TypeError`.
+`lib/util/legacyUrl.js` is therefore a **607-line faithful transcription** of the legacy pathname derivation,
+exporting `pathname` and its alias `legacyPathname`, and it depends on nothing deprecated: its only `url`-module use
+is the non-deprecated `url.domainToASCII()`. Equivalence is not asserted but re-proven on every test run by
+`test/lib/util/legacy-pathname.js`, which uses the real `url.parse()` as its oracle over **2,022,153** inputs and
+measures **zero** pathname and **zero** `path.basename()` divergences. See
+[PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 11. Verified in the shipped tree: **zero** `url.parse()` call sites
+remain outside that oracle, and **zero** `require('url')` bindings remain outside `legacyUrl.js` itself.
+
+**The unscoped `catbox-redis` in full, because it is the one row where nothing was ever installed.** Measured at
+`2f8712a`: exactly one require of it in the whole tree, at `test/helpers/catbox-redis.js:L1`, and no matching entry in
+either `package.json` or `package-lock.json`. That single line was the direct cause of the immediate `npm test`
+failure on the suite's first module load, `Cannot find module 'catbox-redis'`.
+
+**Two edits were needed, not one.** The require is repointed at the catbox engine the application actually uses,
+`lib/util/catbox-mongoose.js`; and the stub **target** is corrected from the bare `catbox.prototype` to
+`catbox.Engine.prototype`, because that module exports a named `Engine` class — without which Sinon 22 throws
+`TypeError: Cannot stub non-existent property` rather than silently stubbing nothing as Sinon 1 did. The helper now
+installs five `.callsFake()` stubs — `isReady`, `start`, `get`, `set`, `drop` — over an in-memory map keyed
+`segment + ':' + id`, and deliberately leaves `stop` and `validateSegmentName` real.
+
+**Delivered state, re-measured: zero `require('catbox-redis')` occurrences anywhere in `app.js`, `config/`, `lib/`,
+`scripts/` or `test/` code lines** — the one remaining textual match is a comment in the repaired helper recording
+what it used to do — and the suite runs **224 passing, 0 failing, exit 0**. An earlier revision of this document
+described the repoint as still outstanding; it is not, and the test run above is the check. It appears in this rubric
+because it is a replacement decision, not because a declaration was removed: there was never one to remove, and the
+scoped `@hapi/catbox-redis` that *was* declared is a separate row in Rubric 4. See
+[PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.7.
+
+**The `optimist` and `tab` removals in full, because both ended with no replacement of any kind — which the plan did
+not anticipate.** AAP §0.5.2.1 maps `optimist` onto `node:util`'s `parseArgs` and `tab` onto "a local column
+formatter". Neither was needed. Their sole consumer was the argv parsing and column formatting for the `-R`
+route-table dumper in `lib/util/routeParser.js`; that dumper is pure Hapi-4 compatibility machinery, so it was
+**deleted outright**. Verified across `app.js`, `config/`, `lib/`, `scripts/` and `test/`: zero `parseArgs`
+references, zero `node:util` references, zero `emitTable` references, no formatting helper of any kind, and no
+surviving `argv` handling in the 269-line shipped `routeParser.js`. Had any argv path survived, the built-in would
+have been the choice rather than another package, because `optimist`'s obvious modern successor is unusable from
+CommonJS for the reason given above.
+
+### Presigned download URLs, without a second AWS package
+
+v2 generated presigned URLs **synchronously**, via `client.getSignedUrl('getObject', {Bucket, Key, Expires: 3600})`,
+for the export-download redirect at `lib/controllers/users.js`. `@aws-sdk/client-s3` contains **no presigner at all**
+— zero presign-related symbols among its **707** exports — and v3 offers no synchronous form. AWS publishes
+`@aws-sdk/s3-request-presigner` for this, but adding it would have made a **third** direct dependency where the plan
+sanctions exactly two, so it was not added.
+
+Instead, `config/aws.js` presigns using the client's own resolved configuration, which is the same machinery that
+package uses internally: `client.config.endpointProvider({Bucket, Region, ...})` resolves the bucket addressing, and
+`client.config.signer()` returns the `SignatureV4MultiRegion` instance whose `presign(request, {expiresIn})` produces
+the signed query. `getSignedDownloadUrl(params, expiresIn)` returns a `Promise<string>`, so the accessor is
+asynchronous where v2's was synchronous — the one call-site shape that changed.
+
+**Parity was measured, not assumed**, across three fixtures — a key containing a space, a dotted bucket name that
+forces path-style addressing, and a key containing `+ ( ) ! ' *` — at two expiry values. The official presigner was
+used only as an **oracle, inside a throwaway scratch install outside the repository**; it appears in neither
+`package.json` nor `package-lock.json`, verified by name search against both:
+
+- the shipped implementation's full URL is **byte-identical** to an independent, from-scratch `node:crypto` SigV4
+  query-presign reference, in all three cases;
+- `@aws-sdk/s3-request-presigner`'s own `X-Amz-Signature` matches that same reference, so the shipped signature
+  matches the official package's signature for the same canonical request;
+- origin, path and `X-Amz-Expires` match the official package's output in all three cases.
+
+Two implementation details were established by measurement and are load-bearing: path segments must use AWS
+**extended** URI encoding, which additionally escapes `! ' ( ) *` that `encodeURIComponent` leaves raw, and the
+unsigned-payload header must be spelled `X-Amz-Content-Sha256`. Getting either wrong yields a valid-looking URL whose
+signature S3 rejects.
+
+One deliberate difference from the official presigner is documented rather than reproduced: the shipped URL omits
+`x-id=GetObject` and `x-amz-checksum-mode=ENABLED`, which are v3 operation metadata that aws-sdk v2 never emitted. For
+the record, R-6 measurement against a scratch install of `aws-sdk` 2.1693.0 shows the true base-commit output was
+**SignatureV2** — `?AWSAccessKeyId=…&Expires=<unix>&Signature=…` against `<bucket>.s3.amazonaws.com` — because v2's S3
+client defaults `signatureVersion` to `'s3'`; the SigV4 shape is the already-accepted post-migration behaviour.
+
+**Only two packages are added to the manifest by this entire modernization: `@aws-sdk/client-s3` 3.1098.0 and
+`crypto-js` 4.2.0** — exactly the two the plan sanctions. Everything else in this document is a bump, a removal, or a
+move to a Node built-in or a local module. The additions cover exactly the two cases where a Node built-in could not
+do the job: S3 access, and an AES envelope that had to stay byte-compatible with a frozen browser decryptor.
 
 ## Rubric 4 — Removed: declared but never required
 
@@ -267,13 +674,28 @@ nothing. They were **deleted, not pinned**, which is what R-2 demands, quoted ve
 > the repository to keep them alive."
 
 Pinning an unused package to an old version to keep an install resolvable is exactly the workaround that rule
-forecloses. None of the entries below survives in any form: not in `package.json`, not in `package-lock.json`, and
-not vendored anywhere in the tree.
+forecloses. **Every entry below is gone from `package.json`, and none is vendored anywhere in the tree** — verified by
+set intersection against the committed manifest: zero of the 24 removed names appears in `dependencies` or
+`devDependencies`.
+
+**Two of them do still appear in `package-lock.json`, and that is correct rather than a leftover.** An earlier revision
+of this document claimed none of these names "survives in any form: not in `package.json`, not in `package-lock.json`",
+which conflated *removing a direct declaration* with *eliminating a name from the dependency tree*. The measured
+reality is that two of the fifteen are legitimately reachable transitively, so the lockfile must still resolve them:
+
+| Name | Still in the lock at | Why it is still there, measured from the lockfile's own dependency edges |
+|---|---|---|
+| `@hapi/hoek` | 11.0.7, production | **28** packages depend on it, essentially the entire `@hapi/*` surface: `@hapi/hapi` itself at `^11.0.7`, plus `@hapi/accept`, `address`, `ammo`, `b64`, `boom`, `bounce`, `call`, `catbox`, `catbox-memory`, `heavy`, `inert` and 16 more at `^11.0.2`. Removing the **direct declaration** was correct — no repository file requires it — but the framework needs it and always will |
+| `debug` | 4.4.3, production | **4** dependents: `ioredis`, `mquery`, `superagent` and `mocha`. Again the direct declaration was dead while the transitive need is real |
+
+The remaining thirteen names are absent from the lockfile as well as the manifest. The distinction matters because R-2
+forbids keeping a **dead package alive**, not resolving a **live transitive dependency**: nothing in this repository
+requires `@hapi/hoek` or `debug`, and neither is pinned to an old version to keep anything installable.
 
 **Method.** All **96** JavaScript files in the tracked source tree were scanned for **both quote styles** of the
 require expression. Each candidate was additionally checked against the installed tree and against the
-peer-dependency declarations of the packages being kept, because — as the `chokidar` correction above demonstrates —
-a direct-require scan alone cannot see a dependency that a declared package resolves on its own behalf.
+peer-dependency declarations of the packages being kept, because — as the `chokidar` note above demonstrates — a
+direct-require scan alone cannot see a dependency that a kept package loads dynamically at runtime.
 
 **Runtime, 11 packages:**
 
@@ -290,6 +712,24 @@ a direct-require scan alone cannot see a dependency that a declared package reso
 | `passport` | 0.2.2 | `dead` |
 | `passport-strategy` | 1.0.0 | `dead` |
 | `sha1` | 1.1.1 | `dead` |
+
+**What "removed" means here, precisely: removed as a *direct* dependency.** Every row above is deleted from
+`package.json`, so nothing in this repository declares it and nothing in this repository requires it. Two of them,
+however, are still **present in `node_modules` and in `package-lock.json` as transitive dependencies of packages that
+are kept**, and a reader who greps the installed tree will find them:
+
+| Undeclared but still resolved | Still installed at | Pulled in by |
+|---|---|---|
+| `@hapi/hoek` | 11.0.7 | `@hapi/hapi` and 28 other `@hapi/*` packages that depend on it |
+| `debug` | 4.4.3 | `ioredis` (via `bull`), `mquery` (via `mongoose`), `mocha`, and `superagent` (via `supertest`) |
+
+(That table carries no `dead` / `incompatible` / `security` code because it is not a classification table — both
+packages are already classified `dead` in the table above it. It records where their installed copies come from.)
+
+That is the correct outcome, not a failed removal. Declaring a package that only a dependency needs is what makes a
+manifest lie about its own surface: it invites direct `require` of a module the project does not own, and it pins a
+version the real consumer may not want. Deleting the declaration while the dependency tree keeps resolving its own
+copy is precisely the intended result. The other nine rows above are gone from the installed tree entirely.
 
 **Development, 2 packages:**
 
@@ -310,24 +750,87 @@ These two are the only entries in this rubric that **were** required by a source
 file named `passport.js` from the auth layer of a web application is not something a behavior-preserving migration
 may do on inspection alone, so **deletion was simulated and measured**: `require.cache` was pre-seeded with an empty
 module so the require resolved to nothing, without modifying any repository file, and the framework's own route table
-was dumped both ways. **Both boots produced 233 rows hashing to the identical sha256
-`cd2a7e38a39bd84902ac1a0d69f50e2a`**, and the 58-route response corpus was unchanged. The full proof is recorded in
-[PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.6.
+was dumped both ways. **Both boots produced 233 rows with zero row-by-row differences, matching all seven documented
+route-table anchors and hashing to the identical measured sha256
+`452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8`**, and the 58-route response corpus was unchanged.
+What this adjudication turns on is that the two tables are *identical to each other*. That digest is recorded as
+`gates.measuredSha256` in `test/baseline/route-table.json` and is re-derivable from that artifact's own rows with the
+one-line recipe its `canonicalization.reproduce` field states, so a reader can check it without booting anything. The
+recomputable canonical SHA-256, registration-order SHA-256 and MD5 fingerprints are subordinate regression evidence;
+the AAP's documented 32-character digest `cd2a7e38a39bd84902ac1a0d69f50e2a` is **not** this value, is retained verbatim
+under `gates.documentedDigest` with `gates.documentedDigestReproduced` set to `"none"`, and is not claimed to have been
+recomputed. The deletion proof is in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.6, and the digest
+adjudication itself in section 3.22.
 
-That is **15 packages deleted outright** — 11 plus 2 plus 2 — on top of the 9 removed in Rubric 3 because they were
-replaced, for 24 manifest removals in total.
+One correction belongs with that proof, because this document previously published the wrong digest for it. The value
+`cd2a7e38a39bd84902ac1a0d69f50e2a` was carried forward from the plan and labelled a sha256. It **cannot be one**: it
+is **32** hexadecimal characters, the width of an md5, where a sha256 is 64. Three progressively wider searches for a
+recipe that reproduces it all failed: twenty-seven candidate canonicalizations against the committed route table, then
+forty-two over the exact-base capture, and finally an exhaustive sweep that computed **2,155,050** digests across
+**56,709** distinct serializations of the same 233 rows — every combination of field set, separator, ordering, casing
+and trailing-newline convention — with **no** match under md5, sha1, sha256 or sha512. The two earlier, narrower
+searches are subsumed by that one. It is not the md5 of the current
+canonical form either — that is `dfc1e295156ecdbbee4a073b231b9326`. The **authoritative** digest, regenerated from the
+rows committed in `test/baseline/route-table.json` rather than transcribed, is the sorted sha256
+`452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8`, with a registration-order fingerprint of
+`6a65d18273c731aa070cf905625a9dfe4789caf066dde0c5beb14c6dd8131898`. The mislabelled digest does not weaken the
+passport conclusion, because that conclusion never depended on the digest's *value* — only on the two dumps agreeing.
+The full proof, and the same correction, are recorded in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) sections 3.6
+and 3.22.
+
+That is **15 packages deleted outright** — 11 plus 2 plus 2 — on top of the 9 removed in Rubric 3, where 6 were
+replaced and 3 needed no replacement, for **24** manifest removals in total.
+
+### Dead imports deleted with no replacement
+
+A require statement can be dead while its package is very much alive. Seven such statements were deleted. **None of
+them changes the manifest**, and each is in the dependency-swap diff category exactly as R-1 describes it — import
+removal is that category, and no other justification is offered for any of these seven hunks.
+
+Four were dead at the base commit and were named in the plan. Measured at `2f8712a`: each of these files contains
+**zero** references to the binding it imports, so nothing but the declaration line went away.
+
+| Deleted import | Site at base commit | Package | Measured references to the binding at base |
+|---|---|---|---|
+| `require('@hapi/hapi')` as `Hapi` | `lib/controllers/courses.js:L4` | **kept** — it is the framework | 0 occurrences of `Hapi.` |
+| `require('@hapi/hapi')` as `Hapi` | `lib/controllers/files.js:L2` | **kept** | 0 occurrences of `Hapi.` |
+| `require('@hapi/hapi')` as `Hapi` | `lib/util/helpers.js:L4` | **kept** | 0 occurrences of `Hapi.` |
+| `require('joi')` as `Joi` | `lib/controllers/pages.js:L3` | **kept** — still required by `config/routes.js`, `config/api_routes.js`, `lib/http/validation.js` and `lib/util/routeParser.js` | 0 occurrences of `Joi.` |
+
+Three more are bindings on the Node built-in `url` module, left behind by the `url.parse()` replacement recorded in
+Rubric 3. Each was verified dead by identifier scan before removal — the declaration was the **only** line in the file
+that referenced the name, comments and string literals excluded. Sites are given as they stood immediately before
+removal, which is also their `2f8712a` position in every case:
+
+| Deleted import | Site immediately before removal | Dead at base too? |
+|---|---|---|
+| `require('url').parse` as `parseUrl` | `lib/controllers/courses.js:L2` | **Yes** — declared and never called at `2f8712a` either |
+| `require('url')` as `url` | `lib/controllers/users.js:L8` | No — genuinely used at `2f8712a:L588`, which is the one site that moved to the static `URL.parse()` |
+| `require('url')` as `url` | `lib/util/routeParser.js:L10` | **Yes** — at `2f8712a` (where it stood at `L13`) the only `url` tokens in that file were the `redirect: function(url)` parameters and `request.url`, never the module |
+
+Removing three lines shifts the lines beneath them, so every line citation in the delivered documentation that points
+into these three files was re-derived from the committed source after the removals rather than adjusted by arithmetic.
+The route surface was then re-measured to confirm the removals are inert: **233** routes, the same method distribution
+of 137 GET, 63 POST, 19 PUT, 13 DELETE and 1 PATCH, and **zero** process warnings under `--pending-deprecation`.
+
+`lib/util/legacyUrl.js` keeps its own `require('url')`, and that one is not dead: it calls the **non-deprecated**
+`url.domainToASCII()` at three sites to reproduce the legacy parser's IDNA behavior. After these removals the shipped
+tree contains **zero** `url.parse()` call sites and **zero** other `require('url')` bindings; the only remaining
+`url.parse()` calls in the repository are the three inside `test/lib/util/legacy-pathname.js`, where the deprecated
+function is the differential **oracle** and calling it is the point.
 
 ### Retained despite never being required
 
-Three packages are required by no source file and are nevertheless **kept**, because they are invoked through npm
-scripts rather than through `require`. They are tooling, not dead code, and deleting them would break the build and
-test commands:
+Four packages are required by no source file and are nevertheless **kept**. Three are invoked through npm scripts
+rather than through `require` — they are tooling, not dead code, and deleting them would break the build and test
+commands. The fourth is `require`d dynamically by a package that *is* required, which a static scan cannot see:
 
 | Package | Version | How it is invoked |
 |---|---|---|
 | `mocha` | 11.7.6 | the `test` script |
 | `sass` | 1.98.0 | the stylesheet compilation reached through `build` and `build:css` |
 | `vite` | 4.5.14 | the `build:css` and `watch:css` scripts |
+| `chokidar` | 3.6.0 | `require`d lazily by `nunjucks` 3.2.4 at `node_modules/nunjucks/src/node-loaders.js:L35` when template watching is on, which `lib/util/nunjucks.js:L8` enables for the development and test environments. Declared because npm does not install an **optional** peer on the dependent's behalf — measured on npm 10.9.9 and 11.18.0 alike. Without it, `npm test` and any non-production boot fail with `watch requires chokidar to be installed`; see *Reconciliation with the plan's projected figures* |
 
 ## Rubric 5 — Held, with the behavioral justification for each
 
@@ -343,6 +846,12 @@ was, so no `dead` / `incompatible` / `security` code applies; what each row owes
 tightened from a range to an exact pin, the **resolved version did not move**: these are pins of what was already
 installed, made necessary by `save-exact=true` in `.npmrc`.
 
+**How to read "already current" below.** Several rows record a package that needed no movement because it was already
+at the newest release published **at migration time (2026-07)**. That is a statement about a moment, not a permanent
+property: npm publishes continuously, so a reader checking later will find newer versions and should not read these
+rows as claiming otherwise. What is durable, and what a reader can verify, is the **resolved version in the committed
+`package-lock.json`**, which is the version each row's "Held at" column states.
+
 | Package | Held at | Behavioral justification |
 |---|---|---|
 | `highlight.js` | **9.18.5** | Version 10 renamed the emitted `hljs-*` token classes and changed the `highlight()` signature. `lib/shared/trinket-markdown.js:L310` calls the two-argument `hljs.highlight(lang, code)` form and splices the result straight into rendered markdown, so a bump would change **client-visible markup** on every page containing a fenced code block. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 2 |
@@ -354,17 +863,17 @@ installed, made necessary by `save-exact=true` in `.npmrc`.
 | `mongoose` | **inside the 6.x line** | Version 7 and above remove the discriminator-adjacent behavior that `Model.extend` at `lib/models/model.js:L190-L192` depends on. The patch bump to 6.13.10 in Rubric 1 is the whole of the movement permitted here |
 | `mongoose-schema-extend` | **0.2.2** | The sole provider of `Schema.extend`, and **no maintained successor exists**. It is the reason the mongoose 6.x ceiling exists at all |
 | `underscore` | **1.13.8** | Already above the vulnerable range, and 31 require sites depend on its exact semantics |
-| `moment` | **2.30.1** | Already at the highest published release; 6 require sites |
-| `nunjucks` | **3.2.4** | The template engine for 79 server-rendered views. It is also the package whose optional peer dependency keeps `chokidar` alive |
-| `chokidar` | **3.6.0** | **Required, despite zero direct require sites.** `nunjucks` declares it an optional peer dependency and loads it lazily when template watching is on, which `lib/util/nunjucks.js:L8` enables for both development and test. Removing it breaks the environment the suite runs in |
-| `winston` | **3.19.0** | Already at the highest published release; the log surface assigned to the undeclared `log` global at `app.js:L19` |
-| `redis` | **4.7.1** | Already at the highest published release, and already the promise-based client API that `config/redis.js` uses |
-| `@hapi/boom` | **10.0.1** | Already at the highest published release. 95 error constructions across the codebase depend on its exact wire behavior, including the rule that 4xx passes its message and 5xx scrubs it |
-| `@hapi/vision` | **7.0.3** | Already at the highest published release; wired to the Nunjucks compile function |
-| `@hapi/yar` | **11.0.3** | Already at the highest published release. It decorates only `request.yar` and `server.yar`, and the cookie name and iron-seal format are part of the preserved session contract |
+| `moment` | **2.30.1** | Already current at migration time; 6 require sites |
+| `nunjucks` | **3.2.4** | The template engine for 79 server-rendered views. It is also the package whose **optional peer dependency** on `chokidar` `^3.3.0` is why `chokidar` 3.6.0 is a declared runtime dependency rather than a Rubric 4 removal — npm does not install an optional peer on the dependent's behalf, measured on both resolver majors, so the declaration is what keeps non-production boots working; the measurement is in *Reconciliation with the plan's projected figures* above |
+| `chokidar` | **3.6.0** | **Required, despite zero direct require sites**, which is why the plan lists it among the dead removals. `nunjucks` declares it an **optional peer dependency** and `require`s it lazily whenever template watching is enabled, and `lib/util/nunjucks.js:L8` enables watching for both development and test — so removing it breaks the very environment the suite runs in. Held rather than bumped because the peer range is `^3.3.0`; chokidar 4 would not satisfy it. The measurement is in *Reconciliation with the plan's projected figures* above |
+| `winston` | **3.19.0** | Already current at migration time; the log surface assigned to the undeclared `log` global at `app.js:L19` |
+| `redis` | **4.7.1** | Already current at migration time, and already the promise-based client API that `config/redis.js` uses |
+| `@hapi/boom` | **10.0.1** | Already current at migration time. 95 error constructions across the codebase depend on its exact wire behavior, including the rule that 4xx passes its message and 5xx scrubs it |
+| `@hapi/vision` | **7.0.3** | Already current at migration time; wired to the Nunjucks compile function |
+| `@hapi/yar` | **11.0.3** | Already current at migration time. It decorates only `request.yar` and `server.yar`, and the cookie name and iron-seal format are part of the preserved session contract |
 | `sass` | **1.98.0** | **Advancing it breaks the Foundation 5.5.3 fork's Sass.** It cannot pass the `@import` and legacy-JS-API removals, and the build must keep emitting the same two CSS artifacts at the same paths — `public/css/base.css` at 265,727 bytes and `public/css/embed.css` at 296,352 bytes |
 | `vite` | **4.5.14** | The installed version already builds green on Node 22 and emits exactly those two artifacts. Advancing it risks the same stylesheet output for no benefit |
-| `@hapi/shot` *(transitive)* | 5.0.5 advanced to **6.0.3** | Not a decision of this change: it moved as a transitive consequence of the `@hapi/hapi` major bump already classified in Rubric 2. It is recorded here because 6.0.3 is the **highest version published**, so its inject-only DEP0169 — traced to `@hapi/shot/lib/request.js:L30` — has no upstream fix. That is why the parity harness issues real HTTP and never calls `server.inject()`. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.9 |
+| `@hapi/shot` *(transitive)* | 5.0.5 advanced to **6.0.3** | Not a decision of this change: it moved as a transitive consequence of the `@hapi/hapi` major bump already classified in Rubric 2. It is recorded here because 6.0.3 is the highest version published at migration time, so its inject-only DEP0169 — traced to `@hapi/shot/lib/request.js:L30` — has **no upstream fix**. That is why the delivered parity harness issues real HTTP and never calls `server.inject()`, stated in `test/baseline/capture.js` and re-stated in `test/baseline/replay.js` and `test/lib/api/route-parity.js`. The application's own two internal sub-requests do inject, which is why the warning is reachable at all; see [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) sections 3.9 and 7.6 |
 
 Three groups among these holds exist specifically to protect **client-visible output**, and they are the clearest
 cases in the whole inventory where a routine-looking upgrade would have been a behavior change: `highlight.js`, whose
@@ -373,82 +882,172 @@ and `sass` with `vite`, whose output is the two byte-comparable CSS artifacts.
 
 ## The audit gate — measured, not asserted
 
-**Baseline, at the base commit.** `npm ci` installed **642 packages** and reported **74 vulnerabilities — 19
-moderate, 37 high and 18 critical**. Restricted to production dependencies, `npm audit --omit=dev` reported **59
-findings — 15 critical, 27 high and 17 moderate — across 42 distinct production packages**.
+Every figure in this section was **regenerated from the committed artifacts** immediately before being written down,
+never transcribed from the plan. Where a regenerated figure differs from the plan's, both are shown and the drift is
+explained, because an advisory database is a moving target and a number with no provenance is worse than no number.
 
-**Target, measured.** An isolated install of the complete production target set, together with the
-`overrides` pins, measured **`{critical: 0, high: 0, moderate: 3}`**. Adding `@aws-sdk/s3-request-presigner` — the
-39th runtime dependency, recorded as deviation 6 above — left that result **unchanged**, as its six dependencies were
-already resolved in the tree. Re-run against the committed manifest and lockfile in a working checkout,
-`npm audit --omit=dev` reports the same result:
+**Baseline, at the base commit, re-measured.** The base commit's own `package.json` and `package-lock.json` were
+extracted from `2f8712a` into a scratch directory and audited with `--package-lock-only`, so the measurement is of the
+base commit's resolution rather than of anything this change installed. That lockfile holds **677** package entries
+excluding the root, which npm decomposes as 470 production, 120 development and 126 optional.
+
+| Audit scope, base commit | critical | high | moderate | low | total | distinct vulnerable packages |
+|---|---|---|---|---|---|---|
+| `npm audit --omit=dev` | **15** | **26** | **17** | 0 | **58** | 58 |
+| `npm audit` (full tree) | **18** | **36** | **19** | 0 | **73** | 73 |
+
+The plan recorded 15 / 27 / 17 for 59 production findings and 18 / 37 / 19 for 74 across the whole tree. Each of those
+differs from the regenerated figure by **exactly one high finding**, which is what an advisory database moving between
+the plan's measurement and this one looks like. The regenerated figures above are authoritative for this document; the
+plan's are left visible so the one-finding drift is not mistaken for a discrepancy in the manifest.
+
+**Committed result, re-measured.** `npm ci` against the committed lockfile exits 0 and installs **428 packages**; the
+lockfile itself holds **467** entries excluding the root, decomposing as 300 production, 150 development and 55
+optional. The plan's own projection for the target set was `{critical: 0, high: 0, moderate: 3}`; the committed tree
+is one better than that, because the `uuid` override closes two of those three. `npm audit --omit=dev` reports:
 
 ```json
-{ "info": 0, "low": 0, "moderate": 3, "high": 0, "critical": 0, "total": 3 }
+{ "info": 0, "low": 0, "moderate": 1, "high": 0, "critical": 0, "total": 1 }
 ```
 
-**The zero-critical-and-zero-high result is measured, not aspirational.** It was established by installing the target
-set and running the audit, before the manifest was committed, and then confirmed against the committed manifest.
+**The zero-critical-and-zero-high result is measured, not aspirational** — 15 critical and 26 high findings closed,
+and the residual moderate count is **1**, down from the 3 the plan projected. The two that closed beyond the
+projection are the `uuid` pair, and they closed because they were **fixed rather than accepted**; the reasoning and the
+evidence are in the `uuid` row of Rubric 1 and immediately below.
 
-### The three accepted moderate findings
+### The one accepted moderate finding
 
-Three moderate findings remain, and each is accepted with a stated reason rather than repaired. Under R-4 a repair
-here would itself be the violation.
+**This section previously described three accepted moderate findings. That is no longer the delivered state, and the
+reason is worth recording rather than quietly editing away.** Two of the three shared a single root cause — a
+transitive `uuid` inside the kept queue library `bull` — and both were charged to the audit, once against `uuid` and
+once against `bull` as its path. Rather than accept them on unreachability alone, a compatible fix was looked for and
+found: `overrides` now pins `uuid` to 11.1.1. The evidence that the vulnerable API was unreachable *and* that the pin
+is behaviorally inert is set out in full in the `uuid` row of Rubric 1, and the outcome is measured — production
+findings went from 3 moderate to **1**, with 0 critical and 0 high throughout, a **one-entry** lockfile delta, and the
+test suite unchanged at 224 passing.
 
-- **Two of the three share a single root cause**: a transitive `uuid` dependency inside the queue library `bull`. The
-  advisory is *"uuid: Missing buffer bounds check in v3/v5/v6 when buf is provided"*, and it concerns an **optional
-  buffer argument this code path never supplies** — so the vulnerable branch is **unreachable** from this
-  application. The only fix npm offers is `bull` 1.1.3, a **major downgrade** from 4.16.5 that would land the project
-  back in the critical range. Accepting an unreachable moderate is strictly better than accepting a reachable
-  critical.
-- **The third is the deliberate `highlight.js` hold**, the advisory *"ReDOS vulnerabities: multiple grammars"*, which
-  applies to the range from 9.0.0 up to but excluding 10.4.1. The only fix npm offers is `highlight.js` 11.11.1, a
-  semver-major bump that would rename the emitted `hljs-*` classes and therefore **change client-visible markup** —
-  precisely the behavior change R-4 forbids. The hold is documented in Rubric 5 and in
-  [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 2.
+That leaves exactly one accepted finding, and it is accepted because R-4 makes the offered repair the violation:
+
+- **The deliberate `highlight.js` hold**, advisory *"ReDOS vulnerabities: multiple grammars"*, applying to the range
+  `9.0.0 - 10.4.0`. npm's only offered fix is `highlight.js` 11.11.1, a semver-major bump. The acceptance is
+  evidence-backed rather than asserted, and the evidence is in
+  [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 12.3: the reachable surface is **one** server call site,
+  `lib/shared/trinket-markdown.js:L310`, guarded by `hljs.getLanguage(lang)` and reached only from
+  `lib/controllers/courses.js:L287` inside `download()` when `format === "html"`, which binds it to the single
+  session-authenticated route `GET /{userSlug}/courses/{courseSlug}/download.zip`; a sizing run over **all 185**
+  bundled grammars against 8 pathological payloads measured a worst case of **42.6 ms** and a median of **1.03 ms**,
+  scaling linearly rather than catastrophically; and a 15-language differential against 10.4.1 — the *minimum*
+  non-vulnerable version, a gentler move than the 11.x npm proposes — found that **6** languages emit different
+  markup and that `r`, a language this platform actually ships, **gains an `hljs-built_in` class**. Changing emitted
+  markup is precisely the behavior change R-4 forbids, so the hold stands and the finding is accepted with that
+  measurement attached. One correction to the reason the plan gave for this hold: 10.4.1 **still accepts** the
+  positional `highlight(lang, code)` form used at that call site, so it is the **markup** that blocks the bump, not the
+  signature.
+
+**Development-only findings are recorded separately and are not charged to this change.** The full-tree audit reports
+`{low: 1, moderate: 3, high: 2, critical: 0, total: 6}` — `serialize-javascript` and `vite` at high, `esbuild`,
+`mocha` and `highlight.js` at moderate, `diff` at low. The two highs were proven **pre-existing** by auditing the
+lockfile as it stood before the `uuid` override, which reported `{low: 1, moderate: 5, high: 2, critical: 0}`: the
+override removed exactly `bull` and `uuid` and touched neither high. `vite` and `sass` are held for the stylesheet
+reason given in Rubric 5, and the gate the plan sets is `npm audit --omit=dev`, which is what the production table
+above measures.
 
 ### Reproducibility, added by this change
 
-The base commit had no reproducibility surface at all: no `engines` field, no `.nvmrc`, no `.npmrc`, and a container
-that installed with a peer-dependency escape hatch. Every item below is new or changed.
+**What the base commit did and did not have.** It **did** have a committed `package-lock.json` at lockfileVersion 3,
+so dependency *resolution* was already pinned — including the `marked` git dependency, which the lock recorded at a
+specific commit SHA. What it lacked was every pin **above** the dependency graph: no `engines` field, so nothing
+declared which Node or npm the lockfile was written for; no `.nvmrc`, so nothing told a version manager which
+interpreter to select; no `.npmrc`, so neither engine enforcement nor exact-save was in effect; and a container that
+installed with `npm install --legacy-peer-deps`, which lets the resolver drift away from the lock it was handed. The
+gap this section closes is therefore the **runtime, toolchain and container** layer, not the lockfile. Every item
+below is new or changed.
 
 **`package.json` gains an `engines` block**, verified absent at the base commit. The committed value is exactly:
 
 ```json
 "engines": {
-  "node": ">=22.0.0 <23.0.0",
+  "node": ">=22.12.0 <23.0.0",
   "npm": ">=10.0.0"
 }
 ```
 
-The npm constraint is a floor with no upper bound, and that is deliberate rather than an oversight. Because `.npmrc`
-sets `engine-strict=true`, an upper bound below npm 11 would make the install **fail outright** on a current Node 22
-distribution: a probe manifest carrying such a bound produced `npm error code EBADENGINE` and exited 1, while the
-committed constraint exited 0. A pin that prevents `npm ci` from running is not reproducibility.
+The node floor is **22.12.0 rather than 22.0.0**, and the extra precision is load-bearing. This migration depends on
+the **non-throwing static `URL.parse()`**, which AAP §0.1.1.4 (implicit requirement I5) selects as the correct Node 22
+replacement for the deprecated `url.parse()` precisely because it returns `null` instead of throwing. Node's release
+notes record that static method as added in **22.1.0**; it is a function on this checkout's v22.23.2 and `undefined`
+on a 22.0.x runtime, where the **4** call sites that rely on it — `lib/controllers/users.js:L873`, `L1776`, `L1810`
+and `L1846`, plus one in the parity harness at `test/baseline/replay.js:L337` — would raise a `TypeError` at first
+use. (`lib/controllers/trinket.js` and `lib/workers/exports.js` reach the *legacy* parser's semantics through
+`lib/util/legacyUrl.js` instead, which uses no WHATWG API at all.) A floor of `>=22.0.0` would therefore admit a
+runtime on which the application does not work — the opposite of what **AAP G1** asks the `engines` block to
+guarantee. `22.12.0` sits well above 22.1.0 and is also the release from which `require(esm)` is unflagged —
+`process.features.require_module` measures `true` on v22.23.2 — while `.nvmrc`'s bare `22` resolves to the newest
+22.x on any current distribution, which satisfies the floor with no pinning of its own.
 
-**`package.json` gains an `overrides` block**, also verified absent at the base commit, pinning the two transitive
-packages that carry the denial-of-service chain:
+**The Node constraint is bounded on both sides; the npm constraint is a floor only**, and that asymmetry is measured
+rather than stylistic — the paragraph below records the upper bound that was tried and rejected. The floor costs
+nothing to satisfy: **every** Node 22 release bundles an npm 10 — the release index at
+`https://nodejs.org/dist/index.json` records npm 10.9.8 for v22.23.2 and v22.23.1, npm 10.9.4 for v22.22.0, and
+across the whole of the Node 22 line the set of bundled npm majors is exactly `{10}`. A stock Node 22 LTS therefore
+satisfies `>=10.0.0` out of the box, with no downgrade step and no extra install, while a distribution or container
+whose package manager has already moved on to npm 11 still installs rather than being refused.
+
+`.npmrc`'s `engine-strict=true` is what gives the floor teeth, and the effect was measured in this checkout rather
+than assumed. An **upper** bound was tried and rejected. With `engine-strict=true`, `"npm": ">=10.0.0 <11.0.0"`
+makes every npm command fail on a distribution carrying npm 11: a probe manifest with that bound produced
+`npm error code EBADENGINE ... Required: {"npm":">=10.0.0 <11.0.0"} Actual: {"npm":"11.18.0"}` and exited 1,
+which takes `npm ci` — and therefore the whole `git clean -xfd && npm ci && npm run build && npm test` chain — down
+with it. The committed floor admits both resolver majors, and both were measured against the committed lockfile:
+`npm ci` exits 0 under npm 11.18.0, and `npx --yes npm@10.9.9 ci --dry-run` exits 0 as well. `lockfileVersion` 3 is
+what makes that safe — it is the format npm 7 and later both read and write, so neither major rewrites the file it is
+handed. An unbounded **floor** is still a gate: it refuses npm 9 and earlier, which cannot read this lockfile format.
+
+**`package.json` gains an `overrides` block**, also verified absent at the base commit, pinning the **two** transitive
+packages that carried advisories on behalf of dependencies this change keeps — the denial-of-service chain that
+reaches `archiver`, and the `uuid` inside `bull`:
 
 ```json
 "overrides": {
-  "brace-expansion": "5.0.9",
-  "minimatch": "10.2.6"
+  "brace-expansion": "2.1.4",
+  "uuid": "11.1.1"
 }
 ```
+
+That block is transcribed from the committed `package.json`, not written by hand: the two keys and two values above
+are exactly what the manifest holds. There is deliberately no third entry — the `minimatch` pin an earlier revision
+carried was measured to close nothing the `brace-expansion` pin does not already close, while overriding three
+consumer ranges that cannot accept a 10.x. The full reasoning is in Rubric 1.
 
 The remaining items complete the surface:
 
 - **`.nvmrc` is new**, and contains `22`.
 - **`.npmrc` is new**, and sets `engine-strict=true` and `save-exact=true`. The second is why the committed manifest
   carries exact versions rather than ranges throughout.
-- **`package-lock.json` is regenerated deterministically at lockfileVersion 3 and committed.** This was only possible
-  once the `marked` git specifier was replaced by a registry version.
+- **`package-lock.json` is regenerated at lockfileVersion 3 and committed**, and `npm ci` consumes it without
+  rewriting it — measured: `npm ci` exits 0 and the file's sha256 is byte-identical before and after
+  (`db571b90675baa7975cda7fb7ea477a7e71a72130372001836e74f69e70c0525`). The base commit's lockfile was **also**
+  lockfileVersion 3 and **also** pinned every specifier, including the `marked` fork at commit `55ea824…`, so this is
+  a regeneration rather than the introduction of determinism. The substantive, measured gains are narrower and
+  concrete: the base lock had **678** package entries of which **exactly one** carried no `integrity` field and
+  exactly one `resolved` URL was not an anonymous registry tarball — both the `marked` fork entry, resolved over
+  `git+ssh://`. The current lock has **466** entries, **zero** without `integrity`, and **zero** non-registry
+  `resolved` URLs, so every artifact `npm ci` fetches is now hash-verified and reachable without a git binary or SSH
+  credentials.
 - **The `Dockerfile` moves off its Node 16 base to a Node 22 LTS base, and its install step becomes `npm ci`.** The
   base commit ran `npm install --legacy-peer-deps`; that escape hatch is precisely the pinning-as-workaround R-2
   forbids, because it lets the resolver silently drift away from the lockfile.
-- **Verified working toolchain: node v22.23.1, npm 10.9.9.** The committed `engines` constraint admits later npm 10
-  and npm 11 releases as well, which is what allows a checkout to install on a stock Node 22 distribution without
-  first downgrading its package manager.
+- **The `Dockerfile` base image is pinned to an exact patch release, `node:22.23.2-bookworm`, not to the floating
+  `22-bookworm` tag**, because a floating tag lets both the interpreter and its bundled npm move between image builds —
+  the opposite of what the pin exists to guarantee. It then runs `npm install -g npm@10.9.9`, so the image's package
+  manager is fixed at one release inside the declared `npm >=10.0.0` floor even if the base tag is ever re-pointed. The base
+  image already bundles npm 10.9.8, so this fixes an exact release rather than correcting a violation.
+- **Verified working toolchain: node v22.23.2 with npm 10.9.9.** Both sit inside the committed `engines` constraint,
+  which is satisfiable by a stock Node 22 LTS as measured above — so a checkout installs without touching its package
+  manager, and `engine-strict=true` rejects anything outside the range instead of warning.
+- **The documented prerequisites were corrected to match.** `README.md:L18` and `docs/setup.md:L9` stated "Node.js
+  18+"; both now state the bounded Node 22 range and the `npm >=10.0.0` floor the manifest actually declares, and
+  both record that npm 11 installs the committed lockfile identically.
 
 ## What is NOT a dependency change
 
@@ -457,7 +1056,7 @@ Two things in this repository look like dependency problems and are not. Both ar
 
 ### `gleak` is neither declared nor vendored
 
-`app.js:L31-L36` contains a guarded optional `require` of `gleak` with a working no-op fallback. The package appears
+`app.js:L29-L36` contains a guarded optional `require` of `gleak` with a working no-op fallback. The package appears
 **zero times in `package.json`** and **zero times in `package-lock.json`** — verified against both the base commit
 and the committed manifest — and `node_modules/gleak` does not exist. The `catch` branch therefore always fires, the
 detector always returns an empty list, and the machinery is permanently inert.

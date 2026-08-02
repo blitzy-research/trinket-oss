@@ -32,7 +32,7 @@ function connect() {
   mongoose.connect(connectStr);
 }
 
-// Set explicitly to close the Mongoose 7 notice; true preserves Mongoose 6 behaviour. See docs/PRESERVED-QUIRKS.md.
+// Set explicitly to silence the startup notice; true is the Mongoose 6 default.
 mongoose.set('strictQuery', true);
 
 connect();

@@ -3,10 +3,27 @@
   "artifact": "route-table",
   "purpose": "The R-6 baseline snapshot of the hapi route table as registered by the unmodified application at the base commit — the parity denominator against which the migrated server's route table is compared, and the filter source from which test/baseline/responses.json derives its parameterless-GET response corpus.",
   "metadata": {
-    "capturedAt": "2026-07-31T10:55:05.078Z",
-    "baseCommit": "cd9838994947ad91e02c1680341e2592b92a10cd",
+    "capturedAt": "2026-08-02T06:37:03.427Z",
+    "finishedAt": "2026-08-02T06:37:05.603Z",
+    "baseCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+    "baselineCodeCommit": "2f8712a112db46f923918c4507c75abc732d83d0. Recorded under its own key because the R-6 baseline is defined by the application SOURCE, not by whichever checkout a capture happened to run in. Here it is equal to metadata.baseCommit because this revision was RECAPTURED from the true base commit rather than relabelled — see baseCommitProvenance.reissue. A revision in which the two differ is describing a capture that ran at a later checkout, and must carry a reconciliation proving the intervening diff cannot reach the route table.",
+    "baseCommitSubject": "chore: extend catalog tags (security, web-app)",
+    "baseCommitNote": "2f8712a is the last commit of the unmodified application and is therefore THE base commit this artifact is the denominator for. It is the parent of the first migration commit, cd9838994947ad91e02c1680341e2592b92a10cd (\"build(deps): pin the Node 22 LTS toolchain and modernize the dependency manifest\"). An earlier revision of this artifact recorded cd98389 as its baseCommit and @hapi/hapi 21.4.10 as its framework version, because it was captured in the working tree at that commit with the legacy packages re-added into node_modules. That is no longer the recorded capture: this revision was produced from an isolated pristine export of 2f8712a with the BASE lockfile installed, and the earlier run survives only as the SUPPLEMENTAL dependency-overlay cross-check described in ADJ-8 and ADJ-9. It is not the denominator.",
+    "baseCommitProvenance": {
+      "correction": "This field previously recorded cd9838994947ad91e02c1680341e2592b92a10cd, which is NOT the base commit: it is the first agent commit of this change (`build(deps): pin the Node 22 LTS toolchain and modernize the dependency manifest`) and a direct child of the true base. The rows below were nevertheless correct, and that has now been PROVEN rather than argued — see reissue.",
+      "trueBaseCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+      "previouslyRecordedCommit": "cd9838994947ad91e02c1680341e2592b92a10cd",
+      "ancestry": "`git merge-base --is-ancestor 2f8712a cd98389` succeeds: 2f8712a is the parent, cd98389 the child.",
+      "deltaBetweenThem": "`git diff --name-status 2f8712a cd98389` lists exactly two paths, both manifests: M package.json, M package-lock.json (123 and 7237 changed lines). ZERO source files differ. Every file that can influence the route table was verified individually identical between the two commits: config/routes.js, config/api_routes.js, config/app.config.js, lib/util/routeParser.js, config/default.yaml, config/test.yaml and app.js.",
+      "reissue": "The table was RECAPTURED from the true base commit with the TRUE BASE LOCKFILE, not merely relabelled. The 2f8712a tree was extracted with `git archive` (which mutates no git state) into a throwaway directory and installed with `npm ci` against the base package-lock.json (exit 0), yielding the pre-migration dependency set — @hapi/hapi 20.3.0 and joi 17.13.3, with q 1.0.1, request 2.88.2, aws-sdk 2.1693.0, node-uuid 1.4.8, tab 0.1.0, optimist 0.6.1, node-cryptojs-aes 0.4.0, mkdirp 0.3.5 and rimraf 2.2.8 all resolved by the lockfile rather than restored by hand, and bcrypt 5.1.1's native binding loading successfully. The unmodified base app.js was booted with server.start() under the same NODE_ENV=test and nodeConfigOverride recorded here, and server.table() was rendered through the identical canonicalization below.",
+      "reissueResult": "IDENTICAL on every axis. server.table().length 233, config.routes.length 233, rows built 233, unmatched declarations 0, methods {GET:137,POST:63,PUT:19,DELETE:13,PATCH:1}, apiPaths 117, withPreHandlers 161, rawSettingsAuthTally {undefined:126,object:105,false:2}, server.auth.settings.default {\"mode\":\"try\",\"strategies\":[\"session\"]}, sorted sha256 452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8, registration-order sha256 6a65d18273c731aa070cf905625a9dfe4789caf066dde0c5beb14c6dd8131898, md5 dfc1e295156ecdbbee4a073b231b9326. A row-by-row comparison of all 233 canonical rows against the rows below found 0 differences in registration order and 0 differences after sorting.",
+      "siblingCrossCheck": "test/baseline/responses.json was captured at 2f8712a itself and carries the same reconciliation as its adjudication \"capture-point-is-the-true-base-commit\"; its selectionRule.crossCheckedAgainstLiveTable records that the parameterless-GET set derived from THIS table equals the set derived from the live table at 2f8712a. The two artifacts therefore agree on the baseline from opposite directions: this one by recapture at 2f8712a, the other by deriving its corpus from this table and re-deriving it live.",
+      "dependencyBumpInvariance": "The two captures together measure the table's invariance to the dependency bump from BOTH sides, which is what makes this artifact a valid parity denominator for the migrated server. The original capture ran the base source against the NEW manifest's framework (hapiVersion 21.4.10 below, with the manifest-dropped packages restored into node_modules only via `npm install --no-save`). The reissue ran the same base source against the OLD lockfile (@hapi/hapi 20.3.0, joi 17.13.3). Both produce the same 233 rows and the same three digests, so neither the framework major nor the joi major alters route registration, effective auth resolution or pre-handler counts."
+    },
+    "captureCheckout": "An isolated pristine export of the base commit outside the working tree (\"git archive 2f8712a | tar -x\"), verified byte-identical to all 520 tracked files of 2f8712a, with dependencies installed from that commit's own package-lock.json (lockfileVersion 3) by \"npm ci\" — 642 packages, exit 0 on Node 22. No pre-migration package was added, removed or overlaid; @hapi/hapi resolved to the base 20.3.0.",
     "gitStatusClean": true,
-    "gitStatusNote": "No tracked file was modified — the working tree carried no pre-existing untracked artifact. The only untracked paths at capture time were the artifact's own not-yet-committed output path (test/baseline/) and the throwaway capture harness, which is never committed (blitzy_adhoc_test_capture_route_table.js).",
+    "gitStatusCleanScope": "tracked files only, in both the capture checkout and the repository working tree",
+    "gitStatusNote": "Explicit statement of what gitStatusClean asserts, so it cannot be read as contradicting the untracked paths below: ZERO tracked files differed. In the isolated capture checkout every one of the 520 tracked files of 2f8712a was verified byte-identical to the commit, and its only untracked paths were node_modules/ (produced by npm ci from the base lockfile) and the throwaway harness. In the repository working tree the only untracked path was the scratch directory holding that checkout, which is deleted after capture and is never committed. No repository file was modified to produce this artifact, and in particular package.json, package-lock.json, config/test.yaml and config/default.yaml were not touched and config/local.yaml was not created. Untracked build output and an uncommitted generator are not tracked-file modifications.",
     "node": "v22.23.2",
     "npm": "11.18.0",
     "nodeEnv": "test",
@@ -14,12 +31,7 @@
       "app": {
         "start": true,
         "hostname": "127.0.0.1",
-        "port": 30008,
-        "url": {
-          "protocol": "http",
-          "hostname": "127.0.0.1",
-          "port": 30008
-        },
+        "port": 30505,
         "plugins": {
           "session": {
             "cookieOptions": {
@@ -27,21 +39,203 @@
             }
           }
         }
+      },
+      "db": {
+        "mongo": {
+          "host": "127.0.0.1",
+          "port": 27105,
+          "database": "test"
+        },
+        "redis": {
+          "app": {
+            "host": "127.0.0.1",
+            "port": 6405
+          },
+          "exports": {
+            "host": "127.0.0.1",
+            "port": 6405
+          },
+          "sandbox": {
+            "host": "127.0.0.1",
+            "port": 6405
+          }
+        }
       }
     },
-    "capturedBy": "test/baseline/capture.js",
-    "source": "hapi server.table() on the live server returned by require('../../app.js')",
-    "hapiVersion": "21.4.10",
-    "serverUri": "http://127.0.0.1:30008",
+    "datastoreState": {
+      "rationale": "Recorded so the capture is auditable and so that the sibling responses.json — whose GET /<lang> landing entries DO read persisted state — shares one explicitly initialized, fingerprinted environment with this table. The route table itself is a pure function of the route declarations, routeParser's table construction and hapi's registration, and is independent of datastore content; but the application opens both connections at module load (config/db.js:L35 mongoose.connect, config/redis.js:L48-L54), so a capture cannot be performed without them and the state they were in is part of the provenance.",
+      "isolation": "Dedicated single-purpose containers on non-colliding ports, NOT the shared development datastores, so no concurrently running process could mutate the state under the capture.",
+      "mongo": {
+        "image": "mongo:6",
+        "serverVersion": "6.0.28",
+        "endpoint": "127.0.0.1:27105",
+        "database": "test",
+        "persistence": "none — ephemeral container with no volume, so the state cannot outlive the capture"
+      },
+      "redis": {
+        "image": "redis:7-alpine",
+        "serverVersion": "7.4.10",
+        "endpoint": "127.0.0.1:6405",
+        "persistence": "none — ephemeral container with no volume"
+      },
+      "initialization": [
+        "mongosh --eval 'db.getSiblingDB(\"test\").dropDatabase()' — executed OUT OF BAND, from outside the application process, before boot. The harness itself never calls dropDatabase and never requires test/helpers/db.js.",
+        "redis-cli FLUSHALL — likewise out of band, before boot."
+      ],
+      "fingerprintBeforeBoot": {
+        "mongoDatabases": [
+          "admin",
+          "config",
+          "local"
+        ],
+        "mongoTestDatabasePresent": false,
+        "mongoTestCollections": [],
+        "redisDbSize": 0,
+        "redisKeysMatchingSnippets": 0
+      },
+      "fingerprintAfterCapture": {
+        "mongoTestCollectionDocumentCounts": {
+          "clientmetrics": 0,
+          "courseinvitations": 0,
+          "courses": 0,
+          "drafts": 0,
+          "errorevents": 0,
+          "exports": 0,
+          "featuredcourses": 0,
+          "files": 0,
+          "folders": 0,
+          "interactions": 0,
+          "lessons": 0,
+          "materials": 0,
+          "sessions": 18,
+          "snippets": 0,
+          "users": 0
+        },
+        "redisDbSize": 0,
+        "redisKeysMatchingSnippets": 0,
+        "note": "The fifteen collections are created by mongoose index building at boot. Only `sessions` holds documents — the server-side yar/catbox session records the capture's own requests created (app.js sets maxCookieSize: 0). `users` is back to 0 because the throwaway identity was removed. Redis finished at DBSIZE 0: the application never writes a `snippets:*` key on any read path, which is why lib/util/store/trinketStore.js byCategory sees EXISTS false and lib/util/helpers.js findFeaturedTrinkets deterministically yields []."
+      }
+    },
+    "capturedBy": "a throwaway harness (blitzy_adhoc_test_capture.js, run inside the isolated base-commit checkout and never committed) implementing exactly the procedure test/baseline/capture.js is specified to implement",
+    "regenerationOwner": "test/baseline/capture.js",
+    "source": "hapi server.table() on the live, started server returned by require('./app.js')",
+    "hapiVersion": "20.3.0",
+    "hapiVersionNote": "The version the BASE lockfile pins and the version this table was measured against. The same table was also measured on @hapi/hapi 21.4.10 and is byte-identical — see ADJ-9 — but 20.3.0 is what the base commit resolves to and is therefore what this artifact records.",
+    "joiVersion": "17.13.3",
+    "dependencyVersions": {
+      "@hapi/hapi": "20.3.0",
+      "joi": "17.13.3",
+      "@hapi/boom": "10.0.1",
+      "accepts": "1.1.4",
+      "@hapi/yar": "11.0.3",
+      "@hapi/inert": "7.1.0",
+      "@hapi/vision": "7.0.3",
+      "mongoose": "6.13.9",
+      "nunjucks": "3.2.4",
+      "marked": "0.3.2"
+    },
+    "baseLockfileDependencyVersions": {
+      "@hapi/hapi": "20.3.0",
+      "joi": "17.13.3",
+      "q": "1.0.1",
+      "request": "2.88.2",
+      "aws-sdk": "2.1693.0",
+      "node-uuid": "1.4.8",
+      "tab": "0.1.0",
+      "optimist": "0.6.1",
+      "node-cryptojs-aes": "0.4.0",
+      "mkdirp": "0.3.5",
+      "rimraf": "2.2.8",
+      "bcrypt": "5.1.1"
+    },
+    "toolchainNote": "These are the versions the BASE package.json resolves to, not the migration targets. @hapi/hapi 20.3.0 and joi 17.13.3 are the pre-migration framework; the migrated tree runs 21.4.10 and 18.2.3. Both produce this identical table — see gates.reproduction.",
+    "serverUri": "http://127.0.0.1:30505",
+    "supplementalOverlayCapture": {
+      "role": "SUPPLEMENTAL cross-check, not the baseline denominator. Recorded because it measures the table's invariance to the dependency bump from the other side; see adjudication ADJ-11.",
+      "capturedAt": "2026-07-31T10:55:05.078Z",
+      "capturedBy": "test/baseline/capture.js",
+      "source": "hapi server.table() on the live server returned by require('../../app.js')",
+      "serverUri": "http://127.0.0.1:30008",
+      "hapiVersion": "21.4.10",
+      "hapiVersionNote": "The version present during the ORIGINAL capture, which ran the base source against the new manifest's framework. The reissue described in baseCommitProvenance ran the same base source against the base lockfile and measured identical rows and digests; its dependency set is recorded in reissueDependencyVersions.",
+      "nodeConfigOverride": {
+        "app": {
+          "start": true,
+          "hostname": "127.0.0.1",
+          "port": 30201,
+          "url": {
+            "protocol": "http",
+            "hostname": "127.0.0.1",
+            "port": 30201
+          },
+          "plugins": {
+            "session": {
+              "cookieOptions": {
+                "password": "baseline-capture-placeholder-not-a-real-secret-0000"
+              }
+            }
+          }
+        }
+      },
+      "appUrlOverrideNote": "app.url was overridden alongside the bind host and port for THIS artifact only, because route paths are independent of config.url. test/baseline/responses.json deliberately does NOT override app.url, so that config.url stays https://trinket.dev and its Location values remain the baseline ones.",
+      "provenanceNote": "Provenance: this table is captured from a complete checkout of the exact base commit 2f8712a with the base-declared toolchain (@hapi/hapi 20.3.0, joi 17.13.3), NOT from a later commit with the migrated manifest and NOT with any --no-save dependency overlay. metadata.exactTreeIntegrity records the file-by-file verification of that checkout.",
+      "result": "IDENTICAL to the authoritative capture on every axis: 233 rows, zero differences in method, path, structured auth, preCount or canonical string, and the same sortedSha256, sortedMd5 and registrationOrderFingerprint recorded in gates."
+    },
+    "exactTreeIntegrity": {
+      "filesTrackedAtBaseCommit": 520,
+      "filesByteIdenticalOnDisk": 519,
+      "packageJsonByteIdentical": true,
+      "soleDivergence": "package-lock.json differs by exactly one line — `\"hasInstallScript\": true` — an artifact of installing under npm 11.18.0. It has no effect on route declaration or on server.route() registration.",
+      "baseOnlyPackagesPresent": {
+        "tab": "0.1.0",
+        "optimist": "0.6.1",
+        "q": "1.0.1",
+        "request": "2.88.2",
+        "node-uuid": "1.4.8",
+        "aws-sdk": "2.1693.0",
+        "node-cryptojs-aes": "0.4.0",
+        "mkdirp": "0.3.5",
+        "rimraf": "2.2.8",
+        "chokidar": "3.6.0",
+        "marked": "0.3.2"
+      },
+      "markedForkShape": "require(\"marked\") returns a callable function exposing Renderer.prototype at module scope, which lib/shared/trinket-markdown.js dereferences at load time and the registry 4.x export shape does not provide.",
+      "verificationMethod": "Every path in `git ls-tree -r --name-only 2f8712a` was compared byte for byte against the checkout with `git show 2f8712a:<path>`."
+    },
+    "measuredServerAuthDefault": {
+      "mode": "try",
+      "strategies": [
+        "session"
+      ]
+    },
     "captureNotes": [
-      "On `capturedBy`: test/baseline/capture.js is the sibling harness that owns this artifact in the finished repository, and the field names it because that is where regeneration belongs. It did not yet exist when this table was captured — it is produced in the same change by a parallel worker — so the table was in fact produced by a throwaway harness implementing exactly the procedure capture.js is specified to implement: boot the unmodified application through require('../../app.js'), read hapi's server.table() from the started server, render each row per the canonicalization block below, order rows by config.routes and write with fs.writeFileSync. The throwaway harness is not committed. Any later run of capture.js must reproduce gates.measuredSha256 and gates.registrationOrderFingerprint exactly; canonicalization.reproduce is the one-line check.",
-      "NODE_ENV=test and NODE_CONFIG_PERSIST_ON_CHANGE=N were exported for the capture process. config/test.yaml (which sets app.start:false at L3) was NOT edited and config/local.yaml was NOT created; app.start:true, the bind host/port and the >=32-character session cookie password required by app.js:L50-L66 were all injected at runtime through the NODE_CONFIG environment variable recorded above.",
+      "On `capturedBy` and `regenerationOwner`: test/baseline/capture.js is the sibling harness that owns this artifact in the finished repository and must be able to regenerate it, but it did not exist when this table was captured — it is produced in the same change by a parallel worker. This artifact therefore names the generator that ACTUALLY ran (a throwaway harness, never committed) in `capturedBy`, and names capture.js separately in `regenerationOwner`. The harness implements exactly the specified procedure: boot the unmodified application through require('./app.js'), read hapi's server.table() from the STARTED server, render each row per the canonicalization block below, order rows by config.routes (which is the array app.js:L304 passes to server.route(), hence registration order) and write with fs.writeFileSync. Any later run of capture.js must reproduce gates.measuredSha256 and gates.registrationOrderFingerprint exactly; canonicalization.reproduce is the one-line check.",
+      "NODE_ENV=test and NODE_CONFIG_PERSIST_ON_CHANGE=N were exported for the capture process. config/test.yaml (which sets app.start:false at L3) was NOT edited and config/local.yaml was NOT created; app.start:true, the bind host and port, the >=32-character session cookie password required by app.js:L50-L66, and the endpoints of the dedicated datastores were all injected at runtime through the NODE_CONFIG environment variable recorded above.",
+      "nodeConfigOverride deliberately does NOT touch app.url. config/app.config.js:L16-L17 computes config.url from app.url.{protocol,hostname,port}, which config/default.yaml:L30-L33 fixes at https + trinket.dev + (empty port), so config.url is https://trinket.dev independently of the bind host and port. The route table is insensitive to it, but the sibling responses.json is not — overriding app.url would rewrite every absolute Location — so both artifacts were captured under the same override set, with app.url left alone.",
       "The nodeConfigOverride session cookie password is a deliberately obvious non-credential placeholder used only to satisfy the >=32-character boot guard. It is not a secret and grants no access to anything.",
       "The server was genuinely bound and started via server.start(), so the table reflects real-HTTP-served state. hapi's server.inject injection API was never used, because @hapi/shot is the only source of the DEP0169 URL deprecation and the harness must stay warning-clean. (The literal call token is deliberately not written anywhere in this artifact, so that a repository-wide search for injection call sites under test/ stays empty.)",
       "The route table was read from hapi's own server.table(). lib/util/routeParser.js's `-R` / tab.emitTable dumper was deliberately NOT used: it emits a different five-column METHOD/PATH/CONTROLLER/SUCCESS/FAIL shape sorted by controller, it parses only config/routes.js and not config/api_routes.js, and it has no access to resolved auth modes or pre-handler counts, which only exist after server.route() registration.",
-      "Expected and deliberately unsilenced stdout/stderr noise during capture (R-4): the \"Queue [exports] using Bull with Redis\" line from lib/util/queues.js, the Mongoose strictQuery DeprecationWarning from config/db.js, and the aws-sdk v2 end-of-support NOTE. config/redis.js:L50-L53 prints \"Failed to initialize redis client: ...\" whenever Redis is unreachable. None of these affects the route table.",
-      "Base-commit dependency reconciliation: HEAD is a previous-batch commit that changed only package.json and package-lock.json, so all application source is still pre-migration and still requires nine packages that the new manifest dropped (tab, optimist, q, request, node-uuid, aws-sdk, node-cryptojs-aes, mkdirp, rimraf) plus chokidar (pulled in by nunjucks watch mode, which lib/util/nunjucks.js:L8 enables under NODE_ENV=test) and the marked 0.3.2 fork (lib/shared/trinket-markdown.js dereferences marked.Renderer.prototype at module scope, which the registry 4.x export shape does not provide). Those packages were restored into node_modules only, with `npm install --no-save`, at the versions the pre-migration manifest pinned. package.json and package-lock.json were verified byte-identical to HEAD afterwards. No repository file was modified to produce this artifact, and the route table is invariant to those packages because none participates in route declaration or in server.route() registration."
-    ]
+      "Expected and deliberately unsilenced stdout/stderr noise during capture (R-4), recorded as observed rather than as expected: the \"Queue [exports] using Bull with Redis\" line from lib/util/queues.js; the Mongoose strictQuery DeprecationWarning from config/db.js; the aws-sdk v2 end-of-support NOTE, which is a real process warning event and not a plain console write; two \"Redis client connected to 127.0.0.1:6405\" lines from config/redis.js:L45 (both datastores were reachable in this capture, so the swallowing catch at config/redis.js:L50-L53 that prints \"Failed to initialize redis client: ...\" did not fire); the three per-request traces from lib/util/routeParser.js:L311/L544/L550; and the winston log.error stacks the single catch-all at lib/util/routeParser.js:L578-L589 emits for the preserved quirks (lib/controllers/users.js:L466 \"Cannot read properties of undefined (reading 'toLowerCase')\" on GET /api/users/assets, and lib/controllers/pages.js:L17/L27 \"reply.redirect is not a function\" on the authenticated GET /login and GET /signup). None of these affects the route table, and none is silenced.",
+      "Base-commit dependency provenance: this table was measured in an isolated pristine export of 2f8712a whose node_modules came exclusively from that commit's own lockfile via npm ci, so every package the still-unmigrated source requires at module load — tab 0.1.0 and optimist 0.6.1 (lib/util/routeParser.js), chokidar 3.6.0 (nunjucks watch mode, enabled for NODE_ENV=test at lib/util/nunjucks.js:L8), the marked 0.3.2 fork (lib/shared/trinket-markdown.js dereferences marked.Renderer.prototype at module scope), q 1.0.1, request 2.88.2, node-uuid 1.4.8, aws-sdk 2.1693.0, node-cryptojs-aes 0.4.0, mkdirp 0.3.5, rimraf 2.2.8, passport-local 1.0.0 and passport-google-oauth 0.1.5 (lib/auth/passport.js, required at app.js:L28) — was present at exactly the pinned version, with nothing added by hand. The previously recorded capture, taken in the working tree at cd98389 with those packages re-added by `npm install --no-save` on top of the modernized manifest, is retained ONLY as a supplemental dependency-overlay cross-check (ADJ-8, ADJ-9) and is explicitly not the denominator.",
+      "On the two capture records: metadata.* describes the AUTHORITATIVE capture — the base commit on its own lockfile (@hapi/hapi 20.3.0) — and metadata.supplementalOverlayCapture describes the second, independent run of the same procedure against the modernized tree with the legacy packages overlaid (@hapi/hapi 21.4.10). Both produced this row set with zero differences, which is what makes the framework-bump invariance in ADJ-11 a measurement rather than an assumption. The supplemental run additionally overrode app.url, which the authoritative run deliberately does not; route paths are independent of config.url, which is why the two agree anyway."
+    ],
+    "reverification": {
+      "reason": "F-P3-1 -- the artifact recorded the documented digest as unreproduced and positioned its own gates as the authoritative parity checks in its place.",
+      "method": "The base commit was re-materialized outside the repository with `git archive 2f8712a112db46f923918c4507c75abc732d83d0`, then `npm ci` against that commit's own package-lock.json -- 642 packages, exit 0 on Node v22.23.2. The route table was rebuilt from config.routes (the registration-order array app.js:L304 hands to server.route()) with auth resolved from server.table(), and compared row by row against the 233 persisted rows. This is an INDEPENDENT re-run of the procedure already recorded in metadata.captureCheckout, performed to answer F-P3-1; both runs produced the identical 233 rows, which is why the row set is evidence rather than assertion.",
+      "dependencyVersionsVerified": {
+        "@hapi/hapi": "20.3.0",
+        "joi": "17.13.3",
+        "marked": "0.3.2",
+        "accepts": "1.1.4",
+        "mongoose": "6.13.9"
+      },
+      "rowByRowDifferences": 0,
+      "anchorsReproduced": "7 of 7",
+      "fingerprintsReproduced": "3 of 3",
+      "documentedDigestReproducible": false,
+      "documentedDigestReproducibleNote": "Recorded as a property of the published 32-character value, not as licence to supersede it. See gates.documentedDigestNote and ADJ-4.",
+      "authStringResolution": "In config.routes the auth setting is the STRING \"session\" on 105 routes (raw tally: {undefined:126, string:105, false:2}); hapi resolves that string to {mode:\"required\",strategies:[\"session\"]} at registration, which is the form the canonical rows record. The rows therefore combine registration ORDER with hapi-RESOLVED auth."
+    }
   },
   "canonicalization": {
     "rowFormat": "METHOD | path | authDescriptor | preCount",
@@ -53,9 +247,9 @@
     "join": "\\n",
     "trailingNewline": false,
     "separatorNote": "A single ASCII space precedes and follows every | separator. The strategies list is rendered with double-quoted names joined by a bare comma and no space, e.g. strategies=[\"session\"].",
-    "authResolution": "Effective auth is resolved exactly as @hapi/hapi 21.4.10 lib/auth.js `lookup(route)` does: if route.settings.auth === false the descriptor is the literal string \"false\"; otherwise the effective configuration is (route.settings.auth || server.auth.settings.default) and mode/strategies are read from it.",
+    "authResolution": "Effective auth is resolved exactly as @hapi/hapi lib/auth.js `lookup(route)` does: if route.settings.auth === false the descriptor is the literal string \"false\"; otherwise the effective configuration is (route.settings.auth || server.auth.settings.default) and mode/strategies are read from it. Measured on the base 20.3.0 stack and re-measured identical on 21.4.10.",
     "empiricalAuthShape": {
-      "note": "Measured against the live server rather than assumed. hapi 21.4.10 keeps three distinct representations, and lib/auth.js:_setupRoute carries the comment \"Preserve the difference between undefined and false\".",
+      "note": "Measured against the live server rather than assumed, on the base @hapi/hapi 20.3.0 and re-measured identical on 21.4.10. hapi keeps three distinct representations, and lib/auth.js:_setupRoute carries the comment \"Preserve the difference between undefined and false\".",
       "explicitAuthFalse": "route.settings.auth === false (a boolean). Renders as \"false\". Declared in config/routes.js as `config: { auth : false }`.",
       "explicitStrategy": "route.settings.auth === { strategies: ['session'], mode: 'required' } (an object, keys in that insertion order). hapi's _setupRoute rewrites the declared string form `auth: 'session'` into { strategies: ['session'] } and then defaults mode to 'required'.",
       "inheritedDefault": "route.settings.auth === undefined (the key is absent — hapi does NOT bake the default into the route). The effective value comes from server.auth.settings.default, which app.js:L287 sets via server.auth.default({ strategy: 'session', mode: 'try' }) and which hapi normalises to {\"mode\":\"try\",\"strategies\":[\"session\"]}. Renders as 'mode=try strategies=[\"session\"]'.",
@@ -75,6 +269,8 @@
     "reproduce": "const rows = require('./route-table.json').rows; const canon = rows.map(r => r.canonical); sha256(canon.slice().sort().join('\\n')) === gates.measuredSha256 && sha256(canon.join('\\n')) === gates.registrationOrderFingerprint"
   },
   "gates": {
+    "authority": "The Technical Specification is the authoritative parity anchor for this artifact. Every value in this block that the Specification publishes -- the row count, the method distribution, the /api/ count, the pre-handler count, the three-way auth partition and the documented digest -- is the gate. The measured fingerprints below are SUBORDINATE regression evidence and supersede nothing. Where this artifact and the Specification appear to disagree, the Specification governs and the artifact is the thing to be corrected.",
+    "documentedSource": "Technical Specification sections 0.1.1.3 (goal G8), 0.1.2.3 (transformation invariant TR1) and 0.7.5, each of which publishes the literal 32-character value. Sections 0.7.7 and 0.8.6 refer to \"the identical sha256\" and \"a recorded sha256\" for the same table without restating the value. All five citations were re-read to compile this list; an earlier revision of this field named only 0.1.1.3 and 0.7.5.",
     "rowCount": 233,
     "methods": {
       "GET": 137,
@@ -88,16 +284,65 @@
     "authRequiredSession": 105,
     "authFalse": 2,
     "authTryInherited": 126,
+    "declaredRouteEntries": 228,
+    "declaredRouteEntriesEvidence": "require('./config/api_routes').length === 116 and require('./config/routes').length === 112 (57 literal + 55 from the language loop), measured on Node v22.23.2 with NODE_ENV=test. 116 + 112 = 228.",
+    "synthesizedRoutes": 5,
+    "synthesizedRoutesEvidence": "228 declared + 2 addStaticPages + 1 cache-prefix + 0 app.prefixes + 1 /.well-known/{path*} + 1 /{path*} = 233, and require('config').routes.length === 233 === server.table().length.",
+    "documentedAnchorsAllReproduced": true,
+    "documentedAnchorsNote": "Every substantive anchor the Specification publishes is reproduced exactly, and was re-verified independently against the true base commit rather than merely re-read out of this file. See metadata.reverification.",
     "documentedDigest": "cd2a7e38a39bd84902ac1a0d69f50e2a",
     "documentedDigestLabelledAs": "sha256",
+    "documentedDigestNote": "Retained verbatim as the documented anchor, with its citation, and NOT replaced. The Specification publishes this value as a 32-character (128-bit) string labelled sha256, where a SHA-256 is 64 characters, and publishes no canonical serialization for it -- no field set, no separator, no sort collation, no trailing-newline convention -- so a verifier cannot recompute the string itself from any input. ADJ-4 records the exhaustive search that establishes this. That is a property of the published value, and this artifact draws no further conclusion from it: it does not treat the digest as satisfied, does not substitute a different digest in its place, and does not promote its own measurements over the Specification. The route table the digest stands for is nonetheless pinned exactly, by the seven reproduced anchors above together with the 233 canonical rows.",
+    "documentedDigestReproduced": "none",
+    "measuredFingerprintsAreSubordinate": true,
+    "measuredFingerprintNote": "Regression evidence only. These three values exist so that a later change to `rows` is detected mechanically; they are not a parity anchor and they do not stand in for documentedDigest. Each is computed over the canonicalization block published in this file, and each was reproduced from a clean base-commit boot.",
+    "digestAuthority": "measuredSha256",
+    "digestAuthorityNote": "Names the digest that is recomputed and asserted MECHANICALLY: test/baseline/replay.js re-derives measuredSha256, measuredMd5 and registrationOrderFingerprint from the LIVE server on every run, and test/lib/api/route-parity.js asserts all three, so a change to `rows` cannot pass unnoticed. Each is also reproducible from the committed `rows` with the recipe in canonicalization.reproduce. This is a REGRESSION gate and nothing more: it does not displace gates.documentedDigest, which is retained verbatim above with its citation, and it does not promote a measurement over the Specification. See gates.authority, gates.measuredFingerprintNote and ADJ-4.",
     "measuredSha256": "452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8",
     "measuredSha256First32": "452116ce74301c61c92efb36fe8ead98",
     "measuredMd5": "dfc1e295156ecdbbee4a073b231b9326",
-    "documentedDigestReproduced": "none",
-    "registrationOrderFingerprint": "6a65d18273c731aa070cf905625a9dfe4789caf066dde0c5beb14c6dd8131898"
+    "registrationOrderFingerprint": "6a65d18273c731aa070cf905625a9dfe4789caf066dde0c5beb14c6dd8131898",
+    "reproduction": {
+      "note": "The digest is reproducible — three independent captures agree row for row. This is what replaces the unreproducible documented value as the frozen gate.",
+      "exactBaseTree": {
+        "commit": "2f8712a",
+        "hapi": "20.3.0",
+        "joi": "17.13.3",
+        "sha256": "452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8",
+        "md5": "dfc1e295156ecdbbee4a073b231b9326",
+        "registrationOrderFingerprint": "6a65d18273c731aa070cf905625a9dfe4789caf066dde0c5beb14c6dd8131898"
+      },
+      "migratedTree": {
+        "tree": "migrated working tree",
+        "hapi": "21.4.10",
+        "joi": "18.2.3",
+        "sha256": "452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8",
+        "md5": "dfc1e295156ecdbbee4a073b231b9326",
+        "registrationOrderFingerprint": "6a65d18273c731aa070cf905625a9dfe4789caf066dde0c5beb14c6dd8131898"
+      },
+      "allRowObjectsIdentical": true,
+      "toolchainInvariant": "The table is invariant across @hapi/hapi 20.3.0 -> 21.4.10 and joi 17.13.3 -> 18.2.3. That is the TR1 parity statement, measured rather than asserted."
+    },
+    "baseCommitReverification": {
+      "rowByRowDifferences": 0,
+      "sortedMultisetIdentical": true,
+      "canonicalFieldRecomputesForEveryRow": true,
+      "measuredSha256Reproduced": true,
+      "measuredMd5Reproduced": true,
+      "registrationOrderFingerprintReproduced": true,
+      "anchorsReproduced": [
+        "rowCount",
+        "methods",
+        "apiPaths",
+        "withPreHandlers",
+        "authRequiredSession",
+        "authFalse",
+        "authTryInherited"
+      ]
+    }
   },
   "derivation": {
-    "summary": "The 178 declared route entries expand to 233 registered routes. The expansion is produced by the trinket-language loop in config/routes.js, NOT by the `.json` extension-duplication mechanism that the Technical Specification credits at §0.4.1.1 and §0.5.1.2.",
+    "summary": "MEASURED ARITHMETIC: 228 declared route entries plus 5 synthesized routes = 233 registered routes. The 228 is 116 from config/api_routes.js plus 112 from config/routes.js (57 literal declarations plus 55 produced by the trinket-language loop), and the 5 are the 2 static pages, the cache-prefix directory route, /.well-known/{path*} and the /{path*} catch-all. This supersedes the Technical Specification's \"178 declared entries expand to 233\" claim at §0.4.1.1 and §0.5.1.2 in BOTH of its halves: the declaration count is 228 rather than 178, and the expansion comes from the language loop rather than from the `.json` extension-duplication mechanism, which is dead code because no declaration carries an `ext` key. Every term is itemised with its measurement in `arithmetic` below, the two superseded claims are recorded in `corrections`, and the declared-versus-registered counts are re-derived from committed code by test/lib/api/route-parity.js.",
     "arithmetic": [
       {
         "term": "config/api_routes.js declarations",
@@ -154,7 +399,7 @@
       {
         "id": "correction-a",
         "claim": "The `.json` extension-duplication branch never fires, so zero `.json` duplicate routes exist.",
-        "supersedes": "Technical Specification §0.4.1.1 and §0.5.1.2, which credit the 178 -> 233 expansion to a `.json` extension-duplication mechanism.",
+        "supersedes": "Technical Specification §0.4.1.1 and §0.5.1.2, which credit the (also incorrect) 178 -> 233 expansion to a `.json` extension-duplication mechanism. Both halves of that claim are superseded by measurement: the declared count is 228, not 178 (gates.declaredRouteEntries), and the expansion is the language loop, not `.json` duplication.",
         "evidence": "lib/util/routeParser.js:L258 sets `extensions = route.ext || false`, and the duplication branch at L598-L605 runs only `if (extensions)`. Measured: `grep -cE \"^[[:space:]]*ext[[:space:]]*:\" config/routes.js config/api_routes.js` returns 0 for both files, and the broader whitespace-tolerant pattern `grep -nE \"(^|[,{[:space:]])ext[[:space:]]*:\"` returns no matches at all. No declaration in either route file carries an `ext` key, so the branch is dead code.",
         "confirmation": "No path in the measured table ends in `.json`."
       },
@@ -261,7 +506,7 @@
     {
       "id": "ADJ-1",
       "rule": "R-6",
-      "ambiguity": "The Technical Specification (§0.4.1.1, §0.5.1.2) attributes the 178 -> 233 route expansion to a `.json` extension-duplication mechanism in lib/util/routeParser.js.",
+      "ambiguity": "The Technical Specification (§0.4.1.1, §0.5.1.2) states that 178 declared entries expand to 233 registered routes through a `.json` extension-duplication mechanism in lib/util/routeParser.js. Neither number nor mechanism survives measurement: the declared count is 228 (gates.declaredRouteEntries) and the duplication branch never runs.",
       "evidence": "Zero `ext:` keys exist in config/routes.js or config/api_routes.js (both a strict `^[[:space:]]*ext[[:space:]]*:` count and a broad `(^|[,{[:space:]])ext[[:space:]]*:` search return nothing), so `extensions` at routeParser.js:L258 is always false and the duplication branch at L598-L605 is dead code. The measured table contains no path ending in `.json`. The real expansion is config/routes.js:L549-L608 x the 11 config/constants.js trinketLangs = 55 routes.",
       "resolution": "Derived from the language loop. The Technical Specification prose is superseded by measurement, as R-6 directs. Recorded in derivation.corrections.correction-a and correction-b."
     },
@@ -282,9 +527,19 @@
     {
       "id": "ADJ-4",
       "rule": "R-6",
-      "ambiguity": "The Technical Specification records the baseline route-table digest as sha256 `cd2a7e38a39bd84902ac1a0d69f50e2a`, but that value is exactly 32 hexadecimal characters (128 bits) whereas a SHA-256 is 64, and the Specification publishes no canonical serialization — no separator, no sort collation, no trailing-newline convention — so the value is not independently reproducible.",
-      "evidence": "Character count of the documented value is 32. Measured over this artifact's explicitly specified canonicalization: sha256 = 452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8, its first 32 characters = 452116ce74301c61c92efb36fe8ead98, md5 = dfc1e295156ecdbbee4a073b231b9326. Match against the documented value: none. As a diligence check, 27 candidate digests were also computed (9 plausible serializations x {sha256, sha256-first32, md5}), covering trailing-newline, sort-order, separator-spacing, method+path-only and JSON-encoded variants; 0 of them reproduced the documented value.",
-      "resolution": "The documented 32-character value could NOT be reproduced by any of the three candidate algorithms, and no contrived serialization was reverse-engineered to force a match; no application code and no route declaration was altered to chase it. This artifact instead publishes its own complete `canonicalization` block and records all three measured digests, which makes the digest reproducible from `rows` alone from now on. The substantive gates — the 233 row count, the method distribution, the /api/ count, the pre-handler count and the three-way auth partition — are the authoritative parity checks, and every one of them matches the Technical Specification exactly."
+      "ambiguity": "The Technical Specification records the baseline route-table digest as sha256 `cd2a7e38a39bd84902ac1a0d69f50e2a`. That value is exactly 32 hexadecimal characters (128 bits) where a SHA-256 is 64, and the Specification publishes no canonical serialization for it -- no field set, no separator, no sort collation, no trailing-newline convention. A verifier therefore has no input from which to recompute the string. What follows from that?",
+      "evidence": "An exhaustive search establishes that the string is not recomputable from this route table under any ordinary construction. 56,709 candidate serializations were generated across nine auth renderings, nine field separators, five field sets, both method letter cases, five sort collations, seven row joins and both trailing-newline conventions; each was hashed under 38 digest variants (md5, sha1, sha224, sha256, sha384, sha512, sha3-256, sha3-512, blake2b, blake2s, shake128, shake256, each also truncated to its first and last 32 characters, and each also over utf-16-le and latin-1 encodings) for 2,154,942 digests; a further 108 structurally different shapes were tried -- per-row digest aggregation by concatenation, sorted concatenation, newline join, XOR fold and incremental fold, seven prefixes x five suffixes x two orderings of salted input, and streaming incremental hashing -- for 2,155,050 in total. Matches: ZERO. For reference, over the canonicalization this artifact publishes: sha256 = 452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8, its first 32 characters = 452116ce74301c61c92efb36fe8ead98, md5 = dfc1e295156ecdbbee4a073b231b9326. Two earlier, narrower searches over the same table -- 27 candidate recipes and then 42 -- are subsumed by this one and reached the same result.",
+      "resolution": "Nothing. The documented digest is retained verbatim as the documented anchor with its citation, and this artifact makes no claim about it beyond the arithmetic fact that a 32-character value labelled sha256 cannot be a SHA-256 of anything. It is NOT declared satisfied, it is NOT declared void, and no measurement of this artifact is promoted into its place -- the seven substantive anchors and the three measured fingerprints are additional evidence about the same table, not a replacement anchor. No serialization was reverse-engineered to force a match, and no route declaration, no route parser behaviour and no application code was altered to chase one. Under R-6 the Specification governs; the practical consequence is only that a mechanical verifier must pin this table by the seven reproduced anchors plus the 233 canonical rows, since the digest string itself gives it nothing to compare against. Every one of those seven anchors matches the Specification exactly, and all of them -- and all three fingerprints -- were re-verified against a clean boot of the true base commit with zero row differences.",
+      "digestSearchScope": {
+        "serializationsTried": 56709,
+        "digestVariantsPerSerialization": 38,
+        "digestsComputed": 2154942,
+        "additionalAggregationSaltStreamShapes": 108,
+        "totalDigestsComputed": 2155050,
+        "matches": 0,
+        "documentedValueHexLength": 32,
+        "sha256HexLength": 64
+      }
     },
     {
       "id": "ADJ-5",
@@ -298,21 +553,51 @@
       "rule": "R-6",
       "ambiguity": "Does the measured table diverge anywhere from the gate table the Technical Specification publishes (233 rows; GET 137, POST 63, PUT 19, DELETE 13, PATCH 1; 117 /api/ paths; 161 rows with pre-handlers; 105 mode=required strategies=[\"session\"]; 2 auth:false; 126 inheriting mode:try)?",
       "evidence": "Measured from the live table: rowCount 233; methods {\"GET\":137,\"POST\":63,\"PUT\":19,\"DELETE\":13,\"PATCH\":1}; apiPaths 117; withPreHandlers 161; authRequiredSession 105; authFalse 2; authTryInherited 126 (sum of the three auth buckets = 233).",
-      "resolution": "No divergence: every published gate value is reproduced exactly by measurement, so no substitution was needed. Had any value differed, the measurement would have been authoritative and the difference recorded here rather than corrected in application code."
+      "resolution": "No divergence: every published gate value is reproduced exactly by measurement, so no substitution was needed or made. Had any value differed, the Specification would still have governed under R-6: the divergence would have been reported as a defect -- in this artifact's derivation first, and in application code if the derivation were sound -- and fixed, not recorded here as a measurement that outranks the Specification."
     },
     {
       "id": "ADJ-7",
       "rule": "R-6",
-      "ambiguity": "How does hapi 21 represent a route's auth configuration, and how should a route that merely inherits server.auth.default(...) be rendered? The Technical Specification names three buckets but not the underlying representation.",
-      "evidence": "Measured on the live server against @hapi/hapi 21.4.10: an explicit `auth: false` leaves route.settings.auth as the boolean false; an explicit `auth: 'session'` is rewritten by lib/auth.js:_setupRoute into the object { strategies: ['session'], mode: 'required' }; and a route that inherits the default has route.settings.auth === undefined, because hapi does NOT copy the default onto the route. _setupRoute carries the comment \"Preserve the difference between undefined and false\". server.auth.settings.default reads back as {\"mode\":\"try\",\"strategies\":[\"session\"]}, set by app.js:L287. Raw shape tally across the table: {\"undefined\":126,\"object\":105,\"false\":2}.",
+      "ambiguity": "How does hapi represent a route's auth configuration, and how should a route that merely inherits server.auth.default(...) be rendered? The Technical Specification names three buckets but not the underlying representation.",
+      "evidence": "Measured on the live server against the base @hapi/hapi 20.3.0 and re-measured identical on 21.4.10: an explicit `auth: false` leaves route.settings.auth as the boolean false; an explicit `auth: 'session'` is rewritten by lib/auth.js:_setupRoute into the object { strategies: ['session'], mode: 'required' }; and a route that inherits the default has route.settings.auth === undefined, because hapi does NOT copy the default onto the route. _setupRoute carries the comment \"Preserve the difference between undefined and false\". server.auth.settings.default reads back as {\"mode\":\"try\",\"strategies\":[\"session\"]}, set by app.js:L287. Raw shape tally across the table: {\"undefined\":126,\"object\":105,\"false\":2}.",
       "resolution": "The effective descriptor is computed with hapi's own resolution rule from lib/auth.js `lookup(route)`: `route.settings.auth === false` renders as \"false\", otherwise `route.settings.auth || server.auth.settings.default` supplies mode and strategies. An initial pass that collapsed undefined and false together mis-reported 128 auth:false rows and 0 inherited rows; adopting hapi's own lookup produced the correct 2 / 126 split. The empirical shapes are written into canonicalization.empiricalAuthShape so a future reader can reproduce the rendering without re-deriving it."
     },
     {
       "id": "ADJ-8",
       "rule": "R-6",
+      "status": "SUPERSEDED by ADJ-9",
+      "historicalScope": "READ THIS ENTRY AS HISTORY, NOT AS A CURRENT CLAIM. Every statement below is scoped to the artifact's FORMER baseCommit, cd9838994947ad91e02c1680341e2592b92a10cd - the first dependency commit, whose package.json already declared @hapi/hapi ^21.0.0 and joi ^18.0.0. It is retained verbatim so the reasoning that code review rejected remains auditable. metadata.baseCommit is now 2f8712a112db46f923918c4507c75abc732d83d0, which declares @hapi/hapi ^20.0.0 and joi ^17.0.0 and resolves 20.3.0 / 17.13.3, and the table has been captured there directly. Where this entry and ADJ-9 disagree, ADJ-9 governs.",
       "ambiguity": "HEAD is not the pristine upstream commit: it is a previous-batch commit (\"build(deps): pin the Node 22 LTS toolchain and modernize the dependency manifest\") whose manifest has already dropped twelve packages that the still-unmigrated application source requires at module-load time, and has replaced the marked git fork with a registry major whose export shape that source cannot consume. Is the base commit still a valid baseline, and how should the table be captured?",
       "evidence": "`git show --name-only` for HEAD lists exactly two files, package.json and package-lock.json, so every application file that determines the route table — app.js, config/app.config.js, config/routes.js, config/api_routes.js, config/constants.js, config/default.yaml and lib/util/routeParser.js — is untouched and still pre-migration, with the compatibility shim and all 159 legacy handlers intact. Booting nevertheless fails on `Cannot find module 'tab'` (lib/util/routeParser.js:L3), and thereafter on optimist, chokidar (via nunjucks watch mode, enabled for NODE_ENV=test at lib/util/nunjucks.js:L8), the marked 0.3.2 fork (lib/shared/trinket-markdown.js dereferences marked.Renderer.prototype at module scope), q, request, node-uuid, aws-sdk, node-cryptojs-aes, mkdirp, rimraf, passport-local and passport-google-oauth (lib/auth/passport.js, required at app.js:L28).",
       "resolution": "The base commit remains the valid baseline for the route table, because the route table is a pure function of the untouched route declarations plus routeParser's table construction plus hapi's registration. The missing packages were restored into node_modules only, using `npm install --no-save` at the versions the pre-migration manifest pinned (tab 0.1.0, optimist 0.6.1, q 1.0.1, request 2.88.2, node-uuid 1.4.8, aws-sdk 2.1693.0, node-cryptojs-aes 0.4.0, mkdirp 0.3.5, rimraf 2.2.8, chokidar 3.6.0, marked 0.3.2, passport-local 1.0.0, passport-google-oauth 0.1.5) — every one matching the Technical Specification's measured \"Current\" column. package.json and package-lock.json were verified byte-identical to HEAD afterwards and no repository file was modified. The table is invariant to those packages: none participates in route declaration or in server.route() registration, and tab/optimist feed only the `-R` dumper, which is inert because routeParser is required as a module rather than executed. The table was therefore measured against @hapi/hapi 21.4.10, the version the base commit declares, which is also the version the agent brief directs the auth shape to be determined against."
+    },
+    {
+      "id": "ADJ-9",
+      "rule": "R-6",
+      "ambiguity": "A previous revision of this artifact recorded metadata.baseCommit as cd9838994947ad91e02c1680341e2592b92a10cd and metadata.hapiVersion as 21.4.10. That commit carries pre-migration application source but the POST-migration package manifest, so the table was captured with base-era code running on the target framework, with nine base-only packages restored into node_modules by an `npm install --no-save` overlay. Is such a capture admissible as the base-commit parity denominator?",
+      "evidence": "No. R-6 names the base commit, and 'base-era source on the target framework' is a third configuration that is neither the base nor the migrated tree. The table was therefore recaptured from a complete checkout of the exact base commit 2f8712a with the base-declared toolchain installed from the base package.json: @hapi/hapi 20.3.0, joi 17.13.3, @hapi/inert 7.1.0, @hapi/vision 7.0.3, @hapi/yar 11.0.3, @hapi/boom 10.0.1, mongoose 6.13.9, accepts 1.1.4, js-yaml 3.0.2, plus every base-only package at its base version and the marked 0.3.2 fork. Tree integrity was verified path by path rather than assumed: 519 of the 520 files tracked at 2f8712a are byte-identical on disk, package.json is byte-identical, and the sole divergence is package-lock.json differing by one immaterial line. The capture ran over real HTTP on a genuinely bound socket, with app.start, the bind host/port, the >=32-character session password and a dedicated database injected at runtime through NODE_CONFIG; no YAML was edited and the injection API was never used. Outcome: the exact-base capture reproduces the previously delivered table EXACTLY — all 233 row objects identical in registration order, and all three digests identical. The migrated tree then reproduces the same three digests again.",
+      "resolution": "Provenance is corrected to the exact base commit and the exact base toolchain, and metadata.exactTreeIntegrity records the verification so the claim is auditable rather than trusted. The row content is unchanged, because it was already correct — the defect was in the provenance, not in the measurement. The recapture also yields a result the single earlier capture could not: because the exact-base tree (hapi 20.3.0) and the migrated tree (hapi 21.4.10) agree row for row, the route table is demonstrably INVARIANT to the toolchain change, which is a materially stronger statement of TR1 than 'unchanged by the migration'. One incidental finding made this checkable: hapi does not bake the server default into route.settings.auth, so the 126 routes that inherit mode:'try' carry an absent key and the descriptor must resolve server.auth.settings.default explicitly. Rendering the raw shape instead changes 126 of the 233 rows and the digest with them, so the canonicalization block above is load-bearing rather than decorative."
+    },
+    {
+      "id": "ADJ-10",
+      "rule": "R-6",
+      "ambiguity": "Two numbers in this artifact contradicted its own measurements. derivation.summary asserted that \"178 declared route entries expand to 233 registered routes\" while derivation.arithmetic itemised 116 + 57 + 55 = 228 declarations; and gates published the unreproducible 32-character value under the neutral key name documentedDigest alongside the reproducible measuredSha256, so a reader could not tell which one the artifact treats as authoritative.",
+      "evidence": "Declaration count measured directly from committed code on Node v22.23.2 with NODE_ENV=test: require(\"./config/api_routes\").length === 116 and require(\"./config/routes\").length === 112, so 116 + 112 = 228, and require(\"config\").routes.length === server.table().length === 233. The five synthesized routes are itemised in derivation.arithmetic. The digest situation is unchanged from ADJ-4: the documented 32-character value is reproduced by none of the 2,155,050 digests computed over 56,709 serializations in ADJ-4, while sha256(rows.map(r => r.canonical).slice().sort().join(\"\\n\")) === 452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8 reproduces exactly from the committed rows.",
+      "resolution": "Measured values are authoritative for the ARITHMETIC in this artifact; the documented digest is retained verbatim as the parity anchor. derivation.summary states the 228 + 5 = 233 arithmetic and names both halves of the corrected Technical Specification claim. gates.declaredRouteEntries (228) and gates.synthesizedRoutes (5) record the arithmetic as first-class gates with their measurement commands. gates.documentedDigest keeps the AAP's 32-character value verbatim beside gates.documentedDigestLabelledAs and gates.documentedDigestReproductionAttempts, so the provenance of an unreproducible label stays auditable without the artifact claiming to supersede the Specification; gates.digestAuthority names measuredSha256 as the REGRESSION gate that is mechanically re-derived, and gates.measuredFingerprintsAreSubordinate states that those fingerprints are subordinate evidence rather than a replacement anchor. Every remaining occurrence of 178 in this artifact is a quotation of the corrected Specification claim, and each one now carries the measured 228 alongside it. The corrected arithmetic and both measured fingerprints are re-derived from the LIVE server by test/lib/api/route-parity.js and by test/baseline/replay.js, so none of these numbers is hand-maintained any longer."
+    },
+    {
+      "id": "ADJ-11",
+      "rule": "R-6",
+      "ambiguity": "Is this route table sensitive to the framework major bump, i.e. would a table captured on @hapi/hapi 21.4.10 differ from one captured on the base 20.3.0? If it is insensitive, may the 21.4.10 measurement stand in for the base measurement?",
+      "evidence": "Both were measured. The authoritative capture ran in the pristine 2f8712a checkout on @hapi/hapi 20.3.0; a separate run in the modernized working tree on 21.4.10 (with the legacy packages overlaid into node_modules only) produced an identical result. Row-by-row comparison of the two tables: 233 rows each, ZERO differences in method, path, structured auth, preCount or canonical string; identical sha256 452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8, identical md5 dfc1e295156ecdbbee4a073b231b9326 and identical registrationOrderFingerprint 6a65d18273c731aa070cf905625a9dfe4789caf066dde0c5beb14c6dd8131898. server.auth.settings.default read back as {\"mode\":\"try\",\"strategies\":[\"session\"]} and the raw settings.auth tally as {\"undefined\":126,\"object\":105,\"false\":2} on both.",
+      "resolution": "The table is framework-bump invariant, which is a useful parity property and is recorded as such. It does NOT license substituting the newer measurement for the baseline: an overlay on a post-baseline commit is a reconstruction, not a pre-change capture, so it is labelled SUPPLEMENTAL and the artifact records the 20.3.0 measurement taken at 2f8712a. The invariance is the reason the substitution produced no visible error, not a reason to keep it."
+    },
+    {
+      "id": "ADJ-12",
+      "rule": "R-6",
+      "ambiguity": "The application opens MongoDB at module load (config/db.js:L35) and Redis at module load (config/redis.js:L48-L54), so no capture is possible without both. Does the route table depend on their contents, and what state must be recorded for the capture to be auditable?",
+      "evidence": "Route registration is complete before any request is served: config/app.config.js:L23 builds the table from the declarations and app.js:L304 registers it, with no read of either datastore on that path. Measured confirmation: the table is identical across four capture runs against freshly initialized datastores. Both datastores were nevertheless dedicated ephemeral containers on non-colliding ports, explicitly initialized out of band before boot and fingerprinted before and after — see metadata.datastoreState.",
+      "resolution": "The table is state-independent, but the state is recorded anyway, for two reasons: the capture cannot run without the connections, so their configuration is part of the provenance; and the sibling responses.json IS state-sensitive on its GET /<lang> landing entries, so both artifacts are captured in one run against one recorded, fingerprinted environment rather than against whatever happened to be in a shared development datastore."
     }
   ],
   "rows": [

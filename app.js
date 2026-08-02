@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 
-// The Q-compatible `spread` polyfill on the native promise prototype was removed by the async
-// conversion: the census recorded in docs/PRESERVED-QUIRKS.md section 3.14 found ZERO callers of it
-// anywhere under app.js, config/, lib/, scripts/ or test/, and Mongoose 6 already returns native
-// promises, so the stated "Mongoose 6 compatibility" rationale no longer holds. The `fail` alias
-// below SURVIVES pending the conversion of its last two consumers - lib/workers/exports.js and
-// test/lib/models/plugins/roles.js - whose 13 remaining call sites would throw without it. The 73
-// `request.fail` decorations are an unrelated concern: the response contract now in lib/http/.
-if (!Promise.prototype.fail) {
-  Promise.prototype.fail = Promise.prototype.catch;
-}
+// Both Q-compatibility polyfills that used to be monkey-patched onto the native promise prototype
+// here - `spread` and `fail` - are gone, completing the async conversion (AAP G3). Neither has a
+// consumer left: re-measured on this commit, `grep -rn '\.fail(' app.js config/ lib/ scripts/ test/`
+// returns ZERO promise call sites (the last 8 lived in test/lib/models/plugins/roles.js and are now
+// `.catch(`, and lib/workers/exports.js's 5 went the same way with the worker migration), and the
+// `spread` census found none at all. The `.fail(` occurrences under lib/views/ are jQuery Deferred
+// calls in browser markup, not consumers of this alias, and the `request.fail` decorations are the
+// unrelated declarative response contract in lib/http/responseContract.js. Mongoose 6 returns native
+// promises, so the "Mongoose 6 compatibility" rationale the patches carried no longer holds. See
+// docs/MIGRATION-DEPENDENCY-INVENTORY.md.
 
 // initialize the global logger
 log = require('./config/log');
@@ -21,6 +21,7 @@ const Vision         = require('@hapi/vision');
 const Yar            = require('@hapi/yar');
 const config         = require('./config/app.config');
 const Helpers        = require('./lib/util/helpers');
+const aws            = require('./config/aws');
 // gleak is not compatible with Node 16+ (uses GLOBAL which was removed)
 // Use a no-op fallback for now
 let gleak;
@@ -247,11 +248,6 @@ const init = async () => {
         }
 
         try {
-          // lib/models/model.js's default findById supports optional callback bridging while
-          // RETAINING a promise return, so calling it without a callback awaits the very mongoose
-          // query the deferred wrapper used to adapt. The error mapping is unchanged: a rejection
-          // still lands in the catch below, which still logs through the global logger and still
-          // answers with the same unauthorized Boom it always did.
           const user = await User.findById(userId);
 
           if (!user) {
@@ -294,6 +290,21 @@ const init = async () => {
 
   // Register helpers
   Helpers.register(server);
+
+  // Release the shared S3 client's sockets when the server stops.
+  //
+  // config/aws.js holds ONE S3Client for the process because that is the resource
+  // shape aws-sdk v2 had - its clients shared a process-global agent singleton and
+  // had no destroy method at all - whereas a v3 client owns its own keep-alive pool.
+  // This is the only shutdown signal the application has: there are no process
+  // signal handlers anywhere in the tree, and none are added here, because inventing
+  // one would be new behavior rather than migration. When nothing ever stops the
+  // server the client simply lives as long as the process, exactly as v2's pool did.
+  // destroyS3Client() is idempotent and safe when no client was ever built, so this
+  // listener is safe on a server that never issued an S3 request.
+  server.events.on('stop', function() {
+    aws.destroyS3Client();
+  });
 
   // Register routes
   server.route(config.routes);

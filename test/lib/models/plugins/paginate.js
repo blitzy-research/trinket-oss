@@ -26,10 +26,13 @@ describe('paginate plugin', function() {
       schema, options;
 
   beforeEach(function() {
-    model.find.reset();
-    query.sort.reset();
-    query.limit.reset();
-    query.exec.reset();
+    // Sinon 1.7.3's spy `reset()` cleared CALL HISTORY; Sinon removed `spy.reset` outright in favour of
+    // `resetHistory()`. A faithful rename - these are spies with no stubbed behaviour to preserve, and the
+    // assertions that read `callCount` and `calledWith` below are untouched.
+    model.find.resetHistory();
+    query.sort.resetHistory();
+    query.limit.resetHistory();
+    query.exec.resetHistory();
     schema  = {
       statics : {}
     };

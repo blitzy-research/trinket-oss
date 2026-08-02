@@ -2,5 +2,6 @@
   "reporter": "spec",
   "recursive": true,
   "check-leaks": true,
-  "exit": true
+  "exit": true,
+  "require": "./test/setup.js"
 }

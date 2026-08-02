@@ -7,12 +7,11 @@
     "test": "test"
   },
   "engines": {
-    "node": ">=22.0.0 <23.0.0",
+    "node": ">=22.12.0 <23.0.0",
     "npm": ">=10.0.0"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1098.0",
-    "@aws-sdk/s3-request-presigner": "3.1098.0",
     "@hapi/boom": "10.0.1",
     "@hapi/hapi": "21.4.10",
     "@hapi/inert": "7.1.2",
@@ -63,14 +62,14 @@
     "vite": "4.5.14"
   },
   "overrides": {
-    "brace-expansion": "5.0.9",
-    "minimatch": "10.2.6"
+    "brace-expansion": "2.1.4",
+    "uuid": "11.1.1"
   },
   "scripts": {
     "test": "mocha",
     "build:css": "vite build",
     "watch:css": "vite build --watch",
-    "build": "npm run build:css",
+    "build": "node scripts/hydrate-components.js && npm run build:css",
     "make-admin": "node scripts/make-admin.js"
   },
   "repository": {

@@ -1101,7 +1101,16 @@ module.exports = [
     route : 'POST /api/users/login users.login',
     cookie : true,
     config  : {
-      pre : [{ method : helpers.lowerUserFields }, { method : function(req, reply) { return reply(true) }, assign : 'encryptRoles' }],
+      // hapi API migration: this was the file's only legacy callback-style pre-handler. It now uses
+      // the native (request, h) signature and RETURNS its value, which hapi stores on request.pre.
+      // The literal `true` is load-bearing and unconditional: lib/controllers/users.js:L205 reads
+      // request.pre.encryptRoles to choose the six-field login projection over the entire user
+      // document, bcrypt hash included. Never make it falsy or conditional, never rename the key,
+      // and keep helpers.lowerUserFields first - it lowercases the submitted email before lookup.
+      pre : [
+        { method : helpers.lowerUserFields },
+        { method : function(request, h) { return true; }, assign : 'encryptRoles' }
+      ],
       validate : {
         payload : {
           email    : Joi.string().required(),

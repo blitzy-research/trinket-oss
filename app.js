@@ -1,16 +1,12 @@
 #!/usr/bin/env node
 
-// Add Q-compatible methods to native Promise for Mongoose 6 compatibility
-if (!Promise.prototype.spread) {
-  Promise.prototype.spread = function(fn) {
-    return this.then(function(result) {
-      if (Array.isArray(result)) {
-        return fn.apply(null, result);
-      }
-      return fn(result);
-    });
-  };
-}
+// The Q-compatible `spread` polyfill on the native promise prototype was removed by the async
+// conversion: the census recorded in docs/PRESERVED-QUIRKS.md section 3.14 found ZERO callers of it
+// anywhere under app.js, config/, lib/, scripts/ or test/, and Mongoose 6 already returns native
+// promises, so the stated "Mongoose 6 compatibility" rationale no longer holds. The `fail` alias
+// below SURVIVES pending the conversion of its last two consumers - lib/workers/exports.js and
+// test/lib/models/plugins/roles.js - whose 13 remaining call sites would throw without it. The 73
+// `request.fail` decorations are an unrelated concern: the response contract now in lib/http/.
 if (!Promise.prototype.fail) {
   Promise.prototype.fail = Promise.prototype.catch;
 }
@@ -251,12 +247,12 @@ const init = async () => {
         }
 
         try {
-          const user = await new Promise((resolve, reject) => {
-            User.findById(userId, (err, user) => {
-              if (err) reject(err);
-              else resolve(user);
-            });
-          });
+          // lib/models/model.js's default findById supports optional callback bridging while
+          // RETAINING a promise return, so calling it without a callback awaits the very mongoose
+          // query the deferred wrapper used to adapt. The error mapping is unchanged: a rejection
+          // still lands in the catch below, which still logs through the global logger and still
+          // answers with the same unauthorized Boom it always did.
+          const user = await User.findById(userId);
 
           if (!user) {
             request.yar.clear('userId');

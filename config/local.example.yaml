@@ -38,6 +38,14 @@ db:
 # OPTIONAL: Email (for password reset)
 # =============================================================================
 # Without email, users can still register and log in, but password reset won't work.
+#
+# SECURITY - if you configure SMTP, set `secret` too. It is the signing key for the
+# "share this trinket by email" token. There is no default for it, and when it is unset
+# the effective key becomes the literal string "undefined" plus the trinket's PUBLIC
+# short code - which anyone can read out of a trinket URL - so the token can be forged
+# and the platform can be driven as a mail relay. Use a long random value, keep it out
+# of version control, and see docs/PRESERVED-QUIRKS.md section 4.6 (SEC-6) for the
+# measurement and for why the application does not ship a default.
 
 # app:
 #   mail:
@@ -46,6 +54,7 @@ db:
 #     port: 587
 #     user: 'your-smtp-username'
 #     pass: 'your-smtp-password'
+#     secret: 'change-me-to-a-long-random-value'
 
 # =============================================================================
 # OPTIONAL: File Storage (for asset uploads in trinkets)

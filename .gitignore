@@ -2,6 +2,7 @@
 
 node_modules
 public/components
+public/._components
 public/vendor
 public/404.html
 public/50x.html

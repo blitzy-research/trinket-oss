@@ -49,8 +49,19 @@ echo '58422c0d0c7d25c1e6fdd1e014ff690f41c899257703e416e85a0fb0a926181f  public-c
 Only once that prints `public-components.tgz: OK`, unpack and clean up:
 
 ```bash
-tar xzf public-components.tgz && rm public-components.tgz
+tar xzf public-components.tgz && rm -f public-components.tgz public/._components
 ```
+
+The cleanup removes two files, not one. The archive was packed on macOS, so it
+carries an AppleDouble sidecar - `public/._components`, 268 bytes - next to the
+component tree. It is inert and nothing serves it, but it is not part of the
+component tree, so it is removed here exactly as `scripts/hydrate-components.js`
+removes it after its own extraction; leaving it behind is what makes
+`git status` report an untracked file on an otherwise clean checkout.
+`.gitignore` covers `public/._components` as well, so a copy left behind by an
+older procedure cannot be committed either. `tar` prints
+`Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'`
+for the same macOS provenance, and that notice is harmless.
 
 `--fail` makes `curl` exit non-zero on an HTTP error rather than writing the
 error body into the output file, `--show-error` keeps the reason visible despite

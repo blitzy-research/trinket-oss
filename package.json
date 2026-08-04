@@ -71,6 +71,7 @@
     "test": "NODE_ENV=test NODE_CONFIG_PERSIST_ON_CHANGE=N mocha --file ./test/setup.js",
     "build:css": "vite build",
     "watch:css": "vite build --watch",
+    "prebuild": "node scripts/hydrate-components.js",
     "build": "npm run build:css",
     "make-admin": "node scripts/make-admin.js"
   },

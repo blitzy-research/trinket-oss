@@ -4,8 +4,8 @@ var sinon    = require('sinon'),
     flow     = require('../../helpers/flow'),
     defaults = require('../../helpers/defaults');
 
-// Review finding M6 (CWE-200 / CWE-522) sentinels - the same pair test/lib/api/admin.js uses. See the
-// annotated describe near the foot of this file.
+// R-6 payload-shape sentinels - the same pair test/lib/api/admin.js uses. See the annotated describe
+// near the foot of this file and docs/PRESERVED-QUIRKS.md section 4.14.
 var GOOGLE_TOKEN_SENTINEL = 'ya29.M6-SENTINEL-GOOGLE-BEARER-TOKEN',
     GOOGLE_ID_SENTINEL    = 'M6-SENTINEL-GOOGLE-ID';
 
@@ -380,12 +380,19 @@ module.exports = function() {
         });
       })
 
-      // Review finding M6 (CWE-200 / CWE-522). Added coverage, not a rewrite of anything above.
-      // `Course.publicSpec` whitelists `_owner` and `setOwner` assigns the populated User DOCUMENT, so
-      // the owner is JSON-cloned whole into this response. A remediation that removed only the
-      // top-level `password` therefore still shipped the owner's live Google OAuth bearer credential
-      // from `profiles.google.token` - into the API body AND, through the server.inject consumer in
-      // lib/controllers/courses.js#create, into POST /courses as well. Both are asserted.
+      // R-6 / R-4 PAYLOAD-SHAPE PIN. Added coverage, not a rewrite of anything above.
+      // `Course.publicSpec` whitelists `_owner` and `setOwner` assigns the populated User DOCUMENT,
+      // and `ObjectUtils.serialize`'s `hasOwnProperty('serialize')` test misses the mongoose
+      // prototype method, so the owner is JSON-cloned WHOLE into this response - bcrypt hash and
+      // `profiles.google.token` included - both in the API body and, through the server.inject
+      // consumer in lib/controllers/courses.js#create, in POST /courses.
+      //
+      // That is the base commit's payload shape and R-4 freezes it. An intermediate revision replaced
+      // the owner with a credential-scrubbed clone; code review removed that under R-1 (a
+      // credential-disclosure repair is not one of the four sanctioned diff categories) and R-4 (it
+      // changed a client-visible payload). These specs pin the restored shape so it cannot drift
+      // silently in either direction; closing the disclosure needs separate authorization. See
+      // docs/PRESERVED-QUIRKS.md section 4.14.
       //
       // The sentinel is added to the owner document in `before` and removed again in `after`, so the
       // shared user the remaining suites depend on is left exactly as it was found.
@@ -423,39 +430,78 @@ module.exports = function() {
           });
         });
 
-        it('should not disclose the owner provider token in the API course response', function(done) {
-          flow.createCourse({ name : 'M6 api course' }, function(err, response) {
-            flow.lastResponse.statusCode.should.eql(200);
-            ownerCourseId = flow.lastResponse.body.course.id;
-            flow.lastResponse.body.course._owner.should.have.property('username', defaults.user.username);
-            flow.lastResponse.body.course._owner.profiles.google.should.have.property('id', GOOGLE_ID_SENTINEL);
-            flow.lastResponse.body.course._owner.profiles.google.should.not.have.property('token');
-            flow.lastResponse.body.course._owner.should.not.have.property('password');
-            flow.lastResponse.text.should.not.contain(GOOGLE_TOKEN_SENTINEL);
-            done();
-          });
-        });
-
-        it('should not disclose the owner provider token through the POST /courses inject consumer',
+        it('should ship the owner document whole in the API course response, credentials included',
           function(done) {
-            // Requesting JSON keeps the declarative `html : { redirect : ... }` branch out of the way so
-            // the injected body itself is what lands on the wire.
+            flow.createCourse({ name : 'M6 api course' }, function(err, response) {
+              should.not.exist(err);
+              flow.lastResponse.statusCode.should.eql(200);
+              // The shape is required unconditionally, BEFORE any expectation about the owner's
+              // keys, so an empty or malformed 200 fails here rather than satisfying the
+              // assertions below by omission.
+              flow.lastResponse.body.should.have.property('course');
+              flow.lastResponse.body.course.should.have.property('id');
+              flow.lastResponse.body.course.should.have.property('_owner');
+              ownerCourseId = flow.lastResponse.body.course.id;
+
+              var owner = flow.lastResponse.body.course._owner;
+
+              owner.should.have.property('username', defaults.user.username);
+              owner.should.have.property('profiles');
+              owner.profiles.should.have.property('google');
+              owner.profiles.google.should.have.property('id', GOOGLE_ID_SENTINEL);
+              // The preserved base-commit shape - see the describe header.
+              owner.profiles.google.should.have.property('token', GOOGLE_TOKEN_SENTINEL);
+              owner.should.have.property('password');
+              flow.lastResponse.text.should.contain(GOOGLE_TOKEN_SENTINEL);
+              done();
+            });
+          });
+
+        it('should ship the same whole owner document through the POST /courses inject consumer',
+          function(done) {
+            // Requesting JSON keeps the declarative `html : { redirect : ... }` branch out of the way
+            // so the injected body itself is what lands on the wire.
             flow.post('/courses')
               .set('accept', 'application/json')
               .send(defaults.extend({ name : 'M6 inject course' }, 'course'))
               .end(function(err, response) {
-                should.not.exist(err);
-                response.statusCode.should.eql(200);
-                response.text.should.not.contain(GOOGLE_TOKEN_SENTINEL);
-                if (response.body && response.body.course) {
-                  response.body.course._owner.profiles.google.should.not.have.property('token');
-                  response.body.course._owner.should.not.have.property('password');
-                  flow.deleteCourse(response.body.course.id, function() {
-                    done();
-                  });
-                  return;
+                if (err) {
+                  return done(err);
                 }
-                done();
+
+                var created = response.body && response.body.course && response.body.course.id,
+                    failure = null;
+
+                try {
+                  response.statusCode.should.eql(200);
+                  // Unconditional shape first - the old form guarded every credential
+                  // expectation behind `if (response.body && response.body.course)`, so an
+                  // empty 200 passed.
+                  response.body.should.have.property('course');
+                  response.body.course.should.have.property('id');
+                  response.body.course.should.have.property('_owner');
+
+                  var owner = response.body.course._owner;
+
+                  owner.should.have.property('username', defaults.user.username);
+                  owner.profiles.google.should.have.property('id', GOOGLE_ID_SENTINEL);
+                  owner.profiles.google.should.have.property('token', GOOGLE_TOKEN_SENTINEL);
+                  owner.should.have.property('password');
+                  response.text.should.contain(GOOGLE_TOKEN_SENTINEL);
+                }
+                catch (assertion) {
+                  failure = assertion;
+                }
+
+                // The course this spec created is always removed, so the shared database is
+                // left as it was found whether or not the assertions above held.
+                if (!created) {
+                  return done(failure);
+                }
+
+                flow.deleteCourse(created, function(deleteErr) {
+                  done(failure || deleteErr);
+                });
               });
           });
       });

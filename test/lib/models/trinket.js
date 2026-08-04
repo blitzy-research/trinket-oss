@@ -21,6 +21,24 @@ describe('Trinket model', function(){
         })
       });
 
+      /**
+       * STUB ISOLATION (review finding M-16).
+       *
+       * `crypto.createHash` and `Date.now` are GLOBAL. An earlier revision restored both inside the
+       * success callback, so any failing expectation left the process with a stubbed hash function and a
+       * frozen clock - which every suite that runs afterwards inherits, including the ones that create
+       * users (bcrypt), seal session cookies (iron) and assert timestamps. A leak like that turns one
+       * failure into a cascade of unrelated ones and hides the original.
+       *
+       * They are restored in afterEach instead, unconditionally, so the failure mode is one failing test.
+       */
+      var globalStubs = [];
+
+      afterEach(function() {
+        globalStubs.forEach(function(stub) { stub.restore(); });
+        globalStubs = [];
+      });
+
       it('should generate a hash and shortcode based on code, lang, owner and parent', function(done) {
         var hash   = 'abcdefghijklmnopqrstuvwxyz';
         var now    = '123456789';
@@ -39,6 +57,9 @@ describe('Trinket model', function(){
         var dateStub = sinon.stub(Date, 'now').callsFake(function() {
           return now;
         });
+
+        globalStubs.push(cryptoStub, dateStub);
+
         var trinket = {
           code            : 'abc123',
           lang            : 'python',
@@ -51,6 +72,9 @@ describe('Trinket model', function(){
         };
 
         Trinket.hooks.pre.save.createHash.call(trinket, function() {
+          // Wrapped so an assertion failure is reported through `done` rather than thrown into the
+          // production hook's callback, where nothing would catch it and the test would time out.
+          try {
           trinket.hash.should.eql(hash);
           // R-6 ADJUDICATION, review finding M4. `lib/models/trinket.js` is BYTE-IDENTICAL to the base
           // commit (`git diff 2f8712a -- lib/models/trinket.js` is empty) and its `hashify` has always
@@ -66,10 +90,34 @@ describe('Trinket model', function(){
           trinket.shortCode.should.not.eql(hash.substring(0, 10));
           update.calledWith(trinket.code + trinket.lang + trinket._owner + trinket._parent).should.be.true;
           update.calledWith(trinket.code + trinket.lang + trinket._owner + trinket._parent + now).should.be.true;
-          cryptoStub.restore();
-          dateStub.restore();
-          done();
+          }
+          catch (assertion) {
+            // The stubs are restored by afterEach either way; see the note above the test.
+            return done(assertion);
+          }
+
+          return done();
         });
+      });
+    });
+
+    /**
+     * The leak guard for review finding M-16, and the reason the afterEach above exists.
+     *
+     * This block runs immediately after the two createHash tests, so if either of them leaves
+     * `crypto.createHash` or `Date.now` stubbed - which is what happened when the restores lived inside
+     * the success callback - both assertions here fail loudly and name the leak, instead of the damage
+     * surfacing later as an inexplicable failure in bcrypt, iron or a timestamp comparison.
+     */
+    describe('global stub isolation', function() {
+      it('leaves crypto.createHash and Date.now unstubbed for every later suite', function() {
+        // A frozen clock would answer the stubbed '123456789'; a real one is far beyond it.
+        Date.now().should.be.a('number');
+        Date.now().should.be.above(1600000000000);
+        // A stubbed createHash returns an object with only `update`, and no real digest.
+        crypto.createHash('sha256').update('trinket', 'utf8').digest('hex').should.have.length(64);
+        should.not.exist(crypto.createHash.restore, 'crypto.createHash is still wrapped by sinon');
+        should.not.exist(Date.now.restore, 'Date.now is still wrapped by sinon');
       });
     });
 
@@ -131,7 +179,7 @@ describe('Trinket model', function(){
     describe('findById', function() {
       it('should include the shortCode as a search criteria', function(done) {
         var doc     = 'foo';
-        var findOne = sinon.spy(function(criteria){ return Promise.resolve(doc) });
+        var findOne = sinon.spy(function(criteria){ return Promise.resolve(doc); });
         var scope   = { model : { findOne : findOne } };
         var query   = { shortCode : 'abc123' };
         var cb      = function(err, result) {
@@ -139,19 +187,20 @@ describe('Trinket model', function(){
           findOne.calledWithExactly(query, cb).should.be.false;
           done();
         };
-
+        
         Trinket.classMethods.findById.call(scope, 'abc123', cb);
       });
 
       it('should return the results of the findOne call', function(done) {
         var doc     = 'foo';
-        var findOne = sinon.spy(function(criteria){ return Promise.resolve(doc) });
+        var findOne = sinon.spy(function(criteria){ return Promise.resolve(doc); });
         var scope   = { model : { findOne : findOne } };
+        var query   = { shortCode : 'abc123' };
         var cb      = function(err, result) {
           result.should.eql('foo');
           done();
         };
-
+        
         Trinket.classMethods.findById.call(scope, 'abc123', cb);
       });
     });
@@ -195,41 +244,134 @@ describe('Trinket model', function(){
         done();
       });
 
-      // Async idiom, and deliberately the SUCCESS-ONLY conversion. `Promise.prototype.done` is `undefined`
-      // here - Q supplied it, native promises do not, and app.js patched only `spread` and `fail` - so the
-      // base commit's trailing `.done(done)` threw `TypeError: ....done is not a function`. Q's
-      // `.done(onFulfilled)` attaches no rejection handler, so neither does this: a rejection, including an
-      // assertion thrown in the handler above, is never routed to `done`. Coverage is not weakened by that -
-      // measured by inverting the expected `$inc` value, the test still FAILS, as Mocha's 2000 ms timeout
-      // rather than as an assertion diff. Passing `done` as a second argument would turn it into `done(err)`,
-      // reporting sooner and more prettily than any path the base commit had: an improvement, not a
-      // migration, and improvements are out of scope here.
-      it('should construct a $inc entry for the metric to be updated', function(done) {
-        Trinket.classMethods.findByIdAndUpdateMetrics
+      /**
+       * ASYNC HANDLING (review finding M-16) and MOCK CONTRACT (review finding M-23).
+       *
+       * Both tests below used to end in `.then(done)` with no rejection arm, which is a defect of the TEST
+       * harness rather than a behaviour of the application: a failing assertion inside the handler produced
+       * an unhandled rejection and then Mocha's 2000 ms timeout, so the report named a timeout instead of
+       * the assertion that failed, and the rejection stayed live for the rest of the run. An earlier
+       * revision argued this preserved Q's `.done(onFulfilled)` semantics; it does not preserve anything
+       * observable about the application, and "the test still fails, just as a timeout" is not a standard
+       * worth keeping. The promise is RETURNED now, so Mocha awaits it and reports the assertion.
+       *
+       * And both used `calledWithMatch`, which asserts only that the arguments it names are a SUBSET of
+       * what was passed. A fourth argument - a stray callback, an extra option - satisfied it silently,
+       * which is exactly the contract these tests exist to pin: `findAndUpdateMetrics` awaits the PROMISE
+       * that `findByIdAndUpdate(id, update, options)` returns, so a fourth callback argument would mean the
+       * production code had reverted to the callback form while the test went on passing. Every assertion
+       * below is exact-arity, and the argument COUNT is asserted separately so the intent survives even if
+       * a future sinon relaxes `calledWithExactly`.
+       *
+       * Measured against the real class method: findByIdAndUpdate receives exactly 3 arguments,
+       * `('abc123', {$inc:{'metrics.runs':1}}, {new:true, upsert:true})`; the Interaction constructor
+       * receives exactly 1; and `save()` receives exactly 0.
+       */
+      it('should construct a $inc entry for the metric to be updated', function() {
+        return Trinket.classMethods.findByIdAndUpdateMetrics
           .call(callScope, 'abc123', 'runs')
           .then(function() {
-            callScope.model.findByIdAndUpdate.calledWithMatch('abc123', {
+            var spy = callScope.model.findByIdAndUpdate;
+
+            spy.calledOnce.should.be.true;
+            // EXACTLY three arguments - no fourth callback, which is what calledWithMatch could not see.
+            spy.firstCall.args.length.should.eql(3);
+            spy.calledWithExactly('abc123', {
               $inc : {
-                'metrics.runs'       : 1
+                'metrics.runs' : 1
               }
+            }, {
+              new    : true,
+              upsert : true
             }).should.be.true;
-          })
-          .then(done);
+            // The update carries ONLY $inc for a non-view metric: `lastView` is added exclusively by the
+            // /views/ branch, and asserting the key set is what keeps that branch honest.
+            Object.keys(spy.firstCall.args[1]).should.eql(['$inc']);
+          });
       });
 
-      it('should construct an interaction for the metric to be updated', function(done) {
-        Trinket.classMethods.findByIdAndUpdateMetrics
+      it('should pass the options object by value rather than a shared reference', function() {
+        return Trinket.classMethods.findByIdAndUpdateMetrics
           .call(callScope, 'abc123', 'runs')
           .then(function() {
-            interactionStub.calledWithMatch({
-              action : 'runs',
+            var options = callScope.model.findByIdAndUpdate.firstCall.args[2];
+
+            // Exactly the two options the production code declares, and nothing else.
+            Object.keys(options).sort().should.eql(['new', 'upsert']);
+            options.new.should.be.true;
+            options.upsert.should.be.true;
+          });
+      });
+
+      it('should add a lastView record for a views metric, and only then', function() {
+        return Trinket.classMethods.findByIdAndUpdateMetrics
+          .call(callScope, 'xyz789', 'pageViews', { referer : 'https://trinket.dev/', address : '10.0.0.1' })
+          .then(function() {
+            var update = callScope.model.findByIdAndUpdate.firstCall.args[1];
+
+            callScope.model.findByIdAndUpdate.firstCall.args.length.should.eql(3);
+            Object.keys(update).sort().should.eql(['$inc', 'lastView']);
+            update.$inc.should.eql({ 'metrics.pageViews' : 1 });
+            Object.keys(update.lastView).sort().should.eql(['address', 'referer', 'viewType', 'viewedOn']);
+            update.lastView.viewType.should.eql('pageViews');
+            update.lastView.referer.should.eql('https://trinket.dev/');
+            update.lastView.address.should.eql('10.0.0.1');
+          });
+      });
+
+      it('should construct an interaction for the metric to be updated', function() {
+        return Trinket.classMethods.findByIdAndUpdateMetrics
+          .call(callScope, 'abc123', 'runs')
+          .then(function() {
+            interactionStub.calledOnce.should.be.true;
+            // EXACTLY one argument, and exactly these four keys: `meta` is undefined for a non-view
+            // metric, and `_.extendOwn(obj, undefined)` returns obj unchanged.
+            interactionStub.firstCall.args.length.should.eql(1);
+            Object.keys(interactionStub.firstCall.args[0]).sort()
+              .should.eql(['_owner', '_trinket', 'action', 'lang']);
+            interactionStub.calledWithExactly({
+              action   : 'runs',
               _trinket : 'id',
-              _owner : 'owner',
-              lang : 'lang'
+              _owner   : 'owner',
+              lang     : 'lang'
             }).should.be.true;
-            interactionStub.returnValues[0].save.calledOnce.should.be.true;
-          })
-          .then(done);
+
+            var save = interactionStub.returnValues[0].save;
+
+            save.calledOnce.should.be.true;
+            // `interaction.save()` is called with NO arguments - not a callback, which is what the
+            // migration removed and what calledWithMatch would never have noticed.
+            save.firstCall.args.length.should.eql(0);
+            save.calledWithExactly().should.be.true;
+          });
+      });
+
+      it('should merge the meta fields into the interaction for a views metric', function() {
+        return Trinket.classMethods.findByIdAndUpdateMetrics
+          .call(callScope, 'xyz789', 'pageViews', { referer : 'https://trinket.dev/', address : '10.0.0.1' })
+          .then(function() {
+            interactionStub.firstCall.args.length.should.eql(1);
+            interactionStub.calledWithExactly({
+              action   : 'pageViews',
+              _trinket : 'id',
+              _owner   : 'owner',
+              lang     : 'lang',
+              referer  : 'https://trinket.dev/',
+              address  : '10.0.0.1'
+            }).should.be.true;
+            interactionStub.returnValues[0].save.firstCall.args.length.should.eql(0);
+          });
+      });
+
+      it('should resolve with the updated trinket rather than the interaction', function() {
+        return Trinket.classMethods.findByIdAndUpdateMetrics
+          .call(callScope, 'abc123', 'runs')
+          .then(function(trinket) {
+            // The production method returns the trinket from inside the `.then`, after firing the
+            // interaction save without awaiting it. Nothing else asserted the resolution value.
+            should.exist(trinket);
+            trinket.should.eql({ _id : 'id', _owner : 'owner', lang : 'lang' });
+          });
       });
     });
   });

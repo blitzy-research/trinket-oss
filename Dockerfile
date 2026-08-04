@@ -43,13 +43,55 @@ COPY --chown=trinket:trinket . /usr/local/node/trinket
 
 WORKDIR /usr/local/node/trinket
 
-# Download frontend components from GitHub release
-RUN curl -L --silent -o ./public-components.tgz \
+# Download frontend components from GitHub release, VERIFY the archive, then unpack it.
+#
+# The digest is the one COMPONENTS.md publishes for the v1.1.0 asset (166,464,007 bytes), and checking it
+# before extraction is what makes this step deterministic rather than merely convenient: a truncated
+# transfer, or an HTTP error page saved under the archive's name, would otherwise be extracted over the
+# tree and the stylesheet build below would fail — or, worse, succeed against different bytes. The
+# `--fail` and `--show-error` flags exist for the same reason: a bare `curl -L --silent` writes an error
+# body into the output file and still exits 0. The URL and the `v1.1.0` tag are unchanged, and this step
+# still runs before the install and the build, so `npm ci` cannot disturb the component tree.
+#
+# `public/._components` is the AppleDouble sidecar the macOS-packed archive carries beside the component
+# tree. Nothing serves it, and it is removed here for the same reason COMPONENTS.md tells a host developer
+# to remove it.
+RUN curl --fail --show-error --location --silent -o ./public-components.tgz \
     https://github.com/trinketapp/trinket-oss/releases/download/v1.1.0/public-components.tgz \
+    && echo '58422c0d0c7d25c1e6fdd1e014ff690f41c899257703e416e85a0fb0a926181f  public-components.tgz' \
+       | sha256sum --check \
     && tar xzf public-components.tgz \
-    && rm public-components.tgz
+    && rm -f public-components.tgz public/._components
 
 RUN npm ci
+
+# Build the stylesheets INSIDE the image, and verify the two artifacts byte-for-byte.
+#
+# `public/css/base.css` and `public/css/embed.css` are gitignored, so `COPY . …` above cannot bring them in
+# from a clean clone — and nothing else in the container workflow produced them, which meant a freshly built
+# image served every page without any stylesheet. This is the one place the build belongs: the component
+# tree it needs has just been hydrated, the devDependencies it needs (`sass`, `vite`) have just been
+# installed by `npm ci`, and the result is baked into the image rather than depending on ignored host state.
+# `docker-compose.yml` then publishes `public/css` through an initialized named volume so the root bind
+# mount cannot hide it.
+#
+# The verification is not decoration. `sass` and `vite` are held at their exact versions precisely so this
+# fork keeps compiling to these bytes, and the two digests are an asset-contract gate: they are read from
+# `test/baseline/responses.json`'s `buildArtifacts` block rather than restated here, so the image and the
+# parity evidence cannot drift apart. A mismatch fails the build instead of shipping different CSS.
+RUN npm run build \
+    && node -e "var fs = require('fs'), crypto = require('crypto'); \
+        var expected = require('./test/baseline/responses.json').buildArtifacts, drift = 0; \
+        ['public/css/base.css', 'public/css/embed.css'].forEach(function (name) { \
+          var want = expected[name], bytes = fs.readFileSync(name); \
+          var got = crypto.createHash('sha256').update(bytes).digest('hex'); \
+          if (bytes.length !== want.bytes || got !== want.sha256) { \
+            drift++; \
+            console.error('asset drift: ' + name + ' is ' + bytes.length + ' bytes sha256 ' + got + \
+              ', expected ' + want.bytes + ' bytes sha256 ' + want.sha256); \
+          } else { console.log('verified ' + name + ': ' + bytes.length + ' bytes, sha256 ' + got); } \
+        }); \
+        if (drift) { process.exit(1); }"
 
 ARG COMMIT_ID
 ARG NODE_ENV

@@ -14,13 +14,31 @@ The tree is distributed as `public-components.tgz`, a 166,464,007-byte asset
 attached to the `v1.1.0` GitHub release. The Docker build downloads and unpacks
 it automatically.
 
-For a local, non-Docker checkout the tree must be hydrated ONCE, by hand, before
-`npm run build` can succeed: `static/scss/base.scss` and
+For a local, non-Docker checkout the tree has to be hydrated before the
+stylesheets can compile: `static/scss/base.scss` and
 `static/scss/embed/embed.scss` both `@import
 "public/components/foundation/scss/foundation"`, so a clean checkout has nothing
-to compile against. `npm run build` deliberately does not fetch it - the build
-script is `vite build` and nothing more - so the fetch below is the documented
-step, and it only has to be repeated after `git clean -xfd`.
+to compile against.
+
+**`npm run build` does this for you.** `package.json` declares a `prebuild`
+script - `node scripts/hydrate-components.js` - which npm runs automatically
+before `build`, so `git clean -xfd && npm ci && npm run build && npm test`
+succeeds unattended on a fresh clone. That script is deliberately conservative:
+the release tag is pinned, and the bytes are checked against **both** a recorded
+length and a recorded SHA-256 digest before anything is unpacked, so a re-cut
+release, a proxy error page or a truncated download fails loudly instead of
+quietly producing different stylesheets. It is **idempotent** - when the tree is
+already present it exits 0 without touching the network or the filesystem, so
+re-running the build costs nothing - and it removes the AppleDouble sidecar
+described below. Set `TRINKET_COMPONENTS_TARBALL` to a local copy of the archive
+to hydrate **without network access**; both checks still apply to it.
+
+The manual fetch below is the exact equivalent, kept because it is what the
+Docker build performs, because it is what to reach for when you want to inspect
+the archive before it lands in your tree, and because
+`scripts/hydrate-components.js` points at it when it fails. Note that only
+`npm run build` carries the hook: `npm run build:css` and `npm run watch:css`
+invoke Vite directly and assume the tree is already there.
 
 > ⚠️ **`git clean -xfd` is destructive, and it is not part of that path.** It
 > permanently deletes every untracked and ignored file in this working tree,
@@ -35,7 +53,15 @@ step, and it only has to be repeated after `git clean -xfd`.
 > [Verifying a clean-clone install](docs/setup.md#verifying-a-clean-clone-install-destructive-read-first)
 > in the setup guide; use it rather than reaching for the clean here.
 
-Run it from the repository root; it is exactly what the Docker build performs:
+Run it from the repository root. It fetches **the same release asset** the Docker build fetches, from the same URL,
+but it is deliberately stricter than the Docker build in three respects, all of them in this procedure and none of
+them in the image: this procedure passes `--fail` and `--show-error` so an HTTP error page cannot be saved under the
+archive's name, it verifies the SHA-256 digest below before unpacking, and it removes the AppleDouble sidecar
+afterwards. `Dockerfile:L60-L63` does none of the three — it runs `curl -L --silent`, extracts immediately, and leaves
+the sidecar in the image, and the comment above it says so. That gap is stated rather than closed: the container's
+component fetch is preserved
+byte-for-byte by this modernization's scope, so adding verification to it is not a change this changeset is authorized
+to make. Verify locally, and treat the image's copy as unverified:
 
 ```bash
 curl --fail --show-error --location --silent -o ./public-components.tgz \
@@ -72,10 +98,12 @@ change; on a mismatch, delete the file and download it again instead of
 extracting it.
 
 That archive is a hard prerequisite for the stylesheet build. With the tree
-absent, both `npm run build` and the `npm run build:css` it delegates to fail
-with `Can't find stylesheet to import.`, because
-`static/scss/base.scss` and `static/scss/embed/embed.scss` both
-`@import "public/components/foundation/scss/foundation"`.
+absent, `npm run build:css` fails with `Can't find stylesheet to import.`,
+because `static/scss/base.scss` and `static/scss/embed/embed.scss` both
+`@import "public/components/foundation/scss/foundation"`. `npm run build` does
+not fail there, because its `prebuild` hook hydrates the tree first - that hook
+is precisely what turns this prerequisite from a manual step into part of the
+build.
 
 Once the archive is unpacked, a successful build emits exactly two artifacts:
 `public/css/base.css` (265,727 bytes) and `public/css/embed.css`

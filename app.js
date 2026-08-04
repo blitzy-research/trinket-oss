@@ -112,12 +112,16 @@ const init = async () => {
   // Touch session on each request to implement sliding expiration
   server.ext('onPreHandler', (request, h) => {
     if (request.yar) {
-      request.yar._logIn = function(user, cb) {
+      // Async conversion: this decoration is SYNCHRONOUS - it writes the session and the request and
+      // returns - so it takes no callback. The base commit ended it in `if (cb) cb(null)`, an error
+      // argument that was always null, and its three call sites in lib/controllers/users.js passed a
+      // callback that could only ever run on the success path; the parameter and all three callbacks
+      // are gone together. Nothing outside those call sites reaches this function.
+      request.yar._logIn = function(user) {
         // Store user id in session
         request.yar.set('userId', user._id ? user._id.toString() : user.id);
         // Also attach user to request for immediate use
         request.user = user;
-        if (cb) cb(null);
       };
 
       // Sliding expiration: touch session to reset TTL on each authenticated request

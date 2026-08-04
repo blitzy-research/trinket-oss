@@ -27,17 +27,34 @@
 process.env.NODE_ENV = 'test';
 process.env.NODE_CONFIG_PERSIST_ON_CHANGE = 'N';
 
-// The two values below are forced through `$NODE_CONFIG` because `config/*.yaml` is frozen and because
-// neither value may be sourced from developer configuration. `config` is held at 0.4.37 and applies
+// The values below are forced through `$NODE_CONFIG` because `config/*.yaml` is frozen and because none of
+// them may be sourced from developer configuration. `config` is held at 0.4.37 and applies
 // `$NODE_CONFIG` AFTER every file layer (node_modules/config/lib/config.js:746-757, measured), so this is
 // the only layer that outranks the gitignored `config/local.yaml`.
 //
-// 1. THE DATABASE. `test/helpers/db.js` drops the database it is connected to, twice. `config/test.yaml:11`
-//    selects `test`, but `local.yaml` loads after it, and `config/local.example.yaml:31` - the template the
-//    setup documentation tells developers to copy - selects `database: trinket`, which is also
-//    `config/default.yaml:367`'s value. A developer following the documented flow therefore aimed the drops
-//    at their own working database. Forcing the name here makes the selection explicit and unconditional,
-//    and `test/helpers/db.js` additionally refuses to drop anything else.
+// 1. THE WHOLE MONGO CONNECTION IDENTITY - not merely the database name (review finding F-01, CWE-20 /
+//    CWE-706). `test/helpers/db.js` drops the database it is connected to, twice, and the endpoint it drops
+//    it on is whatever `config/db.js:L7-L33` assembled. That connection string is built from ELEVEN keys:
+//    `db.mongo.{user,pass,host,port,database}` and `db.mongoread.{user,pass,host,port,database,opts}` - and
+//    a non-empty `db.mongoread.host` appends a SECOND SEED to the same string (`config/db.js:L20-L30`), so
+//    it is part of the cluster identity, not a separate read-only concern.
+//
+//    An earlier revision of this file forced only `database`, which left the other ten keys to be supplied
+//    by arbitrary configuration. `config/test.yaml:8-11` does declare `host: localhost, port: 27017,
+//    database: test`, but `local.yaml` loads AFTER it and `config/local.example.yaml:29-31` - the template
+//    the setup documentation tells developers to copy - selects `host: mongodb` and `database: trinket`,
+//    which is also `config/default.yaml:365-367`'s value. So a developer following the documented flow
+//    aimed the drops at a remote host, under whatever credentials that host carried, and only the *name*
+//    was checked before the drop.
+//
+//    All eleven keys are therefore REPLACED, not merged, with the loopback identity `config/test.yaml`
+//    already declares: `localhost:27017/test`, no credentials, and no second seed. Anything the incoming
+//    `$NODE_CONFIG` carried under `db.mongo` or `db.mongoread` is DISCARDED - measured on config 0.4.37, a
+//    `null` in `$NODE_CONFIG` genuinely overrides a file-layer value rather than falling through, so
+//    nulling `user`/`pass`/`mongoread.host` is effective. A parallel clone still gets its own database
+//    through CLONE_INDEX below, which is the one sanctioned channel for changing this identity, and
+//    `test/helpers/db.js` independently re-validates the LIVE connection - every seed host, the absence of
+//    credentials, and the absence of an SRV/replica-set/TLS cluster - immediately before every drop.
 // 2. THE SESSION PASSWORD. `app.js:47-62` calls `process.exit(1)` when
 //    `app.plugins.session.cookieOptions.password` is shorter than 32 characters. `config/default.yaml`
 //    ships it empty and `config/test.yaml` sets no override, so on a clean checkout - where
@@ -47,39 +64,84 @@ process.env.NODE_CONFIG_PERSIST_ON_CHANGE = 'N';
 //    ("fresh clone on Node 22: npm ci, asset build and npm test all exit 0") reproducible without any
 //    ignored file.
 var TEST_DATABASE         = 'test';
+var TEST_MONGO_HOST       = 'localhost';
+var TEST_MONGO_PORT       = 27017;
 var TEST_SESSION_PASSWORD = 'trinket-oss-test-only-session-cookie-password';
+
+// MongoDB refuses a database name of 64 characters or more, so 63 is the maximum a namespaced test
+// database may reach. Bounded here rather than left to the server, because the server's refusal would
+// arrive as a connection failure during module load instead of as a named bootstrap error.
+var MONGO_DATABASE_NAME_LIMIT = 63;
+
+// The raw shape a CLONE_INDEX must ALREADY have. It is deliberately the suffix half of
+// test/helpers/db.js's `DISPOSABLE_DATABASE` pattern, so a value accepted here always yields a database
+// that helper is willing to clear.
+var CLONE_SUFFIX = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 var forcedConfig = process.env.NODE_CONFIG ? JSON.parse(process.env.NODE_CONFIG) : {};
 
-forcedConfig.db                = forcedConfig.db || {};
-forcedConfig.db.mongo          = forcedConfig.db.mongo || {};
-forcedConfig.db.mongo.database = TEST_DATABASE;
+forcedConfig.db = forcedConfig.db || {};
+
+// ASSIGNED, NOT MERGED. Every key `config/db.js` reads is listed, so nothing from the incoming
+// `$NODE_CONFIG` and nothing from a file layer can contribute a host, a port or a credential to the
+// endpoint the suite is about to drop. `mongoread.host` is nulled because a non-empty value there appends a
+// second seed to the same connection string.
+forcedConfig.db.mongo = {
+  host     : TEST_MONGO_HOST,
+  port     : TEST_MONGO_PORT,
+  database : TEST_DATABASE,
+  user     : null,
+  pass     : null
+};
+
+forcedConfig.db.mongoread = {
+  host     : null,
+  port     : TEST_MONGO_PORT,
+  database : TEST_DATABASE,
+  user     : null,
+  pass     : null,
+  opts     : null
+};
 
 // A parallel clone gets its own namespace so that ten checkouts sharing one mongod cannot drop each
 // other's database mid-run; `test/helpers/db.js`'s allow-list admits exactly this `test_<suffix>` shape.
 //
-// The sanitiser strips everything that allow-list - `/^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/` at
-// test/helpers/db.js:34 - does not admit, so a value made only of stripped characters collapses to the
-// empty string: `CLONE_INDEX='../'` yielded the database name `test_`, which that pattern REFUSES, as does
-// any suffix starting with `_` or `-`. The refusal is correct and fail-closed, but it arrives much later,
-// from a timer during the db helper's module load, and it advises the reader to "Set CLONE_INDEX" - which
-// they did. Silently falling back to the shared `test` database would be worse still: it would hand two
-// parallel clones the same database to drop, which is the exact hazard this namespace exists to prevent.
-// So the value is validated here, at the point it is read, and a bad one fails the bootstrap loudly and by
-// name - the same treatment the malformed `$NODE_CONFIG` below gets.
+// THE RAW VALUE IS VALIDATED, AND NOTHING IS NORMALISED (review finding F-03, CWE-20). An earlier revision
+// sanitised first - `String(CLONE_INDEX).replace(/[^A-Za-z0-9_-]/g, '')` - and then validated only what
+// survived, which made the mapping from CLONE_INDEX to database name NON-INJECTIVE: `a/b` and `ab` both
+// reduced to `ab` and therefore both selected `test_ab`, so two clones that had each been given a distinct
+// CLONE_INDEX would silently share one database and drop it under each other. Rejecting any value that is
+// not ALREADY a legal suffix makes the mapping the identity plus a fixed prefix, so two distinct accepted
+// values can never collide.
+//
+// The refusal happens here, at the point the value is read, rather than being left to the db helper.
+// `test/helpers/db.js:34`'s `/^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/` would also refuse a bad name, and
+// that refusal is correct and fail-closed, but it arrives much later, from a timer during that module's
+// load, and it advises the reader to "Set CLONE_INDEX" - which they did. Silently falling back to the
+// shared `test` database would be worse still: it would hand two parallel clones the same database to drop,
+// which is the exact hazard this namespace exists to prevent. So a bad value fails the bootstrap loudly and
+// by name - the same treatment the malformed `$NODE_CONFIG` below gets.
 if (process.env.CLONE_INDEX) {
-  var cloneSuffix = String(process.env.CLONE_INDEX).replace(/[^A-Za-z0-9_-]/g, '');
+  var cloneSuffix       = String(process.env.CLONE_INDEX);
+  var cloneDatabaseName = TEST_DATABASE + '_' + cloneSuffix;
 
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(cloneSuffix)) {
-    throw new Error('test/setup.js: CLONE_INDEX=' + JSON.stringify(process.env.CLONE_INDEX) + ' reduces to ' +
-      JSON.stringify(cloneSuffix) + ' once the characters a database name may not carry are stripped, which ' +
-      'would select the database ' + JSON.stringify(TEST_DATABASE + '_' + cloneSuffix) + ' - a name ' +
-      'test/helpers/db.js does not treat as disposable, so the suite would refuse to clear it. Use a value ' +
-      'that starts with a letter or a digit and contains only letters, digits, "_" or "-", or leave ' +
-      'CLONE_INDEX unset to run against ' + JSON.stringify(TEST_DATABASE) + '.');
+  if (!CLONE_SUFFIX.test(cloneSuffix)) {
+    throw new Error('test/setup.js: CLONE_INDEX=' + JSON.stringify(process.env.CLONE_INDEX) + ' is not a ' +
+      'legal database-name suffix, and it is deliberately NOT sanitised into one: stripping the illegal ' +
+      'characters would let two different CLONE_INDEX values select the same database and drop it under ' +
+      'each other. Use a value that starts with a letter or a digit and contains only letters, digits, ' +
+      '"_" or "-", or leave CLONE_INDEX unset to run against ' + JSON.stringify(TEST_DATABASE) + '.');
   }
 
-  forcedConfig.db.mongo.database = TEST_DATABASE + '_' + cloneSuffix;
+  if (cloneDatabaseName.length > MONGO_DATABASE_NAME_LIMIT) {
+    throw new Error('test/setup.js: CLONE_INDEX=' + JSON.stringify(process.env.CLONE_INDEX) + ' would ' +
+      'select the ' + cloneDatabaseName.length + '-character database name ' +
+      JSON.stringify(cloneDatabaseName) + ', and MongoDB refuses any name of ' +
+      (MONGO_DATABASE_NAME_LIMIT + 1) + ' characters or more. Use a suffix of at most ' +
+      (MONGO_DATABASE_NAME_LIMIT - TEST_DATABASE.length - 1) + ' characters.');
+  }
+
+  forcedConfig.db.mongo.database = cloneDatabaseName;
 }
 
 forcedConfig.app                                        = forcedConfig.app || {};
@@ -89,8 +151,11 @@ forcedConfig.app.plugins.session.cookieOptions          = forcedConfig.app.plugi
 forcedConfig.app.plugins.session.cookieOptions.password = TEST_SESSION_PASSWORD;
 
 // Any pre-existing `$NODE_CONFIG` is merged rather than discarded - the setup notes use it to give parallel
-// clones their own port - and a malformed one is left to throw here rather than being swallowed, so a
-// broken override fails the bootstrap loudly instead of silently reverting to the file layers.
+// clones their own port - and a malformed one is left to throw at the `JSON.parse` above rather than being
+// swallowed, so a broken override fails the bootstrap loudly instead of silently reverting to the file
+// layers. The two EXCEPTIONS to that merge are `db.mongo` and `db.mongoread`, which are assigned outright
+// for the reason given at the top of this file: no incoming field may contribute to the endpoint the suite
+// drops.
 process.env.NODE_CONFIG = JSON.stringify(forcedConfig);
 var chai           = require('chai'),
     chaiAsPromised = require('chai-as-promised'),
@@ -223,6 +288,35 @@ function createRedisMockV4Client() {
 // `.callsFake`. The stub still resolves to redis-mock, now through the v4 adapter above.
 sinon.stub(redis, 'createClient').callsFake(createRedisMockV4Client);
 
+// The nine model globals `app.js:285-293` assigns, and a snapshot of what each name held BEFORE `app.js`
+// was ever required. Both live above that require on purpose, because "before" has to be a structural fact
+// here rather than a claim about microtask timing.
+//
+// The snapshot exists because `typeof global[name] === 'undefined'` is not a usable test for "app.js
+// assigned this" (review finding F3). Eight of the nine names are genuinely absent from a fresh Node 22
+// global, but `File` is NOT: Node 22 defines it as a non-enumerable built-in class, so it is already a
+// function before this file runs. A drift check phrased as `typeof === 'undefined'` therefore passes for
+// `File` whether or not `app.js:289` still assigns it - and the failure that would slip through is the
+// nastiest kind, because Node's `File` is a real constructor that a spec would happily call. It has no
+// `getName`, no `schema` and no `findById`, so the first symptom would be an unrelated `TypeError` from
+// deep inside whichever model call the spec made, pointing at the model layer rather than at the missing
+// assignment. Measured on the installed node v22.23.2: pre-require, `typeof global.File === 'function'`
+// with `global.File.name === 'File'`; post-boot it is the model, and `Object.getOwnPropertyDescriptor`
+// reports `enumerable: false` in both states, which is why `Object.keys(global)` never reported it and why
+// the leak failure described further down named eight keys rather than nine.
+//
+// Comparing against the captured value by IDENTITY covers both cases with one predicate: for the eight
+// absent names the captured value is `undefined`, which is exactly what the reservation below writes, so
+// identity-with-pre still means "never assigned"; for `File` it means "still Node's built-in".
+var MODEL_GLOBALS = ['User', 'Course', 'Lesson', 'Material', 'File', 'Trinket', 'Interaction', 'Folder',
+  'CourseInvitation'];
+
+var PRE_BOOTSTRAP_GLOBALS = {};
+
+MODEL_GLOBALS.forEach(function(name) {
+  PRE_BOOTSTRAP_GLOBALS[name] = { present : (name in global), value : global[name] };
+});
+
 var app = require('../app.js'),
     db  = require('./helpers/db');
 
@@ -247,18 +341,17 @@ var app = require('../app.js'),
 // Reserving the KEYS here removes the dependency on that timing: the snapshot contains them whatever the
 // file count. Only the keys are reserved - the VALUES stay `app.js`'s to assign, so this file never becomes
 // a second source of truth for what a model is - and `undefined` is written rather than a stand-in object
-// so that nothing can mistake a reserved key for a booted model. `File` is skipped by the `in` test on
-// purpose: Node 22 already defines it as a NON-ENUMERABLE built-in, `Object.keys(global)` never reported
-// it (which is why the failure above names eight keys, not nine), and `app.js`'s assignment overwrites it
-// in place without changing that.
+// so that nothing can mistake a reserved key for a booted model. `File` is the one name the `in` test
+// skips, because Node 22 already defines it: reserving it would mean REPLACING a non-enumerable built-in
+// with `undefined`, and the key it would add to the leak snapshot is one `Object.keys(global)` never
+// reported anyway (which is why the failure above names eight keys, not nine). `app.js`'s assignment
+// overwrites it in place and it stays non-enumerable, measured. That skip is exactly why the drift check
+// at the bottom of this file compares against `PRE_BOOTSTRAP_GLOBALS` instead of testing for `undefined`.
 //
 // Nothing is relaxed to achieve this. `.mocharc.json` keeps `check-leaks: true` and exactly the four keys
 // the Technical Specification enumerates - no `--global` allowance list, which is the alternative this
 // rejects because it needs a fifth key - and a genuinely new global still fails the run, measured with a
 // throwaway spec that assigned one.
-var MODEL_GLOBALS = ['User', 'Course', 'Lesson', 'Material', 'File', 'Trinket', 'Interaction', 'Folder',
-  'CourseInvitation'];
-
 MODEL_GLOBALS.forEach(function(name) {
   if (!(name in global)) {
     global[name] = undefined;
@@ -299,10 +392,21 @@ app.then(function(server) {
 // site exactly as the base commit wrote it: the bare-reference hooks at test/lib/api/index.js:27,29 and
 // test/lib/models/user.js:7, and the explicit `db.reset(done)` at test/lib/api/index.js:37. This runs
 // before any spec file is loaded, so the hook registrations see the adapted methods.
+//
+// The wrapper also raises the hook timeout (review finding M12). `db.reset` performs a real
+// `dropDatabase()`, which on a mongod shared by several checkouts was measured to exceed Mocha's 2000 ms
+// default and abort the whole run in `test/lib/api/index.js`'s very first hook. Mocha binds `this` to the
+// hook's Context, so the limit is raised for the hook that actually needs it rather than globally in
+// `.mocharc.json` - which carries exactly the four keys the Technical Specification enumerates and gains
+// no fifth. The guard keeps this file usable outside a Mocha run, where there is no Context.
 ['ensureConnection', 'reset'].forEach(function(hook) {
   var bound = db[hook];
 
   db[hook] = function(done) {
+    if (this && typeof this.timeout === 'function') {
+      this.timeout(60000);
+    }
+
     return bound(done);
   };
 });
@@ -322,7 +426,8 @@ app.then(function(server) {
 // The reservation is what makes the snapshot unconditional. This hook still runs after that snapshot, and
 // it has two jobs: the barrier, and the drift check below - if `app.js` ever stops assigning one of the
 // reserved names, the reserved `undefined` would otherwise reach a spec as a bare
-// `Cannot read properties of undefined` from whichever line dereferenced it first.
+// `Cannot read properties of undefined` from whichever line dereferenced it first, and in `File`'s case as
+// something even less legible, since Node's own `File` would answer in the model's place.
 //
 // It is registered as a bare top-level `before()` rather than as an exported `mochaHooks` root-hook
 // plugin, because `.mocharc.json` carries exactly the four options the plan specifies - reporter,
@@ -339,19 +444,95 @@ app.then(function(server) {
 // requiring `../app.js` above starts `init()` during Mocha's file-loading phase and, with
 // `app.start : false`, `init()` awaits no real I/O, so the barrier awaits an already-settled promise.
 // Raising the limit would only hide a stuck initialisation for a minute.
+
+// THE DRIFT CHECK, and why it asks two questions rather than one.
+//
+// (1) DID `app.js` ASSIGN THIS NAME? Answered by identity against the pre-require snapshot, never by
+//     `typeof === 'undefined'`, for the `File` reason recorded next to that snapshot.
+// (2) IS WHAT IT ASSIGNED STILL A MODEL? Answered by the surface `lib/models/model.js:180-202` gives every
+//     public model - a callable factory carrying `getName()`, `schema`, `isInstance()` and `extend()`. This
+//     second question is what makes the check survive a future edit that keeps the assignment but points it
+//     at something else, and it is the only description of a model this file states, deliberately: it
+//     asserts the shape the model factory publishes, not the contents of any one schema, so it does not
+//     become a second source of truth for what any individual model is.
+//
+// What it pointedly does NOT assert is `getName() === name`. Measured: `Trinket.getName()` returns
+// `'Snippet'` - the global and the mongoose model name genuinely differ for that one - so equality there
+// would be a false failure on a correct tree.
+var MODEL_SURFACE = ['getName', 'isInstance', 'extend'];
+
+function describeGlobalDrift() {
+  var problems = [];
+
+  MODEL_GLOBALS.forEach(function(name) {
+    var value = global[name];
+    var pre   = PRE_BOOTSTRAP_GLOBALS[name];
+
+    if (value === pre.value) {
+      problems.push(name + ': still holds the value it held before app.js was required (' +
+        (pre.present ? 'Node\'s own built-in ' + name : 'the reserved `undefined`') + '), so app.js never ' +
+        'assigned it');
+      return;
+    }
+
+    if (typeof value !== 'function') {
+      problems.push(name + ': assigned a ' + typeof value + ' rather than a model factory');
+      return;
+    }
+
+    var missing = MODEL_SURFACE.filter(function(method) {
+      return typeof value[method] !== 'function';
+    });
+
+    if (!value.schema) missing.push('schema');
+
+    if (missing.length) {
+      problems.push(name + ': assigned a function that is not a model - no ' + missing.join(', '));
+    }
+  });
+
+  return problems;
+}
+
 if (typeof before === 'function') {
   before(async function() {
     await app;
 
-    var unassigned = MODEL_GLOBALS.filter(function(name) {
-      return typeof global[name] === 'undefined';
-    });
+    var problems = describeGlobalDrift();
 
-    if (unassigned.length) {
-      throw new Error('test/setup.js reserved global keys that app.js never assigned: ' +
-        unassigned.join(', ') + '. The reservation list in this file must match the model globals at ' +
-        'app.js:282-290; a name that is reserved but never filled in would reach a spec as `undefined`.');
+    if (problems.length) {
+      throw new Error('test/setup.js reserved global keys that app.js did not fill with models:\n  ' +
+        problems.join('\n  ') + '\nThe reservation list in this file must match the model globals at ' +
+        'app.js:285-293, and each must still be a public model from lib/models/model.js. `File` is the ' +
+        'name to check first: Node 22 ships its own non-enumerable `global.File`, so a missing assignment ' +
+        'there leaves a real constructor behind rather than `undefined` and every later symptom points ' +
+        'somewhere else.');
     }
+
+    // THE DATABASE BARRIER (review finding M12), registered on the ROOT suite for the same reason the
+    // app barrier above is: it has to hold for every spec file, not only for the ones that happen to
+    // declare a `before(db.reset)` of their own.
+    //
+    // test/helpers/db.js opens its connection from a timer during module load and drops the database
+    // once the connection is announced, setting `_isConnected` only after that drop RESOLVES. Nothing
+    // waited for it. A spec file that touches a model in its own `before` - test/lib/models/*.js and
+    // test/lib/models/plugins/*.js all do, and `npx mocha test/lib/models/course.js` runs them without
+    // the API suite's `before(db.reset)` ahead of them - could therefore create a fixture that the
+    // initialization drop then deleted underneath it. Awaiting readiness here removes the race for
+    // every entry point, including a single-file run.
+    //
+    // `db.ensureConnection` is the existing poll and is used rather than a second mechanism; the
+    // arity-restoring wrapper installed above is already in place at this point, so this call reaches
+    // the same function every hook does. The generous timeout below is for the DROP, not for the
+    // connection: dropping a database that the previous run filled was measured at over Mocha's 2000 ms
+    // default on a shared mongod, and a flake there aborts the whole run in its first hook.
+    this.timeout(60000);
+
+    await new Promise(function(resolve, reject) {
+      db.ensureConnection(function(err) {
+        return err ? reject(err) : resolve();
+      });
+    });
   });
 }
 

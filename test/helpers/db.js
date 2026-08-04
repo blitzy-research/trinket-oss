@@ -33,18 +33,127 @@ var _            = require('underscore'),
 // `trinket`, `trinket_test`, `production` or `test.backup` fails closed.
 var DISPOSABLE_DATABASE = /^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/;
 
+// THE ENDPOINT half of the gate (review finding F-01). The name alone is not enough, and this helper's own
+// documentation said so: a production deployment can legitimately own a database called `test`. So the
+// HOST the driver is actually talking to is validated too, against a loopback-only allow-list.
+//
+// Only loopback is disposable. A test suite that drops a database has no business reaching another machine,
+// and every documented way of running this suite - `npm test`, and test/setup.js's forced
+// `db.mongo.host: localhost` - stays on the loopback interface. `::1` is listed in both its bare and its
+// bracketed form because a connection string may carry either.
+var DISPOSABLE_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]'];
+
 /**
- * Fails closed unless the process is running as a test AND the live connection is pointed at a database
- * whose name is explicitly disposable.
+ * Reads every host the live connection is addressing, as `host:port` strings.
  *
- * Both halves are required. `NODE_ENV` alone is not enough, because NODE_CONFIG can repoint the database
- * without touching NODE_ENV - a read-only probe confirmed exactly that. The database name alone is not
- * enough either, because a production deployment could legitimately own a database called `test`.
+ * Two sources are consulted and both must agree with the allow-list. `connection.host` is what mongoose
+ * recorded, and the driver's own `options.hosts` is the authoritative seed list - it is what exposes a
+ * SECOND seed, which `config/db.js:L20-L30` appends whenever `db.mongoread.host` is set.
+ *
+ * @param {object} connection The live mongoose connection.
+ * @returns {string[]|null} The addressed endpoints, or `null` when they cannot be determined.
+ */
+function connectionEndpoints(connection) {
+  var client = typeof connection.getClient === 'function' ? connection.getClient() : connection.client,
+      options = client && (client.options || (client.s && client.s.options)),
+      seeds = options && options.hosts,
+      endpoints = [];
+
+  // De-duplicated, because mongoose's record and the driver's seed list normally describe the same
+  // endpoint and naming it twice would only make the refusal message harder to read. Both are still read:
+  // a discrepancy between them adds an entry rather than hiding one.
+  function record(endpoint) {
+    if (endpoints.indexOf(endpoint) === -1) {
+      endpoints.push(endpoint);
+    }
+  }
+
+  if (connection.host) {
+    record(String(connection.host) + ':' + connection.port);
+  }
+
+  if (Array.isArray(seeds)) {
+    seeds.forEach(function(seed) {
+      // The driver models a seed as a HostAddress object; older shapes and connection strings can present
+      // it as a plain string. Both are accepted, and anything else is reported verbatim so an unrecognised
+      // shape fails closed rather than being read as loopback.
+      record(seed && typeof seed === 'object' ? String(seed.host) + ':' + seed.port : String(seed));
+    });
+  }
+
+  return endpoints.length ? endpoints : null;
+}
+
+/**
+ * Describes any part of the live connection identity that makes the endpoint non-disposable.
+ *
+ * @param {object} connection The live mongoose connection.
+ * @returns {string[]} Human-readable reasons; empty when the identity is a credential-free loopback server.
+ */
+function nonDisposableIdentityReasons(connection) {
+  var client = typeof connection.getClient === 'function' ? connection.getClient() : connection.client,
+      options = client && (client.options || (client.s && client.s.options)),
+      endpoints = connectionEndpoints(connection),
+      reasons = [];
+
+  if (!options) {
+    reasons.push('the driver client exposes no options, so the endpoint cannot be identified');
+
+    return reasons;
+  }
+
+  if (!endpoints) {
+    reasons.push('no host could be read from the connection');
+  }
+  else {
+    endpoints.forEach(function(endpoint) {
+      var host = endpoint.slice(0, endpoint.lastIndexOf(':'));
+
+      if (DISPOSABLE_HOSTS.indexOf(host) === -1) {
+        reasons.push('it addresses the non-loopback host ' + JSON.stringify(endpoint));
+      }
+    });
+  }
+
+  // A credential means somebody provisioned this server for something. Checked on the driver's resolved
+  // credentials and on mongoose's own record, because a connection string can carry them either way.
+  if (options.credentials || connection.user || connection.pass) {
+    reasons.push('it authenticates as ' +
+      JSON.stringify((options.credentials && options.credentials.username) || connection.user || 'a user'));
+  }
+
+  // An SRV record, a replica set or TLS all describe a provisioned cluster rather than a throwaway local
+  // mongod, and none of the three is reachable through the identity test/setup.js forces.
+  if (options.srvHost) {
+    reasons.push('it resolves the SRV cluster ' + JSON.stringify(options.srvHost));
+  }
+
+  if (options.replicaSet) {
+    reasons.push('it targets the replica set ' + JSON.stringify(options.replicaSet));
+  }
+
+  if (options.tls) {
+    reasons.push('it negotiates TLS');
+  }
+
+  return reasons;
+}
+
+/**
+ * Fails closed unless the process is running as a test AND the live connection is pointed at a disposable
+ * database on a disposable endpoint.
+ *
+ * All three halves are required. `NODE_ENV` alone is not enough, because NODE_CONFIG can repoint the
+ * database without touching NODE_ENV - a read-only probe confirmed exactly that. The database name alone is
+ * not enough either, because a production deployment could legitimately own a database called `test`. And
+ * the name plus the environment is still not enough, because the endpoint that name resolves on is assembled
+ * from ten further configuration keys (`config/db.js:L7-L33`) that a `local.yaml` can supply - which is why
+ * the complete connection identity is validated here, immediately before every destructive call.
  *
  * @param {string} operation A short label naming the caller, used in the thrown message.
  * @returns {string} The validated database name.
- * @throws {Error} When the environment is not `test`, the connection is not open, or the resolved
- *   database name is not disposable.
+ * @throws {Error} When the environment is not `test`, the connection is not open, the resolved database
+ *   name is not disposable, or the live endpoint is not a credential-free loopback server.
  */
 function assertDisposableDatabase(operation) {
   if (process.env.NODE_ENV !== 'test') {
@@ -74,6 +183,16 @@ function assertDisposableDatabase(operation) {
     throw new Error('db helper refused to ' + operation + ' the database ' + JSON.stringify(name) +
       ': only "test" and "test_<suffix>" are treated as disposable. Set CLONE_INDEX, or point ' +
       'db.mongo.database at a disposable name, before running the suite.');
+  }
+
+  var reasons = nonDisposableIdentityReasons(connection);
+
+  if (reasons.length) {
+    throw new Error('db helper refused to ' + operation + ' the database ' + JSON.stringify(name) +
+      ': the live connection is not a disposable endpoint because ' + reasons.join(', ') + '. Only a ' +
+      'credential-free loopback mongod (' + DISPOSABLE_HOSTS.join(', ') + ') with no SRV cluster, no ' +
+      'replica set and no TLS is treated as disposable. test/setup.js forces that identity through ' +
+      '$NODE_CONFIG; a run that reaches here has had it overridden.');
   }
 
   return name;
@@ -112,26 +231,53 @@ _.extend(DB.prototype, {
     })();
   },
 
+  /**
+   * Empties the test database, WAITING for the connection and the initialization drop first.
+   *
+   * Review finding M12. The earlier form opened with `if (!this.isConnected()) return done();` - it
+   * reported SUCCESS while the database was untouched. Two distinct failures followed from that. A suite
+   * whose `before(db.reset)` ran before `checkState()` had announced the connection started over
+   * whatever the previous run left behind, which is the shared-state race that made the API suites
+   * order-dependent in a way their own comments say they must not be; and the initialization drop could
+   * still be in flight, so a reset that "succeeded" could be immediately followed by the initialization
+   * drop deleting fixtures the first test had already created.
+   *
+   * `ensureConnection` is the existing barrier for exactly that condition - it polls `_isConnected`,
+   * which `checkState()` sets ONLY after the initialization drop has resolved - so reset now goes
+   * through it rather than past it. There is no new mechanism and no new state: a connection that never
+   * arrives still surfaces as the Mocha hook's own timeout, and `_initError` still short-circuits with
+   * the original error.
+   *
+   * @param {Function} done Mocha's callback; called with an error, or with nothing on success.
+   * @returns {void}
+   */
   reset : function(done) {
-    if (this._initError) return done(this._initError);
-    if (!this.isConnected()) return done();
+    var self = this;
 
-    try {
-      assertDisposableDatabase('reset');
-    }
-    catch (err) {
-      return done(err);
-    }
+    if (self._initError) return done(self._initError);
 
-    // Async idiom, and review finding M2 (CWE-252). The base commit passed a callback that discarded its
-    // `err` argument and reported success unconditionally, so a failed drop left every following test
-    // running over stale users, sessions, bcrypt hashes, reset tokens and fixtures while the suite still
-    // looked healthy. The promise form has no argument to discard: a rejection is handed straight to the
-    // Mocha hook, which fails the run at the point of failure.
-    mongoose.connection.db.dropDatabase().then(
-      function() { done(); },
-      done
-    );
+    self.ensureConnection(function(connectionError) {
+      if (connectionError) {
+        return done(connectionError);
+      }
+
+      try {
+        assertDisposableDatabase('reset');
+      }
+      catch (err) {
+        return done(err);
+      }
+
+      // Async idiom, and review finding M2 (CWE-252). The base commit passed a callback that discarded
+      // its `err` argument and reported success unconditionally, so a failed drop left every following
+      // test running over stale users, sessions, bcrypt hashes, reset tokens and fixtures while the
+      // suite still looked healthy. The promise form has no argument to discard: a rejection is handed
+      // straight to the Mocha hook, which fails the run at the point of failure.
+      mongoose.connection.db.dropDatabase().then(
+        function() { done(); },
+        done
+      );
+    });
   },
 
   isConnected : function() {

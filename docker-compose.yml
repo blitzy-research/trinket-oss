@@ -9,6 +9,15 @@ services:
       - .:/usr/local/node/trinket
       - node_modules:/usr/local/node/trinket/node_modules
       - public_components:/usr/local/node/trinket/public/components
+      # public/css carries the two generated stylesheets, and they are gitignored - so the bind mount
+      # above, which replaces the whole image directory with the host checkout, hides the copies the image
+      # build produced and a clean clone ends up serving no stylesheet at all. Docker initializes an EMPTY
+      # named volume from whatever the image holds at that path on first use, so declaring one here
+      # republishes the verified build output through the bind mount, exactly as node_modules and
+      # public/components are already handled. Like those two, the volume is initialized ONCE: after
+      # changing static/scss/** or the component release, recreate it - `docker compose down -v` or
+      # `docker volume rm trinket-oss_public_css` - and bring the stack up with `--build`.
+      - public_css:/usr/local/node/trinket/public/css
     networks:
       - trinket
     links:
@@ -37,4 +46,5 @@ volumes:
   shared-cache:
   node_modules:
   public_components:
+  public_css:
   mongodb_data:

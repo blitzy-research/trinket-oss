@@ -40,6 +40,35 @@ defaults.login = {
   password: defaults.user.password
 };
 
+// An identity used ONLY by test/lib/api/route-parity.js, so that suite can drive the authenticated
+// supplement live without touching `defaults.user` - whose password forgot_pass.js deliberately changes
+// and whose session the earlier eight suites share. `flow.switchUser('parity', done)` creates the account
+// on first use and files its cookie under its own slot, so nothing the parity suite does can disturb the
+// slot any other suite reads. See the header of test/lib/api/route-parity.js.
+defaults.parity = {
+  fullname: 'route parity',
+  username: 'routeparity',
+  email:    'route-parity@example.com',
+  password: 'routeParity!234'
+};
+
+// Isolated identities for the high-risk parameterized/write-route suite. They have their own cookie
+// slots so its archive, folder, invitation, user and admin probes cannot disturb the original nine API
+// suites, the session-transition suite or route-parity's authenticated supplement.
+defaults.routeCoverage = {
+  fullname: 'route coverage owner',
+  username: 'routecoverage',
+  email:    'route-coverage@example.com',
+  password: 'routeCoverage!234'
+};
+
+defaults.routeCoverageOther = {
+  fullname: 'route coverage other',
+  username: 'routecoverageother',
+  email:    'route-coverage-other@example.com',
+  password: 'routeCoverageOther!234'
+};
+
 defaults.course = {
   name:        'test course',
   description: 'test course description'

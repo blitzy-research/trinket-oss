@@ -14,17 +14,23 @@ Trinket lets students and educators write and run code directly in the browser, 
 
 ## Prerequisites
 
-- Docker and Docker Compose
-- Node.js 22 LTS and **npm 10** (for local development without Docker) - `.nvmrc` pins Node, so `nvm use` selects it;
-  `package.json` `engines` declares `node >=22.12.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and its `packageManager` field
-  names the exact release the lockfile and the container image are built with, `npm@10.9.9`. Node 22.23.2 ships
-  npm 10.9.8, so a stock Node 22 LTS install already satisfies both ranges. `.npmrc` sets `engine-strict=true`, which
-  makes those ranges an enforced gate rather than advice: a Node or npm outside them makes `npm ci` **fail** with
-  `EBADENGINE` rather than warn. If your checkout defaults to npm 11, switch the toolchain rather than relaxing the
-  range - `corepack enable npm && corepack use npm@10.9.9`, or `npm install -g npm@10.9.9`
+- Docker and Docker Compose v2 (the `docker compose` subcommand; the standalone `docker-compose` v1 binary is
+  end-of-life and is not used anywhere in this repository)
+- Node.js 22 LTS and **npm 10** (for local development without Docker). `package.json` `engines` declares
+  `node >=22.12.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and its `packageManager` field names the exact release the
+  lockfile and the container image are built with, `npm@10.9.9`. Node 22.23.2 ships npm 10.9.8, so a stock Node 22 LTS
+  install already satisfies both ranges - check with `node --version && npm --version` before installing anything.
+  `.npmrc` sets `engine-strict=true`, which makes those ranges an enforced gate rather than advice: a Node or npm
+  outside them makes `npm ci` **fail** with `EBADENGINE` rather than warn. If your checkout defaults to npm 11, switch
+  the toolchain rather than relaxing the range - `corepack enable npm && corepack prepare npm@10.9.9 --activate`, or
+  `npm install -g npm@10.9.9`. (Use `corepack prepare --activate`, not `corepack use`: corepack 0.34.6 documents that
+  `corepack use` also rewrites the committed `packageManager` value and performs an install of its own.)
   Only install operations enforce `engines`, so `npm run build` and `npm test` run under any npm; to avoid changing a
   global toolchain, run the install step through the pinned release instead - `npx -y npm@10.9.9 ci`, the exact npm the
   Docker image installs
+- **nvm is optional.** `.nvmrc` pins the Node major, so `nvm use` selects it if you manage several Node versions. On a
+  machine whose system Node is already 22.x - which `node --version` tells you - nvm is not needed and every command
+  below works without it
 - MongoDB 5.0+
 - Redis (optional - falls back to in-memory)
 
@@ -36,17 +42,51 @@ Trinket lets students and educators write and run code directly in the browser, 
    cd trinket-oss
    ```
 
-2. Copy the example config and add your settings:
+2. Copy the example config:
    ```bash
    cp config/local.example.yaml config/local.yaml
    ```
 
-3. Start the services:
+3. **Replace the session secret before starting anything.** `config/local.example.yaml` ships a placeholder
+   (`change-this-to-a-secure-password-min-32-chars!`) that is published in this repository and is therefore public.
+   `app.js` checks only that the value is at least 32 characters long, so the placeholder **starts the application
+   successfully** - and `docker compose` publishes the app on `0.0.0.0:3000`, so anyone who can reach the port can
+   forge session cookies with a secret they already know. Generate your own and write it in:
    ```bash
-   docker-compose up
+   node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
+   ```
+   Put the output in `config/local.yaml` under `app.plugins.session.cookieOptions.password`, then confirm the
+   placeholder is gone:
+   ```bash
+   grep -q 'change-this-to-a-secure-password' config/local.yaml \
+     && echo 'REFUSING TO START: session secret is still the published placeholder' \
+     || echo 'session secret replaced'
    ```
 
-4. Visit http://localhost:3000 in your browser.
+4. Start the services:
+   ```bash
+   docker compose up
+   ```
+
+   On a clean clone `docker compose up` is also what produces the stylesheets, so there is no
+   separate hydration or build step to run by hand. Compose has no image yet, so it
+   builds one, and the image build is the deterministic asset path: it downloads the pinned
+   `public-components.tgz` release asset, **verifies its SHA-256 before unpacking it**, installs from the
+   committed lockfile with `npm ci`, runs `npm run build`, and then **fails the build** unless
+   `public/css/base.css` and `public/css/embed.css` match the byte counts and digests recorded in
+   `test/baseline/responses.json`. Both stylesheets are gitignored, so a clean clone has neither until
+   that build runs.
+
+   Compose publishes `public/css` through a named volume, because the `.:/usr/local/node/trinket` bind
+   mount would otherwise hide the copies the image built - the same arrangement `node_modules` and
+   `public/components` already use. Like those two, the volume is initialized once, so after changing
+   `static/scss/**` or the component release, recreate it to publish the new output:
+
+   ```bash
+   docker compose down -v && docker compose up --build
+   ```
+
+5. Visit http://localhost:3000 in your browser.
 
 ## Configuration
 
@@ -81,7 +121,8 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
 
 1. Install dependencies from the committed lockfile:
    ```bash
-   nvm use   # selects Node 22 LTS from .nvmrc
+   node --version        # must report v22.x - if it already does, skip the next line
+   nvm use               # OPTIONAL: selects Node 22 LTS from .nvmrc when you use nvm
    npm ci
    ```
 
@@ -90,15 +131,21 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
    npm run build
    ```
 
-   `npm run build` is `vite build` and nothing more, so on a clean checkout it must be preceded ONCE by
-   hydrating the gitignored `public/components` tree from the pinned `public-components.tgz` release asset -
-   the same archive the Docker build downloads. The `curl`, checksum and `tar` procedure is in
-   [COMPONENTS.md](COMPONENTS.md), and it only has to be repeated after `git clean -xfd`.
+   That is enough on a clean checkout: `package.json` declares a `prebuild` script -
+   `node scripts/hydrate-components.js` - which npm runs first and which hydrates the gitignored
+   `public/components` tree from the pinned `public-components.tgz` release asset, the same archive the Docker
+   build downloads. It verifies the download against both a recorded byte length and a recorded SHA-256 digest
+   before unpacking, and it is idempotent, so re-running the build costs nothing. Set
+   `TRINKET_COMPONENTS_TARBALL` to hydrate from a local copy without network access. The equivalent manual
+   `curl`, checksum and `tar` procedure is in [COMPONENTS.md](COMPONENTS.md).
 
-3. Write `config/local.yaml` and set a session secret of at least 32 characters. It is gitignored, so
-   `git clean -xfd` deletes it and `app.js` then exits at startup - copy it again after any clean:
+3. Write `config/local.yaml` and set your **own** session secret of at least 32 characters - never leave the
+   published placeholder in place, for the reason given in step 3 of the Quick Start. `config/local.yaml` is
+   gitignored, so `git clean -xfd` deletes it and `app.js` then exits at startup; recreate it after any clean:
    ```bash
    cp config/local.example.yaml config/local.yaml
+   node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
+   # write that value into app.plugins.session.cookieOptions.password
    ```
 
 4. Start MongoDB locally (Redis is optional)

@@ -89,7 +89,9 @@ module.exports = function() {
           // pinned at its MEASURED value, so nothing the base suite named is dropped and this site
           // asserts strictly more than the base commit did. Same treatment as the six sites in
           // test/lib/models/plugins/roles.js; docs/PRESERVED-QUIRKS.md section 13 records the policy.
-          flow.lastResponse.text.should.not.contain('/' + libraryUser.username + '/courses/' + sampleCourse.slug + '/copy');
+          var copyPath = '/' + libraryUser.username + '/courses/' + sampleCourse.slug + '/copy';
+
+          flow.lastResponse.text.should.not.contain(copyPath);
           done();
         });
       });
@@ -104,7 +106,10 @@ module.exports = function() {
             // WHATWG one. MEASURED here: this Location is ABSOLUTE, so the base is ignored and the
             // pathname is byte-identical to the legacy reading. `config.url` is still passed - the form
             // test/helpers/flow.js:525 uses - because the static form answers null for a RELATIVE header.
-            URL.parse(response.headers.location, config.url).pathname.should.eql('/u/' + defaults.user.username + '/classes/' + sampleCourse.slug);
+            var expectedPath = '/u/' + defaults.user.username + '/classes/' + sampleCourse.slug;
+
+            URL.parse(response.headers.location, config.url)
+              .pathname.should.eql(expectedPath);
             done();
           });
       });

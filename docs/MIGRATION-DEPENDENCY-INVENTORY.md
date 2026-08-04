@@ -25,7 +25,10 @@ R-3 imposes three obligations, and this file is how each is met.
 - **Every replaced or major-bumped package.** Completeness is auditable rather than asserted: the dependency name
   sets of the base-commit `package.json` and the committed `package.json` were extracted and diffed, and every name
   in the symmetric difference appears below. The base commit declared **58 runtime and 11 development**
-  dependencies; the committed manifest declares **38 runtime and 9 development** dependencies.
+  dependencies; the committed manifest declares **37 runtime and 10 development** dependencies. Both figures are
+  re-derivable in one command —
+  `node -e "var p=require('./package.json');console.log(Object.keys(p.dependencies).length, Object.keys(p.devDependencies).length)"` —
+  and the rubric tables below agree with them row for row.
 - **The mandatory triple.** Every entry states the original, the replacement, and a reason drawn from R-3's
   vocabulary of **`dead`**, **`incompatible`** and **`security`**. No fourth code is used and nothing is left
   unclassified. The contract is **one or more codes, primary first** — not exactly one. Where a single decision is
@@ -50,7 +53,7 @@ tempting upgrade was refused* should read that catalogue; this document records 
 
 - **Lockfile entry counts exclude the root entry.** `package-lock.json`'s `packages` map carries one entry keyed `""`
   for the project itself. Every count below is of the entries *other* than that one, so base = **677** and committed =
-  **467**; add one to each for the raw `Object.keys(...).length`. Earlier revisions mixed the two conventions inside a
+  **465**; add one to each for the raw `Object.keys(...).length`. Earlier revisions mixed the two conventions inside a
   single document and consequently contradicted themselves; the rule above is now applied uniformly.
 - **Mocha run totals are deliberately not published.** A pass total moves every time this changeset adds a spec, and
   earlier revisions quoted a stale one in four places. The non-volatile form — ***`npm test` exits 0 with zero
@@ -233,10 +236,12 @@ above, on the reasoning that AAP §0.9.6's `git clean -xfd && npm ci && npm run 
 that happens to be installed; they ask for **npm 10**, pinned, so the toolchain is reproducible. The right response to
 a checkout carrying npm 11 is therefore to move the checkout onto the pinned resolver, which is exactly what
 `packageManager: "npm@10.9.9"` names and what the container image has always installed. The bounded form was then
-validated end to end under that resolver rather than assumed: with npm 10.9.9, `npm ci` exits 0 (428 packages),
+validated end to end under that resolver rather than assumed: with npm 10.9.9, `npm ci` exits 0 (426 packages added),
 `npm run build` exits 0 and reproduces both stylesheet artifacts byte-for-byte, and `npm test` exits 0. The EBADENGINE
 refusal under npm 11 is the pin working, and `.npmrc`, `README.md` and `docs/setup.md` all now say so and give the two
-one-line commands that switch a local toolchain — `corepack use npm@10.9.9`, or `npm install -g npm@10.9.9`.
+one-line commands that switch a local toolchain — `corepack prepare npm@10.9.9 --activate`, or
+`npm install -g npm@10.9.9`. (`corepack use` is deliberately not recommended: corepack 0.34.6 documents that it also
+rewrites the committed `packageManager` value and performs an install of its own.)
 
 The **lower** bound carries real information of its own and is unchanged: `lockfileVersion: 3` is, in npm's own words,
 "the lockfile version used by npm v9 and above, backwards compatible to npm v7", and the `overrides` block needs npm 8
@@ -367,14 +372,6 @@ this codebase calls, so each is a **manifest-only edit with zero call-site chang
 | `mongoose` | 6.13.9 | **6.13.10** | `security` | Clears a moderate finding **while staying inside the 6.x line**. `Schema.extend` verified present after the extend plugin is loaded. The reason 6.x is a ceiling rather than a waypoint is in Rubric 5 |
 | `brace-expansion` *(transitive)* | 1.1.12 as resolved | **2.1.4, pinned via `overrides`** | `security` | **One override collapses seven high findings**, and the pinned literal is *not* the projected `5.0.9`: forced in, 5.0.9 breaks `minimatch` outright. *The `brace-expansion` pin in full* below |
 | `uuid` *(transitive)* | 8.3.2 as resolved | **8.3.2 — no override; the pin an earlier revision added was removed** | `security` | **Removed in response to review finding F-01.** The frozen plan accepts the two `uuid` findings by name on measured unreachability, and does not pin them; the pin took the audit from the plan's projected 3 moderate findings to 1, which is a decision the plan does not make. The unreachability measurement is kept below because it is what licenses the acceptance. *The `uuid` finding in full* below |
-
-**The `brace-expansion` pin in full.**
-
-**One override collapses seven high findings.** A single denial-of-service advisory fans out through `archiver` to `zip-stream` and `archiver-utils`, then through `glob` to `minimatch`. The pin is deliberately **inside** every consumer's declared range, and the ranges were read from the committed lockfile rather than assumed: the only two consumers in the tree are `minimatch` 9.0.9 at `^2.0.2` and the nested `minimatch` 5.1.9 at `^2.0.1`, and 2.1.4 satisfies both, where the 5.0.9 an earlier revision carried satisfies neither. Brace expansion and `minimatch` pattern matching were verified still correct after the pin, `npm ls --all` exits 0 with **0** problems, and `npm audit --omit=dev` reports the same residual set either way — the pin's own advisory is closed at 1.1.12, 2.0.2, 3.0.1 and 4.0.1, so 2.1.4 is comfortably past it. **The range is not a formality: an override forces its version regardless of the ranges, and 5.0.9 forced in breaks `minimatch` outright.** Measured in a scratch resolution carrying `minimatch` 9.0.9 with `brace-expansion` overridden to 5.0.9, `minimatch('abd', 'a{b,c}d')` raises `(0 , brace_expansion_1.default) is not a function` — 5.x is `"type": "module"` and the shape of its CommonJS build is not what `minimatch` 9's compiled `default` access expects — while `minimatch('x.js', '*.js')` still matches, which is exactly why the breakage survives a smoke test. The same probe at 2.1.4 answers `true`, `true`, `false` for `*.js`/`x.js`, `a{b,c}d`/`abd` and `a{b,c}d`/`aXd`. There is deliberately **no `minimatch` override**: pinning that package to a 10.x would override three consumer ranges that cannot accept it — `glob` at `^9.0.4`, `mocha` at `^9.0.5` and `readdir-glob` at `^5.1.0` — and it was measured to close nothing the `brace-expansion` pin does not already close
-
-**The `uuid` finding in full, and why it is accepted rather than pinned.**
-
-**An intermediate revision pinned it and review finding F-01 removed the pin; what survives is the unreachability measurement that licenses accepting the finding.** `uuid` is not a direct dependency and never has been — measured: **zero** `require('uuid')` sites anywhere in `app.js`, `config/`, `lib/`, `scripts/` or `test/`. Its single dependent in the tree is the kept `bull` 4.16.5, which wanted `^8.3.0`, and the advisory it carried counted **twice** in the audit — once against `uuid` and once against `bull` as its path. Two measurements licensed the pin. First, **the vulnerable API is unreachable**: the advisory concerns a missing bounds check on the optional `buf` argument of `v3`/`v5`/`v6`, and `bull` calls `uuid.v4()` at exactly **3** sites — `bull/lib/queue.js:L120`, `bull/lib/queue.js:L1412` and `bull/lib/timer-manager.js:L74` — **always with zero arguments**, with no `v3(`, `v5(` or `v6(` anywhere in `bull/lib`. Second, **the fix is compatible**: `uuid` 11.1.1 ships a real CommonJS build at `./dist/cjs/index.js` behind its `exports` map's `require` condition, so it does **not** depend on `require(esm)`, so the `>=22.12.0` engine floor is not what makes it usable and the pin would hold on any Node 22; it declares **no** `engines` field and **no** dependencies. The blast radius was measured, not assumed: the lockfile delta is **one entry**, 8.3.2 to 11.1.1, with **466** package entries before and after, nothing added and nothing removed; `npm ci` exits 0; and `bull` still constructs a queue, still produces a valid v4 token and still closes cleanly. Note the outcome npm itself offers is `bull` 1.1.3 — a **semver-major downgrade** of a live dependency — which is why the plan accepted the finding instead of repairing it. The pin was nonetheless **removed**: it was measured compatible, but compatibility is not authorization, and §0.6.1.7 makes the acceptance the frozen decision. The committed tree therefore reports the plan's own `{critical: 0, high: 0, moderate: 3}`. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 12.2
 | `serialize-javascript` *(transitive, development)* | 6.0.2 as resolved | **7.0.7, pinned via `overrides`** | `security` | **Closes the HIGH advisory the test runner carried.** `mocha` 11.7.6 asks for `^6.0.2` and the advisory range is `<=7.0.4`, so only an override can move it. *The development-tree pins in full* below |
 | `diff` *(transitive, development)* | 7.0.0 as resolved under `mocha` | **9.0.0, pinned via `overrides`** | `security` | Collapses the nested copy `mocha` resolved onto the version the runtime block already declares, closing the LOW advisory without adding a version to the tree. *The development-tree pins in full* below |
 
@@ -396,11 +393,14 @@ for repairing them. `uuid` is not a direct dependency and never has been — mea
 anywhere in `app.js`, `config/`, `lib/`, `scripts/` or `test/`. Its single dependent in the tree is the kept `bull`
 4.16.5 at `^8.3.0`, and the advisory counts **twice** in the audit, once against `uuid` and once against `bull` as its
 path. The advisory concerns a missing bounds check on the optional `buf` argument of `v3`/`v5`/`v6`, and `bull` calls
-`uuid.v4()` at exactly **3** sites — `bull/lib/queue.js:L120`, `bull/lib/queue.js:L1412` and
-`bull/lib/timer-manager.js:L74` — **always with zero arguments**, with no `v3(`, `v5(` or `v6(` anywhere in
-`bull/lib`.
+`uuid.v4()` at exactly **3** sites — `node_modules/bull/lib/queue.js:L120`, `node_modules/bull/lib/queue.js:L1412` and
+`node_modules/bull/lib/timer-manager.js:L74` — **always with zero arguments**, with no `v3(`, `v5(` or `v6(` anywhere in
+`node_modules/bull/lib`.
 npm's own `fixAvailable` for it is `bull` 1.1.3, a **semver-major downgrade** of a live dependency, which is why the
-plan accepted the finding instead. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 12.2
+plan accepted the finding instead. The removed pin had itself been measured compatible before it was removed — `uuid`
+11.1.1 exposes a real CommonJS build at `node_modules/uuid/dist/cjs/index.js`, declares no `engines` and no
+dependencies, has exactly one dependent in the tree, and moved exactly one lockfile entry — but **compatibility is not
+authorization**, and §0.6.1.7 is what makes the acceptance the frozen decision. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 12.2
 
 **The development-tree pins in full.**
 
@@ -445,10 +445,10 @@ as the breaking position while the major is 0, so both were probed to the same s
 | `bcrypt` | 5.1.1 | **6.0.0** | `security` | Clears a critical `tar` finding plus high findings in `bcrypt` itself and in `@mapbox/node-pre-gyp`, **and removes a DEP0169 deprecation source**. Both the callback triad and the promise triad verified against the call sites at `lib/models/user.js:L53`, `L56` and `L92` |
 | `bull` | 0.7.2 | **4.16.5** | `security`, `incompatible` | `new Queue(name, {redis:{host,port}})` plus `on`, `process` and `add` verified against the exact shapes used at `lib/util/queues.js:L105` and `L122` |
 | `csv` | 1.2.1 | **6.6.1** | `security`, `incompatible` | `.parse` verified, for the admin CSV import at `lib/controllers/admin.js:L8` and `L116` |
-| `diff` | 1.0.8 | **9.0.0** | `security`, `incompatible` | `applyPatch` verified for the course content patching at `lib/controllers/course.js:L546`. **This is the one bump that required a payload adapter**, because the patch *producer* is a separate browser copy pinned at 1.0.8. *The `diff` bump in full* below |
+| `diff` | 1.0.8 | **9.0.0** | `security`, `incompatible` | `applyPatch` verified for the course content patching at `lib/controllers/course.js:L568`. **This is the one bump that required a payload adapter**, because the patch *producer* is a separate browser copy pinned at 1.0.8. *The `diff` bump in full* below |
 | `jsonwebtoken` | 5.7.0 | **9.0.3** | `security`, `incompatible` | Two-argument `sign` and payload-returning `verify` verified, for the email verification tokens at `lib/controllers/trinket.js:L368`, `L421` and `L693` and the verify at `lib/util/helpers.js:L264` |
 | `nodemailer` | 2.7.2 | **9.0.3** | `security` | Clears a large critical cluster **and removes the DEP0005 deprecation source**, which reached the process through `libmime` to an `iconv-lite` 0.4.15. The exact `createTransport` option shape at `lib/util/mailer.js:L15-L23` verified accepted unchanged |
-| `tmp` | **`0.0.25`, an exact pin with no range** | **0.2.7** | `security` | `tmpName(cb)` verified against the one call site, at `2f8712a:lib/controllers/users.js:L591` and now at `lib/controllers/users.js:L881`. The callback form is unchanged across the bump, so the call site itself was untouched. The original specifier is quoted because it is materially the point: this was the one dependency already pinned exactly, so the bump is unambiguous rather than a range re-resolution |
+| `tmp` | **`0.0.25`, an exact pin with no range** | **0.2.7** | `security` | `tmpName(cb)` verified against the one call site, at `2f8712a:lib/controllers/users.js:L591` and now at `lib/controllers/users.js:L883`. The callback form is unchanged across the bump, so the call site itself was untouched. The original specifier is quoted because it is materially the point: this was the one dependency already pinned exactly, so the bump is unambiguous rather than a range re-resolution |
 | `validator` | 5.7.0 | **13.15.35** | `security`, `incompatible` | `isEmail` verified on both true and false inputs, for the two call sites in the invitation model. **The bump also changes which addresses are accepted**, so the base behaviour is preserved behind a local predicate. *The `validator` bump in full* below |
 | `marked` | **0.3.2, declared as `git+https://github.com/trinketapp/marked.git`** | registry **4.3.0** | `security`, `incompatible` | The only non-registry dependency in the project, and the one bump that required a call-site change. Given its own subsection below: the fork carries **8** advisories that will never be fixed in it, three of them attacking the sanitization the fork exists to provide. It was **not** unpinned — the base lock records commit `55ea824…` — so it did not block determinism |
 
@@ -458,7 +458,7 @@ as the breaking position while the major is 0, so both were probed to the same s
 
 **The `diff` bump in full.**
 
-`applyPatch` verified, for the course content patching at `lib/controllers/course.js:L440` — now `L546` — and it still answers the boolean `false` on failure, so the strict `=== false` conflict test beside it is unchanged. **This is the one bump that required a payload adapter.** The *producer* of the patch text is a separate jsdiff copy that is deliberately not upgraded: `config/default.yaml` pins the browser copy at **1.0.8** and `public/js/courseEditor/controllers/materialControl.js:L321` is its sole `createPatch` caller. Both versions were installed side by side and replayed against the shapes this application actually produces. For every hunk header carrying **at least one old line** the output is **byte-identical**; they diverge on exactly one shape — the first edit against an **empty** material, for which 1.0.8 emits the non-canonical zero-old-lines header `@@ -1,0 +1,N @@`. 1.0.8 spliced those added lines in **before** line 1, while 9.0.0 follows GNU patch and inserts them **after** line 1, which prepended a blank line to the first save of every new page and dropped its trailing newline. `lib/controllers/course.js:L545` therefore rewrites that one leading header to its canonical `@@ -0,0 ` form — `^`-anchored, so no other hunk is touched — which was measured to be a **no-op under 1.0.8's own semantics** while restoring byte-identical output under 9.0.0. Persisted course content is unchanged (TR6). See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.17
+`applyPatch` verified, for the course content patching at `2f8712a:lib/controllers/course.js:L440` — now `L568` — and it still answers the boolean `false` on failure, so the strict `=== false` conflict test beside it is unchanged. **This is the one bump that required a payload adapter.** The *producer* of the patch text is a separate jsdiff copy that is deliberately not upgraded: `config/default.yaml` pins the browser copy at **1.0.8** and `public/js/courseEditor/controllers/materialControl.js:L321` is its sole `createPatch` caller. Both versions were installed side by side and replayed against the shapes this application actually produces. For every hunk header carrying **at least one old line** the output is **byte-identical**; they diverge on exactly one shape — the first edit against an **empty** material, for which 1.0.8 emits the non-canonical zero-old-lines header `@@ -1,0 +1,N @@`. 1.0.8 spliced those added lines in **before** line 1, while 9.0.0 follows GNU patch and inserts them **after** line 1, which prepended a blank line to the first save of every new page and dropped its trailing newline. `lib/controllers/course.js:L567` therefore rewrites that one leading header to its canonical `@@ -0,0 ` form — `^`-anchored, so no other hunk is touched — which was measured to be a **no-op under 1.0.8's own semantics** while restoring byte-identical output under 9.0.0. Persisted course content is unchanged (TR6). See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.17
 
 **The `joi` bump in full, because a validator major is the highest-risk change in the whole migration.** A stricter
 or laxer validator changes which requests are accepted with no error surfacing anywhere, so parity was measured rather
@@ -605,7 +605,7 @@ The Redis double used by `test/setup.js`, and the one bump in this table that **
 
 **The `sinon` bump in full.**
 
-**Three removed APIs, and all three were exercised by this suite.** Measured against the installed 22.1.0: (1) the three-argument form throws `TypeError: stub(obj, 'meth', fn) has been removed, see documentation` — **6** base-commit sites, censused over code lines only at `2f8712a`: `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8`, `test/lib/models/trinket.js:L34, L39, L155`; (2) `spy.reset` is **`undefined`** where `spy.resetHistory` is a function — **6** further base-commit sites, all on `sinon.spy(...)` doubles: `test/lib/models/plugins/paginate.js:L29-L32` and `test/lib/models/trinket.js:L167, L168`; (3) stubbing an absent property throws `TypeError: Cannot stub non-existent property`, which is what makes the catbox target correction in Rubric 3 load-bearing rather than cosmetic. **Delivered state, re-measured over the 32 current test files, code lines only: 0 three-argument `sinon.stub` calls and 0 `.reset()` calls remain** — 13 `.callsFake(` and 6 `.resetHistory()` calls stand in their place — and the suite runs **exit 0 with zero failures**. The remaining textual match for each removed form is a comment recording the conversion. Full adjudication: [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 13.3
+**Three removed APIs, and all three were exercised by this suite.** Measured against the installed 22.1.0: (1) the three-argument form throws `TypeError: stub(obj, 'meth', fn) has been removed, see documentation` — **6** base-commit sites, censused over code lines only at `2f8712a`: `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8`, `test/lib/models/trinket.js:L34, L39, L155`; (2) `spy.reset` is **`undefined`** where `spy.resetHistory` is a function — **6** further base-commit sites, all on `sinon.spy(...)` doubles: `test/lib/models/plugins/paginate.js:L29-L32` and `test/lib/models/trinket.js:L167, L168`; (3) stubbing an absent property throws `TypeError: Cannot stub non-existent property`, which is what makes the catbox target correction in Rubric 3 load-bearing rather than cosmetic. **Delivered state, re-measured over the 33 current test files, code lines only: 0 three-argument `sinon.stub` calls and 0 `.reset()` calls remain** — 13 `.callsFake(` and 6 `.resetHistory()` calls stand in their place — and the suite runs **exit 0 with zero failures**. The remaining textual match for each removed form is a comment recording the conversion. Full adjudication: [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 13.3
 
 **The test-tree call-site edits these bumps oblige are all applied.** The dependency decisions above are committed —
 `package.json` and `package-lock.json` carry them, and every version in the table is the resolved version in the
@@ -893,15 +893,16 @@ was dumped both ways. **Both boots produced 233 rows with zero row-by-row differ
 corpus was unchanged.
 
 **What this adjudication turns on is that the two tables are *identical to each other*** — a within-run comparison of
-two dumps taken minutes apart on the same tree. That comparison is the proof, it needs no external artifact, and it is
-not affected by anything the parity checkpoint later confirms. The *absolute* figures beside it are a different kind of
-claim: the digest
-`452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8` and the corpus outcome come from
-`test/baseline/route-table.json` and `test/baseline/responses.json`, which are signed off at the **final parity
-checkpoint** rather than at the checkpoint this revision belongs to, so they are recorded here as **provisional
-measurements pending that sign-off, not as completed release proof**. The same qualification is stated once, with its
-scope, in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) under *How to read this catalogue*. Nothing about the passport
-conclusion depends on it: had the digest been any other value, the two dumps would still have agreed.
+two dumps taken minutes apart on the same tree. That comparison is the proof, it needs no external artifact, and no
+later measurement can undo it: had the digest been any other value, the two dumps would still have agreed.
+
+The *absolute* figures beside it are a different kind of claim, and they are now **final rather than provisional**. The
+digest `452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8` and the corpus outcome come from
+`test/baseline/route-table.json` and `test/baseline/responses.json`, and both artifacts have been replayed against the
+delivered tree: `node test/baseline/replay.js` exits 0 reporting **zero differences** over the 233-row route table, the
+58 unauthenticated, 7 authenticated and 8 assignment-`next` corpus entries, with the documented route-table anchor
+enforced as all ten clauses of `gates.documentedAnchorGate`. The measured status of every gate is tabulated once, with
+the command that produced it, in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 0.
 
 That digest is recorded as
 `gates.measuredSha256` in `test/baseline/route-table.json` and is re-derivable from that artifact's own rows with the
@@ -910,8 +911,9 @@ recomputable canonical SHA-256, registration-order SHA-256 and MD5 fingerprints 
 the AAP's documented 32-character digest `cd2a7e38a39bd84902ac1a0d69f50e2a` is **not** this value, is retained verbatim
 under `gates.documentedDigest`, and is not claimed to have been recomputed — the string is not recomputable by any
 verifier, so the anchor is enforced over the 233-row table it names, by the ten-clause `gates.documentedAnchorGate`
-that `replay.js` recomputes live and `test/lib/api/route-parity.js` asserts on every run. The deletion proof is in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.6, and the digest
-adjudication itself in section 3.22.
+that one shared evaluator recomputes live — `capture.js#documentedAnchorGate`, adapted by `replay.js` — and that
+the capture CLI, the replay CLI and `test/lib/api/route-parity.js` each enforce on every run. The deletion proof is
+in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.6, and the digest adjudication itself in section 3.22.
 
 One correction belongs with that proof, because this document previously published the wrong digest for it. The value
 `cd2a7e38a39bd84902ac1a0d69f50e2a` was carried forward from the plan and labelled a sha256. It **cannot be one**: it
@@ -1005,7 +1007,7 @@ rows as claiming otherwise. What is durable, and what a reader can verify, is th
 
 | Package | Held at | Behavioral justification |
 |---|---|---|
-| `highlight.js` | **9.18.5** | Version 10 renamed the emitted `hljs-*` token classes and changed the `highlight()` signature. `lib/shared/trinket-markdown.js:L310` calls the two-argument `hljs.highlight(lang, code)` form and splices the result straight into rendered markdown, so a bump would change **client-visible markup** on every page containing a fenced code block. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 2 |
+| `highlight.js` | **9.18.5** | Version 10 renamed the emitted `hljs-*` token classes and changed the `highlight()` signature. `lib/shared/trinket-markdown.js:L413` calls the two-argument `hljs.highlight(lang, code)` form and splices the result straight into rendered markdown, so a bump would change **client-visible markup** on every page containing a fenced code block. See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 2 |
 | `limax` | **1.4.1** | Its slug output **is public URLs**. Any change to slug generation changes URLs that already exist in the wild |
 | `transliteration` | **0.1.1** | Same reason: it feeds the same slug pipeline at `lib/models/plugins/slug.js`, and its output is part of public URLs |
 | `numeral` | **1.5.6** | Formats template-rendered text at `lib/util/nunjucks.js:L6` and `L131`; a formatting change is a visible page change |
@@ -1024,7 +1026,7 @@ rows as claiming otherwise. What is durable, and what a reader can verify, is th
 | `@hapi/yar` | **11.0.3** | Already current at migration time. It decorates only `request.yar` and `server.yar`, and the cookie name and iron-seal format are part of the preserved session contract |
 | `sass` | **1.98.0** | **Advancing it breaks the Foundation 5.5.3 fork's Sass.** It cannot pass the `@import` and legacy-JS-API removals, and the build must keep emitting the same two CSS artifacts at the same paths — `public/css/base.css` at 265,727 bytes and `public/css/embed.css` at 296,352 bytes |
 | `vite` | **4.5.14** | The installed version already builds green on Node 22 and emits exactly those two artifacts. Advancing it risks the same stylesheet output for no benefit |
-| `@hapi/shot` *(transitive)* | 5.0.5 advanced to **6.0.3** | Not a decision of this change: it moved as a transitive consequence of the `@hapi/hapi` major bump already classified in Rubric 2. It is recorded here because 6.0.3 is the highest version published at migration time, so its inject-only DEP0169 — traced to `@hapi/shot/lib/request.js:L30` — has **no upstream fix**. That is why the delivered parity harness issues real HTTP and never calls `server.inject()`, stated in `test/baseline/capture.js` and re-stated in `test/baseline/replay.js` and `test/lib/api/route-parity.js`. The application's own two internal sub-requests do inject, which is why the warning is reachable at all; see [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) sections 3.9 and 7.6 |
+| `@hapi/shot` *(transitive)* | 5.0.5 advanced to **6.0.3** | Not a decision of this change: it moved as a transitive consequence of the `@hapi/hapi` major bump already classified in Rubric 2. It is recorded here because 6.0.3 is the highest version published at migration time, so its inject-only DEP0169 — traced to `node_modules/@hapi/shot/lib/request.js:L30` — has **no upstream fix**. That is why the delivered parity harness issues real HTTP and never calls `server.inject()`, stated in `test/baseline/capture.js` and re-stated in `test/baseline/replay.js` and `test/lib/api/route-parity.js`. The application's own two internal sub-requests do inject, which is why the warning is reachable at all; see [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) sections 3.9 and 7.6 |
 
 Three groups among these holds exist specifically to protect **client-visible output**, and they are the clearest
 cases in the whole inventory where a routine-looking upgrade would have been a behavior change: `highlight.js`, whose
@@ -1053,7 +1055,14 @@ the plan's measurement and this one looks like. The regenerated figures above ar
 plan's are left visible so the one-finding drift is not mistaken for a discrepancy in the manifest.
 
 **Committed result, re-measured under the pinned resolver.** `npm ci` under npm 10.9.9 against the committed lockfile
-exits 0 and installs **428 packages**. `npm audit --omit=dev` reports:
+exits 0 and installs **426 packages** — npm's own summary line reads `added 426 packages, and audited 427 packages`,
+the audited figure being the 426 plus the root project, the same root-exclusion convention the lockfile counts above
+use. Corroborated two further ways on the delivered tree, both giving 426: a walk of `node_modules` counting
+directories that contain a `package.json`, and `npm ls --all --parseable`. An earlier revision published **428** here
+and in the sibling catalogue; that figure is **superseded by re-measurement**, and no cause is claimed for it — the
+`uuid` override whose removal Rubric 1 records is *not* the explanation, because reinstating it was measured to leave
+the lockfile at the same **465** entries, merely hoisting `uuid` to `11.1.1` instead of resolving `8.3.2` beneath
+`bull`. `npm audit --omit=dev` reports:
 
 ```json
 { "info": 0, "low": 0, "moderate": 3, "high": 0, "critical": 0, "total": 3 }
@@ -1074,14 +1083,14 @@ than for convenience:
 - **The `uuid`-in-`bull` pair**, advisory *"Missing buffer bounds check in v3/v5/v6 when buf is provided"*, applying to
   `uuid <11.1.1` and charged twice, once against `uuid` and once against `bull` as its path. Accepted because **the
   vulnerable API is unreachable**: `bull` calls `uuid.v4()` at exactly three sites, always with zero arguments, and no
-  `v3(`, `v5(` or `v6(` appears anywhere in `bull/lib`. npm's only offered fix is `bull` 1.1.3 — a semver-major
+  `v3(`, `v5(` or `v6(` appears anywhere in `node_modules/bull/lib`. npm's only offered fix is `bull` 1.1.3 — a semver-major
   **downgrade** of a live dependency, which would be a regression. The full measurement is in Rubric 1 under *Why there
   is no `uuid` override*.
 - **The deliberate `highlight.js` hold**, advisory *"ReDOS vulnerabities: multiple grammars"*, applying to the range
   `9.0.0 - 10.4.0`. npm's only offered fix is `highlight.js` 11.11.1, a semver-major bump. The acceptance is
   evidence-backed rather than asserted, and the evidence is in
   [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 12.3: the reachable surface is **one** server call site,
-  `lib/shared/trinket-markdown.js:L310`, guarded by `hljs.getLanguage(lang)` and reached only from
+  `lib/shared/trinket-markdown.js:L413`, guarded by `hljs.getLanguage(lang)` and reached only from
   `lib/controllers/courses.js:L287` inside `download()` when `format === "html"`, which binds it to the single
   session-authenticated route `GET /{userSlug}/courses/{courseSlug}/download.zip`; a sizing run over **all 185**
   bundled grammars against 8 pathological payloads measured a worst case of **42.6 ms** and a median of **1.03 ms**,
@@ -1093,17 +1102,16 @@ than for convenience:
   positional `highlight(lang, code)` form used at that call site, so it is the **markup** that blocks the bump, not the
   signature.
 
-- **The two `uuid` findings**, advisory *"uuid: Missing buffer bounds check in v3/v5/v6 when buf is provided"*,
-  reported once against `uuid` `<11.1.1` and once against `bull` `>=2.0.0` as its dependency path. Accepted on
-  measured unreachability, as set out above and in *Item 2 in full*.
 
 **Development-only findings are recorded separately and are not charged to this change.** Re-measured on the committed
-tree, the full-tree audit reports `{low: 1, moderate: 5, high: 2, critical: 0, total: 8}` — `serialize-javascript` and
-`vite` at high, `esbuild`, `mocha`, `highlight.js`, `uuid` and `bull` at moderate, `diff` at low. The two highs reach
-the tree through `vite` alone and are therefore **development-only**: nothing under `app.js`, `config/`, `lib/` or
-`scripts/` requires either package. `vite` and `sass` are held for the stylesheet
-reason given in Rubric 5, and the gate the plan sets is `npm audit --omit=dev`, which is what the production table
-above measures.
+tree with the two development-tree overrides in place, `npm audit` over the whole tree reports
+`{info: 0, low: 0, moderate: 4, high: 1, critical: 0, total: 5}` — **`vite` at high**, and `bull`, `esbuild`,
+`highlight.js` and `uuid` at moderate. That single high reaches the tree through `vite` alone and is therefore
+**development-only**: nothing under `app.js`, `config/`, `lib/` or `scripts/` requires it or `esbuild`. An earlier
+revision of this paragraph published the **pre-override** reading (`2` high, `5` moderate, `1` low) and contradicted the
+figure the next subsection gives; the numbers above are the delivered tree's, and the two agree. `vite` and `sass` are
+held for the stylesheet reason given in Rubric 5, and the gate the plan sets is `npm audit --omit=dev`, which is what
+the production table above measures.
 ### The one accepted HIGH finding, in the development tree
 
 The gate AAP G4 sets is `npm audit --omit=dev`, and the production table above measures it at 0 critical and 0 high.
@@ -1176,8 +1184,11 @@ replacement for the deprecated `url.parse()` precisely because it returns `null`
 notes record that static method as added in **22.1.0**; it is a function on this checkout's v22.23.2 and `undefined`
 on a 22.0.x runtime, where **every** site that replaced a `url.parse()` call would raise a `TypeError` at first use —
 `lib/controllers/users.js:L875`, `L1778`, `L1812` and `L1848`, `lib/controllers/trinket.js:L36`,
-`lib/workers/exports.js:L46`, `lib/http/redirect.js:L97` and `L218`, plus the harness sites at
-`test/helpers/flow.js:L437`, `test/lib/api/registration.js:L102` and `test/baseline/replay.js:L365`. A floor of `>=22.0.0` would therefore admit a
+`lib/workers/exports.js:L46`, `lib/http/redirect.js:L97` and `L238`, plus the harness sites at
+`test/helpers/flow.js:L528`, `test/lib/api/registration.js:L107`, `test/baseline/capture.js:L959`, `L972`, `L1994`
+and `L1995`, and `test/lib/api/route-parity.js:L100`. `test/baseline/replay.js` no longer has a site of its own: the
+one it carried belonged to the origin-rewriting helper that the harness remediation removed, recorded in
+[PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 14.4. A floor of `>=22.0.0` would therefore admit a
 runtime on which the application does not work — the opposite of what **AAP G1** asks the `engines` block to
 guarantee. `22.12.0` sits well above 22.1.0 and is also the release from which `require(esm)` is unflagged —
 `process.features.require_module` measures `true` on v22.23.2 — while `.nvmrc`'s bare `22` resolves to the newest
@@ -1197,8 +1208,8 @@ one resolver rather than three.
 whose default resolver has moved to npm 11, every npm command **fails** with
 `npm error code EBADENGINE ... Required: {"npm":">=10.0.0 <11.0.0"} Actual: {"npm":"11.18.0"}` rather than warning.
 That is the pin refusing an unpinned toolchain, and the remedy is to switch the toolchain, which `.npmrc`, `README.md`
-and `docs/setup.md` all state along with the two one-line commands that do it — `corepack enable npm && corepack use
-npm@10.9.9`, or `npm install -g npm@10.9.9`. Every gate was then re-run under the pinned resolver rather than assumed:
+and `docs/setup.md` all state along with the two one-line commands that do it — `corepack enable npm && corepack prepare
+npm@10.9.9 --activate`, or `npm install -g npm@10.9.9`. Every gate was then re-run under the pinned resolver rather than assumed:
 with npm 10.9.9, `npm ci` exits 0, `npm run build` exits 0 and reproduces both stylesheet artifacts byte-for-byte, and
 `npm test` exits 0 with zero failures. `lockfileVersion` 3 is the format npm 7 and later both read and write, so `npm ci`
 consumes the committed file without rewriting it.
@@ -1228,17 +1239,18 @@ The remaining items complete the surface:
   carries exact versions rather than ranges throughout.
 - **`package-lock.json` is regenerated at lockfileVersion 3 and committed**, and `npm ci` consumes it without
   rewriting it — measured: `npm ci` exits 0 and the file's sha256 is byte-identical before and after. That digest is
-  `ce48d854a34d48eabe016358c24fe4e538855a15665ff7dd7b15a1fad8d35c5f`, regenerated from the committed file with
-  `sha256sum package-lock.json` rather than transcribed; an earlier revision of this document published
-  `db571b90675baa7975cda7fb7ea477a7e71a72130372001836e74f69e70c0525`, which was the digest of an intermediate lockfile
-  and had gone stale by the time later dependency work landed. The base commit's lockfile was **also**
+  `d3d866dfbd767f4e71b3e765cec46815545d1f6f36bea30958407a49c825cda5`, re-derived from the committed file with
+  `sha256sum package-lock.json` rather than transcribed; two earlier revisions of this document published
+  `db571b90675baa7975cda7fb7ea477a7e71a72130372001836e74f69e70c0525` and then
+  `ce48d854a34d48eabe016358c24fe4e538855a15665ff7dd7b15a1fad8d35c5f`, each the digest of an intermediate lockfile that
+  had gone stale by the time later dependency work landed. The base commit's lockfile was **also**
   lockfileVersion 3 and **also** pinned every specifier, including the `marked` fork at
   `git+ssh://git@github.com/trinketapp/marked.git#55ea8249…`, so this is
   a regeneration rather than the introduction of determinism. The substantive, measured gains are narrower and
   concrete, and the counts below use the **same convention as the audit section above — package entries excluding the
   root entry**, so that the two sections agree: the base lock had **677** package entries, of which **exactly one**
   carried no `integrity` field and exactly one `resolved` URL was not an anonymous registry tarball — both the
-  `marked` fork entry, resolved over `git+ssh://`. The current lock has **467** entries, **zero** without
+  `marked` fork entry, resolved over `git+ssh://`. The current lock has **465** entries, **zero** without
   `integrity`, and **zero** non-registry
   `resolved` URLs, so every artifact `npm ci` fetches is now hash-verified and reachable without a git binary or SSH
   credentials. Both counts and both zero-checks are re-derivable from the committed files with

@@ -38,6 +38,12 @@ Trinket depends on frontend libraries (Ace Editor, Skulpt, Blockly, GlowScript, 
 
 For local installs you can run `npm run setup-vendor` to fetch the required components. Most are Trinket forks with customizations on top of their upstream projects.
 
+The version column in the tables below is documentation only - no runtime code path reads it - and it is reproduced here exactly as this repository has always published it. The authority for what a hydrated tree actually contains is the `_release` field of `public/components/<name>/.bower.json`, and it does not agree with every published row.
+
+On this page **skulpt** is published as `0.11.1.34` while the release asset carries `0.11.1.33`, and **marked**'s `master` names a branch rather than a version, with `_release` recording the resolved commit `55ea824910` - the same fork commit the base `package-lock.json` pinned for the server-side copy. The remaining rows match `_release` exactly: jq-console `v2.13.2.1`, traqball.js `1.0.3`, detectizr `2.3.0`, and glowscript `2.7.5`. `COMPONENTS.md` carries the full variance list across every component table under "About the version numbers in the tables below", and its closing rule applies here too - to know what is installed, read the `.bower.json` in the component's directory.
+
+The repository links below were each checked against the `_source` field recorded in those same `.bower.json` files and all seven match, and each URL was resolved live and returns HTTP 200. None of them were introduced or changed by the Node 22 modernization.
+
 ## Embeds by Feature
 
 ### Python Embed (`/embed/python`)
@@ -60,7 +66,7 @@ Blockly-based visual block editor that emits Python code, executed via Skulpt.
 
 ### GlowScript Embed (`/embed/glowscript`)
 
-3D graphics environment based on GlowScript 2.7.5 and VPython bindings.
+3D graphics environment with VPython bindings. The GlowScript version is selected by configuration rather than fixed in code: `lib/views/embed/glowscript-config.html` publishes a map of eleven selectable versions (`1.1` through `3.2`) and `config/default.yaml` picks the default with `app.glowscript.defaultVersion`, which ships as `3.2` - Trinket build `3.2.2`, served from `public/components/vpython-glowscript/`. The separate `glowscript-blocks` type - not the Blockly `/embed/blocks` above - is configured through `app.glowscript.blocksVersion`, which ships as `2.7` - Trinket build `2.7.5`, served from `public/components/glowscript/` - against its own seven-version map in `lib/views/embed/glowscript-blocks-config.html`. Both templates and both configuration values are unchanged by the Node 22 modernization.
 
 ### Music Embed
 

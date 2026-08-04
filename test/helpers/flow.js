@@ -328,15 +328,33 @@ var methods = {
       .end(this.setLastResponse(cb));
   },
 
+  /**
+   * Requests the embed page for a trinket, with an optional query string.
+   *
+   * Review finding M9 - a false green. The test was `if (query.length)`, and every caller passes an
+   * OBJECT (`{ start : 'result' }`), whose `length` is `undefined`. The query was therefore NEVER
+   * appended: `test/lib/api/trinket.js`'s "with result showing" case issued exactly the same request as
+   * the plain embed case beside it and could not have detected the parameter being dropped, ignored or
+   * rejected. The test is now on the object's own key count, and a pre-built string is accepted too so
+   * the existing shape of the argument stays free.
+   *
+   * @param {string}        trinketId The trinket id or short code.
+   * @param {string}        lang      The trinket language segment.
+   * @param {Object|string} [query]   A query map, or an already-serialized query string.
+   * @param {Function}      cb        Called with (err, response).
+   * @returns {Object} The supertest request.
+   */
   getEmbeddedTrinket : function(trinketId, lang, query, cb) {
     if (typeof query === 'function') {
       cb = query;
       query = {};
     }
 
-    var url = '/embed/' + lang + '/' + trinketId;
-    if (query.length) {
-      url += '?' + querystring.stringify(query);
+    var url = '/embed/' + lang + '/' + trinketId,
+        search = typeof query === 'string' ? query : querystring.stringify(query || {});
+
+    if (search.length) {
+      url += '?' + search;
     }
 
     return this.get(url)
@@ -398,6 +416,28 @@ var methods = {
       .end(this.setLastResponse(cb));
   },
 
+  /**
+   * Makes `user` the active cookie slot, logging in - and creating the account if necessary - when a
+   * callback is supplied and the slot holds no cookie yet.
+   *
+   * Review finding M14, four defects in the completion handler, all of which turned a broken fixture into
+   * a confusing later failure instead of a clear immediate one:
+   *
+   *   1. `done(err)` did not `return`, so execution continued;
+   *   2. `res.statusCode` was then dereferenced - and on a transport error `res` is `undefined`, so the
+   *      real error was replaced by `TypeError: Cannot read properties of undefined`;
+   *   3. `done` could be called twice or three times on one invocation, which Mocha reports as
+   *      "done() called multiple times" attributed to whichever test happened to be running;
+   *   4. `userModel.save(function(err) { ... })` DISCARDED its error and logged in regardless, so a
+   *      rejected fixture save surfaced as an unexplained failed login.
+   *
+   * Every error path now returns, the response is only read once an error has been ruled out, and the
+   * save error is propagated before the login is attempted.
+   *
+   * @param {string}     user   A key into test/helpers/defaults.
+   * @param {Function}   [done] Called with (err) once the slot is usable; omitted for a bare switch.
+   * @returns {*} Whatever the underlying request returns, or the result of `done`.
+   */
   switchUser : function(user, done) {
     var self = this;
 
@@ -412,10 +452,12 @@ var methods = {
 
         function onLoginComplete(err, res) {
           if (err) {
-            done(err);
+            return done(err);
           }
-          if (res.statusCode != 302) {
-            done(new Error('Failed to log in "' + user + '"'));
+
+          if (!res || res.statusCode != 302) {
+            return done(new Error('Failed to log in "' + user + '": expected HTTP 302, got ' +
+              (res ? res.statusCode : 'no response')));
           }
 
           return done();
@@ -428,8 +470,12 @@ var methods = {
 
           if (!doc) {
             var userModel = new User(defaults[user]);
-            return userModel.save(function(err) {
-              self.login(credentials, onLoginComplete)
+            return userModel.save(function(saveErr) {
+              if (saveErr) {
+                return done(saveErr);
+              }
+
+              return self.login(credentials, onLoginComplete);
             });
           }
 
@@ -487,7 +533,7 @@ var methods = {
    * recording the replay's response would overwrite the very slot the test is comparing against, and it
    * deliberately bypasses `createRequest`, because that attaches the slot's current cookie.
    *
-   * @param {string} method One of 'get', 'post', 'put', 'del'.
+   * @param {string} method One of 'get', 'post', 'put', 'patch', 'del'.
    * @param {string} url The path to request.
    * @param {string[]|string} cookie The raw cookie to send.
    * @returns {Object} A supertest request, ready for `.end()` or `.send()`.
@@ -609,6 +655,10 @@ _.extend(Flow.prototype, {
 
   put : function(url) {
     return createRequest(this, 'put', url);
+  },
+
+  patch : function(url) {
+    return createRequest(this, 'patch', url);
   },
 
   del : function(url) {

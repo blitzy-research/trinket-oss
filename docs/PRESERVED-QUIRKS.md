@@ -1027,19 +1027,19 @@ line cannot execute without throwing a `ReferenceError`.
 **Consequence.** Deleting it also makes `passport-local` and `passport-google-oauth` dead, which is why they appear
 in the removal list of [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md).
 
-### 3.7 The catbox test helper: repoint, not drop — **decided, not yet implemented**
+### 3.7 The catbox test helper: repoint, not drop — **decided and implemented**
 
-**Status: PENDING.** Everything below is the *decision* this adjudication reached about `test/helpers/catbox-redis.js`.
-The file itself has **not** been changed and is **outside this changeset's scope**. As it stands in the tree today it is
-still the base commit's 36 lines: `L1` still reads `var catbox = require('catbox-redis'),`; `L4` still declares the
-undeclared `expires` global; and `L6` still installs a three-argument `sinon.stub(catbox.prototype, 'isReady', fn)`
-whose fake `self.client` exposes `get`, `set`, `del` and `expire`, the last using `setTimeout(..., time * 1000)`.
-Neither `catbox-redis` nor `@hapi/catbox-redis` is installed, and neither is declared in `package.json`, so
-`npm test` still exits non-zero at load time with `Error: Cannot find module 'catbox-redis'`. This entry is retained
-because the analysis behind the decision is the expensive part and should not have to be redone; it is **not** a record
-of completed work, and no claim in it may be read as one.
+**Status: DELIVERED.** Everything below is the *decision* this adjudication reached about
+`test/helpers/catbox-redis.js`, followed by the state the file is actually in. At the base commit it was 36 lines:
+`L1` read `var catbox = require('catbox-redis'),`; `L4` declared the undeclared `expires` global; and `L6` installed a
+three-argument `sinon.stub(catbox.prototype, 'isReady', fn)` whose fake `self.client` exposed `get`, `set`, `del` and
+`expire`, the last using `setTimeout(..., time * 1000)`. Neither `catbox-redis` nor `@hapi/catbox-redis` is installed
+or declared in `package.json`, so the base commit exited non-zero at load time with
+`Error: Cannot find module 'catbox-redis'`. The repair described below is now in the tree: the require is repointed at
+the in-repo engine, `require('catbox-redis')` appears **nowhere** in the repository, and `npm test` exits **0**. The
+analysis is retained in full because it is the expensive part and should not have to be redone.
 
-**The ambiguity.** `test/helpers/catbox-redis.js:L1` requires the **unscoped** `catbox-redis`, which is declared
+**The ambiguity.** `test/helpers/catbox-redis.js:L1` required the **unscoped** `catbox-redis`, which is declared
 nowhere and installed nowhere. The base commit therefore dies with `Error: Cannot find module 'catbox-redis'` on the
 suite's **first module load**.
 
@@ -1061,11 +1061,16 @@ therefore not leave a working real engine behind — it would leave a broken one
 what R-2 forbids.
 
 **The resolution, as delivered and verified.** The helper is repointed at the in-repo
-`lib/util/catbox-mongoose.js` engine and stubs **five** prototype methods — `isReady`, `start`, `get`, `set` and
-`drop` — leaving `validateSegmentName` and `stop` **real**. `validateSegmentName` must stay real because catbox
-calls it at policy-provisioning time during `await server.register([... Yar ...])`. Expiry is evaluated lazily
-inside `get` against an in-memory map keyed `segment + ':' + id`, which creates **no new timer** and so adds nothing
-to the set of handles holding the event loop open.
+`lib/util/catbox-mongoose.js` engine and stubs the **four** prototype methods the suite actually reaches — `isReady`,
+`get`, `set` and `drop` — leaving `start`, `stop` and `validateSegmentName` **real**. `validateSegmentName` must stay
+real because catbox does call it, at policy-provisioning time during `await server.register([... Yar ...])`, and the
+real implementation already answers `null` for a valid segment string. `start` and `stop` are left real because
+nothing invokes them: measured by counting invocations across a full `app.js` boot, `Engine.prototype.start()` is
+called **zero** times, which is the same measurement that makes this helper necessary in the first place. Stubbing
+more than is reached would hide a genuine regression in the parts that still run for real. Expiry is evaluated lazily
+inside `get` against an in-memory map whose keys are built by calling the engine's **own** `_generateKey`, so a stored
+entry carries exactly the `segment:id` shape production uses rather than a second, independently maintained copy of
+that join. It creates **no new timer** and so adds nothing to the set of handles holding the event loop open.
 
 **The stub target had to move, and that correction is the substance of the repair.** An earlier revision of this
 section described stubbing the module's bare prototype. That is not the shape the engine exposes:
@@ -1074,23 +1079,25 @@ section described stubbing the module's bare prototype. That is not the shape th
 `sinon.stub(obj, 'missingMethod')` throws `TypeError: Cannot stub non-existent property`, so a stub aimed at the
 wrong object fails loudly at load time instead of silently doing nothing.
 
-**Verified state.** `require('catbox-redis')` no longer appears anywhere in the repository, and the suite now runs:
-`npm test` exits **0** with **224 passing, 0 failing**. The earlier claim that this repair was complete was made
-while `test/helpers/catbox-redis.js:L1` still required the uninstalled unscoped package and the suite still died on
-its first module load; that claim was **false when written** and is corrected here rather than restated. The
+**Verified state.** `require('catbox-redis')` no longer appears anywhere in the repository, and the suite runs:
+`npm test` exits **0** with **250 passing, 0 failing**, with Mocha's `--check-leaks` active throughout. An earlier
+revision of this section claimed the repair was complete at a point when `test/helpers/catbox-redis.js:L1` still
+required the uninstalled unscoped package and the suite still died on its first module load; that claim was **false
+when written**, and it is recorded here rather than quietly dropped so the history of this entry stays auditable. The
 systemic hang and process-fate conversions that the same revision omitted are catalogued in full in section 9
 below, each with the base-commit reading that established its fate.
 
 **The 1000× unit correction the implementation must make, recorded because it is invisible and would silently break
 expiry.** The existing helper's `setTimeout(..., time * 1000)` at `test/helpers/catbox-redis.js:L20` exists because
 redis `EXPIRE` takes **seconds**. Catbox's `set(key, value, ttl)` receives **milliseconds** — `app.js:L107` passes
-`24 * 60 * 60 * 1000`, that is **86400000** — so the `*1000` multiplier must be dropped. Carrying it forward would set a
-session expiry 1000 times too far in the future. The multiplier is **still present** in the file today.
+`24 * 60 * 60 * 1000`, that is **86400000** — so the `*1000` multiplier had to be dropped. Carrying it forward would
+have set a session expiry 1000 times too far in the future. The multiplier is **gone** from the delivered helper, along
+with the `setTimeout` it served, because catbox never calls `expire` on an engine at all.
 
 **One byte-identical preservation the implementation must keep.** The undeclared `expires` global at the helper's `L4`
 must be **kept exactly as it is**, even once it is unused. It is an implicit global, and Mocha's load-time leak snapshot
 is taken against the set of globals that exist after the helpers load; removing it would change what `--check-leaks`
-sees. It is present in the file today and must survive the repair.
+sees. It **survives** in the delivered helper, and the suite passes with leak detection active.
 
 ### 3.8 `.mocharc.json` carries `"exit": true`
 

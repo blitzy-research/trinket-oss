@@ -151,8 +151,8 @@ now delivered**, and each row below is measured rather than asserted.
 
 | Adjudicated work | Owning file | Measured state | Entry |
 |---|---|---|---|
-| Resolve the exported promise before binding the listener | `test/helpers/flow.js` | `L18-L22` capture `resolvedServer` through `app.then(…)`; `agentFor()` at `L454-L464` binds `resolvedServer.listener` at `L461`; `test/setup.js:L113-L121` awaits `app` in a root `mochaHooks.beforeAll` | §1.14 C |
-| `url.parse` → the differential-tested legacy helper in the harness | `test/helpers/flow.js`, `test/lib/api/registration.js` | `require('url')` is gone from both; `flow.js:L433` and `registration.js:L103` call `legacyUrl.pathname()` | §3.13 |
+| Resolve the exported promise before binding the listener | `test/helpers/flow.js` | `L18-L22` capture `resolvedServer` through `app.then(…)`; `agentFor()` at `L464-L475` binds `resolvedServer.listener` at `L471`; `test/setup.js:L113-L121` awaits `app` in a root `mochaHooks.beforeAll` | §1.14 C |
+| `url.parse` → WHATWG in the harness, the differential-tested legacy helper in the one spec | `test/helpers/flow.js`, `test/lib/api/registration.js` | `require('url')` is gone from both; `flow.js:L443` reads `URL.parse(location, config.url)` and `registration.js:L103` calls `legacyUrl.pathname()`, and the two are measured pathname-identical to the base commit on all 19 distinct `Location` headers the suite emits | §3.13 |
 | Repoint the catbox helper at the in-repo engine | `test/helpers/catbox-redis.js` | the unscoped `catbox-redis` require is gone; the helper stubs five prototype methods of the in-repo `lib/util/catbox-mongoose.js` engine | §3.7 |
 | Convert the legacy three-argument `sinon.stub` calls | `test/setup.js`, `test/helpers/catbox-redis.js`, `test/helpers/queue.js`, `test/lib/models/trinket.js` | a re-census finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls in test code, against **14** `.callsFake(` and **6** `.resetHistory(` sites | §3.7, §3.8, §13.3 |
 | The capture and replay harness, and the route-parity suite | `test/baseline/capture.js`, `test/baseline/replay.js`, `test/lib/api/route-parity.js` | all three committed — 1,573, 456 and 387 lines — with both scripts guarded by `require.main === module` | §3.8, §3.9 |
@@ -652,7 +652,7 @@ direct consequence of the asynchronous bootstrap — `await server.register(...)
 **Status: delivered.** The repair is in `test/helpers/flow.js`, which still requires `../../app.js` (now at `L10`)
 but no longer reads `app.listener`. It declares `var resolvedServer = null;` at `L18` and attaches
 `app.then(function (server) { resolvedServer = server; });` at `L20-L22`, and the supertest agent is built **lazily**
-by `agentFor(flow)` at `L454-L464` — `L461` reads `flow.agent = server(resolvedServer.listener);` and the guard above
+by `agentFor(flow)` at `L464-L475` — `L471` reads `flow.agent = server(resolvedServer.listener);` and the guard above
 it throws an explanatory error rather than a `TypeError` if it is ever reached before the promise resolved. What
 guarantees it is not, is a **root hook**: `test/setup.js:L113-L121` exports `mochaHooks.beforeAll` as an `async`
 function that `await`s `app` under a 60-second timeout. It has to be a root hook rather than a bare top-level
@@ -1263,17 +1263,24 @@ another. There is therefore no single mechanical swap, and the eight sites split
   base argument is explicitly **wrong** here: it would resolve relative input and inherit the base's protocol, turning
   rejections into acceptances. The asymmetry it preserves — that a scheme-only string like `foo:` *has* a protocol and
   is accepted — is base-commit behavior that R-4 forbids repairing.
-- **Two `test/` redirect-assertion sites → `URL.parse(location, config.url)`, with a base argument** — except that
-  measurement moved them too. Both assert on a `Location` header that occurs in **two** forms, so the WHATWG parser
-  needed a base to resolve the relative one; but the same header can also carry an opaque or protocol-less value on
-  which the two parsers disagree, so the delivered sites call `lib/util/legacyUrl.js#pathname` instead —
-  `test/helpers/flow.js:L433` and `test/lib/api/registration.js:L103` — and the base-argument reasoning below is
-  retained because it is what ruled out the bare, base-less form.
+- **The harness redirect-assertion site → the static `URL.parse(location, config.url)`, with a base argument.**
+  `test/helpers/flow.js:L443` — the single line that feeds all 17 surviving `lastRedirect.pathname` assertions —
+  reads a `Location` header that occurs in **two** forms, so the WHATWG parser needs the base to resolve the relative
+  one and ignores it once the header is already absolute. This is measured rather than argued: recorded at the HTTP
+  layer across a full suite run, the suite emits **56** `Location` headers, **19** distinct, and for every one of
+  those 19 the `pathname` this form yields is byte-identical to the base commit's legacy derivation — under both the
+  `https://trinket.dev` origin `default.yaml` supplies and the `http://localhost:3000` a local config supplies — with
+  `URL.parse` itself emitting **zero** warnings under `--pending-deprecation`. Only `.pathname` is ever read off
+  `lastRedirect`, which is what makes the differently shaped WHATWG object a genuine drop-in.
+- **The one independent spec site → `lib/util/legacyUrl.js#pathname`.** `test/lib/api/registration.js:L103` reads the
+  same header shape through the shared helper instead. Both spellings are measurably equivalent on the corpus above;
+  the helper additionally reproduces the legacy derivation for the opaque and protocol-less values on which the two
+  parsers disagree, none of which the suite actually emits, so the site that parses a header **directly** keeps it.
 
 **The census, and the one file where it moves.** At the base commit it is exactly **22** `lastRedirect.pathname`
 sites plus the one independent site in `test/lib/api/registration.js` = **23** pathname assertions; an earlier prose
 estimate of 24 was wrong. In the delivered tree the same grep returns **18** occurrences, **17** of them `.should.`
-assertions — the eighteenth is the comment at `test/helpers/flow.js:L426` explaining the swap — and the whole
+assertions — the eighteenth is the comment at `test/helpers/flow.js:L441` explaining the swap — and the whole
 difference is `test/lib/api/course.js`, whose five went to zero. They were **not** dropped: two R-6 adjudications in
 section 13.7 replace them with strictly stronger assertions, because both were asserting redirects the application
 provably does not emit. The stale-slug case measures **500** (`courseBySlug`'s alias branch leaves
@@ -1317,11 +1324,12 @@ validation quirk where the absence of a protocol drives the rejection. It is the
 `lib/` and is preserved exactly, including its falsy-`protocol` test. Note the line reference: this site was cited
 as `users.js:L588` at the base commit and has since moved.
 
-**`url.parse` still survives at exactly two sites, both in the test tree** — `test/helpers/flow.js:L399` and
-`test/lib/api/registration.js:L85`. They are assertions, they are the two sites the `URL.parse(location,
-config.url)` adjudication above was written for, and they are **unconverted**: the base-argument form is the
-recorded decision for them, not a change already applied. See section 7.6 for the separate,
-application-triggered DEP0169 path, which does not involve either of them.
+**The legacy parser now survives at exactly one place in the whole tree, and deliberately** — the oracle inside
+`test/lib/util/legacy-pathname.js`, which has to call it in order to measure the helper against it. Both
+redirect-assertion sites are converted: `test/helpers/flow.js` (base commit `L399`) reads the static
+`URL.parse(location, config.url)` — the base-argument form this adjudication was written for, now applied and
+measured — and `test/lib/api/registration.js` (base commit `L85`) reads `lib/util/legacyUrl.js#pathname`. See
+section 7.6 for the separate, application-triggered DEP0169 path, which involves neither of them.
 
 ### 3.14 The `.fail(` and `.spread(` census was refined
 
@@ -4245,10 +4253,12 @@ reference implementation.
 
 **Consumers.** `lib/controllers/trinket.js` (required at L35; called at L1468, L1588, L1800),
 `lib/workers/exports.js#assetPathBasename` (required at L11; called at L47 — aligned with the same contract so the
-two layers cannot diverge on opaque schemes), `test/helpers/flow.js` (L6, L433) and `test/lib/api/registration.js`
-(L10, L103). Three rival implementations were retired in favour of this one, each by differential rather than by
-argument: two per-file lexical approximations and one 76-line lexical helper, the last of which diverged on 30,860
-pathnames and 30,860 basenames over 376,320 inputs where this module diverges on none.
+two layers cannot diverge on opaque schemes) and `test/lib/api/registration.js` (L10, L103). `test/helpers/flow.js`
+was a fourth consumer and is deliberately no longer one: its redirect assertion reads the static
+`URL.parse(location, config.url)`, measured pathname-identical to the legacy derivation on all 19 distinct `Location`
+headers the suite emits (section 3.13). Three rival implementations were retired in favour of this one, each by
+differential rather than by argument: two per-file lexical approximations and one 76-line lexical helper, the last of
+which diverged on 30,860 pathnames and 30,860 basenames over 376,320 inputs where this module diverges on none.
 
 ## 12. Streaming, SSRF, and three inherited risks — one overridden, two accepted
 

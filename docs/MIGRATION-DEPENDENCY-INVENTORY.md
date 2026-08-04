@@ -490,7 +490,7 @@ seventh, `redis-mock`, moved from 0.2.0 to 0.56.3, which semver treats as breaki
 | `chai-as-promised` | 6.0.0 | **7.1.2** | `incompatible` | CommonJS ceiling |
 | `sinon-chai` | 2.14.0 | **3.7.0** | `incompatible` | CommonJS ceiling |
 | `sinon` | 1.7.3 | **22.1.0** | `security`, `incompatible` | **Three removed APIs, and all three were exercised by this suite** — the three-argument `stub` form, `spy.reset`, and stubbing an absent property. All 12 base-commit sites are converted and the suite runs 224 passing, exit 0. *The `sinon` bump in full* below |
-| `supertest` | 0.8.3 | **7.2.2** | `security`, `incompatible` | The HTTP test client used by the flow harness |
+| `supertest` | 0.8.3 | **7.2.2** | `security`, `incompatible` | The HTTP test client used by the flow harness. `incompatible` is earned by the attachment, not by the request API: measured on the delivered 7.2.2 / superagent 10.3.0, `agent.del` still exists and **is** `agent.delete`, `res.redirect` is still set on every response and true only for a 3xx, and `.end(cb)` still takes `(err, res)` and passes `err === null` for 302, 404 and 500 — so `flow.del`, the `if (res && res.redirect)` guard and `wasOk = err ? false : true` all needed **no shim**. What did need repair is the promise the bootstrap exports, below |
 | `redis-mock` | 0.2.0 | **0.56.3** | `security`, `incompatible` | The Redis double used by `test/setup.js`, and the one bump in this table that **did not preserve its call-site shape** — the constructor and the client surface both moved. *The `redis-mock` bump in full* below |
 
 **The `redis-mock` bump in full.**
@@ -509,7 +509,7 @@ accurate when it was written and is not accurate now. Measured against the deliv
 | Obliged by | Edit | Measured state |
 |---|---|---|
 | `sinon` 22.1.0 | six `sinon.stub(obj, 'm', fn)` → `.callsFake(fn)` conversions, plus six `.reset()` → `.resetHistory()` | **12 of 12 done.** A re-census finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls in test code, against **14** `.callsFake(` sites and **6** `.resetHistory(` sites |
-| `supertest` 7.2.2 | resolve the promise `app.js` exports before binding `server.listener` | **done.** `test/helpers/flow.js:L18-L22` captures `resolvedServer` through `app.then(…)`, `agentFor()` binds `resolvedServer.listener` at `L461`, and `test/setup.js:L113-L121` awaits `app` in a root `mochaHooks.beforeAll` |
+| `supertest` 7.2.2 | resolve the promise `app.js` exports before binding `server.listener` | **done.** `test/helpers/flow.js:L18-L22` captures `resolvedServer` through `app.then(…)`, `agentFor()` binds `resolvedServer.listener` at `L471`, and `test/setup.js:L113-L121` awaits `app` in a root `mochaHooks.beforeAll` |
 | the unscoped `catbox-redis` removal | repoint `test/helpers/catbox-redis.js` at the in-repo engine | **done.** The unscoped require is gone; the helper stubs five prototype methods of `lib/util/catbox-mongoose.js` and leaves `validateSegmentName` and `stop` real |
 | `mocha` 11.7.6 | `.mocharc.json` replacing `test/mocha.opts` | **done.** The five-key file is committed — `reporter`, `recursive`, `check-leaks`, `exit` and `require`, with no `spec` — and `test/mocha.opts` is deleted |
 
@@ -576,11 +576,14 @@ Measured on the same probe, `legacyUrl.pathname()` fires **zero** warnings.
 
 There were **8** `url.parse()` call sites at the base commit — `lib/controllers/trinket.js:L1253, L1350, L1521`,
 `lib/controllers/users.js:L588`, `lib/workers/exports.js:L40, L304`, `test/helpers/flow.js:L399` and
-`test/lib/api/registration.js:L85` — and they took two different targets, because one replacement does not fit both
-jobs. **Seven** went to `legacyUrl.pathname()`: the three in `trinket.js` directly, the two in `exports.js` funnelled
-through one local `assetPathBasename` helper, and the two test sites. **One** went to the static, non-throwing
-`URL.parse()` at `lib/controllers/users.js:L844`, where the handler's own `if (!requestUrl.protocol)` test makes
-WHATWG semantics the correct reading.
+`test/lib/api/registration.js:L85` — and they took two different targets, because one replacement does not fit every
+job. **Six** went to `legacyUrl.pathname()`: the three in `trinket.js` directly, the two in `exports.js` funnelled
+through one local `assetPathBasename` helper, and the one independent spec assertion in `registration.js`. **Two**
+went to the static, non-throwing `URL.parse()`, in its two correct shapes: with **no base argument** at
+`lib/controllers/users.js:L844`, where the handler's own `if (!requestUrl.protocol)` test makes WHATWG semantics the
+correct reading; and with `config.url` **as the base** at `test/helpers/flow.js:L443`, where the harness reads only
+`.pathname` off a `Location` header that arrives in both relative and absolute form — measured byte-identical to the
+legacy derivation on all 19 distinct `Location` headers the suite emits.
 
 The split exists because `new URL()` **throws** `ERR_INVALID_URL` on the relative and protocol-less inputs the legacy
 parser tolerated, and the static `URL.parse()` returns **`null`** where the legacy parser returned an object with a

@@ -1,9 +1,9 @@
 var _        = require('underscore'),
     server   = require('supertest'),
-    // Dependency swap: `require('url')` is retired here. Its only use was `url.parse(location).pathname`
-    // below, and the deprecated parser is replaced by the proven pathname helper rather than by
-    // `URL.parse`, for the reason recorded at that call site.
-    legacyUrl = require('../../lib/util/legacyUrl'),
+    // Dependency swap: the deprecated `url` built-in is retired here and replaced by no require at all -
+    // its single consumer was the legacy `parse()` in setLastResponse below, which now reads the WHATWG
+    // `URL.parse(location, config.url)`, a Node 22 global, so nothing is added to the manifest and no
+    // module-level binding is left dangling. The reasoning is recorded in full at that call site.
     querystring = require('querystring'),
     defaults = require('./defaults'),
     config   = require('../../config/app.config'),
@@ -423,14 +423,24 @@ var methods = {
       self.lastError    = err;
       self.wasOk        = err ? false : true;
       if (res && res.redirect) {
-        // Dependency swap. Every assertion in the suite reads `lastRedirect.pathname` and nothing else -
-        // 23 call sites across test/lib/api/** - and the `Location` values this application emits are
-        // frequently RELATIVE ('/login', '/home', '/reset-pass'), for which the non-throwing static
-        // `URL.parse()` returns NULL. The proven helper is used instead: `lib/util/legacyUrl.js#pathname`
-        // reproduces the retired parser's pathname derivation byte-for-byte, verified by the differential
-        // suite in test/lib/util/legacy-pathname.js, so these assertions compare exactly what they
-        // compared at the base commit.
-        self.lastRedirect = { pathname : legacyUrl.pathname(res.headers.location) };
+        // Dependency swap, and an R-6 adjudication measured on this tree. Two of the three candidate
+        // replacements for the base commit's legacy parser are wrong here: the deprecated built-in fires
+        // DEP0169, which the zero-warning gate forbids, and the WHATWG `new URL()` raises
+        // ERR_INVALID_URL on relative input, while the non-throwing static form given NO base answers
+        // `null` for '/login' where the legacy parser answered an object whose `pathname` was '/login'.
+        // Passing `config.url` as the base closes all three: it resolves the relative form and is
+        // ignored outright once the header is already absolute. Both forms really do reach this one
+        // line, so neither may be assumed - recorded at the HTTP layer across a full suite run, 56
+        // `Location` headers, 19 distinct: relative ones ('/', '/home', '/login',
+        // '/courses/algebra-1', '/reset-pass?key=...') from app.js's onPreResponse takeover and the
+        // controllers' own `h.redirect()`, absolute ones ('http://localhost:3000/home',
+        // 'https://accounts.google.com/o/oauth2/v2/auth?...') from lib/http/redirect.js's
+        // absolutization. For all 19 the `pathname` read below is byte-identical to the base commit's,
+        // under both the `https://trinket.dev` origin default.yaml supplies and the
+        // `http://localhost:3000` a local config supplies, and `URL.parse` emits no warning under
+        // `--pending-deprecation`. Only `lastRedirect.pathname` is ever read - a census of test/ returns
+        // that property and nothing else - which is what makes the WHATWG object a genuine drop-in.
+        self.lastRedirect = URL.parse(res.headers.location, config.url);
       }
 
       self.lastContentType = res.headers['content-type'];

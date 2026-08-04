@@ -21,18 +21,9 @@ describe('roles plugin', function() {
       });
     });
 
-    // ADJUDICATED AGAINST THE BASE COMMIT (R-6). Six assertions in this file read
-    // `hasRole('trinket-code')`, and every one of them was already false before this migration began:
-    // `lib/models/user.js#checkPermissions` gives a new user `setRoles('user', 'site')` - byte-identical to
-    // the base commit - and `hasRole` matches the literal role string with no aliasing. Measured against a
-    // freshly saved user on this tree: `roles` is
-    // `[{context:'site', roles:['user'], permissions:[16 entries]}]`, `hasRole('user')` is true,
-    // `hasRole('trinket-code')` is false, and after `grant('trinket-connect','site')` the array is
-    // `['user','trinket-connect']`. `lib/models/roles.js` retains `trinket-code` only as a PERMISSION
-    // alias - `permissions['trinket-code'] = permissions['user']` - which is exactly why the neighbouring
-    // `hasPermission` assertions have always passed while these did not. The expectations are therefore
-    // corrected to the role the application actually grants; the production role table is unchanged, and
-    // no assertion is relaxed - each still asserts a definite boolean about a definite role.
+    // R-6: a freshly saved user is granted setRoles('user', 'site'), and 'trinket-code' survives only as a
+    // permission alias, so 'user' is the role the application actually holds - see
+    // docs/PRESERVED-QUIRKS.md section 13.7.
     describe('hasRole user before grant', function() {
       it('should return true', function(done) {
         user.hasRole('user').should.be.true;

@@ -48,8 +48,16 @@
  *      away a difference in order to make a replay diff pass." The roles-token rule is therefore
  *      GATED — every match is structurally verified against cryptoParityContract before it is
  *      substituted, and a violation throws instead of being quietly erased.
- *   6. CLONE-SAFE PORT. /tmp/blitzy is a shared workspace; sibling clones hold other ports. The bind
- *      port defaults to 30112 + CLONE_INDEX and is overridable with BASELINE_PORT.
+ *   6. CLONE-SAFE PORT, VALIDATED AND PROVEN FREE BEFORE THE BOOT. /tmp/blitzy is a shared workspace;
+ *      sibling clones hold other ports. The bind port defaults to 30112 + CLONE_INDEX and is
+ *      overridable with BASELINE_PORT, which is CHECKED rather than trusted: it must be a decimal
+ *      integer from 1 to 65535, and anything else stops the run with an operator-facing message
+ *      instead of being coerced. An unchecked value did not fail safe — parseInt('notaport') is NaN,
+ *      JSON.stringify turns NaN into null, node-config then fell back to config/default.yaml's port
+ *      and the harness silently bound 3000, the port docs/setup.md documents for `node app.js`. The
+ *      resolved port is then PROBED with a throwaway listener before app.js is required, so a port
+ *      that is already held by a sibling clone or a development server is reported as an unusable
+ *      environment rather than as a measurement.
  *   7. A VERIFY RUN REPRODUCES THE RECORDED app.url ORIGIN; A WRITE RUN MEASURES THE LIVE ONE. The
  *      corpus is origin-specific by construction — ten of its sixteen unauthenticated redirects carry an
  *      absolute Location and every rendered page embeds the site origin in its markup — so a diff taken
@@ -72,12 +80,27 @@
  *   node test/baseline/capture.js --out <path>      also write the raw measurement to <path>
  *   node test/baseline/capture.js --write           rewrite both artifacts (base commit only)
  *   node test/baseline/capture.js --write --force   rewrite anyway (destroys base-commit evidence)
+ *
+ * ENVIRONMENT
+ *   BASELINE_PORT=<1-65535>  the bind port for this run, taking precedence over CLONE_INDEX. VALIDATED
+ *                            rather than coerced (see validateBaselinePort below) and then PROBED before
+ *                            app.js is required, so an unusable or occupied port stops the run with a
+ *                            remedy instead of being measured or silently redirected to another port.
+ *   CLONE_INDEX=<n>          offsets the clone-safe default port, 30112 + n, so sibling clones sharing
+ *                            /tmp/blitzy cannot collide. A malformed value falls back to 0.
+ *   NODE_CONFIG=<json>       merged UNDERNEATH the four keys configureRuntime() owns, so a caller may add
+ *                            keys of its own. Use it to isolate the DATABASE, which concurrent runs
+ *                            require: every run creates the same throwaway identity, so two runs sharing
+ *                            one MongoDB database interfere. Give each run its own database and port:
+ *                              NODE_CONFIG='{"db":{"mongo":{"database":"trinket_2"}}}' \
+ *                              BASELINE_PORT=30114 node test/baseline/capture.js
  */
 
 var childProcess = require('child_process'),
     crypto       = require('crypto'),
     fs           = require('fs'),
     http         = require('http'),
+    net          = require('net'),
     path         = require('path'),
     nodeUtil     = require('node:util');
 
@@ -233,24 +256,92 @@ function deepMerge(target, source) {
 }
 
 /**
- * The bind port. BASELINE_PORT wins; otherwise 30112 (the port recorded in metadata.serverUri) is
- * offset by CLONE_INDEX so parallel clones under the shared /tmp/blitzy workspace cannot collide.
+ * A failure of a PRECONDITION rather than of a measurement: the run could not be attempted at all, so
+ * nothing about the application was proven or disproven. The marker property is deliberately the same
+ * one test/baseline/replay.js#isPreconditionFailure reads, and that shared marker is the whole bridge
+ * between the two exit contracts: replay.js publishes a separate could-not-run code (2) and maps one of
+ * these onto it, while this file publishes only 0 and 1 and reports one as a curated message instead of
+ * a stack trace. Neither tool has to guess what the other meant.
+ */
+function preconditionFailure(message) {
+  var failure = new Error(message);
+
+  failure.baselinePrecondition = true;
+
+  return failure;
+}
+
+function isPreconditionFailure(err) {
+  return !!(err && err.baselinePrecondition);
+}
+
+/**
+ * Prints one failure for the operator who has to act on it. A precondition failure carries text written
+ * for exactly that reader, so it is printed as written; everything else keeps the stack it arrived with,
+ * because a defect in the harness or the application is read by a developer. This preserves the existing
+ * reporting of every non-precondition path — a mistyped flag still prints its stack, as this file's
+ * documented contract says it does.
+ */
+function reportFailure(err) {
+  if (isPreconditionFailure(err)) {
+    console.error(err.message);
+
+    return;
+  }
+
+  console.error('capture.js: FAILED — ' + (err && err.stack ? err.stack : String(err)));
+}
+
+/**
+ * Validates one BASELINE_PORT value. parseInt is deliberately NOT used: it accepts '30150.5', '3015x'
+ * and '0x7530' and silently returns a different port than the operator asked for, and it returns NaN for
+ * a word — which is the value that used to reach JSON.stringify, serialize as null, and hand the harness
+ * config/default.yaml's port 3000. A port is therefore accepted only in the one form a port has: decimal
+ * digits inside the assignable range.
+ */
+function validateBaselinePort(raw) {
+  var trimmed = String(raw).trim(),
+      port    = /^[0-9]+$/.test(trimmed) ? Number(trimmed) : NaN;
+
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw preconditionFailure('capture.js: BASELINE_PORT=' + JSON.stringify(String(raw)) + ' is not a ' +
+                              'usable TCP port, so the run was not started. Pass a decimal integer ' +
+                              'from 1 to 65535, or unset BASELINE_PORT to take the clone-safe default ' +
+                              RUNTIME.defaultPort + ' + CLONE_INDEX (= ' + resolveCloneIndex() +
+                              ' here, so port ' + (RUNTIME.defaultPort + resolveCloneIndex()) + '). ' +
+                              'Refusing to continue rather than coercing the value: an unusable port ' +
+                              'used to be neutralized silently and the harness then bound ' +
+                              'config/default.yaml\'s port 3000 — the port docs/setup.md documents ' +
+                              'for `node app.js` — inside the shared /tmp/blitzy workspace.');
+  }
+
+  return port;
+}
+
+/** The clone offset. A malformed CLONE_INDEX has always fallen back to 0, and still does. */
+function resolveCloneIndex() {
+  var cloneIndex = parseInt(process.env.CLONE_INDEX || '0', 10);
+
+  return isNaN(cloneIndex) ? 0 : cloneIndex;
+}
+
+/**
+ * The bind port. A validated BASELINE_PORT wins; otherwise 30112 (the port recorded in
+ * metadata.serverUri) is offset by CLONE_INDEX so parallel clones under the shared /tmp/blitzy
+ * workspace cannot collide. An empty or whitespace-only BASELINE_PORT means "not set" — the shell
+ * convention for an unset variable — and takes the clone-safe default, which is the one fallback that
+ * can never resolve to an unrelated port. Every other malformed value throws.
+ *
  * The port is not part of the corpus: config.url is https://trinket.dev regardless of the bind port,
  * and normalizationContract.mayBeNormalized explicitly permits "the ephemeral port inside any
  * self-referential URL".
  */
 function resolvePort() {
-  if (process.env.BASELINE_PORT) {
-    return parseInt(process.env.BASELINE_PORT, 10);
+  if (process.env.BASELINE_PORT !== undefined && String(process.env.BASELINE_PORT).trim() !== '') {
+    return validateBaselinePort(process.env.BASELINE_PORT);
   }
 
-  var cloneIndex = parseInt(process.env.CLONE_INDEX || '0', 10);
-
-  if (isNaN(cloneIndex)) {
-    cloneIndex = 0;
-  }
-
-  return RUNTIME.defaultPort + cloneIndex;
+  return RUNTIME.defaultPort + resolveCloneIndex();
 }
 
 /**
@@ -288,15 +379,74 @@ function configureRuntime(extraOverrides) {
 }
 
 /**
+ * Proves the bind port is actually available, BEFORE app.js is required. This exists because of where
+ * the application puts its own boot failure: app.js:L357-L360 catches anything init() throws, logs it
+ * and calls process.exit(1) itself, so a port that is already taken terminates the process from inside
+ * app.js and never surfaces as a rejection either CLI can classify. That behavior is AAP-preserved and
+ * may not be changed, so the common cause is detected one step earlier instead, where it is still an
+ * ordinary rejection carrying an operator-facing remedy.
+ *
+ * The probe is a throwaway listener on the same host and port the boot will use. It is unref'd so it can
+ * never hold the event loop open, `exclusive` so a shared handle cannot mask a conflict, and closed
+ * before the promise settles. Re-binding immediately afterwards is safe: a listening socket that never
+ * accepted a connection leaves no TIME_WAIT state, and libuv sets SO_REUSEADDR on every TCP listener.
+ */
+function assertPortAvailable(port, hostname) {
+  return new Promise(function(resolve, reject) {
+    var probe = net.createServer();
+
+    probe.unref();
+
+    probe.once('error', function(err) {
+      var code = (err && err.code) || 'unknown';
+
+      if (code === 'EADDRINUSE') {
+        reject(preconditionFailure('capture.js: ' + hostname + ':' + port + ' is already in use, so ' +
+                                   'the application cannot bind it and no measurement was taken. ' +
+                                   '/tmp/blitzy is a shared workspace: a sibling clone, a `node ' +
+                                   'app.js` development server or a previous run may hold it. Free ' +
+                                   'the port, or move this run with BASELINE_PORT=<1-65535> or ' +
+                                   'CLONE_INDEX=<n> (which selects ' + RUNTIME.defaultPort + ' + n).'));
+
+        return;
+      }
+
+      reject(preconditionFailure('capture.js: ' + hostname + ':' + port + ' cannot be bound (' + code +
+                                 ': ' + (err && err.message ? err.message : String(err)) + '), so no ' +
+                                 'measurement was taken. Choose a bindable port with ' +
+                                 'BASELINE_PORT=<1-65535>.'));
+    });
+
+    probe.listen({ host : hostname, port : port, exclusive : true }, function() {
+      probe.close(function() {
+        resolve(port);
+      });
+    });
+  });
+}
+
+/**
  * Boots the application. app.js:L356 exports the promise returned by init(), which resolves to the
  * started hapi server. Requiring app.js is what creates the nine implicit model globals the capture
  * needs (User in particular), so this must complete before createThrowawayUser() runs.
+ *
+ * The port is resolved and probed first, and it is resolved from the same two values configureRuntime()
+ * injected — resolvePort() and RUNTIME.hostname — so the probe cannot check one port while the boot
+ * binds another. This is the single boot procedure under test/baseline/: test/baseline/replay.js calls
+ * it rather than restating it, so both CLIs classify an unusable port identically.
  */
 function startServer() {
-  return Promise.resolve(require('../../app.js')).then(function(server) {
+  var port = resolvePort();
+
+  return assertPortAvailable(port, RUNTIME.hostname).then(function() {
+    return Promise.resolve(require('../../app.js'));
+  }).then(function(server) {
     if (!server || !server.info || !server.info.uri) {
-      throw new Error('capture.js: the application did not expose a listening server. app.start was ' +
-                      'not honoured — check that configureRuntime() ran before startServer().');
+      throw preconditionFailure('capture.js: the application booted but did not expose a listening ' +
+                                'server, so no measurement was taken. app.start was not honoured — ' +
+                                'check that configureRuntime() ran before startServer(), which is ' +
+                                'what injects app.start:true through NODE_CONFIG over ' +
+                                'config/test.yaml\'s app.start:false.');
     }
 
     return server;
@@ -2763,7 +2913,7 @@ function main() {
   }).then(function() {
     return stopServer(server);
   }, function(err) {
-    console.error('capture.js: FAILED — ' + (err && err.stack ? err.stack : err));
+    reportFailure(err);
     exitCode = 1;
 
     return stopServer(server);
@@ -2784,7 +2934,13 @@ module.exports = {
   loadCommittedCorpus      : loadCommittedCorpus,
   loadCommittedRouteTable  : loadCommittedRouteTable,
   deepMerge                : deepMerge,
+  preconditionFailure      : preconditionFailure,
+  isPreconditionFailure    : isPreconditionFailure,
+  reportFailure            : reportFailure,
+  validateBaselinePort     : validateBaselinePort,
+  resolveCloneIndex        : resolveCloneIndex,
   resolvePort              : resolvePort,
+  assertPortAvailable      : assertPortAvailable,
   configureRuntime         : configureRuntime,
   startServer              : startServer,
   stopServer               : stopServer,
@@ -2878,17 +3034,23 @@ module.exports = {
 // no datastore connection, no write and no process.exit happens above this line.
 //
 // The exit is here rather than inside main() so that one place owns it and so that a SYNCHRONOUS throw —
-// a corrupt artifact, an unknown flag, --write together with --dry-run — is reported and exits 1 instead
-// of surfacing as an unhandled error. Promise.resolve().then(main) is what converts such a throw into a
-// rejection this chain can see. Exiting explicitly is mandatory: app.js:L355's un-unref'd 60-second
-// detectLeaks interval, the module-load mongoose connection at config/db.js:L35 and the eager redis
-// client each keep the event loop alive after the server has stopped, which is the same reason
-// .mocharc.json carries "exit": true.
+// a corrupt artifact, an unknown flag, --write together with --dry-run, an unusable BASELINE_PORT — is
+// reported and exits 1 instead of surfacing as an unhandled error. Promise.resolve().then(main) is what
+// converts such a throw into a rejection this chain can see. Exiting explicitly is mandatory:
+// app.js:L355's un-unref'd 60-second detectLeaks interval, the module-load mongoose connection at
+// config/db.js:L35 and the eager redis client each keep the event loop alive after the server has
+// stopped, which is the same reason .mocharc.json carries "exit": true.
+//
+// This file publishes exactly two outcomes, 0 and 1, and a precondition failure is one of the 1s: it was
+// asked to measure, it did not measure, and neither an operator nor a CI step may read that as success.
+// Only test/baseline/replay.js publishes the third outcome — a separate could-not-run code that keeps a
+// broken environment distinguishable from a parity regression — and it maps the shared precondition
+// marker onto it.
 if (require.main === module) {
   Promise.resolve().then(main).then(function(exitCode) {
     process.exit(exitCode);
   }).catch(function(err) {
-    console.error('capture.js: FAILED — ' + (err && err.stack ? err.stack : String(err)));
+    reportFailure(err);
     process.exit(1);
   });
 }

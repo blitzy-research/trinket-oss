@@ -91,13 +91,40 @@
  *   node test/baseline/replay.js --quiet             suppress PASS gate lines (differences still print)
  *   node test/baseline/replay.js --report <path>     also write the machine-readable diff to <path>
  *
+ * ENVIRONMENT
+ *   BASELINE_PORT=<1-65535>  the bind port for this run, taking precedence over CLONE_INDEX. VALIDATED
+ *                            rather than coerced by capture.js#validateBaselinePort: a value that is not
+ *                            a decimal integer in range stops the run with exit 2 instead of resolving
+ *                            to an unrelated port.
+ *   CLONE_INDEX=<n>          offsets the clone-safe default port, 30112 + n, so sibling clones sharing
+ *                            /tmp/blitzy cannot collide. A malformed value falls back to 0.
+ *   NODE_CONFIG=<json>       merged UNDERNEATH this harness's own overrides, so a caller may add keys of
+ *                            its own. Use it to isolate the DATABASE, which concurrent runs require:
+ *                            every replay creates the same throwaway identity, so two runs sharing one
+ *                            MongoDB database interfere. They fail safely when they do — differences or
+ *                            a precondition failure, never a false PASS — but the fix is a database per
+ *                            run, alongside a port per run:
+ *                              NODE_CONFIG='{"db":{"mongo":{"database":"trinket_2"}}}' \
+ *                              BASELINE_PORT=30114 node test/baseline/replay.js
+ *
  * EXIT CODES
  *   0  zero normalized differences, zero report-back findings and every evaluable gate PASSED
  *   1  one or more differences, findings or FAILED gates — a parity regression to report
  *   2  the run could not happen or could not finish: a missing or malformed artifact, a request-policy
- *      divergence, a refused --report path, a failed boot, or an exception mid-run. Kept distinct from
- *      1 so a broken environment is never read as a regression, and so an incomplete run is never read
- *      as evidence of parity.
+ *      divergence, an unusable or refused --report path, an unusable BASELINE_PORT, a failed boot, or
+ *      an exception mid-run. Kept distinct from 1 so a broken environment is never read as a
+ *      regression, and so an incomplete run is never read as evidence of parity.
+ *
+ * A FAILED BOOT reaches 2 through two mechanisms, because it can fail in two structurally different
+ * ways and only one of them is a rejection this file can catch. An unusable or already-occupied bind
+ * port is caught before app.js is required, by the validation and the probe in
+ * capture.js#resolvePort/#assertPortAvailable, and arrives here as a precondition failure. Every other
+ * boot failure — an unreachable mongod or redis, a session cookie password under 32 characters — is
+ * caught by app.js's OWN handler at app.js:L357-L360, which logs the cause and calls process.exit(1)
+ * from inside the application, with the code this tool reserves for a regression. app.js is
+ * AAP-preserved, so the code is re-mapped instead of the application: installBootExitRemap() below
+ * rewrites an exit of 1 taken while the boot is still in flight. Either way no `BASELINE REPLAY: …
+ * differences` verdict line is ever printed for a run that did not measure anything.
  */
 
 var crypto   = require('crypto'),
@@ -339,10 +366,25 @@ function assertRequestPolicyConformance(committedCorpus) {
  * Resolves and vets a --report destination. Writing inside test/baseline/ is refused outright: that
  * folder is capped at exactly four entries (capture.js, replay.js, route-table.json, responses.json)
  * and a fifth would breach the diff-surface rule. Everything else is the operator's choice.
+ *
+ * An absent flag and an EMPTY flag value are deliberately different. `undefined` means no report was
+ * asked for. A present but empty or whitespace-only path — which is what `--report "$OUT"` produces when
+ * OUT is unset — is a usage error, reported as one: exiting 0 with no report and no warning would hide
+ * the mistake behind a PASS, and it was inconsistent with `--report` carrying no value at all, which
+ * node:util.parseArgs already rejects. It is not silently coerced either, because path.resolve('') is the
+ * current working directory and writing a report over a directory fails mid-run with EISDIR.
  */
 function resolveReportPath(requested) {
-  if (!requested) {
+  if (requested === undefined || requested === null) {
     return null;
+  }
+
+  if (String(requested).trim() === '') {
+    throw preconditionFailure('replay.js: --report (alias --json) was given an empty path. Pass a ' +
+                              'writable file path outside test/baseline/, or omit the flag entirely to ' +
+                              'run without a report. An empty value is usually an unset shell variable ' +
+                              '(--report "$OUT"), so it is reported rather than ignored: a run that ' +
+                              'silently wrote no report would still have exited 0.');
   }
 
   var absolute = path.resolve(requested),
@@ -1422,7 +1464,12 @@ function parseArgv(argv) {
                               '\n  Supported flags: --route-table-only (alias --routes-only), ' +
                               '--corpus-only, --verbose, --quiet, --report <path> (alias --json). ' +
                               'This tool never writes an artifact, so there is deliberately no ' +
-                              '--write.');
+                              '--write.' +
+                              '\n  Environment: BASELINE_PORT=<1-65535> (validated, wins over ' +
+                              'CLONE_INDEX), CLONE_INDEX=<n> (clone-safe default 30112 + n), and ' +
+                              'NODE_CONFIG for the per-run MongoDB database that concurrent runs ' +
+                              'require — two runs sharing one database interfere, because each ' +
+                              'creates the same throwaway identity.');
   }
 
   var routeTableOnly  = parsed['route-table-only'] || parsed['routes-only'],
@@ -1447,20 +1494,100 @@ function parseArgv(argv) {
   };
 }
 
-/** Boots through capture.js, mapping a boot failure onto the could-not-run outcome. */
+/**
+ * True only while the application is booting, i.e. between the moment capture.startServer() is called
+ * and the moment a listening server is in hand. Read by the exit re-map below, which is the reason it
+ * exists: during that window an exit code of 1 cannot mean "a difference was measured", because nothing
+ * has been measured yet.
+ */
+var bootPhase = false,
+    bootExitRemapInstalled = false;
+
+/**
+ * Makes a boot failure exit CANNOT_RUN even when the application terminates the process itself.
+ *
+ * app.js:L357-L360 is `init().catch(err => { log.error(...); process.exit(1); })`. It is AAP-preserved
+ * and may not be changed, and it means a boot that THROWS — an unreachable mongod or redis, a session
+ * cookie password under 32 characters, a port hapi refuses — ends the process from inside the
+ * application, with the exit code this tool reserves for a parity regression, before control can return
+ * to startBaselineServer()'s rejection handler. Left alone, a broken environment would be indexed as a
+ * migration regression: precisely the confusion the three-code contract exists to prevent.
+ *
+ * So the code is re-mapped rather than the application. While bootPhase holds, an exit code of 1 can only
+ * have come from that handler, and it is rewritten to CANNOT_RUN. The flag is cleared the instant a
+ * listening server exists, so a genuine difference — measurable only after that point — still exits 1.
+ * Assigning process.exitCode inside an exit listener is the documented way to change the code; the
+ * accompanying line is written with fs.writeSync because stderr may be a pipe, where an ordinary
+ * console.error queued during exit can be truncated.
+ *
+ * Installed lazily, from inside startBaselineServer(), and only once. Registering it at module load would
+ * break constraint 3: mocha's recursive glob requires this file on every `npm test`, and requiring it must
+ * add nothing to the process — least of all a listener able to rewrite mocha's own exit code.
+ */
+function installBootExitRemap() {
+  if (bootExitRemapInstalled) {
+    return;
+  }
+
+  bootExitRemapInstalled = true;
+
+  process.on('exit', function(code) {
+    if (!bootPhase || code !== EXIT.DIFFERENT) {
+      return;
+    }
+
+    var message = 'BASELINE REPLAY: COULD NOT RUN — exit ' + EXIT.CANNOT_RUN + '. The application ' +
+                  'terminated while booting (app.js logs the cause above and exits ' + EXIT.DIFFERENT +
+                  ' itself, which is the code this tool reserves for a parity regression, so it is ' +
+                  're-mapped). Nothing about the application was proven or disproven: check that ' +
+                  'mongod and redis are reachable and that config carries a session cookie password ' +
+                  'of at least 32 characters.\n';
+
+    try {
+      fs.writeSync(2, message);
+    }
+    catch (err) {
+      console.error(message);
+    }
+
+    process.exitCode = EXIT.CANNOT_RUN;
+  });
+}
+
+/**
+ * Boots through capture.js, mapping every boot failure onto the could-not-run outcome.
+ *
+ * Three outcomes are possible and all three land on CANNOT_RUN. capture.startServer() validates and
+ * probes the bind port before app.js is required, so an unusable or occupied port arrives here as a
+ * rejection already marked as a precondition failure and is re-thrown verbatim — its message is written
+ * for the operator and must not be buried inside another one. A boot that throws never reaches here at
+ * all, because app.js exits the process itself; installBootExitRemap() above is what classifies that
+ * case. Anything else — including the application resolving without a listening server, which is what
+ * app.start:false looks like — is wrapped below.
+ */
 function startBaselineServer() {
+  installBootExitRemap();
+  bootPhase = true;
+
   return Promise.resolve().then(function() {
     return capture.startServer();
   }).then(function(server) {
+    bootPhase = false;
+
     return server;
   }, function(err) {
+    bootPhase = false;
+
+    if (isPreconditionFailure(err)) {
+      throw err;
+    }
+
     throw preconditionFailure('replay.js: the application did not boot into a listening server — ' +
                               (err && err.message ? err.message : String(err)) +
-                              '. app.js exports a promise that resolves to the started server and ' +
-                              'never rejects (its own catch calls process.exit), so a falsy resolve ' +
-                              'means app.start was not honoured. Check that mongod and redis are ' +
-                              'reachable and that config carries a session cookie password of at ' +
-                              'least 32 characters.');
+                              '. Check that mongod and redis are reachable, that config carries a ' +
+                              'session cookie password of at least 32 characters, and that the bind ' +
+                              'port is free (BASELINE_PORT=<1-65535> moves this run, CLONE_INDEX=<n> ' +
+                              'offsets the clone-safe default).');
   });
 }
 

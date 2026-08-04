@@ -424,7 +424,7 @@ measured, `diff` 9.0.0 exposes `createPatch`, `diffLines`, `diffWordsWithSpace` 
 reporter renders an actual-versus-expected diff correctly with the pin in place.
 
 Both pins were validated together against the real suite, not only in a scratch resolution: `npm ci` exits 0 and
-`npm test` reports exit 0 with zero failures, exit 0.
+`npm test` reports zero failures, exit 0.
 
 ## Rubric 2 — Same-package major bump
 
@@ -615,7 +615,7 @@ accurate when it was written and is not accurate now. Measured against the deliv
 | Obliged by | Edit | Measured state |
 |---|---|---|
 | `sinon` 22.1.0 | six `sinon.stub(obj, 'm', fn)` → `.callsFake(fn)` conversions, plus six `.reset()` → `.resetHistory()` | **12 of 12 done.** A re-census over code lines finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls, against **13** executable `.callsFake(` sites and **6** `.resetHistory(` sites |
-| `supertest` 7.2.2 | resolve the promise `app.js` exports before binding `server.listener` | **done.** `test/helpers/flow.js:L18-L22` captures `resolvedServer` through `app.then(…)`, `agentFor()` binds `resolvedServer.listener` at `L471`, and `test/setup.js:L125-L133` exports the root `mochaHooks.beforeAll` that `await`s `app` at `L130` |
+| `supertest` 7.2.2 | resolve the promise `app.js` exports before binding `server.listener` | **done.** `test/helpers/flow.js` captures `resolvedServer` through its own `app.then(…)` continuation, `agentFor()` binds `resolvedServer.listener` lazily on first use, and `test/setup.js` awaits `app` in a bare top-level `before()` registered on the root suite |
 | the unscoped `catbox-redis` removal | repoint `test/helpers/catbox-redis.js` at the in-repo engine | **done.** The unscoped require is gone; the helper stubs the **four** `CatboxMongoose.Engine.prototype` methods the suite reaches — `isReady`, `get`, `set`, `drop` — and leaves `start`, `stop`, `validateSegmentName` and `_generateKey` real |
 | `mocha` 11.7.6 | `.mocharc.json` replacing `test/mocha.opts` | **done.** The four-key file is committed — `reporter`, `recursive`, `check-leaks` and `exit`, with no `spec` and no `require` — and `test/mocha.opts` is deleted. Load order, which the deleted `mocha.opts` fixed implicitly, is supplied by `--file ./test/setup.js` in the `test` script instead |
 
@@ -1200,7 +1200,7 @@ That is the pin refusing an unpinned toolchain, and the remedy is to switch the 
 and `docs/setup.md` all state along with the two one-line commands that do it — `corepack enable npm && corepack use
 npm@10.9.9`, or `npm install -g npm@10.9.9`. Every gate was then re-run under the pinned resolver rather than assumed:
 with npm 10.9.9, `npm ci` exits 0, `npm run build` exits 0 and reproduces both stylesheet artifacts byte-for-byte, and
-`npm test` exits 0 at exit 0 with zero failures. `lockfileVersion` 3 is the format npm 7 and later both read and write, so `npm ci`
+`npm test` exits 0 with zero failures. `lockfileVersion` 3 is the format npm 7 and later both read and write, so `npm ci`
 consumes the committed file without rewriting it.
 
 **`package.json` gains an `overrides` block**, also verified absent at the base commit, pinning the **three**

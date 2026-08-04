@@ -22,6 +22,9 @@ Trinket lets students and educators write and run code directly in the browser, 
   makes those ranges an enforced gate rather than advice: a Node or npm outside them makes `npm ci` **fail** with
   `EBADENGINE` rather than warn. If your checkout defaults to npm 11, switch the toolchain rather than relaxing the
   range - `corepack enable npm && corepack use npm@10.9.9`, or `npm install -g npm@10.9.9`
+  Only install operations enforce `engines`, so `npm run build` and `npm test` run under any npm; to avoid changing a
+  global toolchain, run the install step through the pinned release instead - `npx -y npm@10.9.9 ci`, the exact npm the
+  Docker image installs
 - MongoDB 5.0+
 - Redis (optional - falls back to in-memory)
 

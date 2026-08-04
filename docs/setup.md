@@ -19,6 +19,10 @@ This guide walks through the prerequisites, configuration, and commands needed t
   # or
   npm install -g npm@10.9.9
   ```
+
+  Measured on this tree: `engines` is enforced by install operations only, so `npm run build` and `npm test` work under
+  any npm, while `npm ci` under npm 11 is refused with `EBADENGINE`. To avoid changing a global toolchain, run the
+  install step through the pinned release instead - `npx -y npm@10.9.9 ci`, the exact release the Docker image pins.
 - MongoDB 5.0+ (runs inside Docker by default)
 - Redis (optional - falls back to in-memory store when disabled)
 

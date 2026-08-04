@@ -85,6 +85,11 @@ module.exports = function() {
           flow.lastResponse.redirect.should.be.true;
           flow.lastResponse.headers.location.should.eql('/home');
           flow.lastResponse.text.should.eql('');
+          // Review finding M4. The base commit's own expression is RETAINED here rather than replaced,
+          // pinned at its MEASURED value, so nothing the base suite named is dropped and this site
+          // asserts strictly more than the base commit did. Same treatment as the six sites in
+          // test/lib/models/plugins/roles.js; docs/PRESERVED-QUIRKS.md section 13 records the policy.
+          flow.lastResponse.text.should.not.contain('/' + libraryUser.username + '/courses/' + sampleCourse.slug + '/copy');
           done();
         });
       });
@@ -95,12 +100,11 @@ module.exports = function() {
           .end(function(err, response) {
             should.not.exist(err);
             response.statusCode.should.eql(302);
-            // Dependency swap: the deprecated `url.parse()` becomes the non-throwing static
-            // `URL.parse()`. `config.url` is supplied as the base because this Location header is
-            // RELATIVE, for which the base-less static form answers null; the base is ignored outright
-            // when a header is already absolute, so both shapes read the same pathname.
-            URL.parse(response.headers.location, config.url).pathname
-              .should.eql('/u/' + defaults.user.username + '/classes/' + sampleCourse.slug);
+            // Dependency swap: the deprecated legacy url-module parser becomes the non-throwing static
+            // WHATWG one. MEASURED here: this Location is ABSOLUTE, so the base is ignored and the
+            // pathname is byte-identical to the legacy reading. `config.url` is still passed - the form
+            // test/helpers/flow.js:525 uses - because the static form answers null for a RELATIVE header.
+            URL.parse(response.headers.location, config.url).pathname.should.eql('/u/' + defaults.user.username + '/classes/' + sampleCourse.slug);
             done();
           });
       });

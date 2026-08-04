@@ -3,12 +3,15 @@
  *
  * WHAT THIS IS
  * ------------
- * test/baseline/responses.json names this file in `metadata.capturedBy` as the harness that owns the
- * corpus in the finished repository. This is that harness. It boots the application exactly the way
- * the corpus was produced, re-measures every entry, and reports the differences. It is also the
- * shared implementation library for test/baseline/replay.js and test/lib/api/route-parity.js, which
- * require() it — the `require.main === module` guard below means requiring this file boots nothing
- * and captures nothing, so a fifth file under test/baseline/ is not needed.
+ * BOTH artifacts under test/baseline/ name this file in `metadata.regenerationOwner`: it is the harness
+ * that owns test/baseline/route-table.json and test/baseline/responses.json in the finished repository.
+ * It boots the application exactly the way they were produced, re-measures BOTH halves of the R-6
+ * parity contract — the 233-row hapi route table (TR1) and the 58 + 7 + 8 entry response corpus (TR2,
+ * TR3, TR4) — reports every difference, evaluates every gate the artifacts publish, and can regenerate
+ * them. It is also the shared implementation library for test/baseline/replay.js and
+ * test/lib/api/route-parity.js, which require() it — the `require.main === module` guard below means
+ * requiring this file boots nothing and captures nothing, so a fifth file under test/baseline/ is not
+ * needed.
  *
  * HARD CONSTRAINTS, all of them from AAP 0.7.5 and from the artifact's own metadata.captureNotes.
  * Every one of these is a correctness requirement, not a preference:
@@ -47,20 +50,36 @@
  *      substituted, and a violation throws instead of being quietly erased.
  *   6. CLONE-SAFE PORT. /tmp/blitzy is a shared workspace; sibling clones hold other ports. The bind
  *      port defaults to 30112 + CLONE_INDEX and is overridable with BASELINE_PORT.
+ *   7. A VERIFY RUN REPRODUCES THE RECORDED app.url ORIGIN; A WRITE RUN MEASURES THE LIVE ONE. The
+ *      corpus is origin-specific by construction — ten of its sixteen unauthenticated redirects carry an
+ *      absolute Location and every rendered page embeds the site origin in its markup — so a diff taken
+ *      under a different origin reports configuration, not behavior. Measured on a checkout carrying the
+ *      config/local.yaml that docs/setup.md tells a developer to create (app.url =
+ *      http://localhost:3000, two characters longer than https://trinket.dev): 54 differences, every one
+ *      of them a two-byte body, content-length or payload shift, and zero once the recorded origin is
+ *      reproduced. Reproducing it is a runtime NODE_CONFIG override — the same mechanism as the port and
+ *      the session password, no YAML edited — and it is emphatically NOT a normalization: nothing in a
+ *      response is rewritten, the capture conditions are restored. A --write run deliberately does the
+ *      opposite, because the artifact must record the origin it was actually captured under.
  *
  * USAGE
- *   node test/baseline/capture.js                 measure, diff against the committed corpus, exit 1
- *                                                 if anything differs
- *   node test/baseline/capture.js --quiet          same, summary only
- *   node test/baseline/capture.js --write          rewrite responses.json (base commit only)
- *   node test/baseline/capture.js --write --force  rewrite anyway (destroys base-commit evidence)
+ *   node test/baseline/capture.js                  measure both halves, diff against the committed
+ *                                                  artifacts, print the gate summary, exit 1 if
+ *                                                  anything differs or any evaluable gate fails
+ *   node test/baseline/capture.js --dry-run         the same run, said explicitly
+ *   node test/baseline/capture.js --routes-only     the route table and its gates only, no HTTP corpus
+ *   node test/baseline/capture.js --quiet           summary and gates only, no per-difference detail
+ *   node test/baseline/capture.js --out <path>      also write the raw measurement to <path>
+ *   node test/baseline/capture.js --write           rewrite both artifacts (base commit only)
+ *   node test/baseline/capture.js --write --force   rewrite anyway (destroys base-commit evidence)
  */
 
 var childProcess = require('child_process'),
     crypto       = require('crypto'),
     fs           = require('fs'),
     http         = require('http'),
-    path         = require('path');
+    path         = require('path'),
+    nodeUtil     = require('node:util');
 
 var ARTIFACT_PATH    = path.join(__dirname, 'responses.json'),
     ROUTE_TABLE_PATH = path.join(__dirname, 'route-table.json');
@@ -1214,7 +1233,14 @@ function captureCorpus(server, corpus) {
   var committed = corpus || loadCommittedCorpus(),
       rules     = htmlNormalizationRules(committed),
       startedAt = new Date().toISOString(),
-      measured  = { capturedAt : startedAt, serverUri : server.info.uri };
+      measured  = {
+        capturedAt   : startedAt,
+        serverUri    : server.info.uri,
+        // The origin this measurement ran under. Recorded because it decides which Locations are
+        // absolute and what every rendered page embeds, and because a --write run must publish it as
+        // metadata.appUrlOrigin rather than inheriting a stale value from the artifact it replaces.
+        appUrlOrigin : liveAppUrlOrigin()
+      };
 
   resetRolesTokenObservations();
 
@@ -1233,6 +1259,355 @@ function captureCorpus(server, corpus) {
 
     return measured;
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Route table — the other artifact this harness owns (test/baseline/route-table.json)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * route-table.json#metadata.regenerationOwner names THIS FILE, and its metadata.captureNotes bind it:
+ * "Any later run of capture.js must reproduce gates.measuredSha256 and
+ * gates.registrationOrderFingerprint." The recipe below is therefore not a local convenience, it is the
+ * artifact's own canonicalization block reproduced field for field:
+ *
+ *   rowFormat        "METHOD | path | authDescriptor | preCount", one ASCII space around every pipe
+ *   methodCase       uppercase — hapi lowercases route.method
+ *   authDescriptor   the literal string "false" when route.settings.auth === false, otherwise
+ *                    'mode=<mode> strategies=["s1",...]' with the names double-quoted and joined by a
+ *                    bare comma
+ *   preCount         Array.isArray(route.settings.pre) ? route.settings.pre.length : 0
+ *   sort             default Array.prototype.sort() — UTF-16 code units, NOT locale-aware
+ *   join             "\n", with NO trailing newline
+ *
+ * It is implemented here rather than imported from test/baseline/replay.js deliberately. This file is
+ * the artifact's declared regeneration owner and has to be able to produce it standalone, and a second
+ * implementation cannot drift silently: every run of either tool asserts its own canonicalization
+ * against the same committed digests, so a divergence fails the tool that diverged.
+ */
+function md5(text) {
+  return crypto.createHash('md5').update(text, 'utf8').digest('hex');
+}
+
+/**
+ * The server's default auth strategy, which app.js:L279 sets with
+ * server.auth.default({ strategy : 'session', mode : 'try' }) and hapi normalizes to
+ * { mode : 'try', strategies : ['session'] }. Read from the live server rather than assumed, because it
+ * is what every one of the 126 rows that declare no auth of their own inherits.
+ */
+function liveServerAuthDefault(server) {
+  var settings = (server.auth && server.auth.settings && server.auth.settings.default) || {};
+
+  return {
+    mode       : settings.mode,
+    strategies : settings.strategies ? settings.strategies.slice() : undefined
+  };
+}
+
+/**
+ * The EFFECTIVE auth of one row, resolved exactly as @hapi/hapi lib/auth.js lookup(route) resolves it:
+ * `false` stays false — hapi's _setupRoute carries the comment "Preserve the difference between
+ * undefined and false" — and anything else is (route.settings.auth || server.auth.settings.default).
+ * The declared string form `auth : 'session'` has already been rewritten by hapi into
+ * { strategies : ['session'], mode : 'required' } by the time it reaches server.table(); the
+ * `auth.strategy` branch is kept because a hand-built route object can still carry the singular key.
+ */
+function effectiveRouteAuth(auth, serverDefault) {
+  if (auth === false) {
+    return false;
+  }
+
+  var mode       = (auth && auth.mode) || serverDefault.mode,
+      strategies = (auth && auth.strategies) ||
+                   (auth && auth.strategy ? [auth.strategy] : serverDefault.strategies);
+
+  return { mode : mode, strategies : strategies ? strategies.slice() : strategies };
+}
+
+/** The auth half of one canonical row: 'false', or 'mode=<mode> strategies=["s1",...]'. */
+function authDescriptor(auth, serverDefault) {
+  var effective = effectiveRouteAuth(auth, serverDefault);
+
+  if (effective === false) {
+    return 'false';
+  }
+
+  return 'mode=' + effective.mode + ' strategies=' + JSON.stringify(effective.strategies);
+}
+
+/** One canonical row: "METHOD | path | authDescriptor | preCount". */
+function canonicalRow(method, routePath, auth, preCount, serverDefault) {
+  return [
+    String(method).toUpperCase(),
+    routePath,
+    authDescriptor(auth, serverDefault),
+    String(preCount)
+  ].join(' | ');
+}
+
+/**
+ * Canonicalizes the live route table. Everything returned is derived from server.table() and
+ * server.auth.settings.default and from nothing else — no committed value is consulted, so the
+ * measurement cannot be contaminated by the artifact it is about to be compared against.
+ */
+function canonicalizeLiveTable(server) {
+  var serverDefault = liveServerAuthDefault(server),
+      byKey         = {},
+      canonical     = [],
+      tally         = { undefined : 0, object : 0, 'false' : 0 },
+      gates         = {
+        rowCount            : 0,
+        methods             : {},
+        apiPaths            : 0,
+        withPreHandlers     : 0,
+        authRequiredSession : 0,
+        authFalse           : 0,
+        authTryInherited    : 0
+      };
+
+  server.table().forEach(function(row) {
+    var method   = String(row.method).toUpperCase(),
+        auth     = row.settings.auth,
+        preCount = Array.isArray(row.settings.pre) ? row.settings.pre.length : 0,
+        text     = canonicalRow(method, row.path, auth, preCount, serverDefault);
+
+    byKey[method + ' ' + row.path] = {
+      method    : method,
+      path      : row.path,
+      auth      : effectiveRouteAuth(auth, serverDefault),
+      preCount  : preCount,
+      canonical : text
+    };
+    canonical.push(text);
+
+    if (auth === false)          { tally['false'] += 1; gates.authFalse += 1; }
+    else if (auth === undefined) { tally.undefined += 1; }
+    else                         { tally.object += 1; }
+
+    if (auth && auth.mode === 'required' &&
+        JSON.stringify(auth.strategies || []) === JSON.stringify(['session'])) {
+      gates.authRequiredSession += 1;
+    }
+
+    if (auth === undefined && serverDefault.mode === 'try') {
+      gates.authTryInherited += 1;
+    }
+
+    if (row.path.indexOf('/api/') === 0) {
+      gates.apiPaths += 1;
+    }
+
+    if (preCount > 0) {
+      gates.withPreHandlers += 1;
+    }
+
+    gates.methods[method] = (gates.methods[method] || 0) + 1;
+    gates.rowCount += 1;
+  });
+
+  return {
+    byKey                : byKey,
+    canonical            : canonical,
+    rawSettingsAuthTally : tally,
+    serverAuthDefault    : serverDefault,
+    gates                : gates
+  };
+}
+
+/**
+ * The rows in REGISTRATION order, which is what the artifact persists and what
+ * gates.registrationOrderFingerprint hashes. server.table() returns ROUTER order (route-table.json#ADJ-5),
+ * so the order is taken from config.routes — the array app.js hands to server.route() — and each
+ * declaration is mapped onto the live canonical row for its (METHOD, path) key. A declaration with no
+ * live row is reported through `missing` instead of being skipped quietly: it would mean the router and
+ * the declaration list disagree, which is exactly the kind of drift this artifact exists to catch.
+ */
+function registrationOrderRows(live) {
+  var rows    = [],
+      missing = [];
+
+  require('config').routes.forEach(function(route) {
+    [].concat(route.method).forEach(function(method) {
+      var key = String(method).toUpperCase() + ' ' + route.path,
+          row = live.byKey[key];
+
+      if (!row) {
+        missing.push(key);
+
+        return;
+      }
+
+      rows.push({
+        index     : rows.length,
+        method    : row.method,
+        path      : row.path,
+        auth      : row.auth,
+        preCount  : row.preCount,
+        canonical : row.canonical
+      });
+    });
+  });
+
+  return { rows : rows, missing : missing };
+}
+
+/**
+ * The four digests the artifact publishes. The sorted set is hashed twice — sha256 and md5 — and the
+ * registration-order list once; `measuredSha256First32` is the 32-character head, recorded because the
+ * Technical Specification's own published value is 32 hex characters and the artifact keeps the two
+ * comparable side by side (route-table.json#gates.documentedDigestNote).
+ */
+function routeTableDigests(canonical, registrationOrderCanonicalRows) {
+  var sortedText  = canonical.slice().sort().join('\n'),
+      orderedText = registrationOrderCanonicalRows.map(function(row) { return row.canonical; }).join('\n'),
+      sorted      = sha256(sortedText);
+
+  return {
+    measuredSha256               : sorted,
+    measuredSha256First32        : sorted.slice(0, 32),
+    measuredMd5                  : md5(sortedText),
+    registrationOrderFingerprint : sha256(orderedText)
+  };
+}
+
+/**
+ * Measures the whole route table. Synchronous by nature — the table is already in memory once the
+ * server has started, and no HTTP is involved — so this runs before the corpus walk and its result is
+ * available even under --routes-only.
+ */
+function captureRouteTable(server) {
+  var startedAt = new Date().toISOString(),
+      live      = canonicalizeLiveTable(server),
+      order     = registrationOrderRows(live);
+
+  return {
+    capturedAt           : startedAt,
+    finishedAt           : new Date().toISOString(),
+    serverUri            : server.info.uri,
+    serverAuthDefault    : live.serverAuthDefault,
+    rawSettingsAuthTally : live.rawSettingsAuthTally,
+    gates                : live.gates,
+    digests              : routeTableDigests(live.canonical, order.rows),
+    rows                 : order.rows,
+    routerOrderCanonical : live.canonical,
+    missingDeclarations  : order.missing
+  };
+}
+
+/** One difference in the shape compareSection() produces, so both halves report identically. */
+function pushDifference(differences, section, subject, expected, actual) {
+  if (stableStringify(expected) === stableStringify(actual)) {
+    return differences;
+  }
+
+  differences.push({
+    section  : section,
+    entry    : subject,
+    field    : subject,
+    expected : stableStringify(expected),
+    actual   : stableStringify(actual)
+  });
+
+  return differences;
+}
+
+/**
+ * Compares the measured route table against the committed one: the sorted canonical set, every row in
+ * registration order, the four digests, the seven countable gates, the raw auth tally and the server
+ * default. gates.documentedDigest is deliberately NOT compared — the artifact records it as
+ * unreproducible in gates.documentedDigestReproduced ("none") and gates.documentedDigestGateSatisfied,
+ * and manufacturing a match for it would be exactly the kind of evidence-tampering R-6 forbids.
+ */
+function compareRouteTable(committedTable, measured) {
+  var differences = [],
+      committedRows = committedTable.rows || [],
+      length        = Math.max(committedRows.length, measured.rows.length),
+      empirical     = (committedTable.canonicalization &&
+                       committedTable.canonicalization.empiricalAuthShape) || {};
+
+  pushDifference(differences, 'route-table', 'rows (sorted canonical set)',
+                 committedRows.map(function(row) { return row.canonical; }).sort(),
+                 measured.routerOrderCanonical.slice().sort());
+  pushDifference(differences, 'route-table', 'registration order: unresolved declarations',
+                 [], measured.missingDeclarations);
+
+  for (var index = 0; index < length; index++) {
+    var committedRow = committedRows[index],
+        measuredRow  = measured.rows[index];
+
+    pushDifference(differences, 'route-table', 'rows[' + index + ']',
+                   committedRow || '<absent from the committed table>',
+                   measuredRow || '<not measured>');
+  }
+
+  ['measuredSha256', 'measuredSha256First32', 'measuredMd5', 'registrationOrderFingerprint']
+    .forEach(function(digest) {
+      pushDifference(differences, 'route-table', 'gates.' + digest,
+                     committedTable.gates[digest], measured.digests[digest]);
+    });
+
+  ['rowCount', 'methods', 'apiPaths', 'withPreHandlers', 'authRequiredSession', 'authFalse',
+   'authTryInherited'].forEach(function(name) {
+    pushDifference(differences, 'route-table', 'gates.' + name,
+                   committedTable.gates[name], measured.gates[name]);
+  });
+
+  pushDifference(differences, 'route-table',
+                 'canonicalization.empiricalAuthShape.rawSettingsAuthTally',
+                 empirical.rawSettingsAuthTally, measured.rawSettingsAuthTally);
+  pushDifference(differences, 'route-table',
+                 'canonicalization.empiricalAuthShape.serverAuthSettingsDefault',
+                 empirical.serverAuthSettingsDefault, measured.serverAuthDefault);
+
+  return differences;
+}
+
+/**
+ * Merges a measurement into the committed route table for --write, preserving every hand-authored
+ * field — purpose, derivation, adjudications, the provenance prose and the documented-digest block —
+ * and replacing only what is a pure function of the measurement. The keys left alone are returned so
+ * main() can name them rather than leaving a reader to assume the whole gate block was re-derived.
+ */
+function mergeMeasuredRouteTable(committedTable, measured) {
+  var merged        = JSON.parse(JSON.stringify(committedTable)),
+      recomputed    = ['rowCount', 'methods', 'apiPaths', 'withPreHandlers', 'authRequiredSession',
+                       'authFalse', 'authTryInherited', 'measuredSha256', 'measuredSha256First32',
+                       'measuredMd5', 'registrationOrderFingerprint'],
+      notRecomputed = [];
+
+  merged.metadata.capturedAt = measured.capturedAt;
+  merged.metadata.finishedAt = measured.finishedAt;
+  merged.metadata.serverUri  = measured.serverUri;
+  merged.metadata.measuredServerAuthDefault = measured.serverAuthDefault;
+
+  if (merged.canonicalization && merged.canonicalization.empiricalAuthShape) {
+    merged.canonicalization.empiricalAuthShape.rawSettingsAuthTally = measured.rawSettingsAuthTally;
+    merged.canonicalization.empiricalAuthShape.serverAuthSettingsDefault = measured.serverAuthDefault;
+  }
+
+  ['rowCount', 'methods', 'apiPaths', 'withPreHandlers', 'authRequiredSession', 'authFalse',
+   'authTryInherited'].forEach(function(name) {
+    merged.gates[name] = measured.gates[name];
+  });
+
+  ['measuredSha256', 'measuredSha256First32', 'measuredMd5', 'registrationOrderFingerprint']
+    .forEach(function(digest) {
+      merged.gates[digest] = measured.digests[digest];
+    });
+
+  merged.rows = measured.rows;
+
+  Object.keys(merged.gates).forEach(function(key) {
+    if (recomputed.indexOf(key) === -1) {
+      notRecomputed.push(key);
+    }
+  });
+
+  return { artifact : merged, notRecomputed : notRecomputed };
+}
+
+function writeRouteTable(artifact) {
+  fs.writeFileSync(ROUTE_TABLE_PATH, JSON.stringify(artifact, null, 2) + '\n', 'utf8');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1304,6 +1679,34 @@ function appUrlOrigin(url) {
 /** The origin the running process would emit, derived from the effective configuration. */
 function liveAppUrlOrigin() {
   return appUrlOrigin(require('config').app.url);
+}
+
+/**
+ * The corpus origin expressed as a config.app.url override, for a VERIFY run. This is how constraint 7
+ * in the file header is implemented: the recorded metadata.appUrlOrigin is turned back into the
+ * { protocol, hostname, port } shape config/app.config.js:L16-L17 reads and injected through
+ * NODE_CONFIG, so the diff measures behavior instead of measuring which config/local.yaml the checkout
+ * happens to carry. Parsing uses the NON-THROWING static URL.parse and handles its null: url.parse()
+ * warns under --pending-deprecation and `new URL(x)` throws ERR_INVALID_URL, and a corpus that predates
+ * the key must still replay exactly as it did, which an empty override guarantees.
+ */
+function corpusOriginOverride(committedCorpus) {
+  var origin = committedCorpus && committedCorpus.metadata && committedCorpus.metadata.appUrlOrigin,
+      parsed = origin ? URL.parse(origin) : null;
+
+  if (!parsed) {
+    return {};
+  }
+
+  return {
+    app : {
+      url : {
+        protocol : parsed.protocol.replace(/:$/, ''),
+        hostname : parsed.hostname,
+        port     : parsed.port === '' ? null : Number(parsed.port)
+      }
+    }
+  };
 }
 
 /** Rewrites a leading `fromOrigin` to `toOrigin`. Relative values and other origins pass through. */
@@ -1559,6 +1962,453 @@ function assignmentNextLocationMap(entries) {
 
 
 // ---------------------------------------------------------------------------------------------
+// Build artifacts — the two CSS files the corpus pins in responses.json#buildArtifacts
+// ---------------------------------------------------------------------------------------------
+
+var BUILD_ARTIFACT_FILES = ['public/css/base.css', 'public/css/embed.css'];
+
+function repositoryRoot() {
+  return path.join(__dirname, '..', '..');
+}
+
+/** Every *.map file under a directory, recursively. Returns [] when the directory does not exist. */
+function mapFilesUnder(directory) {
+  var found = [];
+
+  if (!fs.existsSync(directory)) {
+    return found;
+  }
+
+  fs.readdirSync(directory, { withFileTypes : true }).forEach(function(entry) {
+    var full = path.join(directory, entry.name);
+
+    if (entry.isDirectory()) {
+      found = found.concat(mapFilesUnder(full));
+    }
+    else if (/\.map$/.test(entry.name)) {
+      found.push(full);
+    }
+  });
+
+  return found;
+}
+
+/**
+ * Measures the two build artifacts and the source-map count. Absence is a MEASUREMENT, not an error:
+ * `npm run build` fails on a clean checkout until public/components is hydrated from the
+ * public-components.tgz asset of release v1.1.0, which responses.json#buildArtifacts.precondition
+ * records. A missing file is therefore reported as an unevaluated gate carrying that precondition, never
+ * as a silent skip and never as a parity failure — the two are different claims and conflating them
+ * would let a genuinely changed stylesheet hide behind a checkout that simply had not been built.
+ */
+function measureBuildArtifacts() {
+  var root      = repositoryRoot(),
+      cssRoot   = path.join(root, 'public', 'css'),
+      measured  = { files : {}, missing : [], cssMapFilesEmitted : null, cssMapFiles : null };
+
+  BUILD_ARTIFACT_FILES.forEach(function(relative) {
+    var full = path.join(root, relative);
+
+    if (!fs.existsSync(full)) {
+      measured.missing.push(relative);
+
+      return;
+    }
+
+    var contents = fs.readFileSync(full);
+
+    measured.files[relative] = {
+      bytes  : contents.length,
+      sha256 : crypto.createHash('sha256').update(contents).digest('hex')
+    };
+  });
+
+  if (fs.existsSync(cssRoot)) {
+    var maps = mapFilesUnder(cssRoot);
+
+    measured.cssMapFiles        = maps.map(function(full) { return path.relative(root, full); }).sort();
+    measured.cssMapFilesEmitted = maps.length;
+  }
+
+  return measured;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Gates — the artifacts' own published values, recomputed from the measurement
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A gate is a named triple of an expectation the artifact publishes, the value recomputed from this
+ * run, and a verdict. Three verdicts exist and the third one matters: UNEVALUATED means the run could
+ * not measure the input at all (an unbuilt stylesheet, a corpus half skipped by --routes-only). It is
+ * reported loudly and never counted as a pass, which is what keeps "the gate held" and "the gate was
+ * never checked" from collapsing into the same summary line.
+ */
+function gate(name, expected, actual) {
+  var passed = stableStringify(expected) === stableStringify(actual);
+
+  return {
+    name     : name,
+    status   : passed ? 'PASS' : 'FAIL',
+    expected : expected,
+    actual   : actual
+  };
+}
+
+function unevaluatedGate(name, reason) {
+  return { name : name, status : 'UNEVALUATED', expected : null, actual : null, reason : reason };
+}
+
+/** The first entry of a section for one method and path, or null. */
+function findEntry(entries, method, requestPath, state) {
+  var found = null;
+
+  (entries || []).forEach(function(entry) {
+    if (found || entry.method !== method || entry.path !== requestPath) {
+      return;
+    }
+
+    if (state && String(entry.state || '') !== state) {
+      return;
+    }
+
+    found = entry;
+  });
+
+  return found;
+}
+
+function statusOf(entries, method, requestPath, state) {
+  var entry = findEntry(entries, method, requestPath, state);
+
+  return entry ? entry.status : null;
+}
+
+function pathsWithStatus(entries, status) {
+  return entries.filter(function(entry) {
+    return entry.status === status;
+  }).map(function(entry) {
+    return entry.path;
+  }).sort();
+}
+
+function pathsWithStatusAndBodyKind(entries, status, kind) {
+  return entries.filter(function(entry) {
+    return entry.status === status && entry.bodyShape && entry.bodyShape.kind === kind;
+  }).map(function(entry) {
+    return entry.path;
+  }).sort();
+}
+
+function pathsWithHeader(entries, header) {
+  return entries.filter(function(entry) {
+    return entry.headers && entry.headers[header] !== undefined;
+  }).map(function(entry) {
+    return entry.path;
+  }).sort();
+}
+
+/** The redirecting entries split by whether their Location is absolute on `origin` or relative. */
+function redirectLocationKinds(entries, origin) {
+  var kinds = { absolute : [], relative : [], other : [] };
+
+  entries.filter(function(entry) {
+    return isRedirectStatus(entry.status);
+  }).forEach(function(entry) {
+    var location = entry.location;
+
+    if (typeof location === 'string' && origin && location.indexOf(origin) === 0) {
+      kinds.absolute.push(location);
+    }
+    else if (typeof location === 'string' && location.charAt(0) === '/') {
+      kinds.relative.push(location);
+    }
+    else {
+      kinds.other.push(location);
+    }
+  });
+
+  return kinds;
+}
+
+/** The paths whose first hop redirects to the bare relative '/login' — the 401 HTML takeover branch. */
+function takeoverRedirectPaths(entries) {
+  return entries.filter(function(entry) {
+    return isRedirectStatus(entry.status) && entry.location === '/login';
+  }).map(function(entry) {
+    return entry.path;
+  }).sort();
+}
+
+/** The distinct Set-Cookie attribute-name lists observed across every section, de-duplicated. */
+function cookieAttributeVariants(sections) {
+  var seen = {};
+
+  sections.forEach(function(entries) {
+    (entries || []).forEach(function(entry) {
+      (entry.setCookieAttributes || []).forEach(function(names) {
+        seen[JSON.stringify(names)] = true;
+      });
+    });
+  });
+
+  return Object.keys(seen).sort();
+}
+
+/** Every redacted Set-Cookie value observed across every section. */
+function allSetCookies(sections) {
+  var cookies = [];
+
+  sections.forEach(function(entries) {
+    (entries || []).forEach(function(entry) {
+      (entry.setCookie || []).forEach(function(value) { cookies.push(String(value)); });
+    });
+  });
+
+  return cookies;
+}
+
+function routeTableGates(committedTable, measured) {
+  var empirical = (committedTable.canonicalization &&
+                   committedTable.canonicalization.empiricalAuthShape) || {},
+      gates     = [
+        gate('route-table rowCount', committedTable.gates.rowCount, measured.gates.rowCount),
+        gate('route-table methods', committedTable.gates.methods, measured.gates.methods),
+        gate('route-table apiPaths', committedTable.gates.apiPaths, measured.gates.apiPaths),
+        gate('route-table withPreHandlers', committedTable.gates.withPreHandlers,
+             measured.gates.withPreHandlers),
+        gate('route-table authRequiredSession', committedTable.gates.authRequiredSession,
+             measured.gates.authRequiredSession),
+        gate('route-table authFalse', committedTable.gates.authFalse, measured.gates.authFalse),
+        gate('route-table authTryInherited', committedTable.gates.authTryInherited,
+             measured.gates.authTryInherited),
+        gate('route-table authFalseRoutes', (committedTable.authFalseRoutes || []).map(function(entry) {
+          return entry.row;
+        }), measured.rows.filter(function(row) {
+          return row.auth === false;
+        }).map(function(row) { return row.canonical; })),
+        gate('route-table rawSettingsAuthTally', empirical.rawSettingsAuthTally,
+             measured.rawSettingsAuthTally),
+        gate('route-table serverAuthSettingsDefault', empirical.serverAuthSettingsDefault,
+             measured.serverAuthDefault),
+        gate('route-table registration order resolves every declaration', [],
+             measured.missingDeclarations),
+        gate('route-table gates.measuredSha256', committedTable.gates.measuredSha256,
+             measured.digests.measuredSha256),
+        gate('route-table gates.measuredSha256First32', committedTable.gates.measuredSha256First32,
+             measured.digests.measuredSha256First32),
+        gate('route-table gates.measuredMd5', committedTable.gates.measuredMd5,
+             measured.digests.measuredMd5),
+        gate('route-table gates.registrationOrderFingerprint',
+             committedTable.gates.registrationOrderFingerprint,
+             measured.digests.registrationOrderFingerprint)
+      ];
+
+  // The Technical Specification's published digest is 32 hex characters and this artifact could never
+  // reproduce it: gates.documentedDigestReproduced is the literal string "none". It is surfaced as
+  // UNEVALUATED rather than compared, because the one thing that must never happen is a run that
+  // manufactures agreement with it.
+  gates.push(unevaluatedGate('route-table gates.documentedDigest (' +
+                             committedTable.gates.documentedDigest + ')',
+                             'recorded as unreproducible — documentedDigestReproduced="' +
+                             committedTable.gates.documentedDigestReproduced + '"; the measured ' +
+                             'fingerprints above are the subordinate regression gate'));
+
+  return gates;
+}
+
+/**
+ * The response-corpus gates. Every expectation is read from responses.json#gates or #selectionRule and
+ * every actual is recomputed from the measurement, so a gate can only pass because the run reproduced
+ * the recorded value. `origin` is the app.url origin the measurement ran under, which is what decides
+ * whether a Location counts as absolute.
+ */
+function corpusGates(committedCorpus, measured, origin) {
+  var unauthenticated = measured.unauthenticated,
+      authenticated   = measured.authenticated,
+      published       = committedCorpus.gates,
+      locations       = redirectLocationKinds(unauthenticated, origin),
+      serverErrors    = unauthenticated.filter(function(entry) { return entry.status === 500; }),
+      contract        = committedCorpus.locationContract || [],
+      loginEntry      = findEntry(authenticated, 'POST', '/login', 'login-flow (valid credentials)'),
+      accountEntry    = findEntry(authenticated, 'GET', '/account', 'authenticated');
+
+  return [
+    gate('corpus selectionRule.expectedCount', committedCorpus.selectionRule.expectedCount,
+         unauthenticated.length),
+    gate('corpus selectionRule.paths', committedCorpus.selectionRule.paths,
+         unauthenticated.map(function(entry) { return entry.path; })),
+    gate('corpus unauthenticatedEntryCount', published.unauthenticatedEntryCount,
+         unauthenticated.length),
+    gate('corpus authenticatedEntryCount', published.authenticatedEntryCount, authenticated.length),
+    gate('corpus assignmentNextEntryCount', published.assignmentNextEntryCount,
+         (measured.assignmentNext || []).length),
+    gate('corpus firstHopStatusDistribution', published.firstHopStatusDistribution,
+         statusDistribution(unauthenticated)),
+    gate('corpus resolvedStatusDistribution', published.resolvedStatusDistribution,
+         resolvedStatusDistribution(unauthenticated)),
+    // The Technical Specification's published 25x200 / 7x401 / 25x404 / 1x500 tally, which the corpus
+    // reproduces in its RESOLVED reading (responses.json#gates.distributionAuthority).
+    gate('corpus documentedDistribution (25/7/25/1)', published.documentedDistribution,
+         resolvedStatusDistribution(unauthenticated)),
+    gate('corpus hopCountHistogram', published.hopCountHistogram, hopCountHistogram(unauthenticated)),
+    gate('corpus redirectingRouteCount', published.redirectingRouteCount,
+         redirectingEntryPaths(unauthenticated).length),
+    gate('corpus redirectingRoutePaths', published.redirectingRoutePaths,
+         redirectingEntryPaths(unauthenticated)),
+    gate('corpus redirectResolution', published.redirectResolution,
+         redirectResolutionDistribution(unauthenticated)),
+    gate('corpus authRequiredApiUnauthorized (7x401)', published.authRequiredApiUnauthorized,
+         pathsWithStatus(unauthenticated, 401).length),
+    gate('corpus authRequiredApiUnauthorizedPaths', published.authRequiredApiUnauthorizedPaths,
+         pathsWithStatus(unauthenticated, 401)),
+    gate('corpus serverErrorEntryCount (1x500)', published.serverErrorEntryCount, serverErrors.length),
+    gate('corpus singleServerErrorRoute', published.singleServerErrorRoute,
+         serverErrors.length === 1 ? serverErrors[0].method + ' ' + serverErrors[0].path : null),
+    // R-5 evidence: the pre-existing 500 is Boom JSON rather than a rendered 50x.html, because /api/ is
+    // an API request. The body KIND is the assertion; the message is scrubbed by hapi either way.
+    gate('corpus serverError delivered as JSON', 'json',
+         serverErrors.length === 1 ? serverErrors[0].bodyShape.kind : null),
+    gate('corpus languageFlagFourOhFours (20)', published.languageFlagFourOhFours,
+         pathsWithStatusAndBodyKind(unauthenticated, 404, 'html').length),
+    gate('corpus languageFlagFourOhFourPaths', published.languageFlagFourOhFourPaths,
+         pathsWithStatusAndBodyKind(unauthenticated, 404, 'html')),
+    gate('corpus boomJsonFourOhFours', published.boomJsonFourOhFours,
+         pathsWithStatusAndBodyKind(unauthenticated, 404, 'json').length),
+    gate('corpus boomJsonFourOhFourPaths', published.boomJsonFourOhFourPaths,
+         pathsWithStatusAndBodyKind(unauthenticated, 404, 'json')),
+    gate('corpus takeoverRedirectsToLogin', published.takeoverRedirectsToLogin,
+         takeoverRedirectPaths(unauthenticated)),
+    gate('corpus absoluteRedirectCount', published.absoluteRedirectCount, locations.absolute.length),
+    gate('corpus relativeRedirectCount', published.relativeRedirectCount, locations.relative.length),
+    gate('corpus xFrameOptionsPaths', published.xFrameOptionsPaths,
+         pathsWithHeader(unauthenticated, 'x-frame-options')),
+    gate('corpus unauthenticatedLoginStatus', published.unauthenticatedLoginStatus,
+         statusOf(unauthenticated, 'GET', '/login')),
+    gate('corpus unauthenticatedSignupStatus', published.unauthenticatedSignupStatus,
+         statusOf(unauthenticated, 'GET', '/signup')),
+    // The flagship R-6 quirk: authenticated GET /login and GET /signup are 500, not 302. A 302 here is a
+    // lib/controllers/pages.js conversion defect, never a corpus to be adjusted.
+    gate('corpus authenticatedLoginStatus (500 quirk)', published.authenticatedLoginStatus,
+         statusOf(authenticated, 'GET', '/login', 'authenticated')),
+    gate('corpus authenticatedSignupStatus (500 quirk)', published.authenticatedSignupStatus,
+         statusOf(authenticated, 'GET', '/signup', 'authenticated')),
+    gate('corpus authenticatedHomeStatus', published.authenticatedHomeStatus,
+         statusOf(authenticated, 'GET', '/home', 'authenticated')),
+    gate('corpus authenticatedAccountStatus', published.authenticatedAccountStatus,
+         statusOf(authenticated, 'GET', '/account', 'authenticated')),
+    gate('corpus authenticatedFirstHopStatuses', published.authenticatedFirstHopStatuses,
+         authenticatedStatusMap(authenticated, 'firstHop')),
+    gate('corpus authenticatedResolvedStatuses', published.authenticatedResolvedStatuses,
+         authenticatedStatusMap(authenticated, 'resolved')),
+    // locationContract[0] is the ABSOLUTE literal a successful login emits and locationContract[2] the
+    // RELATIVE one the account route emits. Both are asserted, because the contrast between them is the
+    // evidence behind test/helpers/flow.js's URL.parse base argument and the 22 lastRedirect.pathname
+    // assertions that ride on it.
+    gate('corpus locationContract absolute (POST /login valid)',
+         contract[0] ? contract[0].location : null,
+         loginEntry ? rebaseOrigin(loginEntry.location, origin,
+                                   committedCorpus.metadata.appUrlOrigin) : null),
+    gate('corpus locationContract relative (GET /account authenticated)',
+         contract[2] ? contract[2].location : null, accountEntry ? accountEntry.location : null)
+  ];
+}
+
+/** The cookie contract from responses.json#cookieContract, recomputed from every measured Set-Cookie. */
+function cookieContractGates(committedCorpus, measured) {
+  var contract = committedCorpus.cookieContract,
+      sections = [measured.unauthenticated, measured.authenticated, measured.assignmentNext],
+      cookies  = allSetCookies(sections),
+      expected = [contract.measuredAttributesOrdinaryRoute, contract.measuredAttributesCookieRoute]
+        .map(function(names) { return JSON.stringify(names); }).sort();
+
+  return [
+    gate('cookie name is ' + contract.name, [contract.name], cookies.map(function(value) {
+      return value.split('=')[0];
+    }).filter(function(name, index, all) { return all.indexOf(name) === index; })),
+    gate('cookie seal prefix ' + contract.sealPrefix, cookies.length,
+         cookies.filter(function(value) {
+           return value.indexOf(contract.name + '=' + contract.sealPrefix + '*') === 0;
+         }).length),
+    gate('cookie attribute variants', expected, cookieAttributeVariants(sections)),
+    // isSecure is false in the shipped configuration, so app.js appends only "; Expires=…". A capture
+    // that overrode cookieOptions.isSecure would append "; SameSite=None; Secure" and change an
+    // observable header, which is why the override set excludes it. Both gates below are named after the
+    // cookieContract key they check, and both expectations are the recorded `false`.
+    gate('cookie sameSiteSecureAppended', contract.sameSiteSecureAppended,
+         cookies.some(function(value) {
+           return /SameSite=None/i.test(value) || /;\s*Secure(\s*;|\s*$)/i.test(value);
+         })),
+    gate('cookie domainAttributePresent', contract.domainAttributePresent,
+         cookies.some(function(value) { return /;\s*Domain=/i.test(value); }))
+  ];
+}
+
+/** The buildArtifacts block. Absent build output yields UNEVALUATED gates carrying the precondition. */
+function buildArtifactGates(committedCorpus, measured) {
+  var published = committedCorpus.buildArtifacts || {},
+      gates     = [];
+
+  BUILD_ARTIFACT_FILES.forEach(function(relative) {
+    if (!measured.files[relative]) {
+      gates.push(unevaluatedGate('buildArtifacts ' + relative,
+                                 'absent from this checkout — ' + (published.precondition ||
+                                 'run `npm run build` after hydrating public/components')));
+
+      return;
+    }
+
+    gates.push(gate('buildArtifacts ' + relative, published[relative], measured.files[relative]));
+  });
+
+  if (measured.cssMapFilesEmitted === null) {
+    gates.push(unevaluatedGate('buildArtifacts cssMapFilesEmitted',
+                               'public/css does not exist in this checkout'));
+  }
+  else {
+    gates.push(gate('buildArtifacts cssMapFilesEmitted', published.cssMapFilesEmitted,
+                    measured.cssMapFilesEmitted));
+  }
+
+  return gates;
+}
+
+/**
+ * Prints one line per gate and returns the tally. FAIL lines carry both values, because a gate summary
+ * that says only "FAIL" forces a reader back into the artifact to find out what was expected.
+ */
+function printGateSummary(gates, quiet) {
+  var tally = { pass : 0, fail : 0, unevaluated : 0 };
+
+  gates.forEach(function(entry) {
+    if (entry.status === 'PASS')             { tally.pass += 1; }
+    else if (entry.status === 'UNEVALUATED') { tally.unevaluated += 1; }
+    else                                     { tally.fail += 1; }
+
+    if (entry.status === 'PASS' && quiet) {
+      return;
+    }
+
+    console.log('  [' + entry.status + '] ' + entry.name +
+                (entry.status === 'PASS' ? ' = ' + String(stableStringify(entry.actual)).slice(0, 120)
+                                         : ''));
+
+    if (entry.status === 'UNEVALUATED') {
+      console.log('      reason: ' + entry.reason);
+    }
+    else if (entry.status === 'FAIL') {
+      console.log('      expected: ' + String(stableStringify(entry.expected)).slice(0, 400));
+      console.log('      measured: ' + String(stableStringify(entry.actual)).slice(0, 400));
+    }
+  });
+
+  console.log('capture.js: gates ' + tally.pass + ' PASS, ' + tally.fail + ' FAIL, ' +
+              tally.unevaluated + ' UNEVALUATED');
+
+  return tally;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Writing — deliberately hard to do by accident
 // ---------------------------------------------------------------------------------------------
 
@@ -1581,7 +2431,7 @@ function currentHeadCommit() {
  * The gate keys that are NOT recomputed are returned so main() can name them explicitly instead of
  * leaving a reader to assume the whole gate block was re-derived.
  */
-function mergeMeasuredIntoCommitted(committed, measured) {
+function mergeMeasuredIntoCommitted(committed, measured, buildArtifacts) {
   var merged        = JSON.parse(JSON.stringify(committed)),
       notRecomputed = [];
 
@@ -1609,6 +2459,10 @@ function mergeMeasuredIntoCommitted(committed, measured) {
   merged.metadata.capturedAt = measured.capturedAt;
   merged.metadata.finishedAt = measured.finishedAt;
   merged.metadata.serverUri  = measured.serverUri;
+  // The origin the measurement actually ran under, never the one the previous revision recorded: every
+  // absolute Location and every rendered body in the rows above is relative to this value, so a stale
+  // one would make the artifact describe a surface it does not contain.
+  merged.metadata.appUrlOrigin = measured.appUrlOrigin || merged.metadata.appUrlOrigin;
 
   merged.selectionRule.actualCount        = measured.unauthenticated.length;
   // The RESOLVED reading, which is the one the Technical Specification publishes (25/7/25/1). The
@@ -1631,6 +2485,20 @@ function mergeMeasuredIntoCommitted(committed, measured) {
   merged.gates.assignmentNextStatuses          = assignmentNextStatusMap(measured.assignmentNext);
   merged.gates.assignmentNextLocations         =
     assignmentNextLocationMap(measured.assignmentNext);
+
+  // The build artifacts, and ONLY the halves this run could actually measure. An absent stylesheet means
+  // the checkout was never built (responses.json#buildArtifacts.precondition), which is not evidence
+  // that the bytes changed — overwriting a recorded digest with "missing" would destroy a measurement
+  // and replace it with the story of how this particular checkout was set up.
+  if (buildArtifacts && merged.buildArtifacts) {
+    Object.keys(buildArtifacts.files || {}).forEach(function(relative) {
+      merged.buildArtifacts[relative] = buildArtifacts.files[relative];
+    });
+
+    if (buildArtifacts.cssMapFilesEmitted !== null && buildArtifacts.cssMapFilesEmitted !== undefined) {
+      merged.buildArtifacts.cssMapFilesEmitted = buildArtifacts.cssMapFilesEmitted;
+    }
+  }
 
   var recomputed = [
     'measuredDistribution', 'unauthenticatedEntryCount', 'authenticatedEntryCount',
@@ -1657,17 +2525,44 @@ function writeArtifact(artifact) {
 // CLI
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * The command line, parsed with node:util.parseArgs — a Node 22 built-in, so no dependency is added and
+ * neither optimist (a dead package this change removes) nor a hand-rolled loop is needed. `strict` is on
+ * so a mistyped flag fails loudly instead of being silently ignored: `--dryrun` quietly starting a run
+ * that could write is precisely the accident this CLI is shaped to prevent.
+ *
+ * --dry-run is accepted explicitly even though it is the default, so the documented invocation works and
+ * so a script can state its intent. It is mutually reinforcing with --write rather than redundant:
+ * passing both is a contradiction and is rejected.
+ */
 function parseArgv(argv) {
-  var options = { write : false, force : false, quiet : false, out : null };
+  var parsed = nodeUtil.parseArgs({
+    args   : argv,
+    strict : true,
+    allowPositionals : false,
+    options : {
+      write         : { type : 'boolean', default : false },
+      force         : { type : 'boolean', default : false },
+      quiet         : { type : 'boolean', default : false },
+      'dry-run'     : { type : 'boolean', default : false },
+      'routes-only' : { type : 'boolean', default : false },
+      out           : { type : 'string' }
+    }
+  }).values;
 
-  for (var index = 0; index < argv.length; index++) {
-    if (argv[index] === '--write')      { options.write = true; }
-    else if (argv[index] === '--force') { options.force = true; }
-    else if (argv[index] === '--quiet') { options.quiet = true; }
-    else if (argv[index] === '--out')   { options.out = argv[++index]; }
+  if (parsed.write && parsed['dry-run']) {
+    throw new Error('capture.js: --write and --dry-run contradict each other. Pass one or neither; ' +
+                    'a run with no flags is already a dry run.');
   }
 
-  return options;
+  return {
+    write      : parsed.write,
+    force      : parsed.force,
+    quiet      : parsed.quiet,
+    dryRun     : parsed['dry-run'] || !parsed.write,
+    routesOnly : parsed['routes-only'],
+    out        : parsed.out === undefined ? null : parsed.out
+  };
 }
 
 function reportDifferences(differences, quiet) {
@@ -1689,44 +2584,123 @@ function reportDifferences(differences, quiet) {
   });
 }
 
-function main() {
-  var options   = parseArgv(process.argv.slice(2)),
-      committed = loadCommittedCorpus(),
-      server    = null,
-      exitCode  = 0;
+/** The route-table half of the human-readable summary — the values AAP 0.7.5 names as the anchors. */
+function reportRouteTable(measured) {
+  console.log('capture.js: route table rows=' + measured.gates.rowCount +
+              ' methods=' + JSON.stringify(measured.gates.methods) +
+              ' api=' + measured.gates.apiPaths +
+              ' withPre=' + measured.gates.withPreHandlers);
+  console.log('capture.js: route table auth required=' + measured.gates.authRequiredSession +
+              ' false=' + measured.gates.authFalse +
+              ' inheritedTry=' + measured.gates.authTryInherited +
+              ' rawTally=' + JSON.stringify(measured.rawSettingsAuthTally));
+  console.log('capture.js: route table sha256=' + measured.digests.measuredSha256 +
+              ' (first32=' + measured.digests.measuredSha256First32 + ')');
+  console.log('capture.js: route table md5=' + measured.digests.measuredMd5 +
+              ' registrationOrderFingerprint=' + measured.digests.registrationOrderFingerprint);
+}
 
-  configureRuntime();
+/** The corpus half of the human-readable summary, in both readings the artifact publishes. */
+function reportCorpus(measured) {
+  console.log('capture.js: unauthenticated=' + measured.unauthenticated.length +
+              ' authenticated=' + measured.authenticated.length +
+              ' assignmentNext=' + (measured.assignmentNext || []).length);
+  console.log('capture.js: firstHopDistribution=' +
+              JSON.stringify(statusDistribution(measured.unauthenticated)) +
+              ' resolvedDistribution=' +
+              JSON.stringify(resolvedStatusDistribution(measured.unauthenticated)));
+  console.log('capture.js: roles tokens structurally verified before normalization: ' +
+              measured.rolesTokenObservations.length + ' ' +
+              JSON.stringify(measured.rolesTokenObservations));
+}
+
+/**
+ * Measures both artifacts, diffs them against what is committed, evaluates every gate the artifacts
+ * publish, and — only when explicitly asked and only on the base commit — regenerates them.
+ *
+ * Resolves with the process exit code rather than exiting itself, so the single `process.exit` lives in
+ * the guarded entry point below where a synchronous throw is also caught. Exit 0 means three things and
+ * nothing less: every evaluable gate held, nothing differed on a verify run, and a requested write
+ * actually happened. A refused write, a failed gate, an unexpected difference and a thrown error all
+ * exit 1.
+ */
+function main() {
+  var options        = parseArgv(process.argv.slice(2)),
+      committed      = loadCommittedCorpus(),
+      committedTable = loadCommittedRouteTable(),
+      server         = null,
+      differences    = [],
+      gates          = [],
+      measured       = null,
+      exitCode       = 0;
+
+  // A VERIFY run reproduces the app.url origin the corpus was captured under; a WRITE run measures the
+  // live one and records it. See constraint 7 in the file header for the measurement behind this.
+  configureRuntime(options.write ? {} : corpusOriginOverride(committed));
 
   return startServer().then(function(started) {
     server = started;
     console.log('capture.js: real HTTP against ' + server.info.uri +
                 ' (this harness never calls server.inject(); the app still does — PRESERVED-QUIRKS 7.6)');
+    console.log('capture.js: mode=' + (options.write ? 'WRITE' : 'VERIFY (dry run)') +
+                ' app.url origin=' + liveAppUrlOrigin() +
+                ' recorded=' + committed.metadata.appUrlOrigin);
 
-    return captureCorpus(server, committed);
-  }).then(function(measured) {
-    var differences = compareCorpus(committed, measured);
+    if (options.write && liveAppUrlOrigin() !== committed.metadata.appUrlOrigin) {
+      console.log('capture.js: NOTE — this run would record app.url origin ' + liveAppUrlOrigin() +
+                  ', not the ' + committed.metadata.appUrlOrigin + ' the committed artifact carries. ' +
+                  'Every absolute Location and every rendered body would move with it.');
+    }
 
-    console.log('capture.js: unauthenticated=' + measured.unauthenticated.length +
-                ' authenticated=' + measured.authenticated.length +
-                ' assignmentNext=' + measured.assignmentNext.length +
-                ' distribution=' + JSON.stringify(statusDistribution(measured.unauthenticated)));
-    console.log('capture.js: roles tokens structurally verified before normalization: ' +
-                measured.rolesTokenObservations.length + ' ' +
-                JSON.stringify(measured.rolesTokenObservations));
+    var routeTable = captureRouteTable(server);
+
+    differences = differences.concat(compareRouteTable(committedTable, routeTable));
+    gates       = gates.concat(routeTableGates(committedTable, routeTable));
+    reportRouteTable(routeTable);
+
+    if (options.routesOnly) {
+      gates.push(unevaluatedGate('corpus (58 + 7 + 8 entries)',
+                                 '--routes-only: the HTTP corpus was deliberately not walked'));
+
+      return routeTable;
+    }
+
+    return captureCorpus(server, committed).then(function(result) {
+      measured    = result;
+      differences = differences.concat(compareCorpus(committed, measured));
+      gates       = gates
+        .concat(corpusGates(committed, measured, liveAppUrlOrigin()))
+        .concat(cookieContractGates(committed, measured));
+      reportCorpus(measured);
+
+      return routeTable;
+    });
+  }).then(function(routeTable) {
+    var buildArtifacts = measureBuildArtifacts();
+
+    gates = gates.concat(buildArtifactGates(committed, buildArtifacts));
 
     reportDifferences(differences, options.quiet);
+    console.log('capture.js: gate summary — every expectation below is read from the committed ' +
+                'artifacts and every measured value is recomputed from this run:');
 
-    if (options.out) {
+    var tally = printGateSummary(gates, options.quiet);
+
+    if (tally.fail) {
+      exitCode = 1;
+    }
+
+    if (options.out && measured) {
       fs.writeFileSync(options.out, JSON.stringify(measured, null, 2) + '\n', 'utf8');
       console.log('capture.js: measured corpus written to ' + options.out);
     }
 
     if (!options.write) {
       if (differences.length) {
+        exitCode = 1;
         console.log('capture.js: DRY RUN — nothing was written. Every difference above is either an ' +
                     'application-code defect or a harness defect; it must be reported, not written ' +
                     'over. Re-run with --write ONLY on the base commit.');
-        exitCode = 1;
       }
 
       return undefined;
@@ -1734,28 +2708,56 @@ function main() {
 
     var head = currentHeadCommit();
 
+    // A refusal exits 1: the run was asked to write and did not, and an operator (or a CI step) must not
+    // read that as success. Both refusals are lifted only by --force, the single deliberate escape hatch.
     if (head !== committed.metadata.baseCommit && !options.force) {
-      console.log('capture.js: REFUSING to write. HEAD is ' + head + ' but the corpus records ' +
+      exitCode = 1;
+      console.log('capture.js: REFUSING to write. HEAD is ' + head + ' but the artifacts record ' +
                   'baseCommit ' + committed.metadata.baseCommit + '. Overwriting here would replace ' +
                   'base-commit evidence with post-migration values. Pass --force if you genuinely ' +
                   'intend to discard the baseline.');
+
+      return undefined;
+    }
+
+    if (tally.fail && !options.force) {
       exitCode = 1;
+      console.log('capture.js: REFUSING to write. ' + tally.fail + ' gate(s) FAILED above, so this ' +
+                  'measurement contradicts the contract the artifacts publish — that is a regression ' +
+                  'to report, not a new baseline. Pass --force to write it anyway.');
 
       return undefined;
     }
 
     if (head !== committed.metadata.baseCommit) {
-      console.log('capture.js: WARNING — writing the corpus from ' + head + ', which is NOT the ' +
-                  'recorded base commit. The artifact will no longer be baseline evidence.');
+      console.log('capture.js: WARNING — writing from ' + head + ', which is NOT the recorded base ' +
+                  'commit. The artifacts will no longer be baseline evidence.');
     }
 
-    var result = mergeMeasuredIntoCommitted(committed, measured);
+    var table = mergeMeasuredRouteTable(committedTable, routeTable);
 
-    writeArtifact(result.artifact);
+    writeRouteTable(table.artifact);
+    console.log('capture.js: wrote ' + ROUTE_TABLE_PATH);
+    console.log('capture.js: recomputed route-table gates rowCount, methods, apiPaths, ' +
+                'withPreHandlers, authRequiredSession, authFalse, authTryInherited and the four ' +
+                'digests, plus every row. NOT recomputed (hand-derived, verify by hand if the surface ' +
+                'changed): ' + table.notRecomputed.join(', '));
+
+    if (!measured) {
+      console.log('capture.js: --routes-only, so ' + ARTIFACT_PATH + ' was left exactly as committed.');
+
+      return undefined;
+    }
+
+    var corpus = mergeMeasuredIntoCommitted(committed, measured, buildArtifacts);
+
+    writeArtifact(corpus.artifact);
     console.log('capture.js: wrote ' + ARTIFACT_PATH);
-    console.log('capture.js: recomputed gates measuredDistribution, unauthenticatedEntryCount, ' +
-                'authenticatedEntryCount and selectionRule.actualCount. NOT recomputed (hand-derived, ' +
-                'verify by hand if the surface changed): ' + result.notRecomputed.join(', '));
+    console.log('capture.js: recomputed corpus gates measuredDistribution, unauthenticatedEntryCount, ' +
+                'authenticatedEntryCount, the two status distributions, the hop histogram, the ' +
+                'redirect and assignment maps and selectionRule.actualCount. NOT recomputed ' +
+                '(hand-derived, verify by hand if the surface changed): ' +
+                corpus.notRecomputed.join(', '));
 
     return undefined;
   }).then(function() {
@@ -1766,10 +2768,7 @@ function main() {
 
     return stopServer(server);
   }).then(function() {
-    // app.js:L348 installs a 60-second detectLeaks interval that is never unref'd, config/db.js:L35
-    // opens the mongoose connection at module load and config/redis.js creates its client eagerly, so
-    // three handles keep the loop alive after the server stops. Exit explicitly.
-    process.exit(exitCode);
+    return exitCode;
   });
 }
 
@@ -1815,8 +2814,36 @@ module.exports = {
   removeAssignmentSignupUser : removeAssignmentSignupUser,
   captureAssignmentNext    : captureAssignmentNext,
   captureCorpus            : captureCorpus,
+  md5                      : md5,
+  liveServerAuthDefault    : liveServerAuthDefault,
+  effectiveRouteAuth       : effectiveRouteAuth,
+  authDescriptor           : authDescriptor,
+  canonicalRow             : canonicalRow,
+  canonicalizeLiveTable    : canonicalizeLiveTable,
+  registrationOrderRows    : registrationOrderRows,
+  routeTableDigests        : routeTableDigests,
+  captureRouteTable        : captureRouteTable,
+  compareRouteTable        : compareRouteTable,
+  mergeMeasuredRouteTable  : mergeMeasuredRouteTable,
+  writeRouteTable          : writeRouteTable,
+  pushDifference           : pushDifference,
+  BUILD_ARTIFACT_FILES     : BUILD_ARTIFACT_FILES,
+  mapFilesUnder            : mapFilesUnder,
+  measureBuildArtifacts    : measureBuildArtifacts,
+  gate                     : gate,
+  unevaluatedGate          : unevaluatedGate,
+  findEntry                : findEntry,
+  redirectLocationKinds    : redirectLocationKinds,
+  takeoverRedirectPaths    : takeoverRedirectPaths,
+  cookieAttributeVariants  : cookieAttributeVariants,
+  routeTableGates          : routeTableGates,
+  corpusGates              : corpusGates,
+  cookieContractGates      : cookieContractGates,
+  buildArtifactGates       : buildArtifactGates,
+  printGateSummary         : printGateSummary,
   appUrlOrigin             : appUrlOrigin,
   liveAppUrlOrigin         : liveAppUrlOrigin,
+  corpusOriginOverride     : corpusOriginOverride,
   rebaseOrigin             : rebaseOrigin,
   rebaseEmbeddedOrigin     : rebaseEmbeddedOrigin,
   rebaseEntryOrigin        : rebaseEntryOrigin,
@@ -1839,11 +2866,29 @@ module.exports = {
   mergeMeasuredIntoCommitted: mergeMeasuredIntoCommitted,
   writeArtifact            : writeArtifact,
   currentHeadCommit        : currentHeadCommit,
+  parseArgv                : parseArgv,
+  reportDifferences        : reportDifferences,
+  reportRouteTable         : reportRouteTable,
+  reportCorpus             : reportCorpus,
   main                     : main
 };
 
 // AAP 0.7.5: the mocha spec glob is recursive and would otherwise load this file as a spec and run a
-// full capture on every `npm test`. Requiring this module must therefore be inert.
+// full capture on every `npm test`. Requiring this module must therefore be inert — no HTTP, no app.js,
+// no datastore connection, no write and no process.exit happens above this line.
+//
+// The exit is here rather than inside main() so that one place owns it and so that a SYNCHRONOUS throw —
+// a corrupt artifact, an unknown flag, --write together with --dry-run — is reported and exits 1 instead
+// of surfacing as an unhandled error. Promise.resolve().then(main) is what converts such a throw into a
+// rejection this chain can see. Exiting explicitly is mandatory: app.js:L355's un-unref'd 60-second
+// detectLeaks interval, the module-load mongoose connection at config/db.js:L35 and the eager redis
+// client each keep the event loop alive after the server has stopped, which is the same reason
+// .mocharc.json carries "exit": true.
 if (require.main === module) {
-  main();
+  Promise.resolve().then(main).then(function(exitCode) {
+    process.exit(exitCode);
+  }).catch(function(err) {
+    console.error('capture.js: FAILED — ' + (err && err.stack ? err.stack : String(err)));
+    process.exit(1);
+  });
 }

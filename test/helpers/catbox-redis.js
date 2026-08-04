@@ -23,17 +23,13 @@
  * Mocha's `check-leaks` baseline is snapshotted after the helpers load, so removing it would change what
  * that check sees.
  *
- * SERIALIZATION AT THE CACHE BOUNDARY (review finding M7). The fake clones with `structuredClone` on both
- * `set` and `get`, because production does not alias: the engine writes into a Mongoose `Mixed` field and
- * reads back through `.lean()`, so a stored entry is a copy no later in-memory mutation can reach. Sharing
- * one mutable reference silently removed the teeth from every session-invalidation assertion. `structuredClone`
- * rather than a JSON round-trip because it preserves `Date`, as BSON does. `drop` is injectable -
- * `delayDrop`, `failDrop`, `restoreDrop` - so a slow or refused invalidation can be asserted rather than
- * assumed; yar fires `drop` without awaiting it, so use those at engine level only.
- *
- * `expires` below is deliberately kept exactly as the base commit declared it, even though the timer it
- * served is gone: it is an implicit global and Mocha's `check-leaks` baseline is snapshotted after the
- * helpers load, so removing it would change what that check sees.
+ * The fake clones with `structuredClone` on both `set` and `get`, because production does not alias: the
+ * engine writes into a Mongoose `Mixed` field and reads back through `.lean()`, so a stored entry is a
+ * copy no later in-memory mutation can reach. Sharing one mutable reference silently removed the teeth
+ * from every session-invalidation assertion. `structuredClone` rather than a JSON round-trip because it
+ * preserves `Date`, as BSON does. `drop` is injectable - `delayDrop`, `failDrop`, `restoreDrop` - so a
+ * slow or refused invalidation can be asserted rather than assumed; yar fires `drop` without awaiting it,
+ * so use those at engine level only.
  *
  * The evidence behind every claim above - the measured 500s without this helper, the stub-target
  * correction, the millisecond-unit correction and the aliasing measurement - is in

@@ -131,7 +131,7 @@ describe('Trinket model', function(){
     describe('findById', function() {
       it('should include the shortCode as a search criteria', function(done) {
         var doc     = 'foo';
-        var findOne = sinon.spy(function(criteria){ return Promise.resolve(doc); });
+        var findOne = sinon.spy(function(criteria){ return Promise.resolve(doc) });
         var scope   = { model : { findOne : findOne } };
         var query   = { shortCode : 'abc123' };
         var cb      = function(err, result) {
@@ -139,20 +139,19 @@ describe('Trinket model', function(){
           findOne.calledWithExactly(query, cb).should.be.false;
           done();
         };
-        
+
         Trinket.classMethods.findById.call(scope, 'abc123', cb);
       });
 
       it('should return the results of the findOne call', function(done) {
         var doc     = 'foo';
-        var findOne = sinon.spy(function(criteria){ return Promise.resolve(doc); });
+        var findOne = sinon.spy(function(criteria){ return Promise.resolve(doc) });
         var scope   = { model : { findOne : findOne } };
-        var query   = { shortCode : 'abc123' };
         var cb      = function(err, result) {
           result.should.eql('foo');
           done();
         };
-        
+
         Trinket.classMethods.findById.call(scope, 'abc123', cb);
       });
     });
@@ -162,6 +161,8 @@ describe('Trinket model', function(){
       var callScope;
 
       before(function(done) {
+        // R-6: production calls `findByIdAndUpdate(id, update, options)` and awaits the promise, and
+        // `interaction.save()` takes no arguments. See docs/PRESERVED-QUIRKS.md.
         var findByIdAndUpdate = sinon.spy(function(id, update, options){
           return Promise.resolve({
             _id : 'id',

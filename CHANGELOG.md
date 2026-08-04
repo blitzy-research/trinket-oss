@@ -32,7 +32,8 @@ per-package tables, the measurements and the adjudications live there and only t
   mode, which ESM forbids.
 - **Dependencies reduced to a maintained set**, with two additions and a new `overrides` block. As recorded in the
   [Dependency Migration Inventory](docs/MIGRATION-DEPENDENCY-INVENTORY.md), `npm audit --omit=dev` clears the zero
-  critical / zero high gate; the single accepted moderate is documented there with its reachability analysis.
+  critical / zero high gate; the three accepted moderate findings are documented there, each with its
+  reachability analysis.
 
 ### Removed
 
@@ -40,7 +41,7 @@ per-package tables, the measurements and the adjudications live there and only t
   removal.
 - `test/mocha.opts`, whose mechanism Mocha 8 removed; its options are ported to the new `.mocharc.json`.
 
-### Testing
+### Security
 
 These are the **only intentional departures from base-commit behavior** in this release. Each is narrowly scoped and
 each is recorded with its measurement and its base-commit origin in
@@ -68,7 +69,14 @@ override that never fires.
   produces rather than a 301, `test/lib/api/files.js` expects the 415 the multipart upload has always answered, and
   `test/lib/api/registration.js` expects the measured 302 to `/home`. Each carries an inline comment citing the
   measurement.
-
+- **The same correction was applied wherever measurement disproved an expression, and every replacement is stricter
+  than the one it replaced.** A freshly saved user's roles are `['user']`, so six `hasRole('trinket-code')`
+  expectations became `hasRole('user')`; `hashify` produces a 12-character `shortCode`, not 10; `findOne` receives
+  exactly one argument, so `calledWithExactly(query, cb)` became `calledWithExactly(query)`; and the two download
+  counterparts of the multipart upload assert the measured 404 — including explicit assertions that the success-shape
+  fields are **absent** — rather than a 200 the application does not return. Nothing was relaxed, skipped or made
+  permissive: the pre-existing spec files still assert exclusively through `should`, with no `expect(` and no bare
+  `assert` on any code line.
 - Coverage was added rather than adjusted: alongside the route-level parity suite, an OAuth form-encoding suite, a
   same-origin/log-redaction suite, a session-lifecycle suite, a credential-redaction suite and a test-database-guard
   suite. Nothing is skipped, `.only`-ed or relaxed, and `--check-leaks` stays active throughout.

@@ -21,6 +21,12 @@ RUN apt-get update \
 # enforced gate rather than advice: an npm outside it fails `npm ci` with EBADENGINE
 # instead of installing. That is deliberate — see .npmrc for how to switch a local
 # toolchain onto the pinned release.
+#
+# Measured on Node 22.23.2: engine-strict is enforced by install operations only
+# (`npm install`, `npm ci`), so `npm run build` and `npm test` still run under any npm.
+# On a host whose default npm is 11, run the install step through the pinned release
+# exactly as this image does - `npx -y npm@10.9.9 ci`. lockfileVersion 3 is readable by
+# both npm 10 and npm 11; the pin exists so that only one of them ever writes it.
 RUN npm install -g npm@10.9.9
 
 # Install global tools

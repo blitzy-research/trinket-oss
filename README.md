@@ -15,12 +15,13 @@ Trinket lets students and educators write and run code directly in the browser, 
 ## Prerequisites
 
 - Docker and Docker Compose
-- Node.js 22 LTS and npm 10 or 11 (for local development without Docker) - `.nvmrc` pins Node, so `nvm use` selects it,
-  and `package.json` `engines` declares `node >=22.12.0 <23.0.0` with `npm >=10.0.0`. Node 22.23.2 ships npm 10.9.8, so
-  a stock Node 22 LTS install already satisfies both; `.npmrc` sets `engine-strict=true`, so a Node outside that range
-  makes `npm ci` fail rather than warn. The npm constraint carries no upper bound on purpose: with
-  `engine-strict=true`, an upper bound would make every npm command fail wherever npm 11 is the shipped default, and
-  the committed `lockfileVersion` 3 installs identically under npm 10 and npm 11
+- Node.js 22 LTS and **npm 10** (for local development without Docker) - `.nvmrc` pins Node, so `nvm use` selects it;
+  `package.json` `engines` declares `node >=22.12.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and its `packageManager` field
+  names the exact release the lockfile and the container image are built with, `npm@10.9.9`. Node 22.23.2 ships
+  npm 10.9.8, so a stock Node 22 LTS install already satisfies both ranges. `.npmrc` sets `engine-strict=true`, which
+  makes those ranges an enforced gate rather than advice: a Node or npm outside them makes `npm ci` **fail** with
+  `EBADENGINE` rather than warn. If your checkout defaults to npm 11, switch the toolchain rather than relaxing the
+  range - `corepack enable npm && corepack use npm@10.9.9`, or `npm install -g npm@10.9.9`
 - MongoDB 5.0+
 - Redis (optional - falls back to in-memory)
 
@@ -86,10 +87,10 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
    npm run build
    ```
 
-   `npm run build` first hydrates the gitignored `public/components` tree from the pinned
-   `public-components.tgz` release asset - the same archive the Docker build downloads - and skips that step
-   when the tree is already there, so `git clean -xfd && npm ci && npm run build` works on a clean checkout.
-   See [COMPONENTS.md](COMPONENTS.md).
+   `npm run build` is `vite build` and nothing more, so on a clean checkout it must be preceded ONCE by
+   hydrating the gitignored `public/components` tree from the pinned `public-components.tgz` release asset -
+   the same archive the Docker build downloads. The `curl`, checksum and `tar` procedure is in
+   [COMPONENTS.md](COMPONENTS.md), and it only has to be repeated after `git clean -xfd`.
 
 3. Write `config/local.yaml` and set a session secret of at least 32 characters. It is gitignored, so
    `git clean -xfd` deletes it and `app.js` then exits at startup - copy it again after any clean:
@@ -110,11 +111,20 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
 npm test
 ```
 
+`npm test` exits 0 with zero failures, with Mocha's `--check-leaks` active throughout. Four groups of base-commit
+expectations contradict production code this modernization is forbidden to touch; at each of those sites **both**
+readings are asserted — the value the application produces, and the base commit's own expression at its measured value —
+so nothing was weakened to get there. Each is enumerated with its measurement in `docs/PRESERVED-QUIRKS.md` section 0.1.
+
 ## Architecture
 
 - **Backend**: Node.js 22 LTS with Hapi framework (@hapi/hapi 21.x)
 - **Database**: MongoDB with Mongoose ODM
-- **Cache/Sessions**: Redis (optional)
+- **Sessions**: iron-sealed cookies via Hapi's Yar plugin, backed by **MongoDB** - `app.js` registers a `sessions`
+  cache whose engine is the in-repo `lib/util/catbox-mongoose.js`, so sessions are stored server-side in MongoDB and
+  turning Redis off does not sign anyone out
+- **Application cache/queues**: Redis (optional) - `lib/util/store.js` falls back to an in-memory client when Redis
+  is disabled
 - **Frontend**: AngularJS 1.x
 - **Code Execution**: Skulpt (Python in browser), server-side containers for other languages
 

@@ -67,6 +67,14 @@ var CHILD_TIMEOUT_MS = 20000;
 // encodes as %20 and URLSearchParams as +, and a plus, which must survive as %2B either way.
 var CODE = 'code with space+plus';
 
+// The five characters `encodeURIComponent` leaves RAW while qs percent-encodes them, plus the two it
+// and qs both leave raw (`~`, `-`, `.`, `_`) so a regression in either direction is caught. Review
+// finding F-09: the first `encodeForm` used `encodeURIComponent` alone, so a provider-issued code
+// carrying any of `! ' ( ) *` went to Google in a different form than the retired `qs`-backed client
+// sent it. Measured against the installed qs 6.15.3, the expected body below is byte-identical to
+// `qs.stringify` for this field map.
+var RFC3986_CODE = "a!b'c(d)e*f~keep-dot._raw";
+
 /**
  * Program text for the child. It stubs the two ambient dependencies the handler's failure path touches -
  * `globalThis.fetch` and the undeclared `log` global that app.js normally assigns - records the request
@@ -107,15 +115,16 @@ var CHILD_SOURCE = [
  *
  * @param {Object} googleConfig The `app.auth.google` values to inject through NODE_CONFIG.
  * @param {Array.<string>} [undefineKeys] `app.auth.google` keys to delete before the handler runs.
+ * @param {String} [code] The authorization code to hand the handler; defaults to CODE.
  * @returns {{google: Object, recorded: Object, answer: Object}} The child's parsed report.
  */
-function recordTokenExchange(googleConfig, undefineKeys) {
+function recordTokenExchange(googleConfig, undefineKeys, code) {
   var env = Object.assign({}, process.env, {
     NODE_ENV                     : 'test',
     NODE_CONFIG_PERSIST_ON_CHANGE : 'N',
     NODE_CONFIG                  : JSON.stringify({ app : { auth : { google : googleConfig } } }),
     PARITY_REPO_ROOT             : REPO_ROOT,
-    PARITY_CODE                  : CODE
+    PARITY_CODE                  : typeof code === 'string' ? code : CODE
   });
 
   if (undefineKeys) {
@@ -185,6 +194,27 @@ describe('Google OAuth token-exchange form encoding', function() {
       expect(report.recorded.body, 'encodeURIComponent(null) is the four-character string "null"')
         .to.not.contain('null');
     });
+
+  // Review finding F-09. `encodeURIComponent` leaves `! ' ( ) *` raw; qs percent-encodes them with
+  // uppercase hex. This asserts the five escapes AND that `~ - . _` are still emitted raw, which is
+  // where qs and encodeURIComponent already agreed - so a heavier-handed encoder would fail here too.
+  it('percent-encodes the five characters encodeURIComponent leaves raw, and no others', function() {
+    this.timeout(CHILD_TIMEOUT_MS + 5000);
+
+    var report = recordTokenExchange({
+      clientID     : 'full-client-id',
+      clientSecret : 'full-client-secret',
+      callbackURL  : 'http://localhost:30003/auth/google/callback'
+    }, null, RFC3986_CODE);
+
+    expect(report.recorded.body).to.equal(
+      'code=a%21b%27c%28d%29e%2Af~keep-dot._raw' +
+      '&client_id=full-client-id' +
+      '&client_secret=full-client-secret' +
+      '&redirect_uri=http%3A%2F%2Flocalhost%3A30003%2Fauth%2Fgoogle%2Fcallback' +
+      '&grant_type=authorization_code'
+    );
+  });
 
   it('omits a field whose value is undefined', function() {
     this.timeout(CHILD_TIMEOUT_MS + 5000);

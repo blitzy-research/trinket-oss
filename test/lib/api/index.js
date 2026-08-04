@@ -4,11 +4,18 @@
 // on the accounts `registration` created, `course`/`profile`/`logout` depend on the session `login`
 // established, and so on. AAP 0.7.6 records the same constraint.
 //
-// 'route-parity' is appended LAST for two reasons. It is the only suite that asserts against the R-6
-// baseline corpus rather than against fixtures it created itself, so running it last proves the parity
-// gates still hold after the other eight suites have written to the database; and it drives every request
-// through a fresh unauthenticated supertest agent, so it neither consumes nor disturbs the session state
-// the earlier suites share.
+// 'route-parity' is appended after the original nine for two reasons. It is the only suite that asserts
+// against the R-6 baseline corpus rather than against fixtures it created itself, so running it late
+// proves the parity gates still hold after the other eight suites have written to the database; and it
+// drives every request through a fresh unauthenticated supertest agent, so it neither consumes nor
+// disturbs the session state the earlier suites share.
+//
+// 'session' is appended LAST (review finding M7). It proves session-id rotation on login and session
+// invalidation on logout by replaying pre-transition cookies, which means it needs to log in and out
+// repeatedly. It therefore creates and removes its own account rather than reusing `defaults.user` -
+// whose password forgot_pass.js deliberately changes - drives every request through a cookie slot no
+// other suite touches, and restores `flow.activeUser` when it finishes. Running it last means even that
+// restoration cannot matter.
 var db       = require('../../helpers/db'),
     sequence = [
     'registration',
@@ -20,7 +27,8 @@ var db       = require('../../helpers/db'),
     'logout',
     'forgot_pass',
     'trinket',
-    'route-parity'
+    'route-parity',
+    'session'
   ];
 
 describe('API tests', function() {

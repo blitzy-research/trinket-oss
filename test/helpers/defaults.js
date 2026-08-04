@@ -1,3 +1,9 @@
+// The suite's bootstrap, required explicitly because `config` on the next line resolves its layers on the
+// first require and `.mocharc.json` carries no `require` preload to guarantee the order. See the note at the
+// head of test/helpers/db.js; requiring it here is what makes a single-file run of any model spec - all of
+// which reach this module - resolve the same configuration as a full `npm test`.
+require('../setup');
+
 var _        = require('underscore'),
     config   = require('config'),
     defaults = {};
@@ -56,19 +62,12 @@ defaults.content = {
   content: 'test content'
 };
 
-// dependency swap - `diff` moves 1.0.8 -> 9.0.0 (see the delivered dependency inventory).
-// R-6 ADJUDICATION. flow.addNewMaterial posts defaults.material, which carries no `content`, so
-// lib/controllers/course.js#updateMaterial applies this patch to an EMPTY base. The previous
-// literal used an abbreviated hunk header ('@@ -1 +1,2 @@') whose context line does not exist in
-// an empty base; diff 1.0.8's header regex could not parse that form at all, so it skipped context
-// verification entirely and spliced the added lines in at index 0, which is the only reason the
-// stale patch ever applied. No client emits that shape. The literal below is byte-for-byte what
-// the browser's pinned jsdiff 1.0.8 - see config/default.yaml and
-// public/js/courseEditor/controllers/materialControl.js:L321 - emits for the real first edit on an
-// empty page, createPatch(id, '', 'test content\nNo newline at end of file\n'). Measured against
-// BOTH diff 1.0.8 and diff 9.0.0, applyPatch('', patch) returns exactly
-// 'test content\nNo newline at end of file\n', so the existing assertion in test/lib/api/course.js
-// is unchanged and unweakened and the fixture now pins the real production patch shape.
+// Dependency swap - `diff` moves 1.0.8 -> 9.0.0 (see docs/MIGRATION-DEPENDENCY-INVENTORY.md). MEASURED
+// on the installed diff 9.0.0: the base literal's abbreviated header ('@@ -1 +1,2 @@') makes
+// applyPatch return false, so the route answered 500. The literal below is the shape the browser's
+// pinned jsdiff actually emits for a first edit on an empty page, and it is the form
+// lib/controllers/course.js#updateMaterial normalises. The assertion in test/lib/api/course.js is
+// unchanged. See docs/PRESERVED-QUIRKS.md sections 3.17 and 13.7.
 defaults.patch = {
   patch: '@@ -1,0 +1,2 @@\n+test content\n+No newline at end of file\n'
 }

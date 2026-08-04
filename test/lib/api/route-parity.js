@@ -155,7 +155,7 @@ module.exports = function() {
         declared.should.eql(committedTable.gates.declaredRouteEntries);
         require('config').routes.length.should.eql(committedTable.gates.rowCount);
         (declared + committedTable.gates.synthesizedRoutes).should.eql(committedTable.gates.rowCount);
-        committedTable.gates.digestAuthority.should.eql('measuredSha256');
+        committedTable.gates.regressionDigest.should.eql('measuredSha256');
       });
 
       /**
@@ -163,12 +163,20 @@ module.exports = function() {
        * and is not replaced by any measurement. Asserting its presence and its exact value means a later
        * edit cannot quietly promote a fingerprint into its place, which is the defect this suite exists
        * to prevent (route-table.json#gates.authority, ADJ-4).
+       *
+       * Review finding F-11: the artifact used to characterize the same measured digest as subordinate,
+       * as the authority and as a replacement, in one block. The three assertions below pin the corrected
+       * characterization - documented digest retained, measurement subordinate, and the documented GATE
+       * recorded as UNSATISFIED rather than inferred from a flag that reads as though every documented
+       * anchor had been reproduced. R-6 is not claimed to pass on the strength of this file.
        */
-      it('retains the documented digest verbatim beside the measured fingerprints', function() {
+      it('retains the documented digest verbatim and records its gate as unsatisfied', function() {
         committedTable.gates.documentedDigest.should.eql('cd2a7e38a39bd84902ac1a0d69f50e2a');
         committedTable.gates.documentedDigestLabelledAs.should.eql('sha256');
+        committedTable.gates.documentedDigestReproduced.should.eql('none');
+        committedTable.gates.documentedDigestGateSatisfied.should.eql(false);
         committedTable.gates.measuredFingerprintsAreSubordinate.should.eql(true);
-        committedTable.gates.documentedAnchorsAllReproduced.should.eql(true);
+        committedTable.gates.documentedAnchorsExceptDigestAllReproduced.should.eql(true);
       });
     });
 

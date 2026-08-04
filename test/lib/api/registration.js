@@ -3,11 +3,6 @@ var sinon         = require('sinon'),
     flow          = require('../../helpers/flow'),
     defaults      = require('../../helpers/defaults'),
     config        = require('config'),
-    // Dependency swap: the deprecated url-module parser is replaced by the proven pathname helper, which
-    // reproduces `require('url').parse(x).pathname` byte-for-byte (see test/lib/util/legacy-pathname.js).
-    // `URL.parse` alone is not usable here because this assertion reads a RELATIVE Location header, for
-    // which the static form returns null.
-    legacyUrl     = require('../../../lib/util/legacyUrl'),
     ObjectId      = require('mongoose').Types.ObjectId;
 
 module.exports = function() {
@@ -100,7 +95,11 @@ module.exports = function() {
           .end(function(err, response) {
             should.not.exist(err);
             response.statusCode.should.eql(302);
-            legacyUrl.pathname(response.headers.location)
+            // Dependency swap: the deprecated `url.parse()` becomes the non-throwing static
+            // `URL.parse()`. `config.url` is supplied as the base because this Location header is
+            // RELATIVE, for which the base-less static form answers null; the base is ignored outright
+            // when a header is already absolute, so both shapes read the same pathname.
+            URL.parse(response.headers.location, config.url).pathname
               .should.eql('/u/' + defaults.user.username + '/classes/' + sampleCourse.slug);
             done();
           });

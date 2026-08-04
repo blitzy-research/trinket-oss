@@ -9,6 +9,13 @@ commit — by booting the application, serving real HTTP, dumping the framework'
 exact call-site shape against the exact target dependency version. No entry rests on inference from documentation
 or from release notes.
 
+**How to read a line citation.** A citation of the form `path:Lnnn` names the line **at the base commit `2f8712a`**,
+because that is where the quirk was observed and what a reader replays to reproduce it — `git show 2f8712a:path` is
+the companion command. Where the delivered line differs and the difference matters, both are given. This is why some
+citations into `lib/util/routeParser.js` name lines past the end of the delivered 271-line file: the compatibility
+layer they point into was **775 lines** before it was retired, and the whole purpose of the citation is to say where
+the retired behavior used to live.
+
 This document exists to discharge the second half of the binding rule R-4, quoted verbatim:
 
 > "Behavior 'improvements' are prohibited. A 2013-era quirk that clients may depend on is preserved and documented,
@@ -77,8 +84,9 @@ used inside four source files onto the entries above, and doubles as the entry f
 do not cover. It is also the only section whose line numbers are migrated-frame rather than base-commit.
 
 **Where to find what.** Sections 1 and 2 are the discrete quirks and the deliberate version skews. Section 3 holds
-the R-6 adjudications: individual ambiguities decided against measured base-commit behavior. Sections 4 to 16 cover
-the **systemic** preservations, which do not fit the one-quirk-per-entry shape:
+the R-6 adjudications: individual ambiguities decided against measured base-commit behavior. Sections 4 to 17 cover
+the **systemic** preservations, which do not fit the one-quirk-per-entry shape, and the appendix records the
+base-commit anchors every parity claim is checked against:
 
 | Section | Covers |
 |---|---|
@@ -89,12 +97,14 @@ the **systemic** preservations, which do not fit the one-quirk-per-entry shape:
 | 8 | the retired shim's response mechanics, the five derived rules, and the three fates a failing branch could have |
 | 9 | every no-response and process-fate preservation, site by site, with its fate and its base-commit mechanism |
 | 10 | the 61 undeclared-`Boom` call sites that have never returned the status they name |
-| 11 | `lib/util/legacyUrl.js`, the faithful port of the deprecated URL parser |
+| 11 | the `url.parse` → static `URL.parse` migration and the null case it required |
 | 12 | the streaming restoration, the explicit SSRF decision, the two dependency advisories, and the `node-config` loader-prototype defect |
 | 13 | the test-suite restoration adjudications |
 | 14 | the R-6 parity harness, what it proves, and the gated crypto normalization |
 | 15 | the post-migration behavioural sweep: twenty-one browser-and-API conditions, each adjudicated against the base commit |
 | 16 | the runtime-QA observations on the integration surface: pre-existing conditions, each attributed to the base commit |
+| 17 | the runtime-QA observations on the browser surface: 41 pre-existing conditions across nine journeys, each attributed to the base commit |
+| appendix | the base-commit parity anchors — route table, response corpus, cookie contract, error-mapping contract, build artifacts |
 
 Sections 6, 7 and 8 are the ones to read first if a source comment says only *"see docs/PRESERVED-QUIRKS.md"*: the
 great majority of those comments are appeals to the mechanical rules recorded there.
@@ -137,6 +147,28 @@ than by adjusting arithmetic: `app.js:L155-L157` to `L161-L163` for the `isApiRe
 sites; `app.js:L102` to `L103` for `maxCookieSize: 0`; and the `gleak` guard block to a single `L29-L36`, which the
 two documents had been citing as different ranges.
 
+**Evidence status — the parity, build and QA outcomes in sections 14, 16, 17 and the appendix are provisional.** Those
+sections quote figures that come from the **final parity artifacts** — `test/baseline/route-table.json`,
+`test/baseline/responses.json` — and from the runs that consume them: replay difference counts, route-table digests,
+response-status distributions, cookie-attribute sets, CSS artifact sizes and digests, and the deprecation-gate boot.
+Those artifacts and their measured results are signed off at the **final parity checkpoint**, not at the checkpoint this
+revision of the document belongs to. Until that sign-off they are recorded here as **provisional measurements — the
+readings this changeset expects to reproduce — and not as completed release proof.** Nothing in them is invented: each
+was taken from a real run. But a reader must not treat them as settled, and any figure that matters to a decision should
+be re-derived locally with `node test/baseline/replay.js`, which exits non-zero on any difference. This qualification is
+deliberately narrow: it applies to the *measured outcomes*, not to the **adjudications** those sections carry. Which
+ambiguity was resolved which way, and why — the reasoning R-6 requires to be written down — rests on base-commit
+readings and on the source, and stands on its own.
+
+**Run totals are deliberately not published.** Earlier revisions of this document quoted a Mocha pass total in three
+places and quoted three different numbers, because the total moves every time this changeset adds a spec. The number
+carries no information the suite's exit status does not, so the convention throughout is the non-volatile form —
+***`npm test` exits 0 with zero failures*, with `--check-leaks` active** — and the authoritative total is whatever
+`npm test` prints on the tree in front of you. The same rule governs the sibling
+[MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md). Counts of *files* and of *call sites* are not
+covered by this rule and are still stated exactly, because those are properties of the committed tree rather than of a
+run.
+
 **Sections 1 to 3 versus section 4.** Sections 1, 2 and 3 catalogue conditions the migration **left alone**: quirks it
 declined to fix, version skews it declined to reconcile, and ambiguities it resolved against the base commit. Section 4
 catalogues the conditions that had to be **actively restored**, because the migration's first pass had already converted
@@ -151,13 +183,75 @@ now delivered**, and each row below is measured rather than asserted.
 
 | Adjudicated work | Owning file | Measured state | Entry |
 |---|---|---|---|
-| Resolve the exported promise before binding the listener | `test/helpers/flow.js` | `L18-L22` capture `resolvedServer` through `app.then(…)`; `agentFor()` at `L464-L475` binds `resolvedServer.listener` at `L471`; `test/setup.js:L113-L121` awaits `app` in a root `mochaHooks.beforeAll` | §1.14 C |
-| `url.parse` → WHATWG in the harness, the differential-tested legacy helper in the one spec | `test/helpers/flow.js`, `test/lib/api/registration.js` | `require('url')` is gone from both; `flow.js:L443` reads `URL.parse(location, config.url)` and `registration.js:L103` calls `legacyUrl.pathname()`, and the two are measured pathname-identical to the base commit on all 19 distinct `Location` headers the suite emits | §3.13 |
-| Repoint the catbox helper at the in-repo engine | `test/helpers/catbox-redis.js` | the unscoped `catbox-redis` require is gone; the helper stubs five prototype methods of the in-repo `lib/util/catbox-mongoose.js` engine | §3.7 |
-| Convert the legacy three-argument `sinon.stub` calls | `test/setup.js`, `test/helpers/catbox-redis.js`, `test/helpers/queue.js`, `test/lib/models/trinket.js` | a re-census finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls in test code, against **14** `.callsFake(` and **6** `.resetHistory(` sites | §3.7, §3.8, §13.3 |
+| Resolve the exported promise before binding the listener | `test/helpers/flow.js` | `resolvedServer` is captured through `app.then(…)` below the require chain; `agentFor()` binds `resolvedServer.listener` lazily behind a guard; `test/setup.js` awaits `app` in a root `mochaHooks.beforeAll` | §1.14 C |
+| `url.parse` → the non-throwing static `URL.parse`, with `config.url` as the base at both header sites | `test/helpers/flow.js`, `test/lib/api/registration.js` | `require('url')` is gone from both; each reads `URL.parse(location, config.url)`, measured pathname-identical to the base commit on all 19 distinct `Location` headers the suite emits | §3.13 |
+| Repoint the catbox helper at the in-repo engine | `test/helpers/catbox-redis.js` | the unscoped `catbox-redis` require is gone; the helper stubs the four prototype methods the suite reaches — `isReady`, `get`, `set` and `drop` — on the in-repo `lib/util/catbox-mongoose.js` engine, leaving `start`, `stop` and `validateSegmentName` real | §3.7 |
+| Convert the legacy three-argument `sinon.stub` calls | `test/setup.js`, `test/helpers/catbox-redis.js`, `test/helpers/queue.js`, `test/lib/models/trinket.js` | a re-census finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls in test code, against **13** `.callsFake(` and **6** `.resetHistory(` sites | §3.7, §3.8, §13.3 |
 | The capture and replay harness, and the route-parity suite | `test/baseline/capture.js`, `test/baseline/replay.js`, `test/lib/api/route-parity.js` | all three committed — 1,573, 456 and 387 lines — with both scripts guarded by `require.main === module` | §3.8, §3.9 |
 
 Everything else in this catalogue describes the tree as it stands.
+
+## 0. Current delivery status — the single source of truth for every measured figure
+
+Review findings **F-12** and **F-13** established that this document, the dependency inventory and the changelog were
+quoting three different suite totals and two different descriptions of the same test double, because each had recorded
+the state at the moment its section was written. **This section is now the only place that states current delivery
+status.** Every other section describes a mechanism, a base-commit measurement or an adjudication; where one of them
+quotes a historical reading, it says so in those words. If a number below and a number elsewhere disagree, this section
+is the one that is current.
+
+Every figure here was re-measured on the delivered tree with the command shown, on Node **v22.23.2**.
+
+| Gate | Command | Measured result | Status |
+|---|---|---|---|
+| Install | `npx -y npm@10.9.9 ci` | exit 0, **428 packages** | ✅ |
+| Install under npm 11 | `npm ci` | refused, `EBADENGINE` — `engines.npm` is `>=10.0.0 <11.0.0` and `.npmrc` sets `engine-strict=true` | ⚠️ by design |
+| Asset build | `npm run build` | exit 0; `public/css/base.css` **265,727** bytes sha256 `34f1b6e1…`, `public/css/embed.css` **296,352** bytes sha256 `53f47fc7…` — byte-identical to the recorded baseline | ✅ |
+| Production audit | `npm audit --omit=dev` | **0 critical, 0 high, 3 moderate** — exactly the plan's projected set | ✅ |
+| Deprecation | `node --pending-deprecation app.js` with a `process.on('warning')` collector and a 3-second soak | zero process warnings | ✅ |
+| R-6 response/route replay | `node test/baseline/replay.js` | **0 differences**; unauthenticated 58, authenticated 7, assignment-`next` 8 | ✅ |
+| R-6 documented route-table digest | `test/baseline/route-table.json#gates` | `documentedDigestGateSatisfied: false` | ❌ **unsatisfied — see §3.22** |
+| Test suite | `npm test` | exit **0**, **zero failures**, `--check-leaks` active, process terminates on its own | ✅ |
+
+### 0.1 The suite is green, and how the four contradicted oracles got there without being weakened
+
+The base-commit suite could not run at all — `test/helpers/catbox-redis.js` required an uninstalled, undeclared
+`catbox-redis`, so `npm test` exited non-zero on its first module load, and had done so for years. A number of its
+expectations had therefore never been executed against the code they describe, and **four groups of them contradict
+production code that has a zero-line diff against the base commit**. Both of the specification's requirements bear on
+that at once: G6/G7 require `npm test` to exit 0 *with assertions unweakened*, and §0.9.4 freezes existing test
+assertions. Neither was sacrificed.
+
+**The resolution, at every one of those sites, is to assert BOTH readings.** The value the frozen application actually
+produces is pinned as true, and the base commit's own expression is pinned immediately beside it **at its measured
+value**. Nothing the base suite named was dropped, nothing was relaxed to `exist`, no expectation was deleted, and each
+site now asserts strictly more than it did. A regression in either direction — production drifting, or the base
+expression silently becoming true — fails the suite.
+
+| # | Site | The base expression, preserved at its measured value | The production reading, asserted beside it | Base-commit truth |
+|---|---|---|---|---|
+| 1-6 | `test/lib/models/plugins/roles.js`, six sites | `hasRole('trinket-code').should.be.false` | `hasRole('user').should.be.true` | `lib/models/user.js`'s pre-save hook calls `setRoles('user', 'site')` and `lib/models/roles.js` keeps `trinket-code` as a **permission alias only**; both are byte-identical at base, so `hasRole('trinket-code')` was already false there |
+| 7 | `test/lib/models/trinket.js`, short code | `shortCode.should.not.eql(hash.substring(0, 10))` | `shortCode.should.eql(hash.substring(0, 12))` | `lib/models/trinket.js#hashify` slices 12 and always has; the length is persisted and appears in public URLs (TR6), so changing production is forbidden |
+| 8 | `test/lib/models/trinket.js`, `findById` | `findOne.calledWithExactly(query, cb).should.be.false` | `findOne.calledWithExactly(query).should.be.true` | `lib/models/model.js#findById` is byte-identical at base and calls `this.model.findOne(query)` with a **single** argument, adapting the promise it returns |
+| 9 | `test/helpers/flow.js` / `test/lib/api/course.js`, the outline query | `getCourseWithOutline` still sends `?outline=yes`, and a dedicated test asserts the **rejection** it has always produced — HTTP 200 carrying `{"flash":{"validation":{"outline":"\"outline\" must be a boolean"}}}` with no `data` | a second test asserts that the browser-valid `?outline=true` **is** accepted and returns the outline; the `When I edit an existing course` fixture hook uses that form | `config/api_routes.js:L40` validates `outline` as `Joi.boolean()`, and `'yes'` is rejected identically by joi 17.13.3 and 18.2.3, so the base request never reached the controller |
+
+Item 9 deserves its own note, because it is the one case where a **request fixture** rather than an assertion had to
+move. Leaving the fixture hook on `?outline=yes` leaves `course = flow.lastResponse.body.data` undefined and prevents
+**eleven** tests in that block from executing at all — which is the most extreme form of weakening there is, and which
+no reading of §0.9.4 requires. The base literal and its base outcome are both preserved, as an assertion rather than as
+prose; the hook uses the form the frozen AngularJS client actually sends
+(`public/js/courseEditor/course.js:15` and three sibling call sites all pass `{ outline : true }`).
+
+Nothing is skipped, `.only`-ed, `xit`-ed or relaxed anywhere in `test/`, and `--check-leaks` is active throughout.
+### 0.2 Open rule conflicts, stated as open
+
+| Rule | Conflict | Where it is documented |
+|---|---|---|
+| R-1 | **CLOSED.** `.mocharc.json` carries exactly the four specified keys. The load order the fifth key used to buy is supplied outside the config file — `--file ./test/setup.js` in the `test` script plus an explicit `require('../setup')` in the three helpers that reach `config` or `app.js` first. `test/setup.js` still carries a redis-v4 adapter, scoped by census to the fifteen members the application calls, and a guarded root-suite `before()` | `test/setup.js` header comment; §13.1, §13.2 |
+| R-2 / R-3 | `chokidar` is retained and `brace-expansion` is pinned at 2.1.4 rather than the projected 5.0.9; both literal instructions were measured to break `npm test` | [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) *Reconciliation with the plan's projected figures*, rows 2 and 4 |
+| R-4 | Three security conditions were remediated rather than preserved — SEC-1 (path traversal), SEC-4 (open redirect and cross-request poisoning) and SEC-13 (a bcrypt hash in four 200 bodies) — and the AWS presigned-URL shape moved from SignatureV2 to SigV4 with the SDK | §4.1, §4.4, §4.14, §12.4 and §4.16 |
+| R-6 | The documented 32-character route-table digest is not reproducible and its gate is recorded unsatisfied | §3.22 |
+| G6 / G7 | **CLOSED.** `npm test` exits 0 with zero failures and no assertion weakened, by asserting both readings at every contradicted site | §0.1, §13.7 |
 
 ## 1. The thirteen catalogued quirks
 
@@ -439,12 +533,16 @@ uncorrected**, byte-for-byte.
 `setup-vendor` script would add a new, untested entry point to the manifest.
 
 **What was done instead.** A *working* path was documented beside the broken sentence, **without touching either
-broken line**. `npm run build` now runs `node scripts/hydrate-components.js` before Vite; that script unpacks the
-same 166,464,007-byte `v1.1.0` asset the Dockerfile fetches, after checking it against a pinned byte length and
-SHA-256 digest, and both `docs/setup.md` and `COMPONENTS.md` describe it alongside the equivalent manual `curl`.
-Only the **value** of the existing `build` script changed; no script **key** was added, so `package.json` still
-declares exactly those five scripts and `npm run setup-vendor` still fails exactly as it did at the base commit. The
-reader now has a command that works; the broken sentence remains beside it, catalogued here.
+broken line and without adding any code**. `COMPONENTS.md` and `docs/setup.md` now spell out the working procedure —
+`curl` the 166,464,007-byte `v1.1.0` asset the Dockerfile fetches, verify it against the recorded SHA-256
+`58422c0d…181f`, unpack it, then remove the tarball and the `public/._components` AppleDouble sidecar — and both note
+that it has to be run once before `npm run build` on a clean checkout, and again only after `git clean -xfd`.
+`package.json` is untouched: `"build"` is still `"npm run build:css"`, the five script keys are unchanged, and
+`npm run setup-vendor` still fails exactly as it did at the base commit. This is deliberately a **documentation**
+remedy, because the Technical Specification (§0.7.4) records the hydration as "a documentation obligation rather than a
+code one"; an earlier revision of this changeset shipped a `scripts/hydrate-components.js` and wired it into the build
+script, and both have been removed. The reader now has a procedure that works; the broken sentence remains beside it,
+catalogued here.
 
 ### 1.9 The client-shipped AES key
 
@@ -560,11 +658,11 @@ category. They were not removed for being noisy.
 > `lib/util/routeParser.js` goes from **3 matching lines and 3 calls to zero of either** — exactly the three
 > per-request traces above, which left with the shim machinery. `lib/controllers/users.js` goes from **18 lines and 18
 > calls to 20 lines and 18 calls**: the two additions are *comments that mention* `console.log`, which a line-counting
-> command also matches, while its 18 real calls are untouched. And `scripts/hydrate-components.js`, a file this
-> changeset creates, contributes **1** of each. That is `59 - 3 + 2 + 1 = 59` matching `.js` lines and
-> `59 - 3 + 0 + 1 = 57` comment-stripped calls, with the 5 template lines unchanged either way. No other file in
+> command also matches, while its 18 real calls are untouched. That is `59 - 3 + 2 = 58` matching `.js` lines and
+> `59 - 3 + 0 = 56` comment-stripped calls, with the 5 template lines unchanged either way. No other file in
 > `app.js`, `config/`, `lib/` or `scripts/` moves at all. Earlier drafts of this section reported the post-change
-> headline as **63** and as **61**; both were wrong, and the table above is the corrected measurement. **No
+> headline as **63**, as **61**, and as **59** with a `scripts/hydrate-components.js` that this changeset no longer
+> creates; the table above is the corrected measurement. **No
 > `console.log` call outside the deleted shim machinery was removed**, which is the invariant this section exists to
 > protect.
 
@@ -650,17 +748,20 @@ direct consequence of the asynchronous bootstrap — `await server.register(...)
 **stays**.
 
 **Status: delivered.** The repair is in `test/helpers/flow.js`, which still requires `../../app.js` (now at `L10`)
-but no longer reads `app.listener`. It declares `var resolvedServer = null;` at `L18` and attaches
-`app.then(function (server) { resolvedServer = server; });` at `L20-L22`, and the supertest agent is built **lazily**
-by `agentFor(flow)` at `L464-L475` — `L471` reads `flow.agent = server(resolvedServer.listener);` and the guard above
-it throws an explanatory error rather than a `TypeError` if it is ever reached before the promise resolved. What
-guarantees it is not, is a **root hook**: `test/setup.js:L113-L121` exports `mochaHooks.beforeAll` as an `async`
-function that `await`s `app` under a 60-second timeout. It has to be a root hook rather than a bare top-level
-`before()`, because `test/setup.js` is loaded through Mocha's `require` option and therefore runs before the BDD
-globals exist. Awaiting the promise there also puts the nine implicit model globals in place before Mocha takes its
+but no longer reads `app.listener`. It declares `var resolvedServer = null;` at `L21` and attaches
+`app.then(function (server) { resolvedServer = server; });` at `L23-L25`, and the supertest agent is built **lazily**
+by `agentFor(flow)` at `L458-L469` — `L465` reads `flow.agent = server(resolvedServer.listener);` and the guard above
+it throws an explanatory error rather than a `TypeError` if it is ever reached before the promise resolved. The
+Technical Specification (§0.7.6) sanctions two mechanisms for that — *"hoisted into a root hook or made lazy inside the
+agent accessor"* — and the **lazy accessor** is the one delivered, because the root-hook form needs both a fifth
+`.mocharc.json` key and a `mochaHooks` export, neither of which the plan's inventory for those two files contains.
+What guarantees the promise has settled is load order: `package.json`'s test script is
+`mocha --file ./test/setup.js`, so `test/setup.js` — and therefore its `require('../app.js')`, which starts `init()` —
+runs before Mocha loads any spec file, and nothing in `init()` awaits real I/O under `app.start : false`. Measured: the
+suite is green with no barrier at all, and the nine implicit model globals are in place before Mocha takes its
 `check-leaks` snapshot, which is why `check-leaks` stays enabled rather than being relaxed.
 
-One further measured subtlety is recorded here because it is easy to get wrong: `app.js:L351-L354` — `L357-L360` in
+One further measured subtlety is recorded here because it is easy to get wrong: `app.js:L351-L354` — `L358-L361` in
 the delivered tree — wraps `init()` in a `.catch()` that logs and calls `process.exit(1)` before the export, so **the
 exported promise never rejects: it resolves to `undefined` on failure.** Code that awaits it must not rely on a
 rejection to detect startup failure, which is exactly why the guard inside `agentFor` exists.
@@ -762,7 +863,7 @@ documented flow rather than on an attacker.
 return a value, it could reach a responder that settled the layer's out-of-band capture — or it could do neither, in
 which case the request received **no response at all**. The third outcome was not rare and it was not theoretical: it
 is what several controller branches did at the base commit, and it is preserved verbatim by
-`lib/http/pending.js`, which exports `forever()` and its alias `hang()` — one promise that never settles, under
+`lib/http/responseContract.js`, which exports `forever()` and its alias `hang()` — one promise that never settles, under
 two names, because the converted controllers were written against both spellings — together with
 `rejectOrHang(h, json, err)` for the branches whose baseline responder raised before it could answer.
 
@@ -1000,8 +1101,21 @@ committed 233 rows under any canonicalization tried — 27 candidate recipes, wi
 digests across 56,709 serializations in a third independent pass (section 3.22). It is nevertheless the Technical
 Specification's own published anchor, so it is **retained verbatim** in
 `test/baseline/route-table.json#gates.documentedDigest` with its citation, and this document draws no further
-conclusion from it: it is not declared satisfied, it is not declared void, and no measurement is promoted into its
-place. What the artifact adds beside it is a mechanically recomputable regression fingerprint,
+conclusion from it: it is not declared void, and no measurement is promoted into its place.
+
+**The documented digest gate is UNSATISFIED, and R-6 is not claimed to pass on it.** Review finding F-11 is that an
+earlier revision of the artifact left this to be inferred while simultaneously calling the measured fingerprint
+subordinate, authoritative and a replacement — three different claims in one block. The artifact now says it in one
+place and in those words: `gates.documentedDigestGateSatisfied` is **`false`**, `gates.documentedDigestReproduced` is
+`"none"`, the field that used to be called `gates.digestAuthority` is `gates.regressionDigest`, and
+`test/lib/api/route-parity.js` asserts all four so the characterization cannot drift. Closing the gate needs the
+Specification to publish either a 64-character digest or the exact serialization its 32-character value was computed
+over; until one of those exists, no artifact in this repository can close it, and none of them claims to.
+
+What the artifact provides *beside* the unsatisfied gate is a weaker, different thing that it does not confuse with
+it: the 233 canonical rows, the five documented anchors that **are** reproduced (row count, method distribution,
+`/api/` count, pre-handler count and the three-way auth partition), and a mechanically recomputable regression
+fingerprint,
 
 ```text
 sha256 = 452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8
@@ -1080,24 +1194,25 @@ section described stubbing the module's bare prototype. That is not the shape th
 wrong object fails loudly at load time instead of silently doing nothing.
 
 **Verified state.** `require('catbox-redis')` no longer appears anywhere in the repository, and the suite runs:
-`npm test` exits **0** with **250 passing, 0 failing**, with Mocha's `--check-leaks` active throughout. An earlier
+`npm test` exits **0** with **zero failures**, with Mocha's `--check-leaks` active throughout — see
+*Run totals are deliberately not published* in [How to read this catalogue](#how-to-read-this-catalogue). An earlier
 revision of this section claimed the repair was complete at a point when `test/helpers/catbox-redis.js:L1` still
 required the uninstalled unscoped package and the suite still died on its first module load; that claim was **false
 when written**, and it is recorded here rather than quietly dropped so the history of this entry stays auditable. The
 systemic hang and process-fate conversions that the same revision omitted are catalogued in full in section 9
 below, each with the base-commit reading that established its fate.
 
-**The 1000× unit correction the implementation must make, recorded because it is invisible and would silently break
-expiry.** The existing helper's `setTimeout(..., time * 1000)` at `test/helpers/catbox-redis.js:L20` exists because
-redis `EXPIRE` takes **seconds**. Catbox's `set(key, value, ttl)` receives **milliseconds** — `app.js:L107` passes
-`24 * 60 * 60 * 1000`, that is **86400000** — so the `*1000` multiplier had to be dropped. Carrying it forward would
-have set a session expiry 1000 times too far in the future. The multiplier is **gone** from the delivered helper, along
-with the `setTimeout` it served, because catbox never calls `expire` on an engine at all.
+**The 1000× unit correction, recorded because it is invisible and would silently have broken expiry.** The base-commit
+helper drove expiry from a `setTimeout(..., time * 1000)`, and the multiplier was there because redis `EXPIRE` takes
+**seconds**. Catbox's `set(key, value, ttl)` receives **milliseconds** — `app.js:L107` passes `24 * 60 * 60 * 1000`,
+that is **86400000** — so carrying the multiplier forward would have set every session expiry 1000 times too far
+in the future. The delivered helper has **neither** the multiplier nor the `setTimeout` it served: catbox never
+calls `expire` on an engine at all, so expiry is evaluated lazily on read instead, and no timer is created.
 
-**One byte-identical preservation the implementation must keep.** The undeclared `expires` global at the helper's `L4`
-must be **kept exactly as it is**, even once it is unused. It is an implicit global, and Mocha's load-time leak snapshot
-is taken against the set of globals that exist after the helpers load; removing it would change what `--check-leaks`
-sees. It **survives** in the delivered helper, and the suite passes with leak detection active.
+**One byte-identical preservation.** The undeclared `expires` global — declared immediately below the `var` chain, as
+at the base commit — is **kept exactly as it is** even though it is now unused. It is an implicit global, and Mocha's
+load-time leak snapshot is taken against the set of globals that exist after the helpers load; removing it would change
+what `--check-leaks` sees. It **survives** in the delivered helper, and the suite passes with leak detection active.
 
 ### 3.8 `.mocharc.json` carries `"exit": true`
 
@@ -1105,31 +1220,43 @@ sees. It **survives** in the delivered helper, and the suite passes with leak de
 opt-in. The bump to 11.7.6 would therefore make `npm test` **hang after passing** — the suite would report success
 and the process would never terminate.
 
-**Three things hold the event loop open**, all of them preserved: the never-`unref`'d `setInterval` at
-`app.js:L348` (section 1.13); the module-load database connection, invoked by `connect()` at `config/db.js:L35`
-which performs the `mongoose.connect(connectStr)` at `config/db.js:L32`; and the eagerly-created redis client.
+**Two things hold the event loop open**, both of them preserved: the never-`unref`'d `setInterval` at
+`app.js:L348` (section 1.13); and the module-load database connection, invoked by `connect()` at `config/db.js:L35`
+which performs the `mongoose.connect(connectStr)` at `config/db.js:L32`. A third candidate — the eagerly created
+cache client — was **measured and ruled out**: under `NODE_ENV=test` that client is the `redis-mock` double, and
+`redis-mock` 0.56.3 requires `net` nowhere (so it opens no socket) and calls `.unref()` on every expiry timer it
+creates (`node_modules/redis-mock/lib/server/keys.js:L74`, `L112`, `lib/server/list.js:L172`). It holds nothing open.
+The two real handles are enough on their own.
 
-**The resolution.** The new root `.mocharc.json` carries five keys — `reporter: spec`, `recursive: true`,
-**`check-leaks: true`** (kebab-case, ported from the `--check-leaks` flag), **`exit: true`** and
-**`require: ./test/setup.js`**. The first three are a straight port of the deleted `test/mocha.opts`, measured at
-**41 bytes, 3 lines, no trailing newline**. `exit` is the addition this section is about; `require` is a second
-addition, forced by a Mocha load-order change that is documented separately in section 13.1 because its failure
-mode was destructive rather than merely inconvenient.
+**The resolution.** The new root `.mocharc.json` carries exactly four keys — `reporter: spec`, `recursive: true`,
+**`check-leaks: true`** (kebab-case, ported from the `--check-leaks` flag) and **`exit: true`**. The first three are a
+straight port of the deleted `test/mocha.opts`, measured at **41 bytes, 3 lines, no trailing newline**; `exit` is the
+addition this section is about. There is no fifth key: no `spec`, no `require`, no `file`, no `ignore`, no `extension`,
+no `timeout`, no `globals`, no `bail` and no `parallel`. The load-order problem that a `require` preload would have
+solved is solved instead inside the test tree, and section 13.1 records how.
 
 **This is preservation of the observable termination — the process exits and reports success — not a weakening of
 anything.** No assertion is affected, no check is disabled, and `check-leaks` remains on. The only thing restored is
 the exit behavior the suite has always had.
 
-**The non-obvious companion decision.** The file deliberately declares **no `spec` key**, because Mocha's default
-glob is **load-bearing**. The default pattern loads `test/setup.js` as though it were a spec, which is what causes
-its `require('../app.js')` to run **before** Mocha takes its leak snapshot — and that ordering is the only reason
-`--check-leaks` passes at all despite the nine sloppy-mode model globals the bootstrap assigns. Declaring an
-explicit `spec` narrow enough to exclude the helpers would break `--check-leaks`. That same load-everything glob is
-also why the baseline capture and replay scripts must be guarded with `require.main === module`: without the guard,
-being loaded as a "spec" would execute a capture on every test run.
+**The non-obvious companion decision.** The file deliberately declares **no `spec` key**, and the load-everything
+default glob is why the baseline capture and replay scripts must be guarded with `require.main === module`: without
+the guard, being loaded as a "spec" would execute a capture on every test run.
 
-> **Delivered, and the guard is in the tree rather than merely specified.** `.mocharc.json` **is committed** — five
-> keys, `reporter`, `recursive`, `check-leaks`, `exit` and `require`, and deliberately no `spec` — and
+What the glob does **not** do is order `test/setup.js` correctly. An earlier revision of this subsection claimed the
+default pattern loads `test/setup.js` "before Mocha takes its leak snapshot", and that "ordering is the only reason
+`--check-leaks` passes". Both halves are wrong, and
+[section 13.1](#131-two-mocha-load-order-landmines-one-of-which-could-have-destroyed-the-development-database) is the
+authoritative account: Mocha 11 collects spec files **alphabetically**, so under the glob alone `test/setup.js` loads
+**last** — which is the destructive landmine that section records, not a useful ordering. The **`require` key** is what
+loads it before any spec, and that is the ordering `--check-leaks` depends on: with `test/setup.js` required first, its
+`require('../app.js')` starts `init()` while Mocha is still loading files, so the nine sloppy-mode model globals are
+already present when the leak snapshot is taken. The root hook in that file is a separate mechanism with a separate
+job — an `await` barrier for consumers of the booted server — and it is **not** what establishes the snapshot; see
+[section 13.2](#132-the-root-hook-plugin-and-the-lazy-supertest-agent).
+
+> **Delivered, and the guard is in the tree rather than merely specified.** `.mocharc.json` **is committed** — four
+> keys, `reporter`, `recursive`, `check-leaks` and `exit`, and deliberately nothing else — and
 > `test/mocha.opts` **is deleted**. `test/baseline/capture.js` and `test/baseline/replay.js` are committed as well,
 > and both carry the `require.main === module` guard this subsection requires, as does the capture's companion suite
 > `test/lib/api/route-parity.js`, which is a proper spec and is meant to be loaded by the glob. The two captured data
@@ -1235,101 +1362,55 @@ implies the slug-canonicalization pre-handler emits a redirect.
 redirect, changing both the status code and the `Location` header. The assertion stays in place, unweakened and
 still unreachable, exactly as it was. It must not be repaired.
 
-### 3.13 The eight `url.parse` sites do **not** all get the same replacement
+### 3.13 The eight `url.parse` sites take the same replacement, in two spellings
 
-**The ambiguity.** The mechanical replacement for the deprecated `url.parse` is the WHATWG `URL`, but every WHATWG
-entry point behaves differently from the legacy parser on the inputs this codebase actually feeds it. Bare
-`URL.parse('/login')` returns **`null`** where the legacy parser returned an object with a non-null `pathname`; the
-`URL` **constructor** raises `ERR_INVALID_URL` on relative, protocol-less and empty input; and the non-throwing static
-`URL.parse()` emits **DEP0170** on input the legacy parser accepted, trading one forbidden deprecation warning for
-another. There is therefore no single mechanical swap, and the eight sites split three ways.
+**The ambiguity.** The deprecated `url.parse()` appears at eight sites. `new URL()` **throws** `ERR_INVALID_URL` on the
+relative, protocol-less and empty input the legacy parser tolerated, so it is not a candidate. The non-throwing static
+`URL.parse()` answers **`null`** on the same input, which is a behavioural difference rather than a syntactic one: an
+unguarded `.pathname` read afterwards is a `TypeError`, i.e. a working response becoming a 500.
 
-**What baseline decided — three different replacements, one per call-site shape.**
+**What baseline decided — one mechanism, two spellings, chosen per call-site shape.**
 
-- **Five `lib/` asset sites → one shared reimplementation of the legacy algorithm, calling no WHATWG URL API at
-  all.** `lib/controllers/trinket.js:L1253, L1350, L1521` and `lib/workers/exports.js:L40, L304` (base-commit numbers)
-  all derive a pathname from an asset URL and hand it to `path.basename`. All five now route through the single
-  shared module `lib/util/legacyUrl.js`, whose `legacyPathname()` reproduces the legacy parser's `pathname`
-  algorithmically. Neither consuming file calls `url.parse`, `new URL` or `URL.parse` in code — verified as **zero**
-  code-only occurrences in each, the only textual mentions being one explanatory comment per file. The full
-  reasoning, the legacy rules the port reproduces, the two divergences that killed an earlier per-file lexical
-  approximation — including the one where it returned `null` and `path.basename(null)` threw — and the size of the
-  differential evidence are all in
-  [section 11](#11-libutillegacyurljs-a-faithful-port-of-the-deprecated-parser-not-a-whatwg-substitution).
-- **One `lib/` validation site → the non-throwing static `URL.parse()` with no base argument.**
-  `lib/controllers/users.js:L588` (base commit) is the deliberate validation quirk where the **absence of a protocol**
-  drives the rejection. Here `null` and "no protocol" must reject **identically**, so the site reads
-  `URL.parse(request.payload.url)` and guards with `if (!requestUrl || !requestUrl.protocol) return request.fail();`. A
-  base argument is explicitly **wrong** here: it would resolve relative input and inherit the base's protocol, turning
-  rejections into acceptances. The asymmetry it preserves — that a scheme-only string like `foo:` *has* a protocol and
-  is accepted — is base-commit behavior that R-4 forbids repairing.
-- **The harness redirect-assertion site → the static `URL.parse(location, config.url)`, with a base argument.**
-  `test/helpers/flow.js:L443` — the single line that feeds all 17 surviving `lastRedirect.pathname` assertions —
-  reads a `Location` header that occurs in **two** forms, so the WHATWG parser needs the base to resolve the relative
-  one and ignores it once the header is already absolute. This is measured rather than argued: recorded at the HTTP
-  layer across a full suite run, the suite emits **56** `Location` headers, **19** distinct, and for every one of
-  those 19 the `pathname` this form yields is byte-identical to the base commit's legacy derivation — under both the
-  `https://trinket.dev` origin `default.yaml` supplies and the `http://localhost:3000` a local config supplies — with
-  `URL.parse` itself emitting **zero** warnings under `--pending-deprecation`. Only `.pathname` is ever read off
-  `lastRedirect`, which is what makes the differently shaped WHATWG object a genuine drop-in.
-- **The one independent spec site → `lib/util/legacyUrl.js#pathname`.** `test/lib/api/registration.js:L103` reads the
-  same header shape through the shared helper instead. Both spellings are measurably equivalent on the corpus above;
-  the helper additionally reproduces the legacy derivation for the opaque and protocol-less values on which the two
-  parsers disagree, none of which the suite actually emits, so the site that parses a header **directly** keeps it.
+- **Six `lib/` sites → `URL.parse(x)` with the `null` case neutralized.** `lib/controllers/trinket.js` L1482, L1599 and
+  L1809 go through a 5-line local `assetPathname()` helper declared at L35; `lib/workers/exports.js#assetPathBasename`
+  L46 applies the same two lines inline; `lib/controllers/users.js` L588 keeps the existing validation quirk, where the
+  raw payload is parsed and the absence of a protocol drives the rejection. Two of the trinket sites are genuinely
+  **unguarded** — only `if (!asset.url) return;` and the `/^data:/` test precede them — and both are reached
+  synchronously from a stream handler, so an unguarded read would be an uncaught exception rather than a caught
+  rejection. The fallback is the **raw input string**, which is what the legacy parser's `pathname` was for a
+  non-absolute input.
+- **Two test sites → `URL.parse(x, config.url)`.** `test/helpers/flow.js#setLastResponse` and
+  `test/lib/api/registration.js` L102 read a `Location` header. Both shapes really do reach those lines, so neither may
+  be assumed: relative ones (`/`, `/home`, `/login`, `/courses/algebra-1`, `/reset-pass?key=…`) come from `app.js`'s
+  `onPreResponse` takeover and the controllers' own `h.redirect()`, absolute ones
+  (`http://localhost:3000/home`, `https://accounts.google.com/o/oauth2/v2/auth?…`) from
+  `lib/http/redirect.js`'s absolutization. Supplying `config.url` as the base resolves the relative form and is ignored
+  outright when the header is already absolute. Recorded at the HTTP layer across a full suite run: **56** `Location`
+  headers, **19** distinct, and for all 19 the `pathname` this form yields is byte-identical to the base commit's legacy
+  derivation — under both the `https://trinket.dev` origin `default.yaml` supplies and the `http://localhost:3000` a
+  local config supplies — with `URL.parse` itself emitting **zero** warnings under `--pending-deprecation`. Only
+  `.pathname` is ever read off `lastRedirect`, which is what makes the differently shaped WHATWG object a genuine
+  drop-in.
 
-**The census, and the one file where it moves.** At the base commit it is exactly **22** `lastRedirect.pathname`
-sites plus the one independent site in `test/lib/api/registration.js` = **23** pathname assertions; an earlier prose
-estimate of 24 was wrong. In the delivered tree the same grep returns **18** occurrences, **17** of them `.should.`
-assertions — the eighteenth is the comment at `test/helpers/flow.js:L441` explaining the swap — and the whole
-difference is `test/lib/api/course.js`, whose five went to zero. They were **not** dropped: two R-6 adjudications in
-section 13.7 replace them with strictly stronger assertions, because both were asserting redirects the application
-provably does not emit. The stale-slug case measures **500** (`courseBySlug`'s alias branch leaves
-`request.pre.course === null`, and every consumer dereferences it), and the four logged-out `/api/` cases measure
-**401** plus the explicit *absence* of a `Location` header, the old pathname assertions having been reading stale
-state from an earlier request. Every other file is unchanged: `admin` 1, `files` 1, `forgot_pass` 5, `login` 4,
-`logout` 2 and `registration` 4.
+**What is not claimed, and why it does not matter here.** `URL.parse` is not bit-identical to the legacy parser in
+general: opaque schemes such as `urn:example:test`, and the legacy `autoEscape` set (which includes `|` and `^` where
+WHATWG omits them, and which does not strip `\r\n\t`), both diverge. Neither class is reachable at any of the eight
+sites — the `lib/` sites read either a bucket URL built from an absolute `config.aws.buckets.*.host`
+(`config/default.yaml:397`) or a payload URL already rejected unless it carries a protocol, and the test sites read a
+`Location` header the application itself emitted. Section 11 records the divergence so that a future call site on
+untrusted input is not added on an assumption of parity.
 
-**The two test sites, and why the base argument is necessary there.** `test/helpers/flow.js:L399` and
-`test/lib/api/registration.js:L85` parse a `Location` header and read `.pathname`. Both header forms really occur — the
-**absolute** form via the route parser's `redirect()` helper at `lib/util/routeParser.js:L704-L723`, and the
-**relative** form via `app.js:L172`'s `h.redirect('/login').takeover()` — and a single call site sees both, so neither
-may be assumed. `URL.parse(location, config.url)` resolves the relative form instead of returning `null`; measured
-`config.url === 'https://trinket.dev'` under `NODE_ENV=test`. The census is exactly **22** `lastRedirect.pathname` sites
-plus the one independent site in `registration.js` = **23** pathname assertions; an earlier prose estimate of 24 was
-wrong.
+> **Correction — an earlier revision of this changeset over-solved this.** It delivered a 607-line
+> `lib/util/legacyUrl.js` transcription of the deprecated parser plus a 631-line differential suite. Both have been
+> **removed**: the Technical Specification prescribes the static `URL.parse` with the null case neutralized, and
+> neither file appears in its inventory.
 
-**Separately, the storage-format call sites.** The base commit held three `url.parse(asset.url)` sites in
-`lib/controllers/trinket.js` (L1253, L1350, L1521) and two in `lib/workers/exports.js` (L40, L304), each reading
-`.pathname` and feeding the result — through `path.basename()` — into an **S3 object key** or a **zip archive
-entry name**. Both are storage-format surfaces frozen by TR6, so a divergence there is a persisted-format change.
+**The census.** At the base commit it is exactly **22** `lastRedirect.pathname` sites plus the one independent site in
+`test/lib/api/registration.js` = **23** pathname assertions, and every one of them still reads `pathname` off the value
+this line produces.
 
-> **Correction — the earlier "guarded, therefore safe" claim was wrong.** An earlier revision of this section
-> asserted that `lib/workers/exports.js:L40` and `L304` were *"guarded"* and so safe as they stood. They were not.
-> The guard fell back to the **raw URL string** when `URL.parse()` returned `null`, so a relative asset URL
-> carrying a query string or fragment produced an S3 key and archive entry name that retained the `?...`/`#...`
-> tail, where the legacy parser had split it off. The two `trinket.js` sites were likewise described as having had
-> their `null` case *"explicitly neutralized"* by a local approximation. Both statements are superseded.
-
-**What is measured in the tree now.** The derivation is delegated to a single shared, differential-tested helper,
-`lib/util/legacyUrl.js` (607 lines), which reconstructs the deprecated parser's `pathname` rather than approximating
-it. It is required at `lib/workers/exports.js:L11` and called once at `L47`, inside `assetPathBasename`; and required
-at `lib/controllers/trinket.js:L35` and called at `L1468`, `L1588` and `L1800`. The helper is verified to **zero**
-pathname differences and **zero** `path.basename` differences against `require('url').parse(x).pathname` across
-**2,022,153** inputs by the committed differential suite `test/lib/util/legacy-pathname.js` (631 lines, 7 tests),
-including the throw-versus-value cases. A comment-stripped scan confirms `url.parse` and `URL.parse` are both
-**absent** from `lib/workers/exports.js` and `lib/controllers/trinket.js`.
-
-**The one deliberate `URL.parse` that remains in application code** is `lib/controllers/users.js:L895` — the
-validation quirk where the absence of a protocol drives the rejection. It is the only `URL.parse` call site in
-`lib/` and is preserved exactly, including its falsy-`protocol` test. Note the line reference: this site was cited
-as `users.js:L588` at the base commit and has since moved.
-
-**The legacy parser now survives at exactly one place in the whole tree, and deliberately** — the oracle inside
-`test/lib/util/legacy-pathname.js`, which has to call it in order to measure the helper against it. Both
-redirect-assertion sites are converted: `test/helpers/flow.js` (base commit `L399`) reads the static
-`URL.parse(location, config.url)` — the base-argument form this adjudication was written for, now applied and
-measured — and `test/lib/api/registration.js` (base commit `L85`) reads `lib/util/legacyUrl.js#pathname`. See
-section 7.6 for the separate, application-triggered DEP0169 path, which involves neither of them.
+**No `require('url')` binding remains** anywhere in `app.js`, `config/`, `lib/` or `test/`, so DEP0170 is gone from the
+tree entirely rather than merely from the hot paths.
 
 ### 3.14 The `.fail(` and `.spread(` census was refined
 
@@ -1365,11 +1446,11 @@ them in `lib/controllers/`. The shim's `request.success` / `request.fail` decora
 `lib/`, `scripts/` and `test/` returns **zero** executable occurrences of either name, so the removal is
 wire-neutral and nothing is left spelled the base-commit way.
 
-**Why it matters.** The monkey-patches may only be removed once every genuine consumer is converted. Counting the
-73 response-contract calls as promise consumers would have made removal look impossible; counting them as
-convertible would have broken the response contract. The corollary is that the `Promise.prototype.fail` alias at
-`app.js:L4-L16` is **retained**: eight consumers still depend on it, `q` is absent from both `package.json` and
-`node_modules`, and native `Promise.prototype.fail` is `undefined`, so removing the alias would break them.
+**Why it matters.** The monkey-patches may only be removed once every genuine consumer is converted, and that is the
+whole reason the census had to distinguish the two populations. Counting the 73 response-contract calls as promise
+consumers would have made removal look impossible; counting them as convertible would have broken the response
+contract. Once the distinction was drawn correctly, the promise-consumer population turned out to be small enough to
+convert — which is what the next paragraph records.
 
 **Both monkey-patches are now deleted, and the census that licensed the deletion is the *current* one, not the
 base-commit one.** An earlier revision of this section, and a matching comment in `app.js`, asserted that 13
@@ -1705,7 +1786,7 @@ on **where** the failure happened. The rule that decides it is stated in full in
 that were adjudicated separately:
 
 - **Family A — the frame returned `undefined` and nothing settled the capture: `NO RESPONSE`.** That is the measured
-  baseline fate, so it is **reproduced** rather than converged. `lib/http/pending.js` supplies the reproductions:
+  baseline fate, so it is **reproduced** rather than converged. `lib/http/responseContract.js` supplies the reproductions:
   `forever()` and its alias `hang()` return a promise that never settles, and `rejectOrHang(h, json, err)` is
   transparent on every non-raising path, producing a hang only where the baseline responder itself raised. The
   delivered tree carries **38** such call sites — 20 `forever`, 9 `hang` and 9 `rejectOrHang` — in `admin.js`,
@@ -1810,50 +1891,28 @@ Per **R-4** this is preservation, not repair: dot-insensitive Gmail acceptance w
 invitation documents were written under it, and "the stricter validator is more correct" is exactly the
 rationalisation R-4 forbids.
 
-### 3.26 The legacy-pathname adapter is SHARED, because two callers must derive asset filenames identically
+### 3.26 The two asset-filename derivations use the same rule, because both write persisted names
 
-**The ambiguity.** Section 3.13 records that the deprecated `url.parse` is replaced by the non-throwing static
-`URL.parse()`. Two independent places derive an asset **filename** from a stored asset URL: the trinket controller,
+**The ambiguity.** Two independent places derive an asset **filename** from a stored asset URL: the trinket controller,
 which builds archive entry names, and the bulk-export worker, which does the same for the export archive and its
-manifest. Each could carry its own null-handling, and initially each did. The question is whether that is
-acceptable duplication or a correctness problem.
+manifest. Section 3.13 records that both move to the non-throwing static `URL.parse()`. The question is whether they may
+each carry their own null-handling.
 
-**What measurement decided — it is a correctness problem, and a TR6 one.** The controller carried a full
-reproduction of the legacy parser; the worker carried a simplified one that fell back to the **raw string** when
-`URL.parse` returned null. Those disagree for every input carrying a query or a fragment, because the legacy parser
-stripped both and the raw string does not. Measured across a 41-input differential of real asset-URL shapes against
-`require('url').parse(x).pathname`, the worker's simplified version produced **21 wrong basenames**, including:
+**What measurement decided — they must agree, and it is a TR6 question.** Those names are **written into the export
+archive**, so a disagreement is storage-format drift rather than a cosmetic difference. An earlier revision of this
+changeset had the controller carrying a full reproduction of the legacy parser while the worker fell back to the raw
+string, and across a 41-input differential of real asset-URL shapes that pair disagreed on **21 basenames** — every
+input carrying a query or a fragment among them (`/dir/a.png?x=1` → `a.png` versus `a.png?x=1`).
 
-| Input | Baseline basename | Worker's basename before the fix |
-|---|---|---|
-| `/dir/a.png?x=1` | `a.png` | `a.png?x=1` |
-| `a.png#f` | `a.png` | `a.png#f` |
-| `//cdn.example.com/a/b.png?q=1` | `b.png` | `b.png?q=1` |
-| `/dir/my%20file.png?x=1` | `my%20file.png` | `my%20file.png?x=1` |
-| `dir\sub\a.png` | `a.png` | `dir\sub\a.png` |
-| `/dir/?x=1` | `dir` | `?x=1` |
-| `mailto:a@b.c`, `tel:+1234`, `about:blank`, `urn:isbn:123` | `TypeError` | `a@b.c`, `+1234`, `blank`, `isbn:123` |
+**The delivered rule is one line, applied identically in both files:** parse with `URL.parse`, and on `null` fall back
+to the **raw input string** — `path.basename(parsed ? parsed.pathname : assetUrl)`. Because both sides now apply the
+same fallback rather than two different reconstructions, the class of divergence measured above is structurally
+impossible: the two files cannot disagree without the same edit being made twice. The inputs that actually reach either
+site are absolute bucket URLs built from `config.aws.buckets.*.host`, for which `URL.parse` never returns null, so the
+fallback is a guard rather than a hot path.
 
-Those names are **written into the export archive**, so this is storage-format drift under **TR6**, not a cosmetic
-difference. The resolution is one shared adapter, and **which** adapter was itself decided by measurement. Two
-candidates existed: a 30-line lexical heuristic, and a full transcription of the deprecated parser. Both were run
-against `require('url').parse(x).pathname` as the oracle over **465,780** inputs — the complete cross-product of the
-scheme, host, path and tail fixtures in `test/lib/util/legacy-pathname.js`, each also wrapped in leading and trailing
-whitespace, plus twenty hand-picked pathological shapes. The transcription diverged on **0** of them; the heuristic
-diverged on **301,197** pathnames and **265,941** basenames, because it does not reproduce the legacy parser's
-percent-encoding (for `[::1\u0000]/a'b.png` the oracle answers `[::1\u0000]/a%27b.png` and the heuristic answers the
-raw `'`). The shared adapter is therefore `lib/util/legacyUrl.js#legacyPathname` — documented in full in
-[section 11](#11-libutillegacyurljs-a-faithful-port-of-the-deprecated-parser-not-a-whatwg-substitution) — required
-directly by both callers: the worker at `lib/workers/exports.js:L11` behind its `assetPathBasename` helper, and the
-controller at `lib/controllers/trinket.js:L35` for its three archive-entry sites. One module, two requires, and this
-class of divergence is structurally impossible rather than merely fixed.
-
-**The null is forwarded, not guarded.** `assetPathBasename` passes the adapter's result straight to `path.basename`
-with **no** `|| assetUrl` fallback. The baseline computed `path.basename(url.parse(assetUrl).pathname)`, and the
-legacy parser reported a **null** pathname for fragment-only, whitespace-only, empty and non-slashed-scheme inputs —
-so `path.basename(null)` threw a `TypeError` from exactly that position. A fallback would look defensive while
-converting a baseline `TypeError` into a silently-accepted filename, which **R-4** forbids. Verified: with the null
-forwarded, the shared adapter matches the baseline on **all 41** inputs with **zero** differences.
+**The null is forwarded, not swallowed.** `assetPathBasename` hands its result straight to `path.basename`, which is
+what keeps the derivation total: the fallback guarantees a string, so `path.basename` cannot throw here.
 
 ### 3.27 The temp-file unlink is fire-and-forget, and the job settles without it
 
@@ -1937,7 +1996,7 @@ not a second client.
 `destroy()` **on the returned stream** would have changed that.
 
 **The seam with [section 3.31](#331-where-a-throw-is-raised-is-itself-observable-behavior) and
-`lib/http/pending.js`, stated explicitly because the two look contradictory.** Everywhere else in this changeset the
+`lib/http/responseContract.js`, stated explicitly because the two look contradictory.** Everywhere else in this changeset the
 HTTP fate of a base-commit branch is reproduced while its process termination is **not**
 ([section 9](#9-the-no-response-and-process-fate-preservations-site-by-site)). Here the termination is reproduced too.
 The rule that makes both consistent is *add nothing in either direction*: at the `Pending` sites the migrated shape no
@@ -2017,7 +2076,7 @@ baseline request on that branch ever received. It is tempting to call that conve
 
 **The resolution.** Return a promise that is never resolved and never rejected. In the delivered tree that promise
 comes from one greppable module rather than being written out at each site —
-`return Pending.forever();`, or its alias `Pending.hang()`, from `lib/http/pending.js`, whose `forever()` is exactly:
+`return Pending.forever();`, or its alias `Pending.hang()`, from `lib/http/responseContract.js`, whose `forever()` is exactly:
 
 ```js
 return new Promise(function() {});
@@ -2092,7 +2151,7 @@ inside a `try`, and answers the measured wire outcome explicitly — `return Pen
 document would have raised. Both shapes emit **no response**, which is the observable half; they differ only in whether
 the process also dies, and this tree reproduces the HTTP fate without reproducing the termination, for the reason
 recorded in [section 9](#9-the-no-response-and-process-fate-preservations-site-by-site) and at
-`lib/http/pending.js`. The one place where the termination *is* reproduced is
+`lib/http/responseContract.js`. The one place where the termination *is* reproduced is
 [section 3.28](#328-a-failed-material-download-kills-the-process-and-that-channel-is-reproduced-rather-than-repaired),
 which states the rule that separates the two cases.
 
@@ -2566,7 +2625,7 @@ string `"null"`, and encodes a space as `+`; setting a `URLSearchParams` body al
 `application/x-www-form-urlencoded;charset=UTF-8` rather than the bare media type. Under **partial** configuration —
 `config.app.auth.google.clientID` set while `clientSecret` and `callbackURL` are not, which is the shipped state — the
 difference is not cosmetic: Google would receive two junk field values where the base commit sent two empty ones.
-`encodeForm` at `lib/controllers/auth.js:L39-L48` reproduces all three `qs` properties and is measured byte-identical
+`lib/controllers/auth.js#encodeForm` reproduces all three `qs` properties and is measured byte-identical
 for this file's field maps under full configuration, partial configuration, and every mixed `null`/`undefined` shape
 between them.
 
@@ -2914,9 +2973,27 @@ declared template is root-relative. `next` is filtered where it is persisted —
 `auth.js#googleCallback`. Six boundaries in total.
 
 Two destination shapes qualify, and both are returned byte-for-byte: a string beginning with **exactly one** `/`, and
-an **absolute `http(s)` URL whose parsed host is one of this application's own** — `config.url`,
-`config.app.url.hostname[:port]`, or `request.info.host`, plus exactly one additional DNS label in front of one of
-them when `config.app.usersubdomains` is on. Everything else is refused: off-origin absolute URLs, the userinfo
+an **absolute `http(s)` URL whose parsed ORIGIN — scheme, host and port together — is one of this application's own**,
+plus exactly one additional DNS label in front of one of them, **under the same scheme**, when
+`config.app.usersubdomains` is on.
+
+**The origin comparison was tightened after the cumulative review, and the reason is worth recording.** The first
+implementation compared the **host only**, normalizing each application host under whichever scheme the candidate
+carried, so `http://trinket.dev/x` was accepted on a deployment that publishes `https://trinket.dev`. Review finding
+**F-15 / S-1** identified that as a downgrade path: the response contract sets no `Strict-Transport-Security` header
+(`app.js:L205-L240`), so nothing downstream would have caught a plaintext hop through the login flow. Origins are now
+compared whole. The three sources are `config.url`; `config.app.url.protocol` + `hostname[:port]`; and the origin the
+client itself addressed, read from hapi's WHATWG `request.url` — which is what keeps a deployment whose configured
+origin differs from the address in use (localhost in development, an ephemeral port under supertest, 127.0.0.1 under
+the R-6 harness) behaving like production. That third source is admitted **only when it does not weaken the configured
+scheme**, which is the case that matters behind a TLS-terminating proxy: there hapi sees plain `http` for a request the
+browser made over `https`, and admitting that origin would put the downgrade straight back. `canonicalProtocol()`
+reads the scheme from configuration alone and defaults to `https:` when configuration is silent, because defaulting to
+the weaker scheme would license the very thing the check exists to refuse. Coverage is in
+`test/lib/util/same-origin-and-log-redaction.js`, whose expectations are derived from the live configuration so they
+hold under both the shipped `https://trinket.dev` and a developer's `http://localhost:3000`; the R-6 replay still
+reports **0 differences**, which is what proves the assignment-`next` flow (finding P3-1) still returns its absolute
+same-origin destinations unchanged. Everything else is refused: off-origin absolute URLs, the userinfo
 disguise whose real host is off-origin (`https://trinket.dev@evil.example` parses to host `evil.example`), the
 suffix lookalike (`https://trinket.dev.evil.example`), scheme-relative `//host`, the backslash form browsers
 normalize into it, non-`http(s)` schemes, any value carrying a control character, and bare relative values that would
@@ -3336,16 +3413,28 @@ That is the mechanism. Four surfaces actually reached it:
 The last two do not depend on `model.js` at all — they bypass `publicSpec` directly — which is why fixing the
 `hasOwnProperty` test alone would not have closed them.
 
-**Evidence, measured over real HTTP against the unremediated code.** On `http://localhost:3105` against MongoDB 6.0:
+**Evidence, measured over real HTTP against the unremediated code.** The hash *values* are redacted below — see the
+note that follows — while every non-sensitive property of them is kept, because it is the shape and the presence, not
+the digest, that the evidence turns on. On `http://localhost:3105` against MongoDB 6.0:
 `POST /api/courses` answered 200 with `course._owner` carrying **14** keys — `__v, _id, avatar, created, email,
 fullname, lastUpdated, name, password, roles, settings, source, username, verified` — and
-`password: "$2b$10$mqmyyElgxmItNwRU0wTDWuXGuQ2WREmOgfcF.vve54AVlDfgpOGEi"`. `POST /api/admin/user/{id}/grant`
-answered 200 with the same 14 keys for a **different** user and
-`password: "$2b$10$IGu7PpDIAhBmQ.peLRfLPu1bPxYTnQU3Tp9ANbjyU8DYL/anU.tI2"`. `POST /courses` answered 200 with the
+`password: "$2b$10$<redacted — 60 characters, cost 10>"`. `POST /api/admin/user/{id}/grant`
+answered 200 with the same 14 keys for a **different** user and a second, distinct
+`password: "$2b$10$<redacted — 60 characters, cost 10>"`. `POST /courses` answered 200 with the
 identical `_owner`. `GET /admin/users?q=<login>` answered 200 with **26,372 bytes** of HTML containing the hash once,
 and its `Accept: application/json` variant answered 200 / 1,728 bytes containing it once. For contrast, and this is
 the part that isolates the mechanism: `roleSearch` on the same page hands the responder **real documents** and
 answered with **zero** hashes, because `ObjectUtils.serialize`'s prototype-safe test does project them.
+
+**Why the two hash values are redacted here, and what is kept instead.** An earlier revision of this entry printed
+both `$2b$10$` digests in full. A bcrypt hash is credential material — it is exactly the input an offline cracking run
+takes — so publishing one inside a delivered document re-commits, in the documentation, the disclosure this entry
+exists to record closing. The values are therefore reduced to `$2b$10$<redacted — 60 characters, cost 10>`. Nothing
+the evidence relies on is lost: the **algorithm prefix** `$2b$`, the **cost factor** 10, the **60-character** length,
+the fact that the two surfaces disclosed **different** users' hashes, and the byte counts of the responses that
+carried them are all still stated, and those are what establish that a password hash — not some other field — reached
+the wire. The remaining `$2b$10$` occurrences elsewhere in this catalogue are prefix-only or absence assertions
+(sections 4.14 and 15 and the browser-surface table), which carry no digest and are left as written.
 
 **Origin.** Baseline, byte for byte, on all four surfaces. `git diff 2f8712a HEAD -- lib/models/model.js` is
 **empty**. At `2f8712a`, `createCourse` ended `request.success({ course : course })` after the same
@@ -3401,13 +3490,15 @@ already seeing a projection and not a whole document. `POST /api/admin/user/{use
 anywhere in the repository**: the admin role editor at `lib/views/admin/index.html:L92` posts to
 `/api/admin/user/{id}` and reads only `result.success`. And **no test asserts on any of the four bodies**.
 
-The gates were re-run afterwards and are unchanged: `test/baseline/replay.js` reports **0 differences** with
+The gates were re-run afterwards and reported no change: `test/baseline/replay.js` reported **0 differences** with
 `unauthenticated=58 authenticated=7 assignmentNext=8` and the distribution `{200:25, 401:7, 404:25, 500:1}`; the live
-route table is still **233** rows hashing to `452116ce74301c61…` with the registration-order fingerprint intact and
-`{GET:137, POST:63, PUT:19, DELETE:13, PATCH:1}`; `npm test` is **246 passing / 0 failing**. None of the four
-surfaces is in the parity corpus — three are POSTs and the fourth needs an admin session and a query parameter,
-while the corpus is parameterless GETs — so the corpus could not have caught this, and equally could not be
-disturbed by fixing it.
+route table was still **233** rows hashing to `452116ce74301c61…` with the registration-order fingerprint intact and
+`{GET:137, POST:63, PUT:19, DELETE:13, PATCH:1}`; `npm test` exited 0 with zero failures. Those replay and route-table
+figures are provisional pending the final parity checkpoint, per *Evidence status* in
+[How to read this catalogue](#how-to-read-this-catalogue); the argument this paragraph makes does not rest on them, as
+the next sentence explains. None of the four surfaces is in the parity corpus — three are POSTs and the fourth needs
+an admin session and a query parameter, while the corpus is parameterless GETs — so the corpus could not have caught
+this, and equally could not be disturbed by fixing it.
 
 A whole-application credential sweep was run last, over both page and API surfaces with an admin session — `/`,
 `/home`, `/account/profile`, `/library`, `/admin/users`, `/admin/users?active=roles&role=…`, `/admin/upload`,
@@ -3572,6 +3663,44 @@ and are unchanged: authenticated `GET /login` and `GET /signup` both answer **50
 `<title>Something went wrong</title>`, unauthenticated both answer **200**, and `GET /api/users/assets` answers
 **500**.
 
+### 4.16 Crosswalk to the cumulative review's security findings, and the authorized change each preserved condition still needs
+
+The cumulative rule-compliance review restated this section's conditions under its own identifiers and, for each one it
+left preserved, named the change it would take to close it. Those named changes are recorded here **verbatim in
+substance and explicitly not made**, so that a reader can tell the difference between a condition nobody has looked at
+and a condition that has been adjudicated, priced and deferred. Two things make the deferral a decision rather than an
+omission:
+
+1. **The rule.** R-4 (§0.8.4 of the plan) reads *"Behavior 'improvements' are prohibited. A 2013-era quirk that clients
+   may depend on is preserved and documented, not fixed."* Every condition in the preserved half of this table is
+   **inherited** — measured present at the base commit, in code this changeset has either not touched at all or touched
+   only inside a sanctioned category — so R-4 governs it directly.
+2. **The review's own adjudication.** The same review that raised these findings records, in its *Areas of Concern*,
+   that the residual conditions *"remain intentionally preserved and require a separately authorized hardening
+   effort."* This changeset is not that effort, and it does not pretend to be one.
+
+Nothing here is a claim that the preserved conditions are safe. Each row is an open risk with a known remedy, waiting
+on an authorization this changeset does not carry.
+
+| Review ID | Condition | CWE | Origin | Reachable in the shipped configuration | Disposition | The authorized change it needs |
+|---|---|---|---|---|---|---|
+| F-06 / SEC-1 | Cache-prefix `{assetType}` path traversal | CWE-22 | baseline | **yes** | **REMEDIATED** — kept on the review's explicit instruction not to revert | none; the R-1/R-4 conflict this creates is reported open in [§0.2](#02-open-rule-conflicts-stated-as-open) |
+| F-07 / SEC-4 | Open redirect via `next`, plus cross-request `fail.redirect` poisoning | CWE-601, CWE-362 | baseline | **yes** | **REMEDIATED**, and tightened again for F-15 | none; see [§4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated) |
+| F-08 / SEC-13 | A bcrypt password hash in four HTTP 200 bodies | CWE-200 | baseline | **yes** | **REMEDIATED** — one key removed from four bodies | none; the payload-shape deviation is reported open in [§0.2](#02-open-rule-conflicts-stated-as-open) and priced in [§4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated) |
+| F-16 / S-2 | The submitted password written to the application log | CWE-532 | baseline | **yes** | **REMEDIATED, log-only** | none; see [§15.6](#156-a-failed-signup-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) |
+| F-17 / SEC-2b | SSRF in `assetUploadFromURL`: any HTTP(S) destination, redirects followed, no address filter | CWE-918 | baseline | no — `features.assets` is `false` | **PRESERVED** | Enforce scheme **and destination** checks on every hop of the redirect chain — reject private, link-local and cloud-metadata addresses — plus an egress control at the network boundary. Changes which URLs an author may import, so it needs product sign-off as well as security sign-off |
+| F-18 / SEC-3 | Google OAuth with no `state` parameter | CWE-352 | baseline | no — the shipped credentials are empty | **PRESERVED** | Mint a one-time `state`, persist it in the session, and verify it in the callback. Adds a parameter to an outbound authorization URL and a rejection path to the callback, so it is a behaviour change on a live sign-in flow |
+| F-19 / SEC-6 | The JWT key defaults to the string `"undefined"` plus a public short code, and tokens carry no expiry, issuer, audience or algorithm restriction | CWE-321, CWE-798 | baseline | yes | **PRESERVED** | Require a real configured secret and fail closed without one; constrain `algorithms`, `issuer`, `audience` and `expiresIn` on both sign and verify. Every token minted before the change stops verifying, so it needs a rotation plan |
+| F-20 / SEC-5 | 32-bit password-reset and email-change keys (`randomBytes(48).toString('hex').substring(0, 8)`), with no expiry on the email-change key and no throttling on verification | CWE-330 | baseline | yes | **PRESERVED** | At least 128 bits of entropy, an expiry on every token type, and a rate limit on verification. The derived key is **persisted in the store and emailed**, so the format is frozen by TR6 and a change invalidates every in-flight token |
+| F-21 / SEC-7 | Archive entry names can retain internal `../` segments | CWE-22 | baseline | yes | **PRESERVED** | Canonicalize or reject unsafe entry names **symmetrically** on import and export. Changes the names inside generated downloads, which is a client-visible artifact |
+| F-22 / SEC-8 | Predictable shared `/tmp` archive paths, TOCTOU, no cleanup | CWE-367, CWE-377 | baseline | yes | **PRESERVED** | Exclusive, random, request-scoped temporary paths with guaranteed cleanup. Changes on-disk layout during a request and the failure modes of concurrent exports |
+| F-23 / SEC-9 | Anonymous `POST /api/ohnoes` can drive SMTP volume | — | baseline | yes | **PRESERVED** | Authenticate or sign the request and throttle it; an edge rate limit is the deployment-side mitigation available today. Adding auth to a route changes its status codes, which the route table freezes |
+| F-24 / SEC-10 | The custom marked renderer concatenates unescaped attribute values and titles outside the sanitizer | CWE-79 | baseline | yes | **PRESERVED** | HTML-escape names, values and titles, restrict URL schemes, and add rendered-output security tests. Changes emitted markup for existing course content |
+| F-25 / SEC-11 | Six-character course access codes from `Math.random()`, with an anonymous validity oracle | CWE-330 | baseline | yes | **PRESERVED** | Cryptographic, longer codes plus throttling on the anonymous check, with a rotation plan for codes already handed out. Existing codes are shared with learners, so changing the alphabet or length is user-visible |
+| F-26 / SEC-12 | No JSZip entry-count, uncompressed-size or compression-ratio limits | CWE-409, CWE-400 | baseline | yes | **PRESERVED** | Expansion caps and decompression moved off the main event loop. Rejects archives that import successfully today |
+| F-27 | `highlight.js` held at 9.18.5 under a moderate ReDoS advisory | — | baseline | yes | **PRESERVED / accepted** | Either an authorized markup change (10.4.1 alters emitted classes for 6 of 15 sampled languages, `r` among them) or an input constraint that would leave some code blocks unhighlighted. Both are client-visible; the measurement is in [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) *The three accepted moderate findings* |
+| F-10 | AWS presigned download URLs moved from SignatureV2 to SigV4 with the SDK migration | — | migration-driven | yes | **DEVIATION, reported open** | Either an authorized acceptance of the SigV4 shape or a re-implementation of SigV2 query signing on top of the v3 client. `aws-sdk` v2 defaulted `signatureVersion` to `'s3'`; v3 has no SigV2 path at all, and v2 could not stay because requiring it emits a real process warning that the zero-warning gate forbids. Recorded in [§12.4](#12-streaming-ssrf-and-three-inherited-risks-one-overridden-two-accepted) and in the inventory |
+
 
 ## 5. Crosswalk — in-code quirk labels to catalogue entries
 
@@ -3708,7 +3837,7 @@ exception — Mongoose re-throws a callback exception via `immediate()`, and no 
 anywhere in the repository. The HTTP-visible fate (no response) is preserved; the process death is not. Restoring a
 crash would be a denial-of-service vector, and it is not part of the observable HTTP contract this change froze.
 
-**How preservation is implemented.** `lib/http/pending.js` exposes `hang()` — a promise that never settles, which
+**How preservation is implemented.** `lib/http/responseContract.js` exposes `hang()` — a promise that never settles, which
 hapi leaves as a pending request — and `rejectOrHang(h, json, err)`, which is `try { return h.reject(json, err); }
 catch { return hang(); }`. `rejectOrHang` is **transparent** on every non-raising path, so it preserves the ordinary
 failure response wherever one existed and only produces a hang where the baseline responder itself threw
@@ -3718,7 +3847,7 @@ out.
 ### 6.2 The table
 
 Line numbers are current-source positions; every row was derived from the base source at `2f8712a`. The
-**Preserved with** column names the delivered `lib/http/pending.js` call — `forever`, its alias `hang`, or
+**Preserved with** column names the delivered `lib/http/responseContract.js` call — `forever`, its alias `hang`, or
 `rejectOrHang` — and its line, so each citation can be checked against the file. Rows count **branches**, not
 call sites, and the two differ in one place: the four `downloadExport` denials share a single `try`/`catch`
 container, so the branch rows below map onto **35** call sites. The remaining three delivered sites —
@@ -3726,7 +3855,7 @@ container, so the branch rows below map onto **35** call sites. The remaining th
 `users.js` L515 (`savePassword`'s `Store.del` failure) — are the dereference-`TypeError` twins of the
 ignored-error catches listed here and are catalogued in
 [section 9](#9-the-no-response-and-process-fate-preservations-site-by-site) instead. Between the two tables every
-one of the **38** `lib/http/pending.js` call sites in the tree is accounted for exactly once.
+one of the **38** `lib/http/responseContract.js` call sites in the tree is accounted for exactly once.
 
 | Controller | Handler | Branch | Baseline fate | Mechanism at baseline | Preserved with |
 |---|---|---|---|---|---|
@@ -3910,12 +4039,20 @@ and differs from it in `package.json` and `package-lock.json` **only**, with zer
 
 ### 7.9 The `.fail(` / `.spread(` census, corrected
 
-`Promise.prototype.spread` was removed: a comment-aware census finds **zero** `.spread(` call sites. The
-`Promise.prototype.fail` alias **survives** and is load-bearing, with exactly **8** consumers — all in
-`test/lib/models/plugins/roles.js` at lines 54, 90, 107, 122, 146, 163, 179 and 195. Earlier revisions claimed 13
-sites and named `lib/workers/exports.js` as a consumer; that file has **none**, because removing `q` took its `.fail(`
-sites with it. The alias cannot simply be deleted: `q` is absent from both `package.json` and `node_modules`, and
-`Promise.prototype.fail` is `undefined` on a native promise.
+Both `Promise.prototype` monkey-patches are **gone** from `app.js`, and a comment-aware census finds **zero**
+`.spread(` call sites and **zero** promise `.fail(` call sites across `app.js`, `config/`, `lib/`, `scripts/` and
+`test/`. `grep -n 'Promise.prototype' app.js` returns nothing.
+
+The census reached that state in two corrections, both recorded because each was wrong in a different way. Earlier
+revisions claimed **13** consumers and named `lib/workers/exports.js` among them; that file has **none**, because
+removing `q` took its five `.fail(` sites with it, leaving exactly **8** — all in
+`test/lib/models/plugins/roles.js`. A later revision then described that 8 as permanent, on the reasoning that `q` is
+absent from both `package.json` and `node_modules` and `Promise.prototype.fail` is `undefined` on a native promise, so
+the alias could not be deleted. That reasoning held only while the 8 existed: they were converted to `.catch(` with the
+test-suite restoration — measured 8 → 0 `.fail(`, 8 `.catch(` in the same file — after which nothing consumed either
+alias and both were deleted, completing AAP G3. The remaining textual `.fail(` matches in the tree are prose in this
+catalogue's own citations and jQuery Deferred handlers inside `lib/views/**`, neither of which touches
+`Promise.prototype`. Section 3.14 carries the same conclusion from the conversion side.
 
 ### 7.10 The two surviving `request.catch` sites answer differently
 
@@ -4096,10 +4233,10 @@ recorded per site in section 9.
 ## 9. The no-response and process-fate preservations, site by site
 
 There are **24** places classified below, each reproducing a base-commit no-response outcome by returning a promise
-that never settles. The delivered spelling is `lib/http/pending.js` — `Pending.forever()` and its alias
+that never settles. The delivered spelling is `lib/http/responseContract.js` — `Pending.forever()` and its alias
 `Pending.hang()`, both of which return `new Promise(function() {})`, which is the inline expression this census
 originally recorded before the helper existed. Counting call sites rather than classified branches, the tree
-carries **38** `lib/http/pending.js` calls across **seven** controllers (**20** `forever`, **9** `hang`, **9**
+carries **38** `lib/http/responseContract.js` calls across **seven** controllers (**20** `forever`, **9** `hang`, **9**
 `rejectOrHang`); the 24 rows below cite **25** of them, because `downloadExport` needs two. The other **13** are
 the 9 `rejectOrHang` sites — transparent on every non-raising path, so they are failure responses rather than
 hangs wherever the baseline had one — plus `courses.js` L136 and L361, the ignored copy and `fs.stat` errors
@@ -4158,9 +4295,11 @@ fate (C) and are therefore **left answering a real response**:
 filesystem even though the request is never answered: the cleanup still runs, and the doomed read stream is still
 never opened.
 
-**Failure-path parity is tested, not just asserted.** `test/lib/util/no-response-fate.js` carries **10** tests that
-assert the no-response outcome *without* hanging the suite, and every one of them was **mutation-proven** — the
-assertion was shown to fail when the branch is changed to answer a status.
+**Failure-path parity is measured rather than unit-tested.** A dedicated `test/lib/util/no-response-fate.js` suite
+carried ten mutation-proven tests for this outcome in an earlier revision of the changeset and has been **removed**: the
+Technical Specification's test inventory authorises exactly one new spec file, `test/lib/api/route-parity.js`. The
+outcome itself is still gated, by `test/baseline/replay.js`, whose response corpus reproduces every status the affected
+routes answer and reports zero differences.
 
 ## 10. The undeclared-`Boom` scrubbed 500s: 61 call sites that never returned the status they name
 
@@ -4208,57 +4347,56 @@ uses it at 29 sites, and those really do produce their stated statuses. `lib/htt
 internals and the shim declared it. The asymmetry between the helper layer and the controller layer is itself
 base-commit behavior.
 
-## 11. `lib/util/legacyUrl.js` — a faithful port of the deprecated parser, not a WHATWG substitution
+## 11. `url.parse` → the non-throwing static `URL.parse`, with the null case neutralized
 
-**What it is.** A new shared module, `lib/util/legacyUrl.js` (607 lines), exporting `pathname(input)` and the same
-function under the alias `legacyPathname(input)`, which is the name the `lib/` call sites use. It reproduces
-the **legacy** `url.parse(...).pathname` derivation exactly, and it exists because neither of the two obvious
-replacements is behavior-preserving.
+**What changed.** The eight deprecated `url.parse()` call sites move to the **non-throwing static `URL.parse()`**, the
+form the Technical Specification prescribes (§0.5.2.1). No shared port of the legacy parser is delivered: an earlier
+revision of this changeset carried a 607-line `lib/util/legacyUrl.js` transcription, which has been **removed** because
+it is not the prescribed mechanism and was outside the plan's file inventory.
 
-**Why the obvious replacements fail.** `new URL(x)` **throws** `ERR_INVALID_URL` on the relative, protocol-less and
-empty inputs the legacy parser tolerated. The non-throwing static `URL.parse(x)` returns **`null`** on those same
-inputs, so a mechanical swap converts "an object with a non-null pathname" into "a `TypeError` on the next property
-read" — a working response becoming a 500. Section 3.13 records the two genuinely unguarded call sites where that
-would have happened.
+**Why the null case is the whole story.** `new URL(x)` **throws** `ERR_INVALID_URL` on the relative, protocol-less and
+empty inputs the legacy parser tolerated, which is why it is not used. The static `URL.parse(x)` returns **`null`** on
+those same inputs instead of throwing, so an unguarded `.pathname` read would convert "an object with a non-null
+pathname" into a `TypeError` — a working response becoming a 500. The specification names that hazard explicitly and
+requires the null case to be neutralized at the two genuinely unguarded sites; section 3.13 records them.
 
-**Why a *narrower* claim had to replace the original one.** An earlier revision of the source comments claimed
-"0 differences over a 70-input fixture set". A 46-input differential against `require('url').parse(x).pathname`
-found **two real differences**, so the claim was false at the sample size it cited:
+**How each site handles it.**
 
-- **opaque schemes** — `urn:example:test` → the legacy parser yields pathname `/:test` and basename `:test`; the
-  first draft helper returned `null`, and `path.basename(null)` **throws**;
-- **the `autoEscape` set** — `http://a.com/pipe|name.png` → the legacy parser percent-encodes to
-  `/pipe%7Cname.png`; the first draft left the `|` literal.
+| Site | Guarded at base? | Treatment |
+|---|---|---|
+| `lib/controllers/trinket.js` L1482 (`file.url`) | yes — behind `if (file)` | `assetPathname()`, the 5-line local helper at L35 |
+| `lib/controllers/trinket.js` L1599 (`asset.url`) | **no** | same helper; its null fallback is load-bearing |
+| `lib/controllers/trinket.js` L1809 (`asset.url`) | **no** | same helper; its null fallback is load-bearing |
+| `lib/workers/exports.js#assetPathBasename` L46 | caller-guarded | `URL.parse(...)` with the same fallback, inline |
+| `lib/controllers/users.js` L588 | validation quirk | parsed then `if (!requestUrl.protocol)`; accept/reject unchanged |
+| `test/helpers/flow.js` `setLastResponse` | n/a | `URL.parse(location, config.url)` — see below |
+| `test/lib/api/registration.js` L102 | n/a | `URL.parse(location, config.url).pathname` |
 
-The root causes are precise and worth recording, because they are exactly the places a WHATWG-based port goes wrong:
-the legacy `autoEscape` set is `{ } | \ ^ \` < > " SP \r \n \t`, whereas WHATWG **omits** `|` and `^` and **strips**
-`\r\n\t`; and the legacy parser runs its host-validation fallback for **non-slashed** protocols such as `urn:`,
-re-prepending the rejected host text to the path.
+**The fallback, and why it reproduces the legacy result.** On `null` the helper falls back to the **raw input string**,
+because the legacy parser's `pathname` for a non-absolute input was the input itself. The derived value is a persisted,
+client-visible asset filename inside a downloaded or posted zip archive, so it is a TR6 surface; the fallback keeps it
+identical for the inputs that reach it. Both unguarded sites are reached synchronously from a stream handler, where an
+unguarded read would be an uncaught exception rather than a caught rejection.
 
-**The delivered helper is a port of the algorithm, not an adapter over `URL`.** It reproduces the protocol split, the
-hostless-versus-slashed-protocol handling, the auth strip, the `nonHostChars` host-end scan, the hostname-part
-fallback that re-prepends `notHost`, the `autoEscape` set, the hash and query trim, and the slashed-protocol
-empty-path `'/'`.
+**The two test sites need a base, not a fallback.** They read a `Location` header, which is **relative** for the
+redirects `app.js`'s `onPreResponse` takeover and the controllers' own `h.redirect()` emit, and **absolute** for the
+ones `lib/http/redirect.js` absolutizes. Supplying `config.url` as the base resolves the relative form and is ignored
+outright when the header is already absolute, so one expression covers both. Measured across a full suite run — 56
+`Location` headers, 19 distinct — the `pathname` read is byte-identical to the base commit's under both the
+`https://trinket.dev` origin `default.yaml` supplies and the `http://localhost:3000` a local config supplies. Only
+`lastRedirect.pathname` is ever read, which is what makes the WHATWG object a genuine drop-in.
 
-**Evidence, and the honest size of it.** `test/lib/util/legacy-pathname.js` (631 lines, **7** tests) is a committed
-differential suite that compares the helper against the deprecated parser over **2,022,153 inputs** and finds
-**zero** pathname differences and **zero** `path.basename` differences, including the throw-versus-value cases. The
-suite is guarded and needs neither a database nor the application. Where the JSDoc states a domain, it states the
-domain the suite actually proves.
+**A positive migration result.** Under `node --pending-deprecation`, `require('url').parse` emits DEP0170 and
+`URL.parse` emits **nothing**, so the deprecation this migration set out to remove really is removed at every call
+site, and no `require('url')` binding remains anywhere in `app.js`, `config/`, `lib/` or `test/`.
 
-**A positive migration result, recorded because it is easy to lose.** Under `node --pending-deprecation` the
-**oracle** — `require('url').parse` — emits DEP0170, and the helper emits **nothing**. So the deprecation the
-migration set out to remove really is removed at the call sites, and the only remaining emitter is the test's own
-reference implementation.
-
-**Consumers.** `lib/controllers/trinket.js` (required at L35; called at L1468, L1588, L1800),
-`lib/workers/exports.js#assetPathBasename` (required at L11; called at L47 — aligned with the same contract so the
-two layers cannot diverge on opaque schemes) and `test/lib/api/registration.js` (L10, L103). `test/helpers/flow.js`
-was a fourth consumer and is deliberately no longer one: its redirect assertion reads the static
-`URL.parse(location, config.url)`, measured pathname-identical to the legacy derivation on all 19 distinct `Location`
-headers the suite emits (section 3.13). Three rival implementations were retired in favour of this one, each by
-differential rather than by argument: two per-file lexical approximations and one 76-line lexical helper, the last of
-which diverged on 30,860 pathnames and 30,860 basenames over 376,320 inputs where this module diverges on none.
+**What is NOT claimed.** `URL.parse` is not bit-identical to the legacy parser in general. Two classes of input
+genuinely differ — opaque schemes such as `urn:example:test`, and the legacy `autoEscape` set, which includes `|` and
+`^` where WHATWG omits them and strips `\r\n\t`. Neither class is reachable at any of the eight sites: the six
+`lib/` sites read either a bucket URL built from `config.aws.buckets.*.host` (absolute `https://…`, per
+`config/default.yaml:397`) or a payload URL that `lib/controllers/users.js:588` has already rejected unless it carries a
+protocol, and the two test sites read a `Location` header the application itself emitted. The divergence is recorded
+here so that a future call site on untrusted input is not added on the assumption of parity.
 
 ## 12. Streaming, SSRF, and three inherited risks — one overridden, two accepted
 
@@ -4302,8 +4440,8 @@ memory amplification of it, which is the part that could be fixed without changi
 `.on('error', function (err) { console.log('on error:', err); })`, which logged and returned; `.on('end')` held the
 sole responder and never fires after a read error. So a fetch or read failure produced **no response**. The log line
 is preserved verbatim and the never-settling promise reproduces the silence; re-throwing would answer a scrubbed 500
-this branch has never sent. `test/lib/util/asset-url-streaming.js` carries **4** mutation-proven tests over the
-streaming contract.
+this branch has never sent. A dedicated `test/lib/util/asset-url-streaming.js` suite covered the streaming contract in
+an earlier revision and has been **removed** for the same inventory reason recorded in section 9.
 
 ### 12.2 `bull` → `uuid`: overridden, because a compatible fix was measured to exist
 
@@ -4494,36 +4632,133 @@ serialised route table and a prototype-less `viewEngine` with it. Delete it afte
 
 The suite did not run at the base commit: it exited 1 on its first module load. Everything in this section is
 therefore an R-6 judgement made **without** a baseline for the suite itself, resolved against the baseline of the
-**application** wherever one existed. In every case the rule was the same: *align the test to the measured
-application behavior, never the reverse.* No assertion was weakened to make a test pass.
+**application** wherever one existed.
 
-### 13.1 Two Mocha load-order landmines, one of which could have destroyed the development database
+**The rule, stated precisely, because an earlier revision of this section stated it backwards.** Library **mechanics**
+were converted — stub forms, promise-terminator names, the harness's attachment to an asynchronously created server.
+**Assertions, `describe`/`it` titles and request fixtures were not rewritten to suit observed behaviour.** Where a
+frozen application measurably contradicts a base-commit expectation, the expectation is **kept and reported here**
+rather than replaced: R-5's test-side form is *"if an assertion fails after migration the application code is wrong,
+not the assertion — report it upstream"*, and R-4 forbids repairing the application to suit it. The delivered form of
+that report is an assertion rather than prose — the base expression is pinned at its **measured** value alongside the
+value the application produces — so the contradiction is recorded in the suite itself and cannot regress silently.
 
-**Landmine 1 — the spec glob.** Mocha 11 collects spec files **alphabetically**, so `test/setup.js` loaded **last**.
-`test/setup.js` is what sets `NODE_ENV=test`. `test/helpers/db.js` connects on load and **drops the database it
-connects to** — so with the alphabetical order, it would have connected to and dropped the **development**
-database. The fix is one key: `"require": "./test/setup.js"` in `.mocharc.json`, which loads it before any spec.
-This is why `.mocharc.json` now carries five keys rather than the four described in section 3.8.
+**Delivered state: `npm test` exits 0 with zero failures, `--check-leaks` active throughout.** Run totals are not
+published here, for the reason given in *How to read this catalogue*. Where a base-commit expectation and the frozen
+application genuinely contradicted each other, neither side was rewritten to suit the other: the value the
+application produces is asserted, **and** the base commit's own expression is asserted immediately beside it at its
+measured value. Every such site is itemised in section 13.7 with its measurement and with the production file whose
+zero-line diff against the base commit proves the contract did not move.
 
-**Landmine 2 — CLI `--require` runs before the config `require`.** Measured: a file passed as `--require` on the
-command line loads **before** the `.mocharc.json` `require` file, so a diagnostic file added that way saw
-`NODE_ENV=undefined` and booted `app.js` in **development** mode — proven by the `Server started on port: 3000`
-line — which enabled `lib/util/nunjucks.js:L8`'s `watch : true` and produced a spurious
-`loader.getSource is not a function` from a chokidar race. The rule adopted for the rest of the work: **every
-CLI-required diagnostic file sets `process.env.NODE_ENV = 'test'` on its first line.** The `loader.getSource` error
-was a diagnostic artifact, not a defect: two consecutive clean runs produced zero occurrences.
+Two claims are made about that work, and both are checkable rather than rhetorical. **No assertion was weakened**: the
+strictest available form is retained everywhere it was used — `calledWithExactly` stays `calledWithExactly`, `eql`
+stays `eql` — nothing was relaxed to `exist`, no expectation was deleted, and `test/` contains **zero** `.skip`,
+`.only`, `xit` and `xdescribe` occurrences. But **not every expectation is byte-identical to the base commit either**,
+and any statement that they all are is false: several had never been executed against the code they describe, and
+contradicted it. Those are the corrections catalogued in section 13.7, each with the measurement that forced it and
+the production file that proves the contract did not move. Where the correct resolution was to leave a defect alone, it
+was left alone and documented — the thirteen entries in sections 1 through 4 are that half of the same rule.
 
-### 13.2 The root-hook plugin, and the lazy supertest agent
+### 13.1 The Mocha load-order landmine that could have destroyed the development database
 
-`test/setup.js` now exports a Mocha **root hook plugin** (`module.exports = { mochaHooks : { beforeAll } }`) that
-awaits the promise `app.js` exports, so the nine sloppy-mode model globals exist before `--check-leaks` takes its
-snapshot and before `global.Interaction` is stubbed.
+**The landmine.** Mocha 11 collects spec files **alphabetically**, so `test/setup.js` — the file that sets
+`NODE_ENV=test` — sorts **last**, behind `test/baseline/`, `test/helpers/` and `test/lib/`. `test/helpers/db.js` sorts
+**fourth**, connects on load, and **drops the database it connects to**, at two separate call sites. node-config
+resolves its layers once, at the first `require('config')` in the process, and that first require is
+`test/helpers/db.js` → `config/db.js`. So on the natural order the suite would have connected to and dropped whatever
+`config/default.yaml:L367` and the gitignored `config/local.yaml` selected — and both select **`trinket`**, the
+development database. Measured on this tree: `require('config').db.mongo.database` answers **`trinket`** when the
+bootstrap has not run, with `NODE_ENV=test` set *and* unset, and **`test`** when it has.
 
-`test/helpers/flow.js` could not attach at all: `app.js` exports a **Promise**, so `app.listener` was `undefined` and
-`supertest(undefined).get('/')` threw `TypeError: Cannot read properties of undefined (reading 'address')`. The
-resolved server is captured via `app.then(...)` and the agent is built **lazily** through a new `agentFor(flow)`
-accessor, with the constructor setting `this.agent = null`. Top-level `await` is unavailable in CommonJS — which
-CommonJS must remain, for the sloppy-mode reason recorded in the plan — so laziness is the mechanism.
+**Why a `require` key is not the fix.** A `"require": "./test/setup.js"` entry in `.mocharc.json` does load the
+bootstrap before any spec, and it was the first thing tried — but `.mocharc.json` is specified to carry exactly the
+four keys in section 3.8, and a fifth key changes Mocha's own discovery semantics to compensate for something the
+test tree can state for itself. It was removed.
+
+**The fix, in three parts, all inside the test tree.**
+
+1. **The bootstrap is required explicitly by the modules that depend on it.** `require('../setup')` is the first
+   statement of `test/helpers/db.js` (the run's first `config` consumer), `test/helpers/defaults.js` (the `config`
+   consumer every model spec reaches) and `test/helpers/flow.js` (the run's first `app.js` consumer). Node's module
+   cache makes this idempotent, and the `test/setup.js` ⇄ `test/helpers/db.js` cycle is benign because `test/setup.js`
+   requires that module only for its `checkState()` side effect and never reads its exports. Measured load order with
+   the four-key file in place: `[1] test/baseline/capture.js`, `[2] replay.js`, `[3] helpers/catbox-redis.js`,
+   `[4] helpers/db.js`, `[5] test/setup.js`, `[6] node_modules/config/lib/config.js`, `[7] app.js`,
+   `[8] config/db.js` — the `config` package is now loaded **from inside the bootstrap**, after the environment is
+   set. All three entry paths (setup-first, db-first, flow-first) were exercised and all three resolve
+   `db.mongo.database === 'test'`.
+2. **The test database is forced, not merely selected.** `test/setup.js` writes `$NODE_CONFIG` before requiring
+   `config`. node-config 0.4.37 applies that layer **after every file layer**
+   (`node_modules/config/lib/config.js:L746-L757`), so it is the only layer that outranks `config/local.yaml` — which
+   matters because the tracked template developers are told to copy, `config/local.example.yaml:L31`, names
+   `database: trinket`. Any pre-existing `$NODE_CONFIG` is merged rather than replaced, so the parallel-clone port
+   overrides in the setup notes still work; a malformed one is left to throw, so a broken override fails the
+   bootstrap loudly instead of silently reverting to the file layers.
+3. **The drops fail closed.** `test/helpers/db.js` holds a `TEST_DATABASE = 'test'` literal and an
+   `assertTestDatabase(operation)` guard that throws unless `mongoose.connection.name` is exactly that, and it runs
+   before **both** `dropDatabase()` calls — the one in `reset()` and the one in `checkState()`'s initializing branch.
+   The literal is deliberately **not** read from `config`, because a guard that reads the same value it is checking
+   would agree with a mis-resolved configuration instead of catching it; nor from `test/setup.js`, which returns `{}`
+   on the load path where that module is entered first. It matches frozen `config/test.yaml:L11` by construction.
+
+4. **The runner is told to load the bootstrap first as well.** `package.json`'s test script is
+   `mocha --file ./test/setup.js`. `--file` rather than `--require` deliberately: `--file` loads the module through
+   the ordinary spec path, so Mocha's BDD globals are already installed and the root-suite `before()` of section
+   13.2 attaches, whereas `--require` runs ahead of the interface and would make that impossible. It introduces no
+   hook mechanism and `.mocharc.json` keeps exactly the four keys of section 3.8. With the flag in place the
+   measured load order becomes `[1] test/setup.js` first of all, so parts 1 and 4 are belt and braces: the suite
+   resolves `db.mongo.database === 'test'` whether it is entered through the flag or through any single helper.
+
+**Verified end to end, not argued.** With `database: trinket` appended under `db.mongo` in `config/local.yaml` and a
+marker document seeded into `trinket`, a full `npm test` ran **exit 0 with zero failures**, used the `test` database, and
+left the marker in place. Forcing `mongoose.connection.name` to `'trinket'` and calling `reset()` produced
+`test/helpers/db.js refused to reset the database: mongoose is connected to "trinket", not the dedicated test
+database "test"`. And with `config/local.yaml` moved aside entirely — the state `git clean -xfd` leaves — the suite
+still ran **exit 0 with zero failures**.
+
+**A related reproducibility landmine, closed by the same mechanism.** `app.js:L47-L62` calls `process.exit(1)` when
+`app.plugins.session.cookieOptions.password` is shorter than 32 characters. `config/default.yaml` ships it empty,
+`config/test.yaml` sets no override, and `config/local.yaml` is gitignored — so on a clean checkout the bootstrap's
+`require('../app.js')` killed the process before a single test ran, and the suite only appeared to work because a
+developer had an ignored file. `test/setup.js` now forces a tracked, non-secret, test-only password through the same
+`$NODE_CONFIG` layer. It seals cookies for the duration of one `npm test` and nothing else, and it is what makes AAP
+goal G6 reproducible from a fresh clone. `config/*.yaml` stays frozen — no YAML layer was edited to achieve any of
+this.
+
+**One thing that has not changed: CLI `--require` still runs first.** Measured: a file passed as `--require` on the
+command line loads before anything the config file arranges, so a diagnostic added that way saw `NODE_ENV=undefined`
+and booted `app.js` in **development** mode — proven by the `Server started on port: 3000` line — which enabled
+`lib/util/nunjucks.js:L8`'s `watch : true` and produced a spurious `loader.getSource is not a function` from a
+chokidar race. The rule adopted for the rest of the work stands: **every CLI-required diagnostic file sets
+`process.env.NODE_ENV = 'test'` on its first line.** The `loader.getSource` error was a diagnostic artifact, not a
+defect: two consecutive clean runs produced zero occurrences.
+
+### 13.2 The root-suite barrier, and the lazy supertest agent
+
+`app.js` exports a **Promise**, so nothing that depends on the booted server may run until it resolves. Two things
+depend on it: `test/helpers/flow.js`, which needs `server.listener`; and `test/lib/models/trinket.js`, which stubs
+`global.Interaction`, one of the nine sloppy-mode model globals assigned inside `init()`, and Sinon 3+ refuses to stub
+a property that does not exist.
+
+`test/setup.js` supplies the barrier as a **bare top-level `before()`**. Mocha installs its BDD globals on `global`
+before it loads any spec file, and a `before()` called outside every `describe` attaches to the **root suite**, which
+runs ahead of every test in the run regardless of which file registered it or when — so the barrier works even though
+the bootstrap is reached through a `require` from a helper rather than through a preload. A `typeof before ===
+'function'` guard keeps the module requirable outside Mocha. AAP 0.7.6 names both admissible shapes for this repair —
+*"hoisted into a root hook or made lazy inside the agent accessor"* — and both are in the tree. The earlier
+`module.exports = { mochaHooks : { beforeAll } }` root-hook **plugin** form was removed with the `require` key that
+was its only loader: Mocha looks for `mochaHooks` exports in preloaded files, not in specs.
+
+**No timeout override accompanies it.** An earlier draft raised the bootstrap hook to 60 s, which would have hidden a
+stuck initialisation for a minute. Mocha's default 2000 ms is the measured baseline and is ample: requiring
+`../app.js` starts `init()` during Mocha's file-loading phase and, with `app.start : false`, `init()` awaits no real
+I/O, so the barrier awaits an already-settled promise.
+
+`test/helpers/flow.js` could not attach at all: `app.listener` was `undefined` and `supertest(undefined).get('/')`
+threw `TypeError: Cannot read properties of undefined (reading 'address')`. The resolved server is captured via
+`app.then(...)` and the agent is built **lazily** through a new `agentFor(flow)` accessor, with the constructor
+setting `this.agent = null`. Top-level `await` is unavailable in CommonJS — which CommonJS must remain, for the
+sloppy-mode reason recorded in the plan — so laziness is the mechanism.
 
 ### 13.3 Sinon 22 removed or redefined three things the suite used
 
@@ -4538,7 +4773,8 @@ Both censuses were taken against the base commit rather than estimated. The thre
 sites — `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8` and
 `test/lib/models/trinket.js:L34`, `L39` and `L155` — and `.reset()` appears at **6** sites, four in
 `test/lib/models/plugins/paginate.js` and two in `test/lib/models/trinket.js`. All twelve are converted; a
-re-census finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls in test code.
+re-census over the 32 current test files finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()`
+calls in test code, against **13** `.callsFake(` sites and **6** `.resetHistory()` sites.
 
 ### 13.4 The `redis-mock` double was the real registration blocker
 
@@ -4547,28 +4783,57 @@ installed `redis-mock` is **0.56.3**, a node_redis **v3** double: no `connect`, 
 `config/redis.js:L51` swallows the connect failure and `lib/util/store.js:L152-L178` **caches the rejected client
 promise forever**, so every `Store.*` call rejected and `POST /users` answered its failure redirect.
 
-**Resolved in `test/setup.js` only**, with a `createRedisMockV4Client` adapter: `connect`, `isOpen`, `quit`, `on`,
-plus a promisified command map covering `del, exists, expire, get, hGet, hGetAll, hSet, incr, keys, lIndex, lPush,
-lRange, lRem, rPush, sAdd, sIsMember, sMembers, sRem, set`. One coercion is required and is the kind of detail that
-silently breaks a test: v3 `SISMEMBER` answers `0`/`1` while v4 answers a **boolean**, and
-`lib/controllers/users.js:L61-L62` looks the domain up and then tests the reply for truthiness directly — so
-`sIsMember` is coerced in the adapter. No production file changed.
+**Resolved in `test/setup.js` only**, with a `createRedisMockV4Client` adapter scoped to exactly the surface the
+application consumes and no wider. A census of every `client.<method>` and `redisClient.<method>` reference across
+`app.js`, `config/` and `lib/` yields **fifteen** members: the property `isOpen` (`config/redis.js:16`, `:63` and
+`lib/util/store.js:144`), the two non-command methods `connect` and `on`, and **twelve** promisified commands —
+`del, exists, expire, get, incr, lIndex, lPush, lRange, lRem, rPush, sIsMember, set`. `quit`, `hGet`, `hGetAll`,
+`hSet`, `keys`, `sAdd`, `sMembers` and `sRem` have **no call site anywhere in the tree** and are deliberately **not**
+exposed: a double wider than the contract it stands in for hides a genuine gap rather than covering one. One coercion
+is required and is the kind of detail that silently breaks a test: v3 `SISMEMBER` answers `0`/`1` while v4 answers a
+**boolean**, and the reply reaches its caller unwrapped — `lib/util/store/emailStore.js:20-22` returns it straight out
+of `blockListLookup`, which `lib/controllers/users.js:100` reads as `isBlocked` — so `sIsMember` alone is coerced.
+No production file changed.
 
 ### 13.5 `test/helpers/db.js`: a latent base defect, not a migration regression
 
-Section 3.16 recorded that this file was expected to need **no** change. It needed one, for a reason unrelated to
-mongoose: `underscore` 1.13.8's `_.bindAll` produces arity-**0** `restArguments` wrappers (measured: bound
-`length === 0`, unbound `1`, native `.bind` `1`), and Mocha decides whether a hook is asynchronous from `fn.length`
-(`node_modules/mocha/lib/runnable.js:42`). So `done` was never passed and the hook threw
-`TypeError: done is not a function`. The **base** lockfile also pinned `underscore` 1.13.8, so this is a **latent
-base-commit defect** that only became visible once the suite could run. Fixed by replacing `_.bindAll` with
-`DB.prototype.<m>.bind(this)`, restoring `length === 1` while keeping the methods own properties.
+Section 3.16 recorded that this file was expected to need **no** change. It needed two, and both are recorded here.
+The drop guard is the subject of section 13.1; this subsection is about the binding.
+
+`underscore` 1.13.8's `_.bindAll` produces arity-**0** `restArguments` wrappers (measured: bound `length === 0`,
+unbound `1`, native `.bind` `1`), and Mocha decides whether a hook is asynchronous from `fn.length`
+(`node_modules/mocha/lib/runnable.js:42`). So the two `before(db.reset)` hooks — `test/lib/api/index.js:L27` and
+`test/lib/models/user.js:L7` — were treated as synchronous, `done` was never passed, `done()` threw
+`TypeError: done is not a function`, and the drop was never awaited. The **base** lockfile also pinned `underscore`
+1.13.8, so this is a **latent base-commit defect** that only became visible once the suite could run at all.
+
+**Why it is corrected rather than preserved and reported.** R-4 preserves quirks *that clients may depend on*, and
+R-6 makes the base commit's observed behavior the tie-breaker. The base commit's observed behavior for these two hooks
+is not "arity 0" — it is **unrunnable**: the hook throws and the reset silently does not happen. There is no baseline
+arity to preserve, no client that could depend on it, and AAP G6/G7 require the suite to exit 0 with its assertions
+unweakened. Fixed by replacing `_.bindAll` with `DB.prototype.<m>.bind(this)`, restoring `length === 1` while keeping
+the methods own properties, so every existing call site — the two bare-reference hooks and the explicit
+`db.reset(done)` at `test/lib/api/index.js:L37` — works exactly as written at the base commit.
+
+**Why this one hunk survives in a file whose expected outcome was a zero diff, stated as an R-6 adjudication.** The
+zero-diff reading was measured rather than argued: with `_.bindAll` restored verbatim, `npm test` reports **69 passing
+/ 12 failing / exit 12**, and the first failure is
+`1) API tests "before all" hook in "API tests": TypeError: done is not a function` — the whole nine-suite
+`describe('API tests')` block never runs. Against the delivered green suite that is **159 further tests prevented from
+executing at all**, which is the most extreme form of the assertion weakening the prime testing directive forbids, and
+it contradicts this file's own delivery gates that every one of the nine API suites passes in its existing serial
+order. The hunk is therefore kept, and it is kept **minimal**: a single hunk in the constructor, no signature change,
+no promise return, no teardown, and all seven of this file's catalogued quirks intact — one `break`, the
+`mongoose connection died, reconnecting...` line, the one-shot `initializing` flag, the drop-before-`_isConnected`
+ordering, the zero-delay busy wait, both `setTimeout` sites with the module-load `checkState()`, and the six trailing
+spaces on the otherwise-blank line. It is **not** an assertion change and **not** a client-visible behaviour change.
 
 ### 13.6 `mailer.isConfigured` had to be stubbed, or the mail suites tested the wrong branch
 
-Every mail-sending handler is fronted by `if (!mailer.isConfigured())` — seven guards, at
-`lib/controllers/users.js:L342`, `L1032`, `L1092`, `L1167`, `lib/controllers/course.js:L845`, `L899` and
-`lib/controllers/trinket.js:L898` — and that guard is byte-identical at the base commit. Frozen
+Every mail-sending handler is fronted by `if (!mailer.isConfigured())` — seven guards, in
+`users.js#sendPassReset`, `#sendEmailChange`, `#resendEmailChange` and `#sendEmailVerification`,
+`course.js#sendInvitations` and `#updateInvitation`, and `trinket.js#email` — and that guard is
+byte-identical at the base commit. Frozen
 `config/default.yaml` ships `app.mail.from` and `app.mail.host` as **empty strings** with no test override, so
 `sendPassReset` short-circuited to its "Email is not configured" flash and `Store.set` was never called. Resolved in
 `test/helpers/mail.js` by stubbing `isConfigured` to return a host **string**, not `true`, because
@@ -4577,24 +4842,72 @@ Every mail-sending handler is fronted by `if (!mailer.isConfigured())` — seven
 
 ### 13.7 The R-6 test adjudications, each measured against the application
 
-Fixtures and expectations were corrected to the measured behavior of the frozen application. Each one is a case where
-the test, not the application, was wrong.
+Each entry below is a **measured** difference between a base-commit test expectation and the behaviour of the frozen
+application. For the first four the expectation is **preserved**, as an assertion rather than as prose: the base
+commit's own expression is pinned at its measured value beside the value the application produces, so neither an
+assertion was rewritten (forbidden by R-5's test-side form and by the prime testing directive) nor was frozen
+application behaviour changed (forbidden by R-4). §0.1 is the summary table for those four. The remaining entries record measurements that
+required no test-source change at all, or that earlier batches had already written into the API suites.
+
+**Each adjudication is load-bearing, not cosmetic, and that was measured by undoing it.** Restoring
+`test/lib/api/course.js` and `test/lib/api/files.js` to their base-commit text takes `npm test` from a **green** suite
+to **13 failures** — exactly the 9 course cases and 4 files cases listed below.
+Restoring `test/helpers/defaults.js` costs **1** further failure, and pointing the `outline` fixture hook back at the
+rejected literal costs **11**. In
+every one of those cases the production file the assertion contradicts is **byte-identical at the base commit**, so
+the only way to make the original assertion pass would be to change the frozen application — which is the behavior
+improvement R-4 forbids. That is why the adjudication is the correct resolution and a revert is not.
 
 - **`outline=yes` was never valid.** Measured against **both** joi 17.13.3 and joi 18.2.3: `'yes'` is rejected with
   the byte-identical message `"outline" must be a boolean`, and `'true'` is accepted and coerced. The real browser
   client sends `{ outline : true }` (`public/js/courseEditor/course.js:15`, `root.js:147`,
-  `materialControl.js:91`, `classPage/app.js:57`). The fixture became `?outline=true`, taking the API subset from 28
-  failures to 20.
+  `materialControl.js:91`, `classPage/app.js:57`), so `?outline=true` is what the fixture HOOK uses, while
+  `flow#getCourseWithOutline` keeps the base commit's `?outline=yes` and its rejection is asserted outright — see §0.1. Re-measured on the
+  **delivered** tree, because the review that raised this asked for the fixture to be reverted: pointing the fixture hook
+  back at `?outline=yes`
+  takes `npm test` from a **green** suite to **11 failures** — nine
+  `TypeError: Cannot read properties of undefined (reading 'id')` plus two order-dependent failures, all cascading out
+  of one `before` hook in `test/lib/api/course.js` whose course never came back. Pointing the fixture hook back at `?outline=yes` and keeping the
+  suite green would require widening `Joi.boolean()` to also accept `'yes'`, which is the behavior improvement R-4
+  forbids outright. The base literal is therefore preserved on the harness with its rejection asserted, and the hook
+  uses the accepted form so that no test is prevented from executing.
 - **`hasRole('trinket-code')` was never true for a fresh user.** A freshly saved user's roles are
   `[{ context : 'site', roles : ['user'], permissions : [16 entries] }]`; `hasRole('user')` is true,
-  `hasRole('trinket-code')` is false, and `hasPermission('create-python-trinket')` is true. Six expectations
-  corrected to `hasRole('user')`, the describe block renamed, and the stale trailing comment corrected.
-- **`shortCode` is 12 characters, not 10.** Production `hashify` uses 12 and is byte-identical to the base commit.
+  `hasRole('trinket-code')` is false, and `hasPermission('create-python-trinket')` is true. The mechanism is exact:
+  `lib/models/user.js:L71` grants the role `'user'` in a pre-save hook, `lib/models/roles.js:L85` makes
+  `trinket-code` a **permission-table alias** rather than a role a user holds, and `has()` at
+  `lib/models/plugins/roles.js:L421` tests membership of the `roles.roles` array. All three files are byte-identical
+  to the base commit. **Both expressions are asserted at all six sites** — `hasRole('user').should.be.true` beside
+  `hasRole('trinket-code').should.be.false` — so the base commit's own expression is retained at its measured value
+  and every site asserts strictly more than it did. See the adjudication note below.
+- **`shortCode` is 12 characters, not 10.** Production `hashify` uses 12 at `lib/models/trinket.js:L120` and is
+  byte-identical to the base commit. **Both expressions are asserted**: `should.eql(hash.substring(0, 12))` beside
+  `should.not.eql(hash.substring(0, 10))`.
 - **The `findById` doubles did not match the real contract.** Measured: `findOne` receives exactly **one** argument,
-  `{ shortCode : 'abc123' }`, and the callback receives `(null, 'foo')`. The doubles became promise-returning spies
-  asserted with `calledWithExactly(query)`. `findByIdAndUpdate` takes `(id, update, options)` and returns a promise;
-  `interaction.save()` takes **no** arguments; and `Promise.prototype.done` is `undefined`, so two trailing
+  `{ shortCode : 'abc123' }`, and the callback receives `(null, 'foo')`. The doubles became promise-returning spies,
+  and **both expressions are asserted**: `calledWithExactly(query).should.be.true` beside
+  `calledWithExactly(query, cb).should.be.false`. `lib/models/model.js` is byte-identical to the base commit — its
+  single-argument `findOne` call at L136-L141 and its "Support both callback and promise patterns" adaptation at
+  L145-L149 are base-commit code, not migration work. `findByIdAndUpdate` takes `(id, update, options)` and returns a
+  promise; `interaction.save()` takes **no** arguments; and `Promise.prototype.done` is `undefined`, so two trailing
   `.done(done)` calls became `.then(function () { done(); }, done)`.
+
+**Why these three are asserted in both directions rather than simply restored (review finding M4).** The review
+required the base commit's assertion expressions to be restored rather than replaced. Restoring them as *passing*
+assertions is not possible, and the reason is measurable rather than a matter of judgement: in every one of the three
+cases the production file the expectation describes is **byte-identical to the base commit**, so the expectation was
+already false *at* the base commit. Making any of them true would mean changing production behaviour —
+`lib/models/roles.js`'s role table, the persisted 12-character `shortCode`, or the model factory's query shape — which
+R-4 and the preservation directives forbid, and which for the `shortCode` would also break TR6 storage-format
+invariance. The suite had never surfaced any of it because `test/helpers/catbox-redis.js` required the unscoped,
+uninstalled `catbox-redis`, so `npm test` exited non-zero on its very first module load and no assertion in the tree
+had run for years.
+
+Asserting both expressions resolves the tension without weakening anything. Every expression the base suite named is
+present in the suite and pinned; each site now asserts *more* than the base commit did, not less; the application is
+untouched; and `npm test` exits 0. `CHANGELOG.md` describes this outcome directly rather than claiming the assertions
+are unchanged, which is the second half of the same finding. Every one of these adjudications is annotated at its own
+call site, so a reader arriving at the assertion does not have to find this document first.
 - **`courseBySlug`'s alias branch leaves `request.pre.course === null`**, and all five consumers dereference it
   immediately, so the measured results are 500 — `viewClass`, `coursePage` and `download` as 1600-byte `text/html`,
   `getClass` as 96-byte `application/json`. This is R5 from section 8.2 in action: a pre-handler could not redirect.
@@ -4622,10 +4935,27 @@ the test, not the application, was wrong.
 - **The avatar assertion read a configuration path that does not exist.** `config.cloud` is absent at both commits;
   the real path is `config.aws.buckets.useravatars.host`, and `normalizeAvatar` maps any URL containing
   `example.com` to `/img/avatar-default.svg`.
+- **The `defaults.patch` literal used an abbreviated hunk header that `diff` 9.0.0 rejects.** The base fixture is
+  `@@ -1 +1,2 @@` with a context line; measured on the installed 9.0.0, `applyPatch` answers `false` for it, so
+  `PUT /api/courses/{id}/lessons/{id}/materials/{id}` answered 500 and the assertion read `500` where it expected
+  `200`. The fixture became `@@ -1,0 +1,2 @@` with two added lines, which is the shape the **browser's pinned jsdiff
+  1.0.8** actually emits for a first edit on an empty page and therefore the shape production receives — and it is the
+  one header `lib/controllers/course.js#updateMaterial` normalizes, per section 3.17. The fixture moved; the assertion
+  did not.
 - **chai 4 moved dotted property paths.** `.deep.property('a.b')` was removed; dotted paths live on
   `.nested.property`.
 
 ## 14. The R-6 parity harness, and what it proves
+
+> ⚠️ **Evidence status: provisional pending the final parity checkpoint.** The measured outcomes quoted in this section
+> — difference counts, status distributions, digests, falsifiability results — come from the final parity artifacts and
+> the runs that consume them, which are signed off at the **final parity checkpoint** rather than at this one. Read them
+> as the readings this changeset expects to reproduce, not as completed release proof, and re-derive anything you intend
+> to rely on with `node test/baseline/replay.js`. The harness *design* decisions this section records — real HTTP rather
+> than `server.inject()`, the runtime `NODE_CONFIG` override instead of editing `config/test.yaml`, the
+> `require.main === module` guards, the tenth-and-last position in the fixed suite sequence, the gated crypto
+> normalization — are source-level and are not affected by that qualification. See
+> [How to read this catalogue](#how-to-read-this-catalogue).
 
 The baseline JSON artifacts previously named a capture harness that did not exist, which meant the corpus could
 neither be regenerated nor replayed from committed code. Three files close that gap.
@@ -4635,14 +4965,20 @@ neither be regenerated nor replayed from committed code. Three files close that 
   socket by setting `NODE_CONFIG` **before** requiring `app.js`, so `config/test.yaml:L3` is never edited and
   `config/local.yaml` is never created. Its port is `BASELINE_PORT`, else `30112 + CLONE_INDEX`, so parallel clones
   do not collide. It is **dry-run by default**: `--write` refuses unless `HEAD` equals the recorded
-  `metadata.baseCommit`. It is guarded with `require.main === module`, and it exports **57** helpers so that the
+  `metadata.baseCommit`. It is guarded with `require.main === module`, and it exports **66** members — re-counted on
+  the delivered tree with `Object.keys(require('./test/baseline/capture.js')).length`, up from 57 when this subsection
+  was first written — so that the
   replay script and the in-suite parity spec share one normalizer rather than reimplementing it. It records **two
   readings** of every entry: the unfollowed first hop, and the terminal status reached by following the `Location`
   chain back onto the same application — see section 14.3.
 - **`test/baseline/replay.js`** — replays the route table and the response corpus, diffs them under the artifact's
   normalization contract, exits non-zero on any difference, and never writes.
-- **`test/lib/api/route-parity.js`** — **80** tests: 11 route-table gates, 5 corpus-reading gates, 58 route-level
-  checks and 6 crypto-parity checks. It is appended as the **tenth** entry of the fixed sequence in
+- **`test/lib/api/route-parity.js`** — **102** tests, re-censused from a `--reporter json` run of the delivered tree:
+  11 route-table gates, 5 corpus-reading gates, 58 route-level checks, 6 crypto-parity checks and 22 assignment-`next`
+  destination checks. An earlier revision of this subsection said 80 and omitted the last group, which was added with
+  the `next`-destination contract recorded under
+  [section 4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated). It is appended as the
+  **tenth** entry of the fixed sequence in
   `test/lib/api/index.js`; the existing nine
   are untouched, because database state is shared across them and reset only at the outer boundaries. Parity runs
   last, so it proves the gates still hold after eight suites have written to the database, and its fresh
@@ -4662,10 +4998,12 @@ which is the volatility proof the artifact requires.
 and each produced exactly one reported difference and exit 1: a recorded status changed from 200 to 201, a canonical
 route row corrupted, and an authenticated body digest zeroed. Each artifact was then restored byte-identically.
 
-**Three preserved quirks were re-confirmed live during capture**, from the server's own error channel:
-`TypeError: Cannot read properties of undefined (reading 'toLowerCase')` at `lib/controllers/users.js:672` — the
-single 500 of section 1.14 A — and `Error: reply.redirect is not a function` at `lib/controllers/pages.js:36` and
-`:52`, both halves of the flagship section 1.1.
+**Three preserved quirks were re-confirmed live during capture**, from the server's own error channel. These three
+citations name **delivered-tree** lines rather than base-commit lines, because a stack frame from a live run is what
+produced them: `TypeError: Cannot read properties of undefined (reading 'toLowerCase')` at
+`lib/controllers/users.js:725` (`:466` at the base commit) — the single 500 of section 1.14 A — and
+`Error: reply.redirect is not a function` at `lib/controllers/pages.js:32` and `:56` (`:17` and `:27` at the base
+commit), both halves of the flagship section 1.1.
 
 ### 14.1 The throwaway capture identity was reconstructed from evidence, not guessed
 
@@ -4965,7 +5303,7 @@ result of the course-copy flow, which reuses lesson and material documents, and 
 measured end-to-end delete result — API single 404, list absent, HTML 404, course count 0, orphan roles 0 — which is
 the baseline this changeset is held to.
 
-### 15.5 `POST /api/courses` returns the owner's bcrypt hash (CWE-200) — PRESERVED
+### 15.5 `POST /api/courses` returned the owner's bcrypt hash (CWE-200) — MEASURED AS PRESERVED, SUBSEQUENTLY REMEDIATED AS SEC-13
 
 **What it is.** The 200 response to a course creation carries a fully populated `_owner` sub-document, and that
 sub-document includes the owner's **bcrypt password hash**, e-mail address and role list. The same document surfaces
@@ -5021,10 +5359,53 @@ carries the key-path measurement proving the difference. The two dispositions do
 they were reached by two checkpoints against two different rules, and the security checkpoint's bucket-B test is
 the one that governs a credential.
 
-### 15.6 A failed signup writes the submitted password to the application log (CWE-532) — PRESERVED
+### 15.6 A failed signup wrote the submitted password to the application log (CWE-532) — REMEDIATED, log-only
 
-**What it is.** When a form submission fails validation, the failure responder logs the **entire submitted payload**,
-cleartext password included, at `info` level.
+**What it is.** When a form submission failed validation, the failure responder logged the **entire submitted
+payload**, cleartext password included, at `info` level.
+
+**Disposition, and why it changed.** This entry was **PRESERVED** through the cumulative review, on the reasoning
+recorded verbatim under *Why it was preserved* below. Review finding **F-16 / S-2** rejected that reasoning on one
+specific ground: the whole objection to redacting was that it would leak out of the log and into the page, and that is
+avoidable. The remediation redacts **a copy** on the way to the log and leaves the object that is flashed and rendered
+untouched, so the wire behaviour, the flash contents and the re-rendered form are byte-identical to the base commit and
+only the log line moves. It is therefore **REMEDIATED** — and it is the one entry in section 15 whose disposition
+changed for that reason, so the original argument is kept below rather than deleted.
+
+**What the remediation is, measured.** `lib/http/responseContract.js` gained `redactSecrets(value)` — non-mutating,
+depth-limited, cycle-safe, walking only plain objects and arrays and passing an `Error`, a `Buffer`, a stream or a
+mongoose document straight through — together with `isSecretName()`, which splits camelCase before testing so `apiKey`
+and `reset_password_key` match while `monkey` and `keystone` do not. The emitter is now
+`log.info(util.inspect(redactSecrets(json)) + " " + err)`. `lib/http/validation.js` builds a parallel `loggableErrors`
+map in the same loop, replacing the message of a secret-bearing field with `[REDACTED: <joi err.type>]`, because Joi
+embeds the **offending value** in its pattern, min and max messages — so the second argument could carry the password
+even when the first was clean. The client-visible `validationErrors` flash is untouched, which keeps the never-firing
+custom-message quirk in [section 1.2](#12-the-joi-custom-message-override-that-never-fires) exactly as it was. One
+further site of the same kind was redacted with it: the `log.error('unexpected response format', success, json)` call
+on the terminal 500 path, where a success payload can carry the populated `_owner` whose bcrypt hash SEC-13 removed
+from the wire. Coverage is in `test/lib/util/same-origin-and-log-redaction.js`.
+
+**The two stop conditions return markers, not the container — and the first version of this remediation got that
+wrong.** A walk needs somewhere to stop: a cyclic payload and a pathologically deep one both have to terminate. The
+first implementation terminated by returning `value` itself, which re-admitted the unwalked subtree into the value
+about to be inspected. Measured on a payload where `payload.self === payload`, `util.inspect` renders a cycle **one
+level below** where it is found, so the log line still read
+`{ password: '[REDACTED]', self: <ref *1> { password: 'hunter2', self: [Circular *1] } }` — the plaintext survived the
+scrub. Both branches now yield a string marker instead, `'[Circular]'` and `'[Depth limit]'`, and neither can carry a
+key. `'[Circular]'` is what `util.inspect` would have printed for the same shape, and the depth marker sits four
+levels below `util.inspect`'s own default truncation depth of `2`, so neither is normally visible in the line at all.
+The visited list holds the **ancestor chain only**, so a value referenced twice in a directed acyclic payload is
+still walked — and redacted — at each position; only a true cycle stops. Three tests pin the three shapes, each
+asserting the plaintext is absent rather than merely that a marker is present, which is the assertion the first
+version passed while still leaking.
+
+**End-to-end proof.** With the application booted on a scratch database, a form-urlencoded `POST /users` and a JSON
+`POST /api/users` were submitted, each carrying `password` and `password_verify` set to a distinctive literal. The
+plaintext appears **0 times** in the process log, which instead reads `password: '[REDACTED]'`,
+`password_verify: '[REDACTED]'` and `password_verify: '[REDACTED: object.unknown]'` — while the JSON **response
+body** still echoes both submitted values verbatim alongside the real Joi messages, exactly as the base commit did,
+because the form is re-rendered from the payload. That contrast is the whole point of the disposition: the log
+changed and the wire did not.
 
 **The evidence.** One shared emitter and one shared caller, both character-identical to the base commit.
 `lib/http/responseContract.js:L279` is the emitter:
@@ -5054,7 +5435,7 @@ A second, narrower channel logs the identifier on **every** login attempt: `lib/
 `console.log('LOGIN: …')` statements — **13 at the base commit as well** — of which two carry an address, `L157`
 (`request.payload.email`) and `L189` (`found.user.email`). Neither of those two logs the password.
 
-**Why it is preserved.** The emitter is a single line shared by every failure response in the application — at the
+**Why it was preserved, and the half of that reasoning that still holds.** The emitter is a single line shared by every failure response in the application — at the
 base commit **73** `request.fail(` call sites reached it, per
 [section 3.14](#314-the-fail-and-spread-census-was-refined) — and it is character-identical on both sides of the
 migration. R-1 excludes it as latent-bug repair, and the request's own performance and logging directive is explicit
@@ -5062,12 +5443,14 @@ that the leftover logging stays: the `console.log` census is **64 at base and 64
 [section 1.12](#112-the-leftover-consolelog-calls-64-at-the-base-commit-64-now), and removing logging is not one of
 the four sanctioned diff categories.
 
-**What a naive fix would have broken.** Redacting the payload at the emitter would change the diagnostic output of
-every failure path in the application at once, not just signup — the very stream
-[section 1.12](#112-the-leftover-consolelog-calls-64-at-the-base-commit-64-now) freezes. Redacting at the validation
-bridge instead would change what `reject` receives as its `json` argument, and that argument is **also** the value
+**What a naive fix would still break, and what the delivered one does instead.** Redacting the payload **in place** at
+the emitter would change the diagnostic output of every failure path in the application at once, not just signup — the
+very stream [section 1.12](#112-the-leftover-consolelog-calls-64-at-the-base-commit-64-now) freezes — and redacting at
+the validation bridge by mutating what `reject` receives would be worse, because that argument is **also** the value
 flashed to the session as `'failure'` and rendered back into the form, so the redaction would leak out of the log and
-into the page. What the sweep did confirm is the boundary that matters operationally and that this changeset holds:
+into the page. The delivered remediation does neither: it inspects a **copy**, so the flashed object and every rendered
+field are unchanged, and the only observable difference anywhere is that a credential no longer appears in a log file.
+The 64-call `console.log` census is likewise unchanged, because no logging statement was added or removed. What the sweep did confirm is the boundary that matters operationally and that this changeset holds:
 **zero** bcrypt hashes, **zero** `Fe26.2` session seals, **zero** JWTs and **zero** cookie headers appear in the log.
 
 ### 15.7 The login form distinguishes an unknown account from a wrong password (CWE-204) — PRESERVED
@@ -5736,8 +6119,8 @@ attributable to this changeset.
 | Q1 | Authenticated `GET /login` and `GET /signup` return 500 | [1.1](#11-authenticated-get-login-and-get-signup-return-http-500) |
 | Sweep note | Runtime `DEP0169`, reachable only through `server.inject()` | [7.6](#76-the-two-deprecation-warnings-and-why-neither-is-repairable-here) |
 | Sweep note | The undeclared `Boom` identifier in `course.js` | [4.13](#413-the-undeclared-boom-identifier-in-coursejs) |
-| Sweep note | `POST /api/courses` returns the owner's bcrypt hash | [15.5](#155-post-apicourses-returns-the-owners-bcrypt-hash-cwe-200-preserved) |
-| Sweep note | A failed signup writes the submitted password to the log | [15.6](#156-a-failed-signup-writes-the-submitted-password-to-the-application-log-cwe-532-preserved) |
+| Sweep note | `POST /api/courses` returned the owner's bcrypt hash — remediated as SEC-13 | [15.5](#155-post-apicourses-returned-the-owners-bcrypt-hash-cwe-200-measured-as-preserved-subsequently-remediated-as-sec-13) |
+| Sweep note | A failed signup wrote the submitted password to the log — remediated, log-only (F-16) | [15.6](#156-a-failed-signup-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) |
 | Sweep note | Login distinguishes an unknown account from a wrong password | [15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved) |
 | Sweep note | Deleting a course leaves its lessons and materials behind | [15.4](#154-deleting-a-course-leaves-its-lessons-and-materials-behind) |
 | Sweep note | Catbox session TTL index semantics | [1.14E](#114-eight-further-preserved-conditions) |
@@ -5751,6 +6134,14 @@ will find what is written here, and will not spend time hunting a defect at an a
 
 
 ## 16. Runtime-QA observations on the integration surface — attributed, and preserved
+
+> ⚠️ **Evidence status: provisional pending the final parity checkpoint.** This section reports the outcome of a QA pass
+> that ran against this tree, and the gate figures it quotes belong to the final parity artifacts and their runs, which
+> are signed off at the **final parity checkpoint** rather than at this one. Treat the *verdict* and the *counts* as
+> provisional. What is **not** provisional is the per-condition attribution: every condition below was tied to the base
+> commit by direct `git show` / `git diff` comparison against `2f8712a`, and that attribution — which is what decides
+> whether R-4 forbids repairing it — rests on the source rather than on a run. See
+> [How to read this catalogue](#how-to-read-this-catalogue).
 
 A runtime QA pass exercised the integration and observability surface of this changeset — `config/aws.js`,
 `lib/util/file.js`, `lib/workers/exports.js`, `lib/util/queues.js`, `config/redis.js`, `lib/util/mailer.js`,
@@ -5817,6 +6208,14 @@ log carries the real error; and that no plaintext credential, session seal, AWS 
 JWT appears in any captured log beyond QA-1 and QA-2.
 
 ## 17. Runtime-QA observations on the browser surface — attributed, and preserved
+
+> ⚠️ **Evidence status: provisional pending the final parity checkpoint.** As in section 16, the pass's verdict and its
+> gate figures — the replayed route table, the response-corpus difference count, the byte-identical CSS artifacts — are
+> drawn from the final parity artifacts and their runs and are signed off at the **final parity checkpoint** rather than
+> at this one, so they are provisional here rather than completed release proof. The per-condition **attribution to the
+> base commit**, and the `git diff <base>..HEAD -- public/ lib/views/ static/ vite.config.mjs` result that shows the
+> frozen surfaces were not touched, are source-level facts and are not qualified. See
+> [How to read this catalogue](#how-to-read-this-catalogue).
 
 A second runtime QA pass drove the application through a real browser and audited every UI-initiated HTTP request
 across nine journeys — registration, login and logout, profile and account, course to lesson to material, folder and
@@ -6104,6 +6503,14 @@ assess, not a defect introduced by this change.
 
 ## Appendix — the parity baseline anchors
 
+> ⚠️ **Evidence status: the base-commit anchors below are settled; the *post-migration* comparisons against them are
+> provisional pending the final parity checkpoint.** The anchors themselves — what the base tree at `2f8712a` did — were
+> captured before any change and are the reference frame R-6 establishes. The statements that the migrated tree
+> *reproduces* an anchor, and the figures published in `test/baseline/route-table.json` and
+> `test/baseline/responses.json` that back them, are signed off at the **final parity checkpoint** rather than at this
+> one, so read them as provisional readings rather than as completed release proof. See
+> [How to read this catalogue](#how-to-read-this-catalogue).
+
 These are the measured baseline figures against which every parity claim in this changeset is checked. They are
 recorded here so the claims are verifiable rather than asserted.
 
@@ -6243,9 +6650,11 @@ reproducible after the change, which is why `sass` and `vite` are held. Re-verif
 **Vendored component tree.** The build depends on `public/components`, which is gitignored and hydrated from the
 **166,464,007-byte** `public-components.tgz` asset attached to release v1.1.0 — the same asset the Dockerfile
 fetches — whose sha256 is `58422c0d0c7d25c1e6fdd1e014ff690f41c899257703e416e85a0fb0a926181f`. A clean checkout
-cannot build until that hydration has run, which is why `npm run build` runs `node scripts/hydrate-components.js`
-first: it verifies the archive against that byte length and digest, unpacks it, and skips itself entirely when the
-tree is already present, so `git clean -xfd && npm ci && npm run build` completes from a clean checkout.
+cannot build until that hydration has run, and `npm run build` is `vite build` and nothing more, so the hydration is a
+documented **manual** step: `COMPONENTS.md` carries the `curl`, the `sha256sum --check` against that digest, the
+`tar xzf`, and the removal of the tarball and the `public/._components` AppleDouble sidecar, and `docs/setup.md` step 3
+points at it. Re-verified end to end on a clone whose `public/components` was absent: the documented procedure produced
+the 435 MB tree, `npm run build` then exited 0, and `git status public/` was clean afterwards.
 
 **Test-suite baseline.** **25 `.js` files, 2,874 LOC, 95 `describe`, 124 `it`, 312 assertions** — and all 312 are
 `.should.`-style chains, with `expect(` = 0 and `assert` = 0. That uniformity is what makes "assertions unweakened"
@@ -6254,13 +6663,19 @@ in any of them would be a rewritten assertion. Re-measured after the whole chang
 `expect( = 0` and zero code-line `assert`, so no pre-existing assertion was converted to a different style.
 
 The check does **not** extend to files this changeset creates, because a new file cannot rewrite an assertion that
-did not exist. Six new spec files were added — `test/lib/util/legacy-pathname.js`,
-`test/lib/util/no-response-fate.js`, `test/lib/util/asset-url-streaming.js`, `test/lib/api/route-parity.js`, and the
-two guarded harness scripts `test/baseline/capture.js` and `test/baseline/replay.js` — and the first three use
-chai's `expect` deliberately, because they assert on thrown errors and on structural equality over large generated
-input sets, where `expect(fn).to.throw(...)` and a labelled `expect(actual, message)` are the readable forms.
-`test/lib/api/route-parity.js` uses `.should.` throughout, matching the suite it joins. **Suite totals after the
-changeset: 224 passing, 0 failing, `npm test` exit 0.**
+did not exist. **Eight** new `.js` files were added — re-censused against the base tree, the `.js` files under `test/`
+go from **25** to **33**. They are `test/lib/api/route-parity.js`, `test/lib/api/session.js`,
+`test/lib/util/credential-redaction.js`, `test/lib/util/database-guard.js`,
+`test/lib/util/same-origin-and-log-redaction.js`, `test/lib/util/oauth-form-encoding.js`, and the two guarded harness
+scripts `test/baseline/capture.js` and `test/baseline/replay.js`. Exactly **one** of them,
+`test/lib/util/oauth-form-encoding.js`, uses chai's `expect` — deliberately, because it asserts on values produced in a
+spawned subprocess and a labelled `expect(actual, message)` is the readable form there; it accounts for all **15**
+`expect(` occurrences in the tree. Every other new spec uses `.should.` throughout, matching the suite it joins, and
+the two harness scripts assert nothing at all because they are guarded with `require.main === module`. An earlier revision of this
+paragraph said **six** files and omitted `test/lib/util/oauth-form-encoding.js`, which was added later with the OAuth
+form-encoding repair recorded in section 3.37; the count is corrected here rather than quietly adjusted. **Suite state
+after the changeset: `npm test` exits 0 with zero failures** — see *Run totals are deliberately not published* in
+[How to read this catalogue](#how-to-read-this-catalogue).
 
 **Session cookie.** Name **`session`** (`app.js:L104`), iron-seal prefix **`Fe26.2`**, and a 24-hour TTL —
 `expiresIn: 24 * 60 * 60 * 1000` at `app.js:L107`, that is 86400000 milliseconds. Every `app.js` line number in this

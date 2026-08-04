@@ -6,7 +6,8 @@ Trinket is a browser-based coding environment for education. This page describes
 
 - **Backend**: Node.js 22 LTS with the Hapi framework (@hapi/hapi 21.x)
 - **Database**: MongoDB via the Mongoose ODM
-- **Cache/Sessions**: Redis (optional - in-memory fallback when disabled)
+- **Sessions**: iron-sealed cookies via Hapi's Yar plugin, backed by **MongoDB** through the in-repo `lib/util/catbox-mongoose.js` catbox engine - not Redis
+- **Application cache/queues**: Redis (optional - `lib/util/store.js` falls back to an in-memory client when disabled)
 - **Frontend**: AngularJS 1.x
 - **Code Execution**: Skulpt (Python in the browser) for client-side languages; server-side container runners for Python 3, Java, R, and Pygame
 

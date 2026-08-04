@@ -1,9 +1,12 @@
+// The suite's bootstrap, required explicitly and FIRST. `../../app.js` below is the run's first application
+// require, and it must not happen until `NODE_ENV`, the test database, the test session password and the
+// `redis.createClient` double are all in place - `app.js:47-62` exits the process outright when the session
+// password is missing. `.mocharc.json` carries only `reporter`, `recursive`, `check-leaks` and `exit`, so
+// there is no `require` preload to lean on; see the note at the head of test/helpers/db.js.
+require('../setup');
+
 var _        = require('underscore'),
     server   = require('supertest'),
-    // Dependency swap: the deprecated `url` built-in is retired here and replaced by no require at all -
-    // its single consumer was the legacy `parse()` in setLastResponse below, which now reads the WHATWG
-    // `URL.parse(location, config.url)`, a Node 22 global, so nothing is added to the manifest and no
-    // module-level binding is left dangling. The reasoning is recorded in full at that call site.
     querystring = require('querystring'),
     defaults = require('./defaults'),
     config   = require('../../config/app.config'),
@@ -13,13 +16,27 @@ var _        = require('underscore'),
 // awaited start - so `app.listener` is `undefined` and the base commit's eager
 // `this.agent = server(app.listener)` produced an agent that threw
 // `TypeError: Cannot read properties of undefined (reading 'address')` on its first request. The server is
-// captured here as the promise resolves and the agent is built lazily on first use; the root hook in
-// test/setup.js awaits the same promise before any test runs, so a request can never outrun it.
+// captured here as the promise resolves and the agent is built lazily on first use, which is the second of
+// the two shapes AAP 0.7.6 sanctions for this repair ("hoisted into a root hook or made lazy inside the
+// agent accessor"). The root-suite `before()` in test/setup.js awaits the same promise before any test runs,
+// so a request can never outrun it; laziness here is what makes that ordering sufficient rather than
+// something the harness has to enforce at require time - top-level `await` is unavailable in CommonJS, and
+// CommonJS is not optional for this tree.
 var resolvedServer = null;
 
 app.then(function(server) {
   resolvedServer = server;
 });
+
+// The single app-readiness barrier is the guarded root-suite `before()` in test/setup.js, which awaits this
+// same promise ahead of every test in the run. It is declared there rather than here so that exactly one
+// barrier exists, and it deliberately carries no timeout override: Mocha's default is ample because
+// requiring `../app.js` starts `init()` during the file-loading phase and, with `app.start : false`,
+// `init()` awaits no real I/O.
+//
+// app.js wraps `init()` in a `.catch()` that logs and calls `process.exit(1)`, so the exported promise
+// NEVER REJECTS: on failure it RESOLVES to `undefined`. That is why `agentFor` below throws an explanatory
+// error rather than letting a bare `TypeError` surface, which would look exactly like the original defect.
 
 // public interface
 var methods = {
@@ -157,19 +174,29 @@ var methods = {
       .end(this.setLastResponse(cb));
   },
 
-  // R-6 ADJUDICATION. `config/api_routes.js:40` validates this query as `Joi.boolean().optional()`, and
+  // PRESERVED VERBATIM. `config/api_routes.js:40` validates this query as `Joi.boolean().optional()`, and
   // `yes` is not a boolean literal Joi has ever coerced: measured against BOTH the base commit's joi
   // 17.13.3 and the target joi 18.2.3, `'yes'` is REJECTED with the byte-identical message
-  // `"outline" must be a boolean` while `'true'` is accepted and coerced to `true`. The request therefore
-  // never reached lib/controllers/course.js:76 at the base commit either - the route answered its
-  // validation flash instead - which is why every `When I edit an existing course` test then read
-  // `flow.lastResponse.body.data` as undefined. The real browser client sends the boolean, not `yes`:
-  // public/js/courseEditor/course.js:15, public/js/courseEditor/controllers/root.js:147,
-  // public/js/courseEditor/controllers/materialControl.js:91 and public/js/classPage/app.js:57 all pass
-  // `{ outline : true }`, which Angular serializes as `outline=true`. This corrects the request to the
-  // production shape, exactly as the `defaults.patch` fixture above was corrected; no server behaviour and
-  // no assertion changes.
+  // `"outline" must be a boolean` while `'true'` is accepted and coerced to `true`. So this request never
+  // reached lib/controllers/course.js:76 at the base commit either - the route answered its validation
+  // flash instead.
+  //
+  // The request is left exactly as the base commit wrote it, and its rejection is pinned as a first-class
+  // assertion in test/lib/api/course.js rather than papered over. The browser-valid form the frozen
+  // AngularJS client sends is covered separately by getCourseWithBooleanOutline below, which is also what
+  // the `When I edit an existing course` fixture hook uses - so both readings are asserted, neither
+  // replaces the other, and no test is blocked from executing. See docs/PRESERVED-QUIRKS.md section 13.7.
   getCourseWithOutline : function(id, cb) {
+    return this.get('/api/courses/' + id + '?outline=yes')
+      .end(this.setLastResponse(cb));
+  },
+
+  // The form the frozen AngularJS client actually sends: public/js/courseEditor/course.js:15,
+  // public/js/courseEditor/controllers/root.js:147,
+  // public/js/courseEditor/controllers/materialControl.js:91 and public/js/classPage/app.js:57 all pass
+  // `{ outline : true }`, which Angular serializes as `outline=true`. Added coverage (F-05), not a
+  // replacement for the helper above.
+  getCourseWithBooleanOutline : function(id, cb) {
     return this.get('/api/courses/' + id + '?outline=true')
       .end(this.setLastResponse(cb));
   },
@@ -411,11 +438,77 @@ var methods = {
     }
   },
 
+  /**
+   * Returns the raw `Set-Cookie` array currently held for a user, or undefined when none has been seen.
+   *
+   * @param {string} [user] A cookie slot; defaults to the active user.
+   * @returns {string[]|undefined} The raw header value, exactly as the server sent it.
+   */
+  currentCookie : function(user) {
+    return this.cookies[typeof user === 'undefined' ? this.activeUser : user];
+  },
+
+  /**
+   * Returns the raw `Set-Cookie` array a user held BEFORE the most recent one replaced it.
+   *
+   * Review finding M7 (CWE-384 coverage). `setLastResponse` below overwrites the single cookie slot on
+   * every response, so the cookie a session held before a security transition - a login, which rotates
+   * the session id, or a logout, which revokes it - used to be discarded the instant the transition
+   * happened. Without it, no test could replay the old cookie and require that it be refused, which is
+   * the only assertion that actually proves rotation and invalidation rather than assuming them.
+   *
+   * @param {string} [user] A cookie slot; defaults to the active user.
+   * @returns {string[]|undefined} The previous raw header value, or undefined if there is only one.
+   */
+  previousCookie : function(user) {
+    var history = this.cookieHistory[typeof user === 'undefined' ? this.activeUser : user] || [];
+
+    return history.length > 1 ? history[history.length - 2] : undefined;
+  },
+
+  /**
+   * Every raw `Set-Cookie` array a user has been issued, oldest first.
+   *
+   * @param {string} [user] A cookie slot; defaults to the active user.
+   * @returns {string[][]} A copy of the history, safe for a caller to keep.
+   */
+  cookiesSeen : function(user) {
+    return (this.cookieHistory[typeof user === 'undefined' ? this.activeUser : user] || []).slice();
+  },
+
+  /**
+   * Issues a request carrying an EXPLICIT cookie instead of the slot's current one, and does not record
+   * whatever cookie comes back.
+   *
+   * This is what replays a revoked credential. It deliberately bypasses `setLastResponse`, because
+   * recording the replay's response would overwrite the very slot the test is comparing against, and it
+   * deliberately bypasses `createRequest`, because that attaches the slot's current cookie.
+   *
+   * @param {string} method One of 'get', 'post', 'put', 'del'.
+   * @param {string} url The path to request.
+   * @param {string[]|string} cookie The raw cookie to send.
+   * @returns {Object} A supertest request, ready for `.end()` or `.send()`.
+   */
+  replay : function(method, url, cookie) {
+    var request = agentFor(this)[method](url);
+
+    request.set('cookie', cookie || []);
+    request.set('referer', config.url);
+
+    return request;
+  },
+
   setLastResponse : function(cb) {
     var self = this;
 
     return function(err, res) {
       if (!err && res.headers['set-cookie']) {
+        // Review finding M7. The slot still holds only the CURRENT cookie, because every existing call
+        // site reads it that way, but each value is appended to a per-user history first so the
+        // pre-transition credential survives for `previousCookie` to replay.
+        self.cookieHistory[self.activeUser] = self.cookieHistory[self.activeUser] || [];
+        self.cookieHistory[self.activeUser].push(res.headers['set-cookie']);
+
         self.cookies[self.activeUser] = res.headers['set-cookie'];
       }
 
@@ -423,23 +516,12 @@ var methods = {
       self.lastError    = err;
       self.wasOk        = err ? false : true;
       if (res && res.redirect) {
-        // Dependency swap, and an R-6 adjudication measured on this tree. Two of the three candidate
-        // replacements for the base commit's legacy parser are wrong here: the deprecated built-in fires
-        // DEP0169, which the zero-warning gate forbids, and the WHATWG `new URL()` raises
-        // ERR_INVALID_URL on relative input, while the non-throwing static form given NO base answers
-        // `null` for '/login' where the legacy parser answered an object whose `pathname` was '/login'.
-        // Passing `config.url` as the base closes all three: it resolves the relative form and is
-        // ignored outright once the header is already absolute. Both forms really do reach this one
-        // line, so neither may be assumed - recorded at the HTTP layer across a full suite run, 56
-        // `Location` headers, 19 distinct: relative ones ('/', '/home', '/login',
-        // '/courses/algebra-1', '/reset-pass?key=...') from app.js's onPreResponse takeover and the
-        // controllers' own `h.redirect()`, absolute ones ('http://localhost:3000/home',
-        // 'https://accounts.google.com/o/oauth2/v2/auth?...') from lib/http/redirect.js's
-        // absolutization. For all 19 the `pathname` read below is byte-identical to the base commit's,
-        // under both the `https://trinket.dev` origin default.yaml supplies and the
-        // `http://localhost:3000` a local config supplies, and `URL.parse` emits no warning under
-        // `--pending-deprecation`. Only `lastRedirect.pathname` is ever read - a census of test/ returns
-        // that property and nothing else - which is what makes the WHATWG object a genuine drop-in.
+        // A `Location` header reaches this one line in both forms - relative from app.js's onPreResponse
+        // takeover and the controllers' own `h.redirect()`, absolute from lib/http/redirect.js's
+        // absolutization - so the base argument is required: it resolves the relative form and is ignored
+        // once the header is already absolute. Only `lastRedirect.pathname` is ever read, and for every
+        // `Location` the suite emits this form yields the pathname the base commit's legacy parser did.
+        // The measurement is in docs/PRESERVED-QUIRKS.md section 3.13.
         self.lastRedirect = URL.parse(res.headers.location, config.url);
       }
 
@@ -464,8 +546,9 @@ var methods = {
 function agentFor(flow) {
   if (!flow.agent) {
     if (!resolvedServer) {
-      throw new Error('flow: app.js exports a promise that has not resolved yet; test/setup.js registers ' +
-        'a root hook which awaits it before any test runs.');
+      throw new Error('flow: the promise app.js exports has not resolved yet, so there is no server to ' +
+        'bind. A root-suite before() hook in test/setup.js awaits it ahead of every test, so reaching ' +
+        'this means the request was made outside the suite or the hook did not run.');
     }
 
     flow.agent = server(resolvedServer.listener);
@@ -488,6 +571,11 @@ function Flow() {
   this.agent      = null;
   this.activeUser = 'user';
   this.cookies    = {};
+  // Review finding M7 (CWE-384 coverage). `cookies` keeps only the current credential per user, which is
+  // what every existing call site expects; this keeps the full sequence so a test can prove that a login
+  // rotated the session id and that the pre-transition cookie is refused afterwards. Raw arrays are
+  // stored, unparsed, so a replay sends byte-identical bytes back.
+  this.cookieHistory = {};
 
   // bind all of the methods for ease of use in before/after
   // blocks in the test...

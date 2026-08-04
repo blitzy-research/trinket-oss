@@ -14,24 +14,28 @@ The tree is distributed as `public-components.tgz`, a 166,464,007-byte asset
 attached to the `v1.1.0` GitHub release. The Docker build downloads and unpacks
 it automatically.
 
-For a local, non-Docker checkout there is nothing to fetch by hand:
-`npm run build` runs `scripts/hydrate-components.js` before Vite, and that
-script unpacks the same pinned `v1.1.0` asset. It checks the archive against a
-recorded byte length and SHA-256 digest before unpacking anything, and it exits
-immediately when the tree is already present - so
-`git clean -xfd && npm ci && npm run build` works from a clean checkout, and
-repeat builds cost nothing.
+For a local, non-Docker checkout the tree must be hydrated ONCE, by hand, before
+`npm run build` can succeed: `static/scss/base.scss` and
+`static/scss/embed/embed.scss` both `@import
+"public/components/foundation/scss/foundation"`, so a clean checkout has nothing
+to compile against. `npm run build` deliberately does not fetch it - the build
+script is `vite build` and nothing more - so the fetch below is the documented
+step, and it only has to be repeated after `git clean -xfd`.
 
-To hydrate from a local copy of the archive rather than over the network - on an
-air-gapped machine, or from a shared cache - point `TRINKET_COMPONENTS_TARBALL`
-at it. The byte length and the digest are still verified:
+> ⚠️ **`git clean -xfd` is destructive, and it is not part of that path.** It
+> permanently deletes every untracked and ignored file in this working tree,
+> with no recovery - `config/local.yaml` and the session secret in it (the
+> application calls `process.exit(1)` without it, and it is gitignored, so git
+> cannot restore it), `config/runtime.json`, the hydrated `public/components/`
+> tree, `node_modules/`, and the generated `public/css/base.css` and
+> `public/css/embed.css`. Preview it with `git clean -xfdn`, which changes
+> nothing and lists exactly what would be deleted, and read that list before
+> running the real command. The full warned procedure, including what has to be
+> restored afterwards, is
+> [Verifying a clean-clone install](docs/setup.md#verifying-a-clean-clone-install-destructive-read-first)
+> in the setup guide; use it rather than reaching for the clean here.
 
-```bash
-TRINKET_COMPONENTS_TARBALL=/path/to/public-components.tgz npm run build
-```
-
-The equivalent manual fetch, run from the repository root, is what both that
-script and the Docker build perform:
+Run it from the repository root; it is exactly what the Docker build performs:
 
 ```bash
 curl --fail --show-error --location --silent -o ./public-components.tgz \
@@ -55,11 +59,8 @@ tar xzf public-components.tgz && rm -f public-components.tgz public/._components
 The cleanup removes two files, not one. The archive was packed on macOS, so it
 carries an AppleDouble sidecar - `public/._components`, 268 bytes - next to the
 component tree. It is inert and nothing serves it, but it is not part of the
-component tree, so it is removed here exactly as `scripts/hydrate-components.js`
-removes it after its own extraction; leaving it behind is what makes
-`git status` report an untracked file on an otherwise clean checkout.
-`.gitignore` covers `public/._components` as well, so a copy left behind by an
-older procedure cannot be committed either. `tar` prints
+component tree, and leaving it behind is what makes `git status` report an
+untracked file on an otherwise clean checkout - so remove it. `tar` prints
 `Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'`
 for the same macOS provenance, and that notice is harmless.
 
@@ -71,8 +72,8 @@ change; on a mismatch, delete the file and download it again instead of
 extracting it.
 
 That archive is a hard prerequisite for the stylesheet build. With the tree
-absent, `npm run build:css` - which calls Vite directly and therefore skips the
-hydration step - fails with `Can't find stylesheet to import.`, because
+absent, both `npm run build` and the `npm run build:css` it delegates to fail
+with `Can't find stylesheet to import.`, because
 `static/scss/base.scss` and `static/scss/embed/embed.scss` both
 `@import "public/components/foundation/scss/foundation"`.
 

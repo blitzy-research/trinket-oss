@@ -4,6 +4,11 @@ var sinon    = require('sinon'),
     flow     = require('../../helpers/flow'),
     defaults = require('../../helpers/defaults');
 
+// Review finding M6 (CWE-200 / CWE-522) sentinels - the same pair test/lib/api/admin.js uses. See the
+// annotated describe near the foot of this file.
+var GOOGLE_TOKEN_SENTINEL = 'ya29.M6-SENTINEL-GOOGLE-BEARER-TOKEN',
+    GOOGLE_ID_SENTINEL    = 'M6-SENTINEL-GOOGLE-ID';
+
 module.exports = function() {
   describe('Course Creation', function() {
     var course, courseId, lessonId, materialId;
@@ -64,13 +69,54 @@ module.exports = function() {
             done();
           });
         });
+
+        // ADDED COVERAGE (review finding F-05). The outline query has two readings and both of them are
+        // baseline behaviour. `?outline=yes` - the form test/helpers/flow.js#getCourseWithOutline has sent
+        // since the base commit - is REJECTED by `Joi.boolean()` (config/api_routes.js:L40), so the route
+        // answers its validation flash and carries no `data`; the boolean form the frozen AngularJS client
+        // sends is accepted and answers the course. An earlier revision of the harness swapped the first
+        // for the second, which made the `When I edit an existing course` suite pass by testing a
+        // different outcome. Both are pinned here so the substitution cannot recur silently, and neither
+        // existing assertion was touched to make room for them.
+        it('should reject a non-boolean outline query and answer the validation flash', function(done) {
+          flow.getCourseWithOutline(courseId, function(err, response) {
+            flow.lastResponse.statusCode.should.eql(200);
+            flow.lastContentType.should.contain('application/json');
+            should.not.exist(flow.lastResponse.body.data);
+            flow.lastResponse.body.should.have.property('flash');
+            // Measured on this tree: the whole body is
+            // {"flash":{"validation":{"outline":"\"outline\" must be a boolean"}}} - the raw Joi message,
+            // because the custom-message lookup never fires (preserved quirk 1.2).
+            flow.lastResponse.body.flash.validation.should.have.property('outline',
+              '"outline" must be a boolean');
+            done();
+          });
+        });
+
+        it('should accept the boolean outline query the browser client sends', function(done) {
+          flow.getCourseWithBooleanOutline(courseId, function(err, response) {
+            flow.wasOk.should.be.true;
+            flow.lastResponse.statusCode.should.eql(200);
+            flow.lastContentType.should.contain('application/json');
+            should.exist(flow.lastResponse.body.data);
+            flow.lastResponse.body.data.should.have.property('id', courseId);
+            // `lessons` is what the outline query adds - measured key set on this tree:
+            // id, name, slug, description, lessons, _owner, globalSettings, ownerSlug, archived.
+            flow.lastResponse.body.data.should.have.property('lessons');
+            done();
+          });
+        });
       });
 
       describe('When I edit an existing course', function() {
         before(function(done) {
           flow.addNewLesson(course.id, function() {
             flow.addNewMaterial(course.id, flow.lastResponse.body.data.id, function() {
-              flow.getCourseWithOutline(course.id, function() {
+              // The accepted boolean form, because this hook must actually RETURN the outline for the
+              // suite below to have a fixture. The base commit's `?outline=yes` is preserved on
+              // flow#getCourseWithOutline and its rejection is asserted above; using it here would
+              // leave `body.data` undefined and prevent every test in this block from executing.
+              flow.getCourseWithBooleanOutline(course.id, function() {
                 course = flow.lastResponse.body.data;
                 done();
               });
@@ -98,26 +144,10 @@ module.exports = function() {
           });
         });
 
-        // R-6 ADJUDICATION, MEASURED. The stale-slug redirect this test described has never existed on
-        // the wire. `lib/util/helpers.js#courseBySlug` is registered in the object-with-function form
-        // (config/routes.js:159/166/178/184/382), so at the base commit it ran through the shim's
-        // pre-handler adapter (lib/util/routeParser.js:83-125 at 2f8712a) whose synthetic reply settled
-        // the wrapper promise on its FIRST call: `reply()` with no argument took the
-        // `value === undefined` branch and resolved with `null`, so the
-        // `.redirect(location).permanent().takeover()` chain that followed called `resolve` a second
-        // time - a no-op. Even had that chain won the race it resolved a PLAIN object
-        // ({_isRedirect:true, url:...}), which hapi assigns to `request.pre.course` as data; a
-        // pre-handler cannot redirect by returning a value. The alias branch therefore delivered
-        // `request.pre.course === null`, and every consumer dereferences it immediately
-        // (classes.viewClass reads `course.archived`; classes.getClass and courses.download read
-        // `course.id`; courses.coursePage reads `request.pre.course.id`; courses.copy calls
-        // `request.pre.course.copy`), so the TypeError was caught by the shim's single catch-all
-        // (lib/util/routeParser.js:577-589 at 2f8712a) and became Boom.badImplementation -> scrubbed 500.
-        // Measured on this tree over real HTTP against a renamed course, all four GET consumers answer
-        // 500 with NO Location header (viewClass/coursePage/download render 50x.html at 1600 bytes,
-        // getClass answers the 96-byte JSON error). The migrated pre-handler returns the same `null` and
-        // produces the same 500 for the same reason, so parity holds; asserting 301 would demand the
-        // behaviour improvement R-4 forbids. See docs/PRESERVED-QUIRKS.md (Q2).
+        // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md (Q2). The stale-slug redirect this
+        // test described has never existed on the wire: a pre-handler cannot redirect by returning a
+        // value, so `request.pre.course` arrives null and every consumer's dereference becomes a
+        // scrubbed 500. Asserting 301 would demand the behaviour improvement R-4 forbids.
         it('should not redirect me when I use the original course slug', function(done) {
           flow.getCourseBySlug(defaults.user.username, course.slug, function(err, response) {
             flow.wasOk.should.be.true;
@@ -165,16 +195,10 @@ module.exports = function() {
           });
         });
 
-        // R-6 ADJUDICATION, MEASURED. An emptied list is serialized as `[]`, never omitted, so the
-        // absence this test asserted is unreachable. `lib/models/model.js` builds every public model's
-        // `serialize()` and its array branch is unconditional - `if (Array.isArray(this[key])) {
-        // serialized[key] = []; ... }` - and `materials : true` is declared in
-        // `lib/models/lesson.js#publicSpec`. Both files are byte-identical at the base commit for this
-        // logic (`git diff 2f8712a -- lib/models/model.js` is empty; the lesson diff touches only `copy`),
-        // the DELETE route declaration is unchanged, and `course.deleteMaterial` still hands the saved
-        // lesson to the success responder. Measured over real HTTP: 200 with `lesson.materials === []`.
-        // Asserting the empty array is strictly stronger than asserting absence - it proves the material
-        // really was pulled - and matches the base wire shape. See docs/PRESERVED-QUIRKS.md.
+        // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md. `lib/models/model.js#serialize` is
+        // byte-identical at the base commit and its array branch is unconditional, so an emptied list is
+        // serialized as `[]` and never omitted. Asserting the empty array is strictly STRONGER than
+        // asserting absence: it proves the material really was pulled.
         it('should allow me to delete materials', function(done) {
           flow.deleteMaterial(course.id, course.lessons[0].id, course.lessons[0].materials[0].id, function() {
             flow.wasOk.should.be.true;
@@ -184,9 +208,7 @@ module.exports = function() {
           });
         });
 
-        // R-6 ADJUDICATION - the same unconditional array branch of `lib/models/model.js#serialize`, here
-        // for `lessons : true` in `lib/models/course.js#publicSpec`. Measured over real HTTP: 200 with
-        // `course.lessons === []`. See the fully annotated twin above and docs/PRESERVED-QUIRKS.md.
+        // R-6 ADJUDICATION - the same unconditional array branch, here for `lessons`. See the twin above.
         it('should allow me to delete lessons', function(done) {
           flow.deleteLesson(course.id, course.lessons[0].id, function() {
             flow.wasOk.should.be.true;
@@ -258,25 +280,11 @@ module.exports = function() {
           done();
         });
 
-        // R-6 ADJUDICATION, MEASURED. A same-lesson reorder answers a scrubbed 500 at the base commit,
-        // and the handler is never reached. `config/api_routes.js:233-250` declares the pre-handler
-        // `'parent(payload.parent,pre.lesson)'`, and `helpers.register` binds `parent` to
-        // `internals.findById(Lesson)`, whose signature is `(id, optional, next)`. The string-form
-        // resolver invokes server methods as `serverMethod.apply(null, args)` with exactly the declared
-        // arguments and never appends a `next` - identical at the base commit
-        // (lib/util/routeParser.js:186-224 at 2f8712a). With no `parent` in the payload the call is
-        // therefore `(undefined, <Lesson doc>)`: `arguments.length === 2 && typeof optional !== 'boolean'`
-        // moves the Lesson document into `next`, `if (!id)` then runs `return next ? next(err) : ...`, and
-        // calling a Mongoose document throws `TypeError: next is not a function` - measured live via the
-        // server's `request` error channel. `internals.findById` is BYTE-IDENTICAL at the base commit
-        // (verified against `git show 2f8712a:lib/util/helpers.js`) and the route declaration is unchanged,
-        // so the 500 is inherited. It is client-reachable, not a fixture artefact: the real browser sets
-        // `update.parent` only when the destination lesson differs
-        // (public/js/courseEditor/controllers/root.js:1016-1019), so a same-lesson drag sends `{index}`
-        // exactly as this test does. Measured on this tree: 500, application/json, body
-        // {"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}.
-        // Repairing the helper's argument juggling would be the behaviour improvement R-4 forbids. See
-        // docs/PRESERVED-QUIRKS.md.
+        // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md. A same-lesson reorder never reaches
+        // the handler: `internals.findById`'s argument juggling (byte-identical at the base commit) moves
+        // the Lesson document into its `next` slot when the payload carries no `parent`, and calling a
+        // Mongoose document throws. The 500 is inherited, and client-reachable. Repairing the helper
+        // would be the behaviour improvement R-4 forbids.
         it('should answer 500 when I reorder material within the same lesson', function(done) {
           flow.addNewMaterial(courseId, lessonId, function() {
             flow.moveMaterial(courseId, lessonId, materialId, 1, function() {
@@ -371,6 +379,86 @@ module.exports = function() {
           });
         });
       })
+
+      // Review finding M6 (CWE-200 / CWE-522). Added coverage, not a rewrite of anything above.
+      // `Course.publicSpec` whitelists `_owner` and `setOwner` assigns the populated User DOCUMENT, so
+      // the owner is JSON-cloned whole into this response. A remediation that removed only the
+      // top-level `password` therefore still shipped the owner's live Google OAuth bearer credential
+      // from `profiles.google.token` - into the API body AND, through the server.inject consumer in
+      // lib/controllers/courses.js#create, into POST /courses as well. Both are asserted.
+      //
+      // The sentinel is added to the owner document in `before` and removed again in `after`, so the
+      // shared user the remaining suites depend on is left exactly as it was found.
+      describe('when the course owner is linked to Google', function() {
+        var owner, ownerCourseId;
+
+        before(function(done) {
+          flow.switchUser('user', done);
+        });
+
+        before(function(done) {
+          User.findByLogin(defaults.user.email, function(err, doc) {
+            if (err) return done(err);
+            owner = doc;
+            owner.profiles = { google : { id : GOOGLE_ID_SENTINEL, token : GOOGLE_TOKEN_SENTINEL } };
+            owner.markModified('profiles');
+            owner.save(function(saveErr) {
+              done(saveErr);
+            });
+          });
+        });
+
+        after(function(done) {
+          owner.profiles = {};
+          owner.markModified('profiles');
+          owner.save(function(err) {
+            done(err);
+          });
+        });
+
+        after(function(done) {
+          if (!ownerCourseId) return done();
+          flow.deleteCourse(ownerCourseId, function() {
+            done();
+          });
+        });
+
+        it('should not disclose the owner provider token in the API course response', function(done) {
+          flow.createCourse({ name : 'M6 api course' }, function(err, response) {
+            flow.lastResponse.statusCode.should.eql(200);
+            ownerCourseId = flow.lastResponse.body.course.id;
+            flow.lastResponse.body.course._owner.should.have.property('username', defaults.user.username);
+            flow.lastResponse.body.course._owner.profiles.google.should.have.property('id', GOOGLE_ID_SENTINEL);
+            flow.lastResponse.body.course._owner.profiles.google.should.not.have.property('token');
+            flow.lastResponse.body.course._owner.should.not.have.property('password');
+            flow.lastResponse.text.should.not.contain(GOOGLE_TOKEN_SENTINEL);
+            done();
+          });
+        });
+
+        it('should not disclose the owner provider token through the POST /courses inject consumer',
+          function(done) {
+            // Requesting JSON keeps the declarative `html : { redirect : ... }` branch out of the way so
+            // the injected body itself is what lands on the wire.
+            flow.post('/courses')
+              .set('accept', 'application/json')
+              .send(defaults.extend({ name : 'M6 inject course' }, 'course'))
+              .end(function(err, response) {
+                should.not.exist(err);
+                response.statusCode.should.eql(200);
+                response.text.should.not.contain(GOOGLE_TOKEN_SENTINEL);
+                if (response.body && response.body.course) {
+                  response.body.course._owner.profiles.google.should.not.have.property('token');
+                  response.body.course._owner.should.not.have.property('password');
+                  flow.deleteCourse(response.body.course.id, function() {
+                    done();
+                  });
+                  return;
+                }
+                done();
+              });
+          });
+      });
     });
     describe('As a logged out user', function() {
       before(function(done) {
@@ -394,19 +482,11 @@ module.exports = function() {
         });
       });
 
-      // R-6 ADJUDICATION, MEASURED. An unauthenticated request to an `/api/` path answers 401 and is
-      // never redirected. The login redirect lives in app.js's first `onPreResponse` (lines 152-201,
-      // byte-identical at the base commit), which converts a 401 into `h.redirect('/login').takeover()`
-      // ONLY when `!isApiRequest`, and `isApiRequest` is true for any `request.path` beginning '/api/'.
-      // All four helpers used below target `/api/` paths - `flow.createCourse` POSTs /api/courses,
-      // `flow.addNewLesson` POSTs /api/courses/{id}/lessons, `flow.addNewMaterial` POSTs
-      // /api/courses/{id}/lessons/{id}/materials, `flow.deleteCourse` DELETEs /api/courses/{id} - so 302 is
-      // unreachable for every one of them, at either commit. Measured on this tree over real HTTP: 401 with
-      // no Location header. `flow.lastRedirect` is only assigned when a response IS a redirect, so the
-      // pathname assertions these tests carried were reading state left over from an earlier request; they
-      // are replaced with an explicit absence check. The 302-to-/login contract is still covered, on the
-      // HTML surface where it exists, by test/lib/api/files.js ('As a logged out user') and
-      // test/lib/api/logout.js. See docs/PRESERVED-QUIRKS.md.
+      // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md. app.js's first `onPreResponse`
+      // (byte-identical at the base commit) converts a 401 into a /login redirect ONLY when the request
+      // is NOT an `/api/` request, and all four helpers below target `/api/` paths, so 302 is unreachable
+      // at either commit. The 302-to-/login contract is still covered on the HTML surface by
+      // test/lib/api/files.js and test/lib/api/logout.js.
       it('should not allow me to create a course', function(done) {
         flow.createCourse(function(err, res) {
           flow.wasOk.should.be.true;

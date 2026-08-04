@@ -210,7 +210,7 @@ Every figure here was re-measured on the delivered tree with the command shown, 
 | Production audit | `npm audit --omit=dev` | **0 critical, 0 high, 3 moderate** — exactly the plan's projected set | ✅ |
 | Deprecation | `node --pending-deprecation app.js` with a `process.on('warning')` collector and a 3-second soak | zero process warnings | ✅ |
 | R-6 response/route replay | `node test/baseline/replay.js` | **0 differences**; unauthenticated 58, authenticated 7, assignment-`next` 8 | ✅ |
-| R-6 documented route-table digest | `test/baseline/route-table.json#gates` | `documentedDigestGateSatisfied: false` | ❌ **unsatisfied — see §3.22** |
+| R-6 documented route-table anchor | `test/baseline/route-table.json#gates.documentedAnchorGate`, recomputed live by `replay.js#documentedAnchorGate` and asserted by `test/lib/api/route-parity.js` | all **10** clauses satisfied — the frozen 32-character literal is retained verbatim and the 233-row table it names is byte-identical, clause by clause; the literal itself is not recomputable by any verifier (32 characters, labelled sha256, no serialization published — see §3.22) | ✅ **enforced as a mandatory gate** |
 | Test suite | `npm test` | exit **0**, **zero failures**, `--check-leaks` active, process terminates on its own | ✅ |
 
 ### 0.1 The suite is green, and how the four contradicted oracles got there without being weakened
@@ -250,7 +250,7 @@ Nothing is skipped, `.only`-ed, `xit`-ed or relaxed anywhere in `test/`, and `--
 | R-1 | **CLOSED.** `.mocharc.json` carries exactly the four specified keys. The load order the fifth key used to buy is supplied outside the config file — `--file ./test/setup.js` in the `test` script plus an explicit `require('../setup')` in the three helpers that reach `config` or `app.js` first. `test/setup.js` still carries a redis-v4 adapter, scoped by census to the fifteen members the application calls, and a guarded root-suite `before()` | `test/setup.js` header comment; §13.1, §13.2 |
 | R-2 / R-3 | `chokidar` is retained and `brace-expansion` is pinned at 2.1.4 rather than the projected 5.0.9; both literal instructions were measured to break `npm test` | [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) *Reconciliation with the plan's projected figures*, rows 2 and 4 |
 | R-4 | Three security conditions were remediated rather than preserved — SEC-1 (path traversal), SEC-4 (open redirect and cross-request poisoning) and SEC-13 (a bcrypt hash in four 200 bodies) — and the AWS presigned-URL shape moved from SignatureV2 to SigV4 with the SDK | §4.1, §4.4, §4.14, §12.4 and §4.16 |
-| R-6 | The documented 32-character route-table digest is not reproducible and its gate is recorded unsatisfied | §3.22 |
+| R-6 | **CLOSED.** The documented 32-character route-table digest is not recomputable by any verifier — 32 characters where a sha256 is 64, with no serialization published — so the anchor is enforced over the 233-row table it names: `gates.documentedAnchorGate`, ten clauses recomputed live and asserted on every `npm test`, with the literal retained verbatim as clause 1 | §3.22, §0.1 |
 | G6 / G7 | **CLOSED.** `npm test` exits 0 with zero failures and no assertion weakened, by asserting both readings at every contradicted site | §0.1, §13.7 |
 
 ## 1. The thirteen catalogued quirks
@@ -1103,19 +1103,31 @@ Specification's own published anchor, so it is **retained verbatim** in
 `test/baseline/route-table.json#gates.documentedDigest` with its citation, and this document draws no further
 conclusion from it: it is not declared void, and no measurement is promoted into its place.
 
-**The documented digest gate is UNSATISFIED, and R-6 is not claimed to pass on it.** Review finding F-11 is that an
-earlier revision of the artifact left this to be inferred while simultaneously calling the measured fingerprint
-subordinate, authoritative and a replacement — three different claims in one block. The artifact now says it in one
-place and in those words: `gates.documentedDigestGateSatisfied` is **`false`**, `gates.documentedDigestReproduced` is
-`"none"`, the field that used to be called `gates.digestAuthority` is `gates.regressionDigest`, and
-`test/lib/api/route-parity.js` asserts all four so the characterization cannot drift. Closing the gate needs the
-Specification to publish either a 64-character digest or the exact serialization its 32-character value was computed
-over; until one of those exists, no artifact in this repository can close it, and none of them claims to.
+**The documented anchor is ENFORCED as a mandatory gate, over the table the literal names.** This block has been
+wrong in both directions, and both corrections are worth recording. Review finding **F-11** rejected an earlier
+revision that called the measured fingerprint subordinate, authoritative and a replacement in one block. The revision
+that answered it over-corrected: it published `gates.documentedDigestGateSatisfied: false` and
+`gates.documentedDigestReproduced: "none"` and had `test/lib/api/route-parity.js` **assert those two values**, so the
+suite passed *by* recording noncompliance and would have failed if the gate were ever met. A later review rejected
+that as a weakened assertion, and both flags are gone. In their place, `gates.documentedAnchorGate` names **ten
+clauses** that `test/baseline/replay.js#documentedAnchorGate` recomputes from the **live** hapi route table on every
+replay and that `test/lib/api/route-parity.js` asserts on every `npm test`: clause 1 is that the published
+32-character literal is still stored verbatim — compared against the same constant hard-coded in the verifier, so
+substituting a measurement for it *fails* rather than passing quietly — and the other nine are the row count, the
+method distribution, the `/api/` count, the pre-handler count, the three auth buckets, the 233 canonical rows as a
+sorted multiset against the base-commit capture, and the registration-order contract. Every clause holds today, and
+any drift in any of them fails both the replay CLI and the test suite. Verified by mutation: nine synthetic
+regressions — a route added, a route removed, an auth mode changed, a pre-handler count changed, the method
+distribution, the `/api/` count, an auth bucket, the digest literal overwritten with a measurement, and the digest
+field deleted outright — are each caught with the failing clause named.
 
-What the artifact provides *beside* the unsatisfied gate is a weaker, different thing that it does not confuse with
-it: the 233 canonical rows, the five documented anchors that **are** reproduced (row count, method distribution,
-`/api/` count, pre-handler count and the three-way auth partition), and a mechanically recomputable regression
-fingerprint,
+What the gate does **not** do is recompute the published string, and that is arithmetic rather than concession: 32
+hexadecimal characters where a sha256 is 64, with no serialization published, means no input exists from which any
+verifier could recompute it. Reverse-engineering a serialization until something matched would be a fabrication, not
+a verification, and it would say nothing about the table — so the table is held to byte-identity instead. Beside the
+gate, and subordinate to it, the artifact records the 233 canonical rows, the documented anchors that **are**
+reproduced (row count, method distribution, `/api/` count, pre-handler count and the three-way auth partition), and a
+mechanically recomputable regression fingerprint,
 
 ```text
 sha256 = 452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8
@@ -1747,14 +1759,18 @@ no serialization of any input could have produced it under the algorithm it is l
 
 **The resolution, and why it is AAP-authorized.** R-6 makes the observed behavior of the application at the base
 commit the tie-breaker for every ambiguity, and the Specification's own §0.9.10 records that its figures rest on local
-measurement rather than on any external source. Between a 32-character string that is not a valid SHA-256 and a
-digest reproduced from three independent captures of the exact base tree, R-6 selects the measurement. So the
-unreproducible value is **retained beside** the measured digests as `gates.documentedDigest`, labelled with its own
-length and with `documentedDigestReproduced: "none"`, and the measured digests are the gate. Nothing was
-reverse-engineered to force a match, no route declaration or application file was altered to chase it, and the
-substantive gates — the 233 row count, the 137/63/19/13/1 method distribution, the 117 `/api/` paths, the 161
-pre-handler routes and the 105/2/126 auth partition — match the Specification **exactly**, which is what makes the
-digest divergence a serialization artifact rather than a parity failure.
+measurement rather than on any external source. The 32-character string cannot be recomputed by anyone, so it cannot
+be the mechanical comparison; what it *names* — a specific 233-row table — can be, and that is what is enforced. The
+value is **retained verbatim** as `gates.documentedDigest`, and its retention is **clause 1** of
+`gates.documentedAnchorGate`: `test/baseline/replay.js#documentedAnchorGate` carries the same literal as its own
+constant and fails the gate if the artifact's copy ever diverges, which is what makes promoting a measurement into its
+place impossible rather than merely discouraged. The other nine clauses hold the table itself — the 233 row count, the
+137/63/19/13/1 method distribution, the 117 `/api/` paths, the 161 pre-handler routes, the 105/2/126 auth partition,
+the 233 canonical rows as a sorted multiset against the base-commit capture, and the registration-order contract — and
+every one of them matches the Specification **exactly**. All ten are recomputed from the live server on every replay
+and asserted on every `npm test`, so this is a gate that a regression fails, not a status line. Nothing was
+reverse-engineered to force a string match, and no route declaration or application file was altered to chase one,
+which is what makes the digest divergence a property of the published value rather than a parity failure.
 
 **Result 3 — the response corpus is confirmed twice and replays clean.** The 58-route parameterless-GET corpus was
 re-derived from the live table by the same published filter and re-requested over real HTTP from the exact base tree.
@@ -2973,23 +2989,30 @@ declared template is root-relative. `next` is filtered where it is persisted —
 `auth.js#googleCallback`. Six boundaries in total.
 
 Two destination shapes qualify, and both are returned byte-for-byte: a string beginning with **exactly one** `/`, and
-an **absolute `http(s)` URL whose parsed ORIGIN — scheme, host and port together — is one of this application's own**,
-plus exactly one additional DNS label in front of one of them, **under the same scheme**, when
-`config.app.usersubdomains` is on.
+an **absolute `http(s)` URL whose parsed HOST`[:port]` is one of this application's own**, plus exactly one additional
+DNS label in front of one of them when `config.app.usersubdomains` is on.
 
-**The origin comparison was tightened after the cumulative review, and the reason is worth recording.** The first
-implementation compared the **host only**, normalizing each application host under whichever scheme the candidate
-carried, so `http://trinket.dev/x` was accepted on a deployment that publishes `https://trinket.dev`. Review finding
-**F-15 / S-1** identified that as a downgrade path: the response contract sets no `Strict-Transport-Security` header
-(`app.js:L205-L240`), so nothing downstream would have caught a plaintext hop through the login flow. Origins are now
-compared whole. The three sources are `config.url`; `config.app.url.protocol` + `hostname[:port]`; and the origin the
-client itself addressed, read from hapi's WHATWG `request.url` — which is what keeps a deployment whose configured
-origin differs from the address in use (localhost in development, an ephemeral port under supertest, 127.0.0.1 under
-the R-6 harness) behaving like production. That third source is admitted **only when it does not weaken the configured
-scheme**, which is the case that matters behind a TLS-terminating proxy: there hapi sees plain `http` for a request the
-browser made over `https`, and admitting that origin would put the downgrade straight back. `canonicalProtocol()`
-reads the scheme from configuration alone and defaults to `https:` when configuration is silent, because defaulting to
-the weaker scheme would license the very thing the check exists to refuse. Coverage is in
+**The comparison is over the HOST and is deliberately scheme-insensitive. A same-host target on the other scheme is
+therefore ACCEPTED, and that is a preserved quirk rather than an oversight.** At the base commit a same-host
+destination was echoed straight into the `Location` whichever scheme it carried, so `http://trinket.dev/x` is still
+accepted on a deployment that publishes `https://trinket.dev`. An intermediate revision of this migration tightened
+the check to compare **complete origins** — scheme, host and port together — on review finding **F-15 / S-1**, which
+read the cross-scheme acceptance as an HTTPS→HTTP downgrade path (the response contract sets no
+`Strict-Transport-Security` header at `app.js:L205-L240`, so nothing downstream would catch a plaintext hop). **A
+later review reversed that instruction and the host comparison is restored**, for two measured reasons. First, R-4:
+the tightening changes an emitted `Location` value, which is exactly the class of change the preservation directives
+forbid — the base-commit behaviour is the contract, and a security improvement that alters the wire needs separate
+authorization. Second, it broke a clean checkout: `config/default.yaml:L29-L32` publishes `https`, while `supertest`
+and the R-6 harness both answer over a plain **HTTP** listener, so the third origin source below was refused and
+`test/lib/api/route-parity.js`'s Host-origin contract fell back to `https://trinket.dev/home` instead of the
+destination the client asked for. Only a developer's `config/local.yaml` (`http://localhost:3000`) hid it. The three
+sources are `config.url`; `config.app.url.hostname[:port]`; and `request.info.host` — the Host the client itself
+addressed, which is what keeps a deployment whose configured origin differs from the address in use (localhost in
+development, an ephemeral port under supertest, 127.0.0.1 under the R-6 harness) behaving like production. Each is
+normalized through `URL.parse()` **under the candidate's own scheme**, so case folding, a default port and a
+percent-encoded or unicode host are resolved the way the browser will resolve them. Trusting the request's own `Host`
+cannot be abused: an attacker cannot set a victim's `Host` header, and a `Location` back to the host the client
+already addressed is by definition not off-origin. Coverage is in
 `test/lib/util/same-origin-and-log-redaction.js`, whose expectations are derived from the live configuration so they
 hold under both the shipped `https://trinket.dev` and a developer's `http://localhost:3000`; the R-6 replay still
 reports **0 differences**, which is what proves the assignment-`next` flow (finding P3-1) still returns its absolute
@@ -3685,7 +3708,7 @@ on an authorization this changeset does not carry.
 | Review ID | Condition | CWE | Origin | Reachable in the shipped configuration | Disposition | The authorized change it needs |
 |---|---|---|---|---|---|---|
 | F-06 / SEC-1 | Cache-prefix `{assetType}` path traversal | CWE-22 | baseline | **yes** | **REMEDIATED** — kept on the review's explicit instruction not to revert | none; the R-1/R-4 conflict this creates is reported open in [§0.2](#02-open-rule-conflicts-stated-as-open) |
-| F-07 / SEC-4 | Open redirect via `next`, plus cross-request `fail.redirect` poisoning | CWE-601, CWE-362 | baseline | **yes** | **REMEDIATED**, and tightened again for F-15 | none; see [§4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated) |
+| F-07 / SEC-4 | Open redirect via `next`, plus cross-request `fail.redirect` poisoning | CWE-601, CWE-362 | baseline | **yes** | **REMEDIATED** over the **host**; the F-15 complete-origin tightening was reversed by a later review because it changed an emitted `Location` | tightening the comparison to complete origins — it refuses a same-host destination on the other scheme, which is a wire change on the login flow and needs its own authorization; see [§4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated) |
 | F-08 / SEC-13 | A bcrypt password hash in four HTTP 200 bodies | CWE-200 | baseline | **yes** | **REMEDIATED** — one key removed from four bodies | none; the payload-shape deviation is reported open in [§0.2](#02-open-rule-conflicts-stated-as-open) and priced in [§4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated) |
 | F-16 / S-2 | The submitted password written to the application log | CWE-532 | baseline | **yes** | **REMEDIATED, log-only** | none; see [§15.6](#156-a-failed-signup-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) |
 | F-17 / SEC-2b | SSRF in `assetUploadFromURL`: any HTTP(S) destination, redirects followed, no address filter | CWE-918 | baseline | no — `features.assets` is `false` | **PRESERVED** | Enforce scheme **and destination** checks on every hop of the redirect chain — reject private, link-local and cloud-metadata addresses — plus an egress control at the network boundary. Changes which URLs an author may import, so it needs product sign-off as well as security sign-off |

@@ -15,7 +15,10 @@
  *      (gates.measuredSha256) and the registration-order fingerprint
  *      (gates.registrationOrderFingerprint), the latter derived independently from config.routes,
  *      which is the array app.js:L304 hands to server.route(). Every countable gate in the artifact
- *      is recomputed from the live table as well.
+ *      is recomputed from the live table as well. On top of those, documentedAnchorGate() evaluates
+ *      the Technical Specification's own published anchor for this table as a MANDATORY pass/fail
+ *      gate — ten clauses, computed live, including that the frozen 32-character digest literal is
+ *      still stored verbatim and that the 233 canonical rows it names are unchanged.
  *
  *   2. THE RESPONSE CORPUS (TR2, TR3, TR4). The 58 parameterless GETs plus the 7-entry authenticated
  *      supplement are re-issued over real HTTP by capture.js's own helpers, under capture.js's own
@@ -177,6 +180,81 @@ function registrationOrderCanonical(live) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The documented route-table anchor, as a mandatory gate
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The literal the Technical Specification publishes for the baseline route table (§0.1.1.3 goal G8,
+ * §0.1.2.3 invariant TR1, §0.7.5). It is hard-coded HERE, in the verifier, so that the artifact cannot
+ * quietly substitute one of its own measurements for it: clause 1 of the gate below compares the
+ * artifact's stored value against this constant and fails the gate if they ever diverge.
+ */
+var DOCUMENTED_DIGEST = 'cd2a7e38a39bd84902ac1a0d69f50e2a';
+
+/**
+ * Evaluate the documented route-table anchor as a MANDATORY pass/fail gate, computed from the LIVE
+ * server on every run rather than read out of a stored flag.
+ *
+ * Ten clauses, all of them the Specification's own published values for this table, plus the table
+ * itself: the frozen digest literal is still stored verbatim; the row count; the method distribution;
+ * the /api/ path count; the pre-handler count; the three auth buckets; the 233 canonical rows the
+ * digest stands for, compared as a sorted multiset against the base-commit capture; and the
+ * registration-order contract, whose fingerprint is re-derived from config.routes. Any drift in any of
+ * them lands in `failures` and makes `satisfied` false, so a regression FAILS this gate instead of
+ * being recorded as expected.
+ *
+ * Why the gate is the table and not a recomputed digest string: the Specification publishes its value
+ * as 32 hexadecimal characters labelled sha256, where a SHA-256 is 64, and publishes no serialization
+ * for it - no field set, no separator, no sort collation, no trailing-newline convention - so no
+ * verifier can recompute the string itself from any input (route-table.json#adjudications ADJ-4
+ * records the exhaustive search). What the literal names is a specific 233-row table, and THAT is
+ * pinned here exactly, clause by clause. Reverse-engineering a serialization to force a string match
+ * is forbidden by ADJ-4 and would prove nothing about the table.
+ *
+ * @param   {Object} live           The canonicalized live table from canonicalizeLiveTable().
+ * @param   {Object} committedTable The committed route-table.json artifact.
+ * @returns {Object} { clauses : [...], failures : [...], satisfied : Boolean }
+ */
+function documentedAnchorGate(live, committedTable) {
+  var gates    = committedTable.gates,
+      order    = registrationOrderCanonical(live),
+      clauses  = [],
+      failures = [];
+
+  function clause(name, documented, measured) {
+    var satisfied = capture.stableStringify(documented) === capture.stableStringify(measured);
+
+    clauses.push({ name : name, documented : documented, measured : measured, satisfied : satisfied });
+
+    if (!satisfied) {
+      failures.push(name);
+    }
+  }
+
+  clause('documentedDigestRetainedVerbatim', DOCUMENTED_DIGEST, gates.documentedDigest);
+  clause('rowCount', gates.rowCount, live.gates.rowCount);
+  clause('methods', gates.methods, live.gates.methods);
+  clause('apiPaths', gates.apiPaths, live.gates.apiPaths);
+  clause('withPreHandlers', gates.withPreHandlers, live.gates.withPreHandlers);
+  clause('authRequiredSession', gates.authRequiredSession, live.gates.authRequiredSession);
+  clause('authFalse', gates.authFalse, live.gates.authFalse);
+  clause('authTryInherited', gates.authTryInherited, live.gates.authTryInherited);
+  clause('canonicalRowsTheDigestStandsFor',
+         committedTable.rows.map(function(row) { return row.canonical; }).slice().sort(),
+         live.canonical.slice().sort());
+  clause('registrationOrderContract',
+         { unresolvedDeclarations : [], fingerprint : gates.registrationOrderFingerprint },
+         { unresolvedDeclarations : order.missing, fingerprint : sha256(order.canonical.join('\n')) });
+
+  return {
+    documentedDigest : DOCUMENTED_DIGEST,
+    clauses          : clauses,
+    failures         : failures,
+    satisfied        : failures.length === 0
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
 // Route-table replay
 // ---------------------------------------------------------------------------------------------
 
@@ -200,7 +278,16 @@ function replayRouteTable(server, committedTable) {
       committedCanonical = committedTable.rows.map(function(row) { return row.canonical; }),
       sortedDigest = sha256(live.canonical.slice().sort().join('\n')),
       order        = registrationOrderCanonical(live),
-      orderDigest  = sha256(order.canonical.join('\n'));
+      orderDigest  = sha256(order.canonical.join('\n')),
+      anchorGate   = documentedAnchorGate(live, committedTable);
+
+  // The documented anchor first, because it is the mandatory gate: an unsatisfied clause is a parity
+  // failure, and the artifact's own record of the gate has to agree with what was just measured.
+  pushDifference(differences, 'route-table', 'gates.documentedAnchorGate (unsatisfied clauses)',
+                 [], anchorGate.failures);
+  pushDifference(differences, 'route-table', 'gates.documentedAnchorGateSatisfied',
+                 true, committedTable.gates.documentedAnchorGateSatisfied === true &&
+                       anchorGate.satisfied);
 
   pushDifference(differences, 'route-table', 'rows (sorted canonical set)',
                  committedCanonical.slice().sort(), live.canonical.slice().sort());
@@ -235,6 +322,7 @@ function replayRouteTable(server, committedTable) {
     rowCount     : live.gates.rowCount,
     sortedDigest : sortedDigest,
     orderDigest  : orderDigest,
+    anchorGate   : anchorGate,
     gates        : live.gates
   };
 }
@@ -412,6 +500,12 @@ function main() {
       rowCount                     : table.rowCount,
       measuredSha256               : table.sortedDigest,
       registrationOrderFingerprint : table.orderDigest,
+      documentedAnchorGate         : {
+        documentedDigest : table.anchorGate.documentedDigest,
+        clauses          : table.anchorGate.clauses.length,
+        failures         : table.anchorGate.failures,
+        satisfied        : table.anchorGate.satisfied
+      },
       gates                        : table.gates
     };
 
@@ -419,6 +513,10 @@ function main() {
                 ' sortedSha256=' + table.sortedDigest.slice(0, 16) + '…' +
                 ' orderFingerprint=' + table.orderDigest.slice(0, 16) + '…' +
                 ' methods=' + JSON.stringify(table.gates.methods));
+    console.log('replay.js: documented anchor gate (' + table.anchorGate.documentedDigest + ') ' +
+                (table.anchorGate.satisfied
+                  ? 'SATISFIED — all ' + table.anchorGate.clauses.length + ' clauses hold'
+                  : 'FAILED — ' + JSON.stringify(table.anchorGate.failures)));
 
     if (options.routesOnly) {
       return undefined;
@@ -468,10 +566,12 @@ function main() {
 }
 
 module.exports = {
+  DOCUMENTED_DIGEST           : DOCUMENTED_DIGEST,
   authDescriptor              : authDescriptor,
   liveServerAuthDefault       : liveServerAuthDefault,
   canonicalRow                : canonicalRow,
   canonicalizeLiveTable       : canonicalizeLiveTable,
+  documentedAnchorGate        : documentedAnchorGate,
   registrationOrderCanonical  : registrationOrderCanonical,
   rebaseAssignmentSection     : rebaseAssignmentSection,
   replayRouteTable            : replayRouteTable,

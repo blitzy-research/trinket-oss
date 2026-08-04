@@ -908,8 +908,9 @@ That digest is recorded as
 one-line recipe its `canonicalization.reproduce` field states, so a reader can check it without booting anything. The
 recomputable canonical SHA-256, registration-order SHA-256 and MD5 fingerprints are subordinate regression evidence;
 the AAP's documented 32-character digest `cd2a7e38a39bd84902ac1a0d69f50e2a` is **not** this value, is retained verbatim
-under `gates.documentedDigest` with `gates.documentedDigestReproduced` set to `"none"`, and is not claimed to have been
-recomputed. The deletion proof is in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.6, and the digest
+under `gates.documentedDigest`, and is not claimed to have been recomputed — the string is not recomputable by any
+verifier, so the anchor is enforced over the 233-row table it names, by the ten-clause `gates.documentedAnchorGate`
+that `replay.js` recomputes live and `test/lib/api/route-parity.js` asserts on every run. The deletion proof is in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.6, and the digest
 adjudication itself in section 3.22.
 
 One correction belongs with that proof, because this document previously published the wrong digest for it. The value

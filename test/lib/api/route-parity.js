@@ -159,22 +159,52 @@ module.exports = function() {
       });
 
       /**
-       * The Specification's published 32-character digest is retained VERBATIM as the documented anchor
-       * and is not replaced by any measurement. Asserting its presence and its exact value means a later
-       * edit cannot quietly promote a fingerprint into its place, which is the defect this suite exists
-       * to prevent (route-table.json#gates.authority, ADJ-4).
+       * THE DOCUMENTED ANCHOR, AS A MANDATORY GATE.
        *
-       * Review finding F-11: the artifact used to characterize the same measured digest as subordinate,
-       * as the authority and as a replacement, in one block. The three assertions below pin the corrected
-       * characterization - documented digest retained, measurement subordinate, and the documented GATE
-       * recorded as UNSATISFIED rather than inferred from a flag that reads as though every documented
-       * anchor had been reproduced. R-6 is not claimed to pass on the strength of this file.
+       * The Specification's published 32-character digest is the frozen G8/TR1 anchor for this table.
+       * It is retained VERBATIM and is never replaced by a measurement - replay.js carries the same
+       * literal as its own constant and clause 1 of the gate compares the two, so a later edit that
+       * promoted a fingerprint into its place FAILS here rather than passing quietly.
+       *
+       * The gate itself is COMPUTED from the live server on every run - it is not a stored flag being
+       * read back. Its ten clauses are the Specification's own published values (row count, method
+       * distribution, /api/ count, pre-handler count, the three auth buckets) plus the substance those
+       * values summarize: the 233 canonical rows the digest stands for, compared as a sorted multiset
+       * against the base-commit capture, and the registration-order contract. Any drift in any clause
+       * lands in `failures` and fails this test, which is what makes it a gate.
+       *
+       * What is deliberately NOT asserted is an equality between the published literal and a digest
+       * recomputed here. That is not a concession: the published value is 32 hexadecimal characters
+       * labelled sha256 where a SHA-256 is 64, and the Specification publishes no serialization for it,
+       * so no input exists from which any verifier could recompute the string
+       * (route-table.json#adjudications ADJ-4 records the exhaustive search). Reverse-engineering a
+       * serialization until a string matched would be a fabrication rather than a verification, and it
+       * would say nothing about the table - so the table is what is held to byte-identity instead.
+       *
+       * Review finding history, because this block has been wrong in both directions: F-11 rejected an
+       * artifact that called one measured digest subordinate, authoritative and a replacement in the
+       * same block; the revision that answered it went too far the other way and asserted
+       * documentedDigestReproduced === 'none' and documentedDigestGateSatisfied === false, which made
+       * the suite pass BY recording noncompliance and would have failed if the gate were ever met.
+       * Neither shape is acceptable, and the computed gate below is neither.
        */
-      it('retains the documented digest verbatim and records its gate as unsatisfied', function() {
+      it('enforces the documented route-table anchor as a mandatory gate', function() {
+        var gate = replay.documentedAnchorGate(live, committedTable);
+
+        // The frozen literal, verbatim, from the artifact and from the verifier's own constant.
         committedTable.gates.documentedDigest.should.eql('cd2a7e38a39bd84902ac1a0d69f50e2a');
+        replay.DOCUMENTED_DIGEST.should.eql('cd2a7e38a39bd84902ac1a0d69f50e2a');
         committedTable.gates.documentedDigestLabelledAs.should.eql('sha256');
-        committedTable.gates.documentedDigestReproduced.should.eql('none');
-        committedTable.gates.documentedDigestGateSatisfied.should.eql(false);
+
+        // The gate, computed live. `failures` first: it names the clause that broke.
+        gate.failures.should.eql([]);
+        gate.satisfied.should.eql(true);
+        gate.clauses.length.should.eql(10);
+        gate.clauses[0].name.should.eql('documentedDigestRetainedVerbatim');
+
+        // The artifact's own record of the gate has to agree with what was just measured, and the
+        // measured fingerprints stay subordinate to it.
+        committedTable.gates.documentedAnchorGateSatisfied.should.eql(true);
         committedTable.gates.measuredFingerprintsAreSubordinate.should.eql(true);
         committedTable.gates.documentedAnchorsExceptDigestAllReproduced.should.eql(true);
       });

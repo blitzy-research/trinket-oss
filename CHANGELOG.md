@@ -105,9 +105,11 @@ rather than preserved, which R-4 does not sanction, and the review that found th
 - **SEC-1** — a cache-prefix path-traversal that allowed arbitrary file reads. Malicious traversal requests now answer
   differently; every legitimate asset URL is byte-identical.
 - **SEC-4** — an open redirect through the user-controlled `next` value, plus cross-request `fail.redirect` poisoning
-  in which one visitor's interpolated value persisted into every later failure on the same route. Same-origin
-  destinations are still returned byte-for-byte; off-origin and cross-scheme ones are refused. Tightened again after
-  review from a host-only comparison to a complete-origin one, which closes an HTTPS→HTTP downgrade.
+  in which one visitor's interpolated value persisted into every later failure on the same route. Same-host
+  destinations are still returned byte-for-byte and off-origin ones are refused. The comparison is over the **host**,
+  so a same-host destination on the other scheme is still accepted exactly as the base commit accepted it; an
+  intermediate revision compared complete origins instead, and review reversed it because it changed an emitted
+  `Location` and broke the Host-origin contract on a clean checkout. See `docs/PRESERVED-QUIRKS.md` section 4.4.
 - **SEC-13** — a bcrypt password hash present in four HTTP 200 bodies. Exactly one key is removed from those four
   bodies; every other key is unchanged. This is a payload-shape change, and it is the one place where the frozen
   payload contract is knowingly broken.

@@ -32,7 +32,11 @@ var chai      = require('chai'),
  *
  * Transport: supertest binds the hapi listener and issues real HTTP over an ephemeral socket.
  * server.inject() is NOT used anywhere in this suite, for the same reason capture.js avoids it —
- * @hapi/shot/lib/request.js:L30 is the last remaining DEP0169 source in the tree.
+ * @hapi/shot/lib/request.js:L30 is the last remaining DEP0169 source in the tree. That is a rule
+ * about this suite and not a claim about the application: lib/controllers/courses.js:L24 and
+ * lib/controllers/folders.js:L50 both perform internal sub-requests with request.server.inject(),
+ * base-identical at both commits, so DEP0169 fires once either route is exercised. Boot stays warning
+ * free because nothing injects during boot. See docs/PRESERVED-QUIRKS.md section 7.6.
  */
 module.exports = function() {
   describe('R-6 baseline route parity', function() {

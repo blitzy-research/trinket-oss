@@ -4814,9 +4814,23 @@ the observable behaviour: a client of this endpoint sees a 200 and an empty list
 
 **What a naive fix would have broken.** Inserting the missing `?` — or switching to `request.url.searchParams` —
 would change this route from "always empty without a query string" to "returns the folder's contents", which is a
-payload change on a route the frozen library UI already consumes. The frozen client
-compensates by requesting the sibling `GET /api/trinkets?folder=…` shape directly, so the repair would alter the wire
-without being needed by anything, and would immediately fail the R-6 parity comparison for this route.
+payload change on a route the frozen library UI already consumes.
+
+**How the frozen client avoids the defect, measured rather than assumed.** The client does **not** call a different
+route. `public/js/library/trinkets/list/folder-list-controller.js:L69` calls
+`$scope.folder.customGETLIST('trinkets', trinketParams)` — Restangular's sub-resource form, which requests **this very
+route** and appends `trinketParams` as a query string. That object is never empty: `L29-L31` seeds it with
+`limit : 20`, and `L46`, `L50`, `L54` and `L58` add `from`, `offset`, `sort` and `user` when they are set. The emitted
+request is therefore
+`GET /api/folders/<id>/trinkets?limit=20&sort=…`, which lands on the working row of the table above, so the folder page
+renders its trinkets and agrees with `folder.trinketCount`. Corroborating measurement on the delivered tree:
+`grep -rn 'api/folders' public/ --include='*.js'` returns **zero** matches and no client anywhere in `public/` issues a
+`?folder=` request, so the sibling `GET /api/trinkets?folder=…` shape — the sub-request's own target, and the first row
+of the table above — is exercised by nothing but this handler.
+
+⇒ The defect path is reachable only by a caller that sends **no** query string at all, which no shipped client does.
+Repairing it would therefore alter the wire without being needed by anything, and would immediately fail the R-6 parity
+comparison for the bare-request row of that table.
 
 ### 15.2 A whitespace-only course name is accepted, and the slug degenerates to random characters
 
@@ -4844,11 +4858,26 @@ directives freeze, and precisely what the R-6 route-parity comparison is built t
 observable slug space for names that merely *begin* with whitespace, and slugs are public URLs, held for the same
 reason [section 2](#2-the-three-deliberate-browser-versus-server-version-skews) holds the slug plugins.
 
-### 15.3 `POST /users` sends its own validation feedback to a path that does not exist
+### 15.3 `POST /users` sends every signup failure to a path that does not exist
 
-**What it is.** A signup that fails validation redirects the browser to `/sign-up`, which is **not a registered
-route**. The validation message is written to the session flash and then never rendered, because the page that would
-render it answers 404.
+**What it is.** A signup that fails redirects the browser to `/sign-up`, which is **not a registered route**. The
+feedback is written to the session flash and then never rendered, because the page that would render it answers 404.
+
+⚠️ **This is not confined to validation failures.** `POST /users` has **two** distinct failure channels and **both**
+take the identical path:
+
+| Failure mode | Where it is decided | Flash key written | Observable outcome |
+|---|---|---|---|
+| Validation — malformed email, short password, bad username | Joi, before the handler runs; `lib/http/validation.js:L63` writes the flash and the route's `fail.redirect` is applied | `validation` | 302 to the absolute `/sign-up` → **404** |
+| Business — the email or username already exists | `lib/controllers/users.js`, `if (existsResult && existsResult.exists)` → `request.yar.flash('duplicates', …, true)` then `return h.reject(json)` | `duplicates` | 302 to the absolute `/sign-up` → **404** |
+
+The duplicate-email channel is the one a real visitor is most likely to hit, and it is the one that reads worst: the
+account genuinely could not be created, and the page that would say so is a chrome-less 404 carrying **no reason at
+all**. The flash is not lost — it is one-shot and survives in the session, so it renders on a later *manual*
+`GET /signup`, which no navigation performs. Measured with the failed-signup session cookie: `GET /signup` grows from
+**13,679** bytes to **13,792**, and the 113 added bytes are the submitted address echoed back into
+`value="…"` plus one element, `<small class="error">An account already exists with this email</small>`. A second
+`GET /signup` on the same session is **13,679** bytes again, which is the one-shot flash consumed.
 
 **The evidence.** `config/routes.js:L75-L77` declares the failure redirect as a template:
 
@@ -4862,21 +4891,34 @@ fail : {
 view supplies it as a hidden input whose value is `sign-up` — `lib/views/signup.html:L18`. The real page is
 registered at `/signup`. Measured on the delivered tree: `GET /signup` → **200**; `POST /users` with an invalid email
 → **302**, `Location: http://localhost:3104/sign-up`; `GET /sign-up` → **404**, **1,545 bytes**, `404.html` with
-`<title>Page not found</title>` — byte-for-byte the canonical unknown-path body.
+`<title>Page not found</title>` — byte-for-byte the canonical unknown-path body. The duplicate-email post produces the
+**same** 302 to the **same** absolute `/sign-up`, and therefore the same 404 at the same 1,545 bytes.
+
+⭐ **A second, independent route to `/sign-up` lives in the controller itself.** `lib/controllers/users.js#create`
+carries `if (!request.payload.username) { … json.formName = 'sign-up'; }` — so a form that posts `formName: signup`
+but omits `username` has its own value **overwritten** before the failure responder ever sees it, and lands on
+`/sign-up` regardless. The hidden input and this assignment are two separate mechanisms producing one destination, and
+**both are base-identical**.
 
 **Why it is preserved.** `config/routes.js` is **byte-identical** to the base commit — a full-file `diff` against
-`2f8712a` is empty — so both the template and the view's `sign-up` value are baseline. All four `formName` values the
+`2f8712a` is empty — so both the template and the view's `sign-up` value are baseline. The duplicate branch is
+base-identical too: the base commit's `lib/controllers/users.js` reads
+`if (existsResult && existsResult.exists) { request.yar.flash('duplicates', existsResult.duplicates, true);
+return request.fail(json); }`, which is the retired shim's spelling of the `h.reject(json)` this changeset emits, and
+the base commit already carried the `json.formName = 'sign-up'` assignment above it. All four `formName` values the
 sweep exercised (`signup`, `sign-up`, `welcome`, `courses/new`) behave exactly as they did at base. R-4 governs: the
-observable outcome of a failed signup is a 302 to a 404, and that is what a client sees today.
+observable outcome of a failed signup — validation or duplicate — is a 302 to a 404, and that is what a client sees
+today.
 
-**What a naive fix would have broken.** Two repairs suggest themselves and both are excluded. Editing
+**What a naive fix would have broken.** Three repairs suggest themselves and all three are excluded. Editing
 `lib/views/signup.html` to send `signup` touches the frozen presentation layer that the preservation directives place
-off-limits, and it would change the emitted `Location` header — an observable change on the signup path. Registering
-a `/sign-up` route would **add a route**, which the exclusion directive forbids outright and which the 233-row route
-table is gated against. Note also that the interpolation of this exact template is the mechanism behind the SEC-4
-remediation in [section 4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated): the
-`Location` is now confined to the origin per request, and the sweep confirmed the confinement without altering this
-destination.
+off-limits, and it would change the emitted `Location` header — an observable change on the signup path. Deleting the
+controller's `json.formName = 'sign-up'` assignment is latent-bug repair, which R-1 places out of bounds, and it would
+change the `Location` on every username-less post. Registering a `/sign-up` route would **add a route**, which the
+exclusion directive forbids outright and which the 233-row route table is gated against. Note also that the
+interpolation of this exact template is the mechanism behind the SEC-4 remediation in
+[section 4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated): the `Location` is now
+confined to the origin per request, and the sweep confirmed the confinement without altering this destination.
 
 ### 15.4 Deleting a course leaves its lessons and materials behind
 
@@ -5656,7 +5698,7 @@ attributable to this changeset.
 | Sweep item | Condition | Recorded in |
 |---|---|---|
 | F2-1 | `h3`–`h5` font stack diverges from `h1`–`h2` | [15.10](#1510-h3-through-h5-use-a-different-font-stack-from-h1-and-h2) |
-| F3-1 | `POST /users` validation feedback redirects to a nonexistent path | [15.3](#153-post-users-sends-its-own-validation-feedback-to-a-path-that-does-not-exist) |
+| F3-1 | `POST /users` failure feedback redirects to a nonexistent path — **both** the validation and the duplicate-email channels | [15.3](#153-post-users-sends-every-signup-failure-to-a-path-that-does-not-exist) |
 | F5-1 | Empty grid with no empty-state message; guidance gated on a non-empty featured list | [15.11](#1511-two-pages-render-an-empty-grid-with-no-empty-state-message-and-the-message-that-exists-is-gated-on-a-non-empty-featured-list) |
 | F5-2 | Loading indicators — **corrected**: they clear after their data; the real gap is a ≈18.5 s no-indicator window | [15.15](#1515-the-two-loading-spinners-clear-after-their-data-not-before-and-the-larger-absence-that-reading-conceals) |
 | F5-3 | Long display name overflow — **relocated**: `/u/{username}/classes`, not `/account/profile` | [15.14](#1514-a-long-display-name-overflows-the-page-on-the-one-template-that-echoes-it-into-free-flowing-text) |
@@ -5756,6 +5798,292 @@ from the installed tree; that the sole remaining warning is the `@hapi/shot` DEP
 through the application's own two internal sub-requests; that every 5xx is the scrubbed fixed string while the internal
 log carries the real error; and that no plaintext credential, session seal, AWS key, connection string, OAuth token or
 JWT appears in any captured log beyond QA-1 and QA-2.
+
+## 17. Runtime-QA observations on the browser surface — attributed, and preserved
+
+A second runtime QA pass drove the application through a real browser and audited every UI-initiated HTTP request
+across nine journeys — registration, login and logout, profile and account, course to lesson to material, folder and
+trinket and file, class membership and invitation, the admin and authorization matrix, error and empty states, and a
+visual-continuity revisit — across 38 screens and roughly 1,900 requests, with no repository file modified.
+
+**Its verdict on this changeset was unqualified: zero migration-attributable defects.** Every measurable contract the
+preservation directives freeze held — the 233-row route table replayed with no row-by-row difference, the response
+corpus replayed with **0** differences, the two CSS artifacts were byte-identical, and
+`git diff <base>..HEAD -- public/ lib/views/ static/ vite.config.mjs` reported **0 changed files**. All 41 conditions
+it reported are pre-existing. Most were already catalogued here — the authenticated `/login` and `/signup` 500 in
+[section 1.1](#11-authenticated-get-login-and-get-signup-return-http-500), the never-firing Joi override in
+[section 1.2](#12-the-joi-custom-message-override-that-never-fires), the branches that answer nothing in
+[section 1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them), the undeclared `Boom`
+identifier in [section 4.13](#413-the-undeclared-boom-identifier-in-coursejs), the empty folder-trinkets list in
+[section 15.1](#151-get-apifoldersfolderidtrinkets-answers-an-empty-list-because-its-internal-sub-request-loses-its),
+the signup dead end in
+[section 15.3](#153-post-users-sends-every-signup-failure-to-a-path-that-does-not-exist), the login enumeration oracle
+in [section 15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved), the
+reader and editor layout collapse in
+[section 15.12](#1512-the-course-reader-loses-its-layout-at-and-below-641px-because-the-outline-is-fixed-at-a-hard-350px),
+and the accessibility set in
+[section 15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them).
+
+The twenty-three below were **not** yet catalogued, or were catalogued only in part. They are recorded here so they are
+not mistaken for regressions of this change, and so that follow-up work outside it has something to cite. Every figure
+was re-measured on the delivered tree — over real HTTP for the server-side rows, and in a real browser at a pinned
+viewport for the layout and accessibility rows — before being written down.
+
+Two of them refine an entry that already exists rather than adding a new condition. BQ-19 extends the accessibility set
+of [section 15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them),
+which records that two tab stops on `/library` carry no accessible name but not the five icon-only controls or the
+three that lose their name at a specific width; and BQ-10 extends the dead-path list of
+[section 7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit) with one route that list omits.
+
+| # | Condition | Measured evidence | Base identity | Disposition |
+|---|---|---|---|---|
+| BQ-1 | Every course link on `/u/{username}/classes` is a **port-less** absolute URL, so on any non-default port the browser targets port 80 and the navigation fails | `GET /{userSlug}/courses/{courseSlug}` as a non-editor answers **302** with `location: http://localhost/u/qafixowner/classes/qa-fix-course` — the `:3401` the request arrived on is **absent**. The same path with the port present answers **200** at 19,432 bytes. Measured for the second user, a site admin and an anonymous visitor; the owner gets **200** because `coursePage` redirects only when the caller can neither edit the course nor is associated with it | `lib/controllers/courses.js:L171-L178` is `2f8712a:lib/controllers/courses.js:L109-L115`, and the sibling template in `createCourse` at `L146-L153` is `2f8712a:L84-L90` | PRESERVED — see 17.1 |
+| BQ-2 | The course write endpoints answer under **three different** top-level envelope keys | Measured top-level key sets: `POST /api/courses` → `['context','course','flash']`; `POST …/lessons` and `POST …/materials` → `['context','data','flash']`; `PUT …/lessons/{id}/name` → `['context','flash','lesson']`. The literals are in one file: `course` at `lib/controllers/course.js:L80`, `L180`, `L403`; `data` at `L95`, `L149`, `L312`, `L324`, `L472`; `material` at `L584`; `lesson` at `L643` | every one of those `h.respond({…})` calls is the retired shim's `request.success({…})` with the same key at the base commit | PRESERVED — R-1 excludes normalizing a response key, and each key is a payload shape the HTTP-surface invariant freezes |
+| BQ-3 | The course-invitation feature is unreachable from the running UI and, when called directly, answers **200** having persisted nothing | `POST /api/courses/{id}/invitations` with `{"emailList":["invitee@example.com"]}` → **200**, body `{"message":"Email is not configured. Course invitations cannot be sent.","flash":{}}`; `GET …/invitations` → `{"data":[]}`; `db.courseinvitations.countDocuments()` → **0** | the message is `2f8712a:lib/controllers/course.js` verbatim, at both of its sites | PRESERVED — see 17.2 |
+| BQ-4 | The "already joined" flash ships raw HTML into an auto-escaping template, so a visitor is shown the markup | `lib/controllers/classes.js:L153` and `L214` build `"You've already joined that course! View <a href='…' class='text-link'><strong>…</strong></a> now."`; `lib/views/home.html:L23` renders `{{ flash.info }}` with Nunjucks autoescaping on. Measured after a second join on a valid access code: the page carries **13** HTML-entity occurrences and the flash reads `You&#39;ve already joined that course! View &lt;a href=&#39;…&#39;&gt;&lt;strong&gt;QA Fix Course&lt;/strong&gt;&lt;/a&gt; now.` | `2f8712a:lib/controllers/classes.js:L146` and `L207` are **character-identical**; `lib/views/home.html` has a 0-line diff | PRESERVED — the repair is either a `\| safe` filter in a frozen template, which would turn an escaped string into live markup on a page that echoes a course name, or a controller rewrite that changes the flash payload. Both are excluded |
+| BQ-5 | An unknown `/admin/{subpage}` answers a **raw-JSON** 500 on an HTML route, not the rendered error page | `GET /admin/no-such-subpage` as a site admin → **500**, **96 bytes**, `content-type: application/json`. Cause: `lib/views/admin/index.html:L46` is `{% include "admin/includes/" + subpage + ".html" %}`, so the template raises during response **marshalling** — after the `onPreResponse` extension that would have rendered `50x.html` has already run | `lib/views/admin/index.html` has a 0-line diff against `2f8712a`, and the `onPreResponse` region of `app.js` that governs error rendering has a 0-line diff | PRESERVED — the fix is an `{% if %}` guard or a whitelist in a frozen template, and the emitted status and body are what a client sees today |
+| BQ-6 | **One** 1,600-byte body serves both a permission denial and a genuine server error, and **one** 1,545-byte body serves every 404 | `GET /admin/users` as a non-admin → **403**/1,600 B; authenticated `GET /login` → **500**/1,600 B; the two bodies are **byte-identical** (`cmp` reports no difference, sha256 begins `a50bf9c7`), both `<title>Something went wrong</title>`. An unknown route and a missing *record* both → **404**/1,545 B, likewise byte-identical (sha256 begins `bd3587ea`), `<title>Page not found</title>` | the mapping itself is already recorded in [section 12](#12-streaming-ssrf-and-three-inherited-risks-one-overridden-two-accepted): `app.js`'s first `onPreResponse` renders 500-and-above **and** 403 as `50x.html`. Both templates and that region are 0-line diffs | PRESERVED — the consequence, that a denial reads as "Something went wrong :(" and a 404 cannot distinguish a missing route from a missing record from a feature-flag-disabled route, is a property of the frozen templates and the frozen extension |
+| BQ-7 | The chrome-less error templates carry **no** icon link, so every error page costs an extra 404 on `/favicon.ico` | `lib/views/404.html` (1,748 B) and `lib/views/50x.html` (1,796 B) are standalone documents — neither carries `extends`, so neither inherits `lib/views/base.html:L12-L16`, which is the only place `rel="icon"` and the four `apple-touch-icon-precomposed` links are declared. Each error template has exactly **one** `rel=` attribute, the stylesheet. Measured: `GET /favicon.ico` → **404** at 1,545 bytes; `GET /img/icons/favicon.ico` → **200** at 1,811 bytes | all three templates are 0-line diffs against `2f8712a` | PRESERVED — adding the link edits a frozen template and adds a request to a chrome-less page |
+| BQ-8 | `/forgot-pass` is reachable by no link on the site, renders no form, and its title and its heading disagree | `GET /forgot-pass` → **200**; the page carries **0** `name="email"` inputs and `<title>Trinket</title>`, while `lib/views/users/forgotpass.html:L6` reads `<h1>Forgot Password</h2>` — an `h1` closed with an `h2` tag | `config/routes.js` is byte-identical to `2f8712a` and `lib/views` has a 0-line diff | PRESERVED — see 17.3 |
+| BQ-9 | `GET /api/courses/{id}?with=_owner` expands the owner's record, **including the email address**, for any authenticated non-member of a public course | Measured as the second user: `_owner` carries **12** keys — `_id`, `avatar`, `created`, `email`, `fullname`, `lastUpdated`, `name`, `roles`, `settings`, `source`, `username`, `verified`. `'password' in _owner` is **false** and no value begins `$2a$` or `$2b$`, so the SEC-13 remediation holds on this path. The email is returned on the wire and is **not** rendered into the DOM | `User.publicSpec` is identical at both commits | PRESERVED — the expansion is a response body clients parse, and [section 4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated) records why a *projection* repair was refused even for the hash. This is a cross-tenant PII read that belongs to post-migration security work, alongside the conditions in [section 4](#4-the-security-condition-catalogue) |
+| BQ-10 | `GET /api/classes/{userSlug}/{courseSlug}` is a dead route that answers **500** to every caller | Measured on two independent instances: → **500**, **96 bytes**, `content-type: application/json` — the scrubbed body. The route is declared at `config/routes.js:L182` as `GET /api/classes/{userSlug}/{courseSlug} classes.getClass` and its handler is `lib/controllers/classes.js:L102`. A repository-wide search of the frozen client for the string `api/classes` returns **0** files, so nothing ever calls it | `config/routes.js` is byte-identical to `2f8712a`, so the declaration is unchanged, and the base commit answered the same scrubbed 500 through the retired shim's catch-all | PRESERVED — [section 7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit) lists the other already-dead paths and omits this one; it belongs to that list, and repairing an unreferenced handler is outside all four sanctioned diff categories |
+| BQ-11 | One of the five `showAlert()` calls on the profile form targets an element that route can never render, so a failed save is **silent** | `lib/views/users/includes/profile.html` calls `showAlert()` five times; four target `#profileError` or `#profileSuccess`, and the fifth — at **L161**, the `.fail()` arm — targets `#passwordError`, which is declared only in the sibling include `lib/views/users/includes/password.html`. `lib/views/users/account.html:L31` is `{% include "users/includes/" + page + ".html" %}`, i.e. **exactly one** include per sub-page, so the two are mutually exclusive by construction. Measured: `/account/profile` → 200/19,576 B carrying `id="profileError"` ×1 and `id="passwordError"` **×0**; `/account/password` → 200/19,152 B carrying `id="passwordError"` ×1 and `id="profileError"` ×0. `showAlert` therefore resolves to an empty jQuery set and `removeClass('hide-override')` is a no-op, leaving the message in the hidden `span#message` | `lib/views` has a 0-line diff against `2f8712a`, so both includes and the one-include-per-page mechanism are unchanged | PRESERVED — see 17.4 |
+| BQ-12 | Signing out leaves the previous user's identity in `localStorage` | Measured across a real logout: `localStorage` is still length 2 afterwards. `__trinket__user-log` **survived and grew** 1,814 → 2,088 bytes as an eighth entry was appended, and its value still contains the username **9 times**; `__browser_id__` survived byte-identical. The writer is `public/js/debug.js:L40` `cache.set('user-log', loadInfo)`, and the prefix comes from `public/js/util/cache.js:L6` `var PREFIX = '__trinket__'`. No logout path calls `removeItem` on it — the only `removeItem` sites in the tree are the embed's own `sessionStorage` guid and `cache.js`'s internals. `sessionStorage` was empty throughout, and the HttpOnly `session` cookie **was** correctly cleared | `public/` has a 0-line diff against `2f8712a`, so both the writer and the absent cleanup are unchanged | PRESERVED — the server-side half of logout is correct; adding a client-side purge means editing frozen browser JavaScript, which §0.2.2.2 forbids, and it would change what a returning visitor's diagnostics buffer contains |
+| BQ-13 | Markdown links are given `target="_blank"` with no `rel`, and `rel` cannot be supplied because the sanitiser strips it | Both copies of the renderer rewrite the anchor identically — `link = link.replace(/^<a\s/, '<a target="_blank" ')` at `lib/shared/trinket-markdown.js:L590` (server) and `public/js/trinket-markdown.js:L417` (browser) — with no `rel`. The `<a>` whitelist is `a: {"class": …, "href": …, "title": …, "target": /^_blank$/}` at `lib/shared/trinket-markdown.js:L108` and `public/js/trinket-markdown.js:L92`: **`rel` is not whitelisted at all**, so even an author-supplied `rel` would be removed. Neither file contains `rel=`, `noopener` or `noreferrer` — 0 occurrences | the rewrite is **character-identical** at `2f8712a:lib/shared/trinket-markdown.js:L439`, and the whitelist line is **byte-identical at line 108 in both commits**; `public/js/trinket-markdown.js` has a 0-line diff | PRESERVED — modern browsers have defaulted new top-level browsing contexts to `noopener` since 2021, so the residual exposure is limited to old engines; adding `rel` means changing the rendered HTML of every course page, which the client-visible-page directive of §0.9.4 freezes, and widening the whitelist weakens the platform's XSS defence, which §0.1.1.4 I12 identifies as load-bearing |
+| BQ-14 | The course editor's Topic and Outline controls sit outside the viewport at **every** width, not merely narrow ones | The container measures `(-350.00, 752.00, 350 × 48)` with `position: fixed` and `margin-left: -350px`, and both buttons report **0.00 px visible** at 375, 768, 1024, 1280 **and 1920**. Read from the live CSSOM, the rule is `body.course #new-topic-container { position: fixed; left: 0; bottom: 0; max-width: 350px; margin-left: -350px }` — declared at `static/scss/_course-edit.scss:L224` and **enclosed by no media query** — the file has four, at L6, L31, L190 and L408, and none wraps this selector; in the compiled `public/css/base.css` all four occurrences of `#new-topic-container` sit outside every `@media` block. Only the `.open` class restores it, and that class is bound to the outline drawer by `ng-class="{open:menuOpen}"` at `public/partials/course_editor.html:L74` | `static/scss` and `public/partials` both have a 0-line diff against `2f8712a`, and `public/css/base.css` still matches its recorded 265,727 bytes and sha256 | PRESERVED — see 17.5 |
+| BQ-15 | The course editor's sub-navigation grows out of the header that is supposed to contain it | Measured at 375px: `div.course-subnav` occupies `(0, 45, 375 × 178)` — bottom edge 223 — inside `header#course-nav` at `(0, 45, 375 × 80)`, bottom edge 125, so it **escapes its container by 98.00 px** and overlays the content beneath. The header computes `overflow: visible`, so nothing clips it. The four controls that would otherwise absorb the width are `div.show-for-large-up`, which compute `display: none` at 375 and `inline-block` at 1280, so the remaining items wrap into three rows | `static/scss`, `public/partials` and `lib/views` all have a 0-line diff against `2f8712a` | PRESERVED — see 17.6 |
+| BQ-16 | The course Dashboard receives eighteen numeric metrics and renders **none** of them | On a course carrying one lesson, four materials and two enrolled members, `GET /api/courses/{id}/dashboard` → **200, 384 bytes**, carrying three objects × six fields = **18** metrics (`{not-started: 2, started: 0, submitted: 0, completed: 0, user-count: 2, hidden: 0}`). The figure is content-dependent, and the control confirms the endpoint rather than undermining it: the same call against a freshly created course with no lessons, no materials and no members answers **200 at 37 bytes** with `{"data":[],…}` and **0** numeric metrics, so the payload tracks the course's actual content. Rendered numeric values: **0** — not one digit anywhere on the dashboard, established four independent ways including a `TreeWalker` over every text node and whole-document `innerText`. `canvas` count **0**, `svg` count **0**; Highcharts, Chart, d3 and c3 are all `undefined`. Every material row carries the unrendered placeholder `<!-- ngIf: material.type === 'assignment' -->`. The heading reads `Hidden from Dashboard ()` with **empty** parentheses, the first legend segment's visible label is `Returned` while its `title` attribute says `Feedback Sent`, and all four `.chart-segment` elements carry a literal inline `width: 25%` resolving to exactly **242.5 px** of a 970 px wrapper | `public/partials` and `static/scss` have a 0-line diff against `2f8712a`, and the endpoint's response shape is unchanged | PRESERVED — see 17.7 |
+| BQ-17 | The **disabled** reader navigation button is styled more prominently than the **enabled** one | Measured on a course-reader material: the disabled "previous" control renders `background-color: rgb(0, 138, 255)` with white text at `opacity: 0.7`, while the enabled "next" control renders white on blue at `opacity: 1` — the inverse of the convention. The disabled control keeps `pointer-events: auto` and `tabindex="0"` and remains **in the tab order**; a trusted click on it reports `defaultPrevented: true` with **0** `hashchange` events and **0** network requests, so it is inert in behaviour while advertising itself as available | `static/scss` and `public/partials` have a 0-line diff against `2f8712a`; the colours are the frozen `$primary-color` of §0.3.3 | PRESERVED — the styling lives in the frozen stylesheet, and adding a `disabled` attribute or `pointer-events: none` would change both the rendered markup of a client-visible page and the compiled `base.css` that the §0.3.3 byte-identity check pins |
+| BQ-18 | The folder-delete confirmation gate is a CSS class only — nothing actually blocks the control | Measured in all three states of the dialog: only the `disabled` **class** and its four presentational values change (`color` `rgb(240,65,36)` ↔ `rgb(255,255,255)`, `background-color` `rgb(253,231,227)` ↔ `rgb(240,65,36)`, `opacity` 0.7 ↔ 1, `cursor` `default` ↔ `pointer`). The `disabled` **attribute** is never present, `aria-disabled` is never present, `pointer-events` stays `auto`, the control is **never focusable**, and its attribute list is byte-identical `["id","class","ng-click","ng-class"]` in all three states. The confirmation input carries none of `label`, `aria-label`, `aria-labelledby`, `placeholder`, `id` or `name` — its attributes are only `["type","ng-model","ng-change","class"]` — so its accessible name is `""`, and Chrome independently flags both "No label associated with a form field" and "A form field element should have an id or name attribute" on it. All three dialog actions are `href`-less anchors with no `tabindex`, exposed to assistive technology as **StaticText** | `public/js`, `public/partials` and `static/scss` all have a 0-line diff against `2f8712a` | PRESERVED — the guard that matters is server-side and unaffected; adding a real `disabled` attribute, a label or a `tabindex` puts new markup on a client-visible page, which R-4 prohibits and §0.9.4 freezes. No delete was performed while measuring: the dialog was cancelled and the folder verified intact |
+| BQ-19 | Five icon-only controls have no accessible name, and three of them **lose** the name they have at a specific width | All five report an accessible name of `""` — the breadcrumb home link, `button#search-label`, the sort dropdown, the view dropdown and the new-folder control — cross-checked against Chrome's own accessibility tree at both 1280 and 1920. Exactly **three** `span.show-for-xlarge-up` elements compute `display: none` at 1280 and `inline-block` at 1920, so precisely three toolbar buttons lose their name at 1280: sort (`Last Updated` → `""`), view (`Grid` → `""`) and new-folder (`new folder` → `""`). Chrome separately flags the orphaned `<label>Sort:</label>` and `<label>View:</label>` (no `for`, wrapping nothing) and a broken `<label for="shareURL">` whose target id is actually `shareUrl` — a case mismatch | `lib/views`, `public/js`, `public/partials` and `static/scss` all have a 0-line diff against `2f8712a` | PRESERVED — see 17.8 |
+| BQ-20 | The class progress indicator has no textual or ARIA representation of the value it displays | The track `div#class-progress` has a complete attribute list of literally **`["id"]`**; the fill `div.percentage` has `["class","ng-style","style"]`. **Zero** `aria-*` attributes and `role` `null` on both; `[role="progressbar"]` count **0** and `<progress>` count **0** on the page. The fill carries inline `style="width: 33.3333%"`, computes to **426.656 px**, and its rect ratio is `426.656/1280` = **33.333%** — so the value is conveyed by geometry alone, with no percentage text and in fact no digit rendered anywhere on the page | `lib/views`, `public/partials` and `static/scss` have a 0-line diff against `2f8712a` | PRESERVED — the four ARIA attributes a progressbar needs would be new markup on a client-visible page. §0.4.4 states the interface layer is preservation-only and expresses its obligations "as prohibitions rather than as designs", and D1 ranks that above any WCAG heuristic |
+| BQ-21 | The username field clips its own value at narrow widths, with no ellipsis and no way to scroll | `input#username`'s content box shrinks from **194 px at 1280 to 110 px at 320**, with computed `overflow-x: clip` and `text-overflow: clip` — no ellipsis, `scrollWidth === clientWidth`, and the field cannot be scrolled, so a clipped value is simply unreadable. A non-destructive `measureText` sweep puts the clipping threshold at **13 characters at 320 px** versus **22 at 1280** — a real 9-character narrow-width penalty. Whether it manifests is fixture-dependent: a 10-character username (86.27 px) does not clip, and the sibling `input#display-name` sits **5.16 px** from clipping at 320 | `lib/views` and `static/scss` have a 0-line diff against `2f8712a`, and `base.css` still matches its recorded bytes and hash | PRESERVED — the width comes from a proportional Foundation column in the frozen stylesheet, and `text-overflow: ellipsis` on an `input` would change the compiled `base.css` the §0.3.3 check pins |
+| BQ-22 | On `/signup` one placeholder is wider than the box that holds it, and the submit label wraps to two lines at four widths but not at the fifth | The password placeholder `What password would you like?` measures a constant **236.85 px** at `16px Merriweather, Times, Georgia, serif` against a `clientWidth` of **235 px at 320**, so it **overflows by 1.85 px** and visibly truncates to `What password would you lik`; at 375, 641 and 768 it fits with 44.15, 52.15 and 115.15 px of slack. Separately the `Sign Up` submit label occupies **two rendered line boxes at 320, 375, 641 and 768** — two `Range.getClientRects()` rects at distinct y-tops — giving a bounding height of **65 px**, and resolves to one line at **48 px** at 1280. The wrap is therefore **non-monotonic** in viewport width. Root cause measured: a 40 px content box against 48.14 px of single-line text — a deficit of 8.14 px — inside the fixed 56 px horizontal padding of a proportional Foundation column | `lib/views/signup.html` and `static/scss` both have a 0-line diff against `2f8712a`, and `base.css` still matches its recorded bytes and hash | PRESERVED — the placeholder string is in a frozen template and the padding and column width are in the frozen stylesheet, so either repair breaks the §0.3.3 byte-identity check or edits client-visible copy. **One correction to the reported account:** the report attributed a 641-only wrap of a "Display Name" label to `/signup`, but that field **does not exist on `/signup`** — measured, the page has 0 matching labels and 0 matching inputs and only two labels in total at every width, and its only named controls are `formName`, `email` and `password`. `input#display-name` lives on `/account/profile` |
+| BQ-23 | The create-course form gets **narrower** as the viewport gets wider, across a single pixel | The name input and both selects drop **610.00 → 504.16 px, a loss of 105.84 px**, between 640 and 641 (`clientWidth` 608 → 502); the outer wrapper drops 640.00 → 534.16. Cause measured directly: `matchMedia('only screen and (min-width: 40.063em)')` flips **false → true**, so the column class resolves from `small-12` (100%) to `medium-10` (83.3333%) — and 641 × 0.833333 = 534.166 checks out. The width is not recovered until 768. The visible consequence: `select#content-default`'s longest option (66 characters, 512.5292 px) **flips from fitting by 95.47 px to overflowing by 10.53 px** across that one pixel, so the selected value begins to clip on the *wider* viewport | `lib/views` and `static/scss` have a 0-line diff against `2f8712a` | PRESERVED — `medium-10` is a Foundation 5.5.3 grid class and 40.063em is its stock `medium` breakpoint; changing either the column class in a frozen template or the breakpoint in the frozen `_settings.scss` would break the §0.3.3 byte-identity check on both stylesheets |
+
+### 17.1 BQ-1: why the port-less class-page redirect is not repaired here
+
+**What it is.** `lib/controllers/courses.js#coursePage` builds its destination from a **hostname**, never from the
+host the request arrived on:
+
+```javascript
+urlTemplate = (config.app.usersubdomains)
+  ? '//{user}.{domain}/{course}'
+  : '//{domain}/u/{user}/classes/{course}';
+
+url = config.app.url.protocol + ':' + StringUtils.interpolate(urlTemplate, {
+  user   : request.params.userSlug,
+  domain : config.app.url.hostname,
+  course : request.params.courseSlug
+});
+```
+
+`config.app.url.hostname` is a bare hostname by construction — `config/default.yaml:L30-L33` declares `protocol`,
+`hostname` and `port` as three separate keys, and only `config/app.config.js` recombines them into `config.url`. The
+template interpolates the hostname alone, so the port is structurally absent from the result. On a deployment served
+at its protocol's default port the URL is correct, which is why the condition has survived since 2013; on any other
+port every course row on `/u/{username}/classes` navigates to a closed port.
+
+**Why it is preserved.** The expression is base-identical at `2f8712a:lib/controllers/courses.js:L109-L115`, and the
+identical template appears a second time in `createCourse` at `L146-L153` (base `L84-L90`). `lib/util/nunjucks.js:L127`
+reads the same `config.app.url.hostname` for its own `host()` helper, and that file's functional diff against the base
+commit is **empty** — the change to it is comment-only. R-1 places latent-bug repair out of bounds and R-4 protects the
+emitted `Location`, which is an observable header on a redirect the response corpus measures.
+
+**What a naive fix would have broken.** Appending `config.app.url.port`, or switching to `request.info.host`, changes
+the emitted `Location` on this route for **every** deployment, not only for a non-default port — and `Location` is one
+of the four fields the parity replay compares. It would also diverge the two sibling call sites from each other unless
+both were edited, and it would put the request's own `Host` header into a redirect target, which is the shape
+[section 12](#12-streaming-ssrf-and-three-inherited-risks-one-overridden-two-accepted) declines to introduce. The
+correct home for this is a separately-scoped configuration change that decides, once, whether the platform's canonical
+origin includes a port.
+
+### 17.2 BQ-3: the invitation feature answers success for an operation it did not perform
+
+**What it is.** `POST /api/courses/{courseId}/invitations` is declared at `config/api_routes.js:L454` and is fully
+wired in the frozen course editor — `public/partials/course_editor.html:L314` carries the `invite-users-form`, `L326`
+binds `inviteForm.emailList`, `L336` promises "We'll send an email with a unique link to each address", and `L310`
+declares `#invitations-sent-messages` as the notification target. With no SMTP configured the handler short-circuits at
+`lib/controllers/course.js:L721` and `L775` and answers **HTTP 200** with
+`{"message":"Email is not configured. Course invitations cannot be sent."}`, having written nothing.
+
+**Why it is preserved.** The message and the short-circuit are verbatim at the base commit at both sites, and they are
+one of four instances of the same pattern — the others are at `lib/controllers/trinket.js:L918`,
+`lib/controllers/users.js:L351` and `lib/controllers/users.js:L1038`. `config/default.yaml:L133-L139` ships
+`app.mail.from`, `host`, `user` and `pass` all empty, so `emailEnabled` — computed at
+`lib/http/responseContract.js:L117` as `hasFrom && (hasAWS || hasMailgun)` — is false on a default install and the
+whole feature is gated off. Changing the status to a 4xx or 5xx would change the wire on four routes at once.
+
+**What a naive fix would have broken.** The frozen client reads `if (result.success)` with **no `else` branch**, so a
+non-2xx status would take a path the client does not implement, and the notification target it would write to does not
+exist on the rendered page. Repairing the status without repairing the frozen client would replace a silent no-op with
+an unhandled rejection.
+
+### 17.3 BQ-8: `/forgot-pass` is gated off by the same flag that empties it
+
+**What it is.** The route exists — `config/routes.js:L256-L257` declares `GET /forgot-pass pages.forgotPasswordForm`
+with `html : 'users/forgotpass.html'` — and answers 200. It is nonetheless unreachable by navigation, and it renders
+no form.
+
+**Why both halves have one cause.** Every link to it is gated on `emailEnabled`: `lib/views/login.html:L38`,
+`lib/views/users/activateaccount.html:L16` and `lib/views/signup.html:L27` each wrap the anchor in
+`{% if emailEnabled %}`. The page's own form is gated on the same flag at `lib/views/users/forgotpass.html:L7`. With
+`app.mail.*` empty on a default install the flag is false, so the links vanish **and** the form vanishes together —
+the page is not broken, it is switched off, and the only reason it answers 200 rather than 404 is that the route is
+unconditional while its contents are not. Independently, `lib/views/users/forgotpass.html:L6` opens an `h1` and closes
+it with `</h2>`, which is why the heading reads "Forgot Password" while the document title falls back to the layout's
+generic `Trinket`.
+
+**Why it is preserved and what a naive fix would have broken.** `config/routes.js` is byte-identical to the base commit
+and `lib/views` has a 0-line diff. Un-gating the route would expose a form that cannot work, the mismatched heading tag
+is in a frozen template, and supplying a `<title>` would change a rendered byte on a page the corpus measures. The
+condition is a correct consequence of an unconfigured optional feature, and it is recorded here so that it is not read
+as a routing defect.
+
+### 17.4 BQ-11: the profile form's one mis-targeted alert, and why it can never find its target
+
+**What it is.** Saving the profile form and having the request fail produces no visible feedback at all. The message is
+computed and written, but the container it is written into is not on the page.
+
+**Why the target can never exist on that route.** `lib/views/users/account.html:L31` renders its body with
+`{% include "users/includes/" + page + ".html" %}` — a single include chosen by the URL segment, so exactly one of the
+six includes under `lib/views/users/includes/` is ever present. `#passwordError` is declared in `password.html`;
+`#profileError` is declared in `profile.html`. The two are therefore **mutually exclusive by construction**. Of the five
+`showAlert()` calls in `profile.html`, four correctly name `#profileError` or `#profileSuccess`; the fifth, at **L161**
+in the `.fail()` arm, names `#passwordError`. Measured on the delivered tree: `/account/profile` answers 200 at 19,576
+bytes carrying `id="profileError"` once and `id="passwordError"` **zero** times, while `/account/password` answers 200
+at 19,152 bytes with exactly the reverse. `showAlert` consequently receives an empty jQuery set, its
+`removeClass('hide-override')` and its 5-second `addClass` timer both act on nothing, and the message text sits in
+`span#message`, which stays hidden. A second, independent defect in the same handler was measured alongside it: the
+client reads only `result.flash.validation.username`, so a `flash.validation.name` is discarded.
+
+**Why it is preserved and what a naive fix would have broken.** `lib/views` has a 0-line diff against the base commit,
+so both includes and the one-include-per-page mechanism are exactly as they were. The obvious repair — changing L161 to
+`#profileError` — edits a frozen template, and it converts a request that currently produces no visible change into one
+that paints a red banner. That is a client-visible page behaviour change on a form, which §0.9.4 places under the
+preservation directive and R-4 prohibits outright. It is worth stating plainly what is **not** wrong here: the server
+answers correctly, the failure is real and is logged, and nothing is silently succeeding — only the notification is
+lost. A related consequence of the same variable-include mechanism is recorded at BQ-5: an unknown sub-page name
+resolves to a template that does not exist and raises during response marshalling. It reproduces on this route too —
+`/account/settings` answers **500** at 96 bytes with `content-type: application/json`, exactly as `/admin/{unknown}`
+does, and `lib/views/users/account.html` is likewise a 0-line diff.
+
+### 17.5 BQ-14: the editor's Topic and Outline controls, and why no breakpoint reveals them
+
+**What it is.** The two controls that add a topic and open the outline in the course editor are positioned entirely
+outside the viewport, and widening the window does not bring them back.
+
+**What the measurement actually showed, against what was expected.** The reported condition was that the controls
+"only enter view at ≥ 1025 px". That is measurably false. The container's rect is `(-350.00, 752.00, 350 × 48)` and both
+buttons report **0.00 px visible** at 375, 768, 1024, 1280 **and 1920** — five widths spanning small phone to large
+desktop, with identical rects. Reading the rule off the live CSSOM rather than inferring it explains why:
+`body.course #new-topic-container { position: fixed; left: 0; bottom: 0; max-width: 350px; margin-left: -350px }`,
+authored at `static/scss/_course-edit.scss:L224`. The rule is **not inside any media query**. That is worth stating
+carefully, because the file does contain four — at L6, L31, L190 and L408 — and none of them encloses this selector:
+in the compiled `public/css/base.css`, all **four** occurrences of `#new-topic-container` sit at brace depth 0 relative
+to the nearest preceding `@media`, i.e. outside every media block. A fixed element pushed exactly its own width to the
+left is therefore off-screen at every viewport size, because nothing that applies to it depends on viewport size. The
+only thing that moves it is the `.open` class, and `public/partials/course_editor.html:L74` binds that class with
+`ng-class="{open:menuOpen}"` — the same flag that opens the outline drawer. So the control that opens the outline is
+itself only reachable once the outline is open.
+
+**Why it is preserved and what a naive fix would have broken.** `static/scss` and `public/partials` both have a 0-line
+diff against the base commit, and `public/css/base.css` still matches its recorded 265,727 bytes and sha256 exactly.
+Any repair is a stylesheet change — removing the negative margin, adding a media query, or adding a default `.open` —
+and every one of those recompiles `base.css` and breaks the §0.3.3 byte-identity check that is this changeset's primary
+proof that the presentation layer did not move. §0.3.1 additionally records the Foundation 5.5.3 fork as a gitignored,
+release-hydrated tree that must not be touched, which is why `sass` and `vite` are both held at their current versions.
+The correct reading is that this is a drawer-coupled affordance in a desktop-era editor, not a responsive bug with a
+breakpoint to find.
+
+### 17.6 BQ-15: the editor sub-navigation that outgrows its header
+
+**What it is.** In the course editor at narrow widths the sub-navigation bar grows taller than the header that contains
+it and spills over the content below.
+
+**The measurement.** At 375 px, `div.course-subnav` occupies `(0, 45, 375 × 178)`, so its bottom edge is at 223, while
+its parent `header#course-nav` occupies `(0, 45, 375 × 80)`, bottom edge 125. The overflow is therefore
+**98.00 px**, and because the header computes `overflow: visible` nothing clips or contains it. The cause is
+wrapping rather than sizing: four of the bar's controls are `div.show-for-large-up`, which compute `display: none` at
+375 and `inline-block` at 1280, so at narrow widths the remaining items wrap into three rows inside a container whose
+height is fixed at 80 px. The same `div.course-subnav` element appears in
+[section 15.12](#1512-the-course-reader-loses-its-layout-at-and-below-641px-because-the-outline-is-fixed-at-a-hard-350px)
+as the thing that blocks the reader's collapse control at 375 px; the two are the same component behaving the same way
+on two different screens, and the reader's account there should not be read as covering the editor.
+
+**Why it is preserved and what a naive fix would have broken.** `static/scss`, `public/partials` and `lib/views` all
+have a 0-line diff against the base commit. Giving the header `height: auto`, or a media query, or `overflow: hidden`,
+each changes the compiled stylesheet and therefore the §0.3.3 artefact hashes; and `overflow: hidden` would in addition
+make the wrapped controls unreachable rather than merely misplaced, which is a strictly worse outcome for the same
+frozen markup.
+
+### 17.7 BQ-16: the Dashboard that receives its numbers and renders none
+
+**What it is.** The course Dashboard is served a complete set of progress statistics and displays no numbers at all.
+
+**Both halves measured.** The server side is correct and was verified first: on a course carrying one lesson, four
+materials and two enrolled members, `GET /api/courses/{id}/dashboard` answers **200** at **384 bytes** carrying three
+objects of six fields each — eighteen metrics in total, with real values (`{not-started: 2, started: 0, submitted: 0,
+completed: 0, user-count: 2, hidden: 0}`). That the figure depends on course content was confirmed with a control
+rather than assumed: the same call against a course created seconds earlier, with no lessons, no materials and no
+members, answers **200** at **37 bytes** with `{"data":[],…}` and no metrics at all. The endpoint is doing its job.
+
+The client side renders **zero** digits. That was established four independent ways, including a `TreeWalker` over
+every text node in the document and a whole-document `innerText` scan, so it is not an artefact of one selector. There
+is no charting surface either: `canvas` count **0**, `svg` count **0**, and `Highcharts`, `Chart`, `d3` and `c3` are all
+`undefined`. What the page does render
+is a **static** legend: all four `.chart-segment` elements carry a literal inline `width: 25%`, resolving to exactly
+242.5 px of a 970 px wrapper, which bears no relation to the real 2/0/0/0 distribution. Three smaller inconsistencies
+were measured on the same screen: every material row carries the unrendered placeholder
+`<!-- ngIf: material.type === 'assignment' -->`, so the per-material progress rows are gated on a material type this
+course has none of; the heading reads `Hidden from Dashboard ()` with **empty** parentheses where a count belongs; and
+the first legend segment's visible label is `Returned` while its own `title` attribute says `Feedback Sent`.
+
+**Why it is preserved and what a naive fix would have broken.** `public/partials` and `static/scss` have a 0-line diff
+against the base commit, and the endpoint's response shape is unchanged, so the whole condition is client-side and
+pre-existing. Rendering the eighteen values means writing new bindings into a frozen AngularJS partial — which is
+squarely the "frontend framework rewrite" that §0.9.5 excludes and the "new features" that §0.9.5 also excludes — and
+driving the segment widths from data means replacing four hard-coded inline styles on a client-visible page. This entry
+exists so that the absence is understood as an unfinished 2013-era feature whose data path still works, rather than as
+a metrics regression introduced by the migration.
+
+### 17.8 BQ-19: the three controls that lose their accessible name at one particular width
+
+**What it is.** Five icon-only controls expose no accessible name, and three of those five are named at 1920 px and
+unnamed at 1280 px — the same control, the same page, a different width.
+
+**Why the width matters, which is the part worth recording.** The three names are supplied by text inside
+`span.show-for-xlarge-up` elements. There are exactly three such spans, and they compute `display: none` at 1280 and
+`inline-block` at 1920. Because the accessible name of these controls is computed from their text content, hiding the
+text does not merely hide a label — it **removes the name**: sort goes from `Last Updated` to `""`, view from `Grid` to
+`""`, and new-folder from `new folder` to `""`. All five controls were cross-checked against Chrome's own accessibility
+tree at both widths rather than inferred from the markup. Chrome independently reports two further defects on the same
+screen: the orphaned `<label>Sort:</label>` and `<label>View:</label>`, which carry no `for` and wrap nothing, and a
+`<label for="shareURL">` whose target id is actually `shareUrl` — a case mismatch, so the association silently fails.
+
+**One correction to the reported account.** The report listed a sixth item, "the modal backdrop (`role="button"` with
+an empty name)". Measured, no such element exists in either state: `div.reveal-modal-bg` has `role` **`null`**,
+`tabIndex` `-1`, is not focusable, and its complete attribute list is `["class","style"]`. The count of unnamed
+icon-only controls is five, not six.
+
+**Why it is preserved and what a naive fix would have broken.** `lib/views`, `public/js`, `public/partials` and
+`static/scss` all have a 0-line diff against the base commit. Adding `aria-label` to five controls, repairing two
+`<label>` elements and correcting one `for` attribute are all new or altered markup on client-visible pages, which R-4
+prohibits and §0.9.4 freezes; several would also change the rendered byte length of pages the R-6 corpus measures. This
+entry extends rather than replaces
+[section 15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them), which
+records the same precedence argument in full: D1 ranks the AAP and the frozen design contract above WCAG heuristics, so
+an accessibility gap in a frozen layer is reported and documented, never quietly repaired.
+
+**What this pass confirmed rather than found.** The same run verified at runtime that the boot emits **zero**
+deprecation warnings under `--pending-deprecation`; that the only warning in the tree is the `@hapi/shot` DEP0169 of
+[section 7.6](#76-the-two-deprecation-warnings-and-why-neither-is-repairable-here), reachable only once one of the
+application's own two internal sub-requests runs; that every 5xx on the wire is the 96-byte scrubbed body while the
+real error stays in the log; that no XSS payload of the ten submitted executed, no injection vector authenticated, and
+no bcrypt hash, session seal or credential appeared on any audited page; and that all four write-then-read-back chains
+agreed field by field. The FAIL verdict the pass recorded reflects the state of the product surface it was asked to
+assess, not a defect introduced by this change.
+
 
 ## Appendix — the parity baseline anchors
 

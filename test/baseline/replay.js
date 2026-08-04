@@ -403,7 +403,7 @@ function main() {
   return capture.startServer().then(function(started) {
     server = started;
     console.log('replay.js: real HTTP against ' + server.info.uri +
-                ' (server.inject() is never used — @hapi/shot is the only DEP0169 source left)');
+                ' (this harness never calls server.inject(); the app still does — PRESERVED-QUIRKS 7.6)');
 
     var table = replayRouteTable(server, committedTable);
 

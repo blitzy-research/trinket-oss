@@ -13,10 +13,17 @@
  * HARD CONSTRAINTS, all of them from AAP 0.7.5 and from the artifact's own metadata.captureNotes.
  * Every one of these is a correctness requirement, not a preference:
  *
- *   1. REAL HTTP ONLY. Requests are issued with node:http against server.info. server.inject() is
- *      NEVER used: @hapi/shot/lib/request.js:L30 is the sole remaining DEP0169 source in the whole
- *      dependency tree, and the zero-deprecation boot gate forbids tripping it. There is no upstream
- *      fix — 6.0.3 is the latest published @hapi/shot.
+ *   1. REAL HTTP ONLY. Requests are issued with node:http against server.info. This harness NEVER
+ *      calls server.inject(): @hapi/shot/lib/request.js:L30 is the sole remaining DEP0169 source in
+ *      the dependency tree, and the zero-deprecation boot gate forbids tripping it. There is no
+ *      upstream fix — 6.0.3 is the latest published @hapi/shot.
+ *      SCOPE OF THAT CLAIM: it is a rule about the HARNESS, not about the application. The
+ *      application itself performs internal sub-requests with request.server.inject() at
+ *      lib/controllers/courses.js:L24 and lib/controllers/folders.js:L50, both base-identical, so
+ *      DEP0169 does fire once a route that injects is exercised. The boot gate is still clean
+ *      because nothing injects during boot, and the corpus stays clean because the harness reaches
+ *      the app only over a real socket. See docs/PRESERVED-QUIRKS.md section 7.6 for the full
+ *      measurement and for why neither inject site may be rewritten.
  *   2. RUNTIME CONFIG OVERRIDE, NEVER A FILE EDIT. config/test.yaml:L3 sets app.start:false, so under
  *      NODE_ENV=test the server is constructed but never bound. app.start:true, the bind host, the
  *      port and the >=32-character session cookie password that app.js:L50-L66 requires are injected
@@ -1692,7 +1699,8 @@ function main() {
 
   return startServer().then(function(started) {
     server = started;
-    console.log('capture.js: real HTTP against ' + server.info.uri + ' (server.inject() is never used)');
+    console.log('capture.js: real HTTP against ' + server.info.uri +
+                ' (this harness never calls server.inject(); the app still does — PRESERVED-QUIRKS 7.6)');
 
     return captureCorpus(server, committed);
   }).then(function(measured) {

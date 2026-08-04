@@ -25,9 +25,12 @@ var sinon      = require('sinon'),
 // `lib/util/store.js` caches the rejected promise forever, which is why POST /users answered its `fail`
 // redirect instead of creating the account. The adapter below therefore keeps redis-mock as the double -
 // it still holds all the data - and presents it through the v4 surface the application actually calls.
-// The command list is exhaustive against a census of every `client.<method>` and `redisClient.<method>`
-// reference in app.js, config/ and lib/: connect, isOpen, on, get, set, del, expire, exists, incr,
-// lIndex, lPush, lRange, lRem, rPush and sIsMember.
+// A census of every `client.<method>` and `redisClient.<method>` reference in app.js, config/ and lib/
+// yields exactly fifteen members - connect, isOpen, on, get, set, del, expire, exists, incr, lIndex,
+// lPush, lRange, lRem, rPush and sIsMember - and the adapter covers all fifteen. The map below is a
+// superset: hGet, hGetAll, hSet, keys, sAdd, sMembers and sRem have no call site anywhere in the tree
+// today, but every one of them is implemented by redis-mock under its lower-case spelling, so they are
+// inert rather than broken and are cheaper to leave in place than to churn out.
 var REDIS_V4_TO_MOCK_COMMAND = {
   del       : 'del',
   exists    : 'exists',
@@ -50,9 +53,12 @@ var REDIS_V4_TO_MOCK_COMMAND = {
   set       : 'set'
 };
 
-// node_redis v3 answers SISMEMBER with 0/1 while v4 answers with a boolean, and
-// lib/controllers/users.js:62 consumes the reply directly, so this one reply is coerced to match the real
-// v4 client. Every other reply shape is identical between the two versions.
+// node_redis v3 answers SISMEMBER with 0/1 while v4 answers with a boolean - `@redis/client`'s
+// SISMEMBER command binds `transformBooleanReply` - so this one reply is coerced to match the real v4
+// client. `lib/util/store.js:37`, the in-memory twin of this double, likewise answers with a boolean, and
+// the reply reaches a caller unwrapped: `lib/util/store/emailStore.js:20-22` returns it straight out of
+// `blockListLookup`, which `lib/controllers/users.js:100` reads as `isBlocked`. Every other reply shape is
+// identical between the two versions.
 var REDIS_V4_BOOLEAN_REPLIES = ['sIsMember'];
 
 function createRedisMockV4Client() {
@@ -103,12 +109,18 @@ var app = require('../app.js'),
 // Mocha ROOT HOOK PLUGIN. `app.js` exports a PROMISE - a direct consequence of its awaited plugin
 // registration and awaited start - so nothing that depends on the booted server may run until it resolves.
 // Two concrete dependencies exist today:
-//   1. test/helpers/flow.js builds its supertest agent from `server.listener`;
+//   1. test/helpers/flow.js captures the server in an `app.then(...)` and builds its supertest agent from
+//      `server.listener` lazily; its `agentFor` throws `'app.js exports a promise that has not resolved
+//      yet; test/setup.js registers a root hook which awaits it before any test runs'` if it has not, so
+//      that file depends on this barrier by name;
 //   2. test/lib/models/trinket.js stubs `global.Interaction`, one of the nine implicit model globals
 //      assigned inside app.js's async `init()`, and Sinon 3+ refuses to stub a non-existent property.
-// Awaiting the promise here also puts those nine globals in place before Mocha takes its `check-leaks`
-// snapshot, which is why `check-leaks` stays enabled rather than being relaxed.
-// This must be a root hook rather than a bare top-level `before()`: this file is loaded through Mocha's
+// `check-leaks` stays enabled rather than being relaxed, but this hook is NOT what allows that. Measured on
+// mocha 11.7.6 by instrumenting `Runner.prototype.globals`: all nine globals are already present when the
+// leak snapshot is taken, and `User` is already inside the snapshot array, because requiring `../app.js`
+// above starts `init()` while Mocha is still awaiting its own file loading and nothing in `init()` awaits
+// real I/O under `app.start : false`. This hook runs after that snapshot; its job is the barrier only.
+// It must be a root hook rather than a bare top-level `before()`: this file is loaded through Mocha's
 // `require` option (see .mocharc.json), which runs before the BDD globals exist.
 module.exports = {
   mochaHooks : {

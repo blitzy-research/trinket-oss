@@ -53,11 +53,34 @@ var forcedConfig = process.env.NODE_CONFIG ? JSON.parse(process.env.NODE_CONFIG)
 
 forcedConfig.db                = forcedConfig.db || {};
 forcedConfig.db.mongo          = forcedConfig.db.mongo || {};
+forcedConfig.db.mongo.database = TEST_DATABASE;
+
 // A parallel clone gets its own namespace so that ten checkouts sharing one mongod cannot drop each
 // other's database mid-run; `test/helpers/db.js`'s allow-list admits exactly this `test_<suffix>` shape.
-forcedConfig.db.mongo.database = process.env.CLONE_INDEX ?
-  TEST_DATABASE + '_' + String(process.env.CLONE_INDEX).replace(/[^A-Za-z0-9_-]/g, '') :
-  TEST_DATABASE;
+//
+// The sanitiser strips everything that allow-list - `/^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/` at
+// test/helpers/db.js:34 - does not admit, so a value made only of stripped characters collapses to the
+// empty string: `CLONE_INDEX='../'` yielded the database name `test_`, which that pattern REFUSES, as does
+// any suffix starting with `_` or `-`. The refusal is correct and fail-closed, but it arrives much later,
+// from a timer during the db helper's module load, and it advises the reader to "Set CLONE_INDEX" - which
+// they did. Silently falling back to the shared `test` database would be worse still: it would hand two
+// parallel clones the same database to drop, which is the exact hazard this namespace exists to prevent.
+// So the value is validated here, at the point it is read, and a bad one fails the bootstrap loudly and by
+// name - the same treatment the malformed `$NODE_CONFIG` below gets.
+if (process.env.CLONE_INDEX) {
+  var cloneSuffix = String(process.env.CLONE_INDEX).replace(/[^A-Za-z0-9_-]/g, '');
+
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(cloneSuffix)) {
+    throw new Error('test/setup.js: CLONE_INDEX=' + JSON.stringify(process.env.CLONE_INDEX) + ' reduces to ' +
+      JSON.stringify(cloneSuffix) + ' once the characters a database name may not carry are stripped, which ' +
+      'would select the database ' + JSON.stringify(TEST_DATABASE + '_' + cloneSuffix) + ' - a name ' +
+      'test/helpers/db.js does not treat as disposable, so the suite would refuse to clear it. Use a value ' +
+      'that starts with a letter or a digit and contains only letters, digits, "_" or "-", or leave ' +
+      'CLONE_INDEX unset to run against ' + JSON.stringify(TEST_DATABASE) + '.');
+  }
+
+  forcedConfig.db.mongo.database = TEST_DATABASE + '_' + cloneSuffix;
+}
 
 forcedConfig.app                                        = forcedConfig.app || {};
 forcedConfig.app.plugins                                = forcedConfig.app.plugins || {};
@@ -124,6 +147,36 @@ var REDIS_V4_TO_MOCK_COMMAND = {
 // identical between the two versions.
 var REDIS_V4_BOOLEAN_REPLIES = ['sIsMember'];
 
+// The number of arguments each mapped command cannot do without, so that a call which is short of one is
+// REJECTED rather than left unanswered. The adapter below appends its own callback as the next positional
+// argument, which is how a callback-shaped double is driven from a promise - but it also means that a short
+// call has that callback consumed AS the missing argument, so redis-mock never calls it and the promise
+// never settles. Measured on the installed 0.56.3: `get()`, `expire('k')`, `lRange('l', 0)` and
+// `sIsMember('s')` all hang forever, and inside a spec that surfaces as a 2000 ms Mocha timeout naming the
+// test rather than the call - a future call-site typo would be diagnosed as a slow test.
+//
+// A prompt `TypeError` is the faithful answer, not an invention: measured against the REAL redis 4.7.1
+// client on the live redis 7.4 server, `client.get()` rejects with `TypeError: Invalid argument type` and
+// `client.expire('k')` with `TypeError: Cannot read properties of undefined (reading 'toString')`, because
+// v4 fails while encoding the command and never reaches the server's own
+// `ERR wrong number of arguments` reply. The counts below are the minimums node-redis v4 declares, and
+// every call site in the tree already satisfies them - `lib/util/store.js:201-213` and the five modules
+// under `lib/util/store/` - so this guard cannot reject a call the application actually makes.
+var REDIS_V4_MINIMUM_ARGUMENTS = {
+  del       : 1,
+  exists    : 1,
+  expire    : 2,
+  get       : 1,
+  incr      : 1,
+  lIndex    : 2,
+  lPush     : 2,
+  lRange    : 3,
+  lRem      : 3,
+  rPush     : 2,
+  sIsMember : 2,
+  set       : 2
+};
+
 function createRedisMockV4Client() {
   var mock = redismock.createClient.apply(redismock, arguments);
   var client = {
@@ -139,11 +192,19 @@ function createRedisMockV4Client() {
   };
 
   Object.keys(REDIS_V4_TO_MOCK_COMMAND).forEach(function(v4Command) {
-    var mockCommand   = REDIS_V4_TO_MOCK_COMMAND[v4Command];
-    var coerceBoolean = REDIS_V4_BOOLEAN_REPLIES.indexOf(v4Command) >= 0;
+    var mockCommand      = REDIS_V4_TO_MOCK_COMMAND[v4Command];
+    var coerceBoolean    = REDIS_V4_BOOLEAN_REPLIES.indexOf(v4Command) >= 0;
+    var minimumArguments = REDIS_V4_MINIMUM_ARGUMENTS[v4Command];
 
     client[v4Command] = function() {
       var args = Array.prototype.slice.call(arguments);
+
+      if (args.length < minimumArguments) {
+        return Promise.reject(new TypeError('redis double: ' + v4Command + ' needs at least ' +
+          minimumArguments + ' argument(s) and received ' + args.length + '. The real redis 4 client rejects ' +
+          'the same call with a TypeError while encoding it; redis-mock would consume the callback this ' +
+          'adapter appends as the missing argument and never answer.'));
+      }
 
       return new Promise(function(resolve, reject) {
         args.push(function(err, reply) {
@@ -164,6 +225,68 @@ sinon.stub(redis, 'createClient').callsFake(createRedisMockV4Client);
 
 var app = require('../app.js'),
     db  = require('./helpers/db');
+
+// EAGER GLOBAL-KEY RESERVATION, and the reason `check-leaks` can stay on.
+//
+// `app.js:282-290` assigns the nine model globals as bare sloppy-mode assignments - `User = require(...)`,
+// with no `var` - and it does so INSIDE its async `init()`, after `await server.register([...])` at
+// `app.js:87`. The require above therefore returns while `init()` is still suspended, so those keys come
+// into existence in a microtask continuation rather than during the require. Mocha snapshots
+// `Object.keys(global)` exactly once, when it constructs the Runner - that is, after every file has been
+// loaded - and `check-leaks` compares every later state against that one array. Whether `init()` had
+// resumed by then depended purely on how much work Mocha happened to do in between, which is a RACE:
+// measured on the installed mocha 11.7.6 by instrumenting `Runner.prototype.globals`, a full run snapshots
+// 42 keys WITH the eight enumerable model names, while
+// `mocha --file ./test/setup.js test/lib/models/plugins/paginate.js` snapshots 34 WITHOUT them. In that
+// second shape the root barrier at the bottom of this file is itself what lets `init()` resume, so eight
+// brand-new enumerable globals appear DURING a hook and the run fails with
+// `global leak(s) detected: 'User', 'Course', ...` even though every test passed - which made five of the
+// six model and plugin specs impossible to run on their own, and `npm test -- <one file>` is the ordinary
+// way to run one.
+//
+// Reserving the KEYS here removes the dependency on that timing: the snapshot contains them whatever the
+// file count. Only the keys are reserved - the VALUES stay `app.js`'s to assign, so this file never becomes
+// a second source of truth for what a model is - and `undefined` is written rather than a stand-in object
+// so that nothing can mistake a reserved key for a booted model. `File` is skipped by the `in` test on
+// purpose: Node 22 already defines it as a NON-ENUMERABLE built-in, `Object.keys(global)` never reported
+// it (which is why the failure above names eight keys, not nine), and `app.js`'s assignment overwrites it
+// in place without changing that.
+//
+// Nothing is relaxed to achieve this. `.mocharc.json` keeps `check-leaks: true` and exactly the four keys
+// the Technical Specification enumerates - no `--global` allowance list, which is the alternative this
+// rejects because it needs a fifth key - and a genuinely new global still fails the run, measured with a
+// throwaway spec that assigned one.
+var MODEL_GLOBALS = ['User', 'Course', 'Lesson', 'Material', 'File', 'Trinket', 'Interaction', 'Folder',
+  'CourseInvitation'];
+
+MODEL_GLOBALS.forEach(function(name) {
+  if (!(name in global)) {
+    global[name] = undefined;
+  }
+});
+
+// THE BOOTED SERVER, PUBLISHED SYNCHRONOUSLY FOR LATE CONSUMERS.
+//
+// `app.js` exports a promise, so the only way to reach the server is a continuation - and a continuation is
+// a MICROTASK, which is a trap for any consumer that is required after the promise has already settled and
+// issues a request in the same synchronous turn: its own `app.then(...)` has not run yet, so it sees no
+// server and raises the "has not resolved yet" error even though the server has been up for seconds.
+// Measured: `await app` in a probe, then `require('./helpers/flow')` and `flow.get('/about')` in the same
+// turn threw; one `setImmediate` later the identical call answered 200. No spec does that today, but a
+// future spec that required the harness from inside a test body rather than at file scope would, and it
+// would fail with a message describing a state that is not the one it is in.
+//
+// This capture is registered at bootstrap, which is the earliest point in the run and therefore before any
+// such consumer can exist, so by the time a late require happens `bootstrap.server` is already populated and
+// readable WITHOUT awaiting anything. It is published on this module's exports rather than on a global,
+// because the nine model globals are the only globals this tree is allowed to add. Registered before the
+// root barrier below `await`s the same promise, so its continuation runs first and the handle is set for
+// every hook and test that follows.
+var bootstrap = { server : null };
+
+app.then(function(server) {
+  bootstrap.server = server;
+});
 
 // DEPENDENCY-SWAP ADAPTATION, hosted here so that test/helpers/db.js stays byte-identical to the base
 // commit. `DB()` binds its two hook methods with `_.bindAll`, and underscore 1.13.8 - the version the
@@ -191,12 +314,15 @@ var app = require('../app.js'),
 //      this barrier;
 //   2. test/lib/models/trinket.js stubs `global.Interaction`, one of the nine implicit model globals
 //      assigned inside app.js's async `init()`, and Sinon 3+ refuses to stub a non-existent property.
-// `check-leaks` stays enabled rather than being relaxed, and this barrier is NOT what allows that.
-// Measured on mocha 11.7.6 by instrumenting `Runner.prototype.globals`: all nine globals are already
-// present when the leak snapshot is taken, and `User` is already inside the snapshot array, because
-// requiring `../app.js` above starts `init()` while Mocha is still awaiting its own file loading and
-// nothing in `init()` awaits real I/O under `app.start : false`. This runs after that snapshot; its job is
-// the barrier only.
+// `check-leaks` stays enabled rather than being relaxed, and this barrier is NOT what allows that - the
+// eager key reservation above is. An earlier revision of this comment claimed the barrier was unnecessary
+// for the snapshot because `init()` always resumed during Mocha's file loading; re-measured on mocha 11.7.6
+// by instrumenting `Runner.prototype.globals`, that holds for a full run (42 keys, model names present) and
+// FAILS for a single spec file (34 keys, model names absent), so it was a race rather than an invariant.
+// The reservation is what makes the snapshot unconditional. This hook still runs after that snapshot, and
+// it has two jobs: the barrier, and the drift check below - if `app.js` ever stops assigning one of the
+// reserved names, the reserved `undefined` would otherwise reach a spec as a bare
+// `Cannot read properties of undefined` from whichever line dereferenced it first.
 //
 // It is registered as a bare top-level `before()` rather than as an exported `mochaHooks` root-hook
 // plugin, because `.mocharc.json` carries exactly the four options the plan specifies - reporter,
@@ -216,7 +342,21 @@ var app = require('../app.js'),
 if (typeof before === 'function') {
   before(async function() {
     await app;
+
+    var unassigned = MODEL_GLOBALS.filter(function(name) {
+      return typeof global[name] === 'undefined';
+    });
+
+    if (unassigned.length) {
+      throw new Error('test/setup.js reserved global keys that app.js never assigned: ' +
+        unassigned.join(', ') + '. The reservation list in this file must match the model globals at ' +
+        'app.js:282-290; a name that is reserved but never filled in would reach a spec as `undefined`.');
+    }
   });
 }
 
-module.exports = {};
+// The exports were `{}` at the base commit and stay a plain object with no behaviour, so this file remains a
+// valid no-op "spec" for Mocha's default glob and the benign require cycles with test/helpers/db.js and
+// test/helpers/catbox-redis.js - each of which requires this module for its side effects and never reads its
+// exports - are unaffected. The single property is the booted server described above.
+module.exports = bootstrap;

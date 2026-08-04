@@ -3,7 +3,10 @@
 // `redis.createClient` double are all in place - `app.js:47-62` exits the process outright when the session
 // password is missing. `.mocharc.json` carries only `reporter`, `recursive`, `check-leaks` and `exit`, so
 // there is no `require` preload to lean on; see the note at the head of test/helpers/db.js.
-require('../setup');
+//
+// Its exports are captured rather than discarded because the bootstrap publishes the booted server there;
+// `agentFor` below reads it when this file's own capture has not run yet.
+var setup = require('../setup');
 
 var _        = require('underscore'),
     server   = require('supertest'),
@@ -545,13 +548,22 @@ var methods = {
  */
 function agentFor(flow) {
   if (!flow.agent) {
-    if (!resolvedServer) {
+    // `resolvedServer` is filled in by this file's own `app.then(...)`, and that continuation is a MICROTASK:
+    // a consumer that requires this helper AFTER the promise already settled and issues a request in the same
+    // synchronous turn finds it still null - measured, the request threw while the identical call one
+    // `setImmediate` later answered 200. The bootstrap registered its capture at the very start of the run,
+    // so in exactly that window `setup.server` is already populated; it holds the same server instance and is
+    // read as the fallback rather than as the primary so that this file keeps standing on its own capture
+    // when it is the entry point.
+    var booted = resolvedServer || setup.server;
+
+    if (!booted) {
       throw new Error('flow: the promise app.js exports has not resolved yet, so there is no server to ' +
         'bind. A root-suite before() hook in test/setup.js awaits it ahead of every test, so reaching ' +
         'this means the request was made outside the suite or the hook did not run.');
     }
 
-    flow.agent = server(resolvedServer.listener);
+    flow.agent = server(booted.listener);
   }
 
   return flow.agent;

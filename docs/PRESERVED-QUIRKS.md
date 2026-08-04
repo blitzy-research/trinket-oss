@@ -747,19 +747,42 @@ was measured to throw `TypeError: Cannot read properties of undefined (reading '
 direct consequence of the asynchronous bootstrap — `await server.register(...)` and `await server.start()` — and it
 **stays**.
 
-**Status: delivered.** The repair is in `test/helpers/flow.js`, which still requires `../../app.js` (now at `L10`)
-but no longer reads `app.listener`. It declares `var resolvedServer = null;` at `L21` and attaches
-`app.then(function (server) { resolvedServer = server; });` at `L23-L25`, and the supertest agent is built **lazily**
-by `agentFor(flow)` at `L458-L469` — `L465` reads `flow.agent = server(resolvedServer.listener);` and the guard above
-it throws an explanatory error rather than a `TypeError` if it is ever reached before the promise resolved. The
+**Status: delivered.** The repair is in `test/helpers/flow.js`, which still requires `../../app.js` (now at `L16`)
+but no longer reads `app.listener`. It declares `var resolvedServer = null;` at `L28` and attaches
+`app.then(function (server) { resolvedServer = server; });` at `L30-L32`, and the supertest agent is built **lazily**
+by `agentFor(flow)` at `L549-L569` — `L558` resolves the server as `resolvedServer || setup.server` (the bootstrap's
+own handle, for the microtask window recorded in section 13.2), `L566` reads `flow.agent = server(booted.listener);`,
+and the guard between them throws an explanatory error rather than a `TypeError` if neither is populated. The
 Technical Specification (§0.7.6) sanctions two mechanisms for that — *"hoisted into a root hook or made lazy inside the
 agent accessor"* — and the **lazy accessor** is the one delivered, because the root-hook form needs both a fifth
 `.mocharc.json` key and a `mochaHooks` export, neither of which the plan's inventory for those two files contains.
-What guarantees the promise has settled is load order: `package.json`'s test script is
-`mocha --file ./test/setup.js`, so `test/setup.js` — and therefore its `require('../app.js')`, which starts `init()` —
-runs before Mocha loads any spec file, and nothing in `init()` awaits real I/O under `app.start : false`. Measured: the
-suite is green with no barrier at all, and the nine implicit model globals are in place before Mocha takes its
-`check-leaks` snapshot, which is why `check-leaks` stays enabled rather than being relaxed.
+What guarantees the promise has settled before any **test** runs is the root-suite barrier in `test/setup.js`, which
+`await`s it ahead of the whole run; load order is what gets `init()` started that early — `package.json`'s test script
+is `mocha --file ./test/setup.js`, so `test/setup.js`, and therefore its `require('../app.js')`, runs before Mocha
+loads any spec file.
+
+**A correction, because an earlier revision of this paragraph asserted the opposite.** It read *"the suite is green
+with no barrier at all, and the nine implicit model globals are in place before Mocha takes its `check-leaks` snapshot,
+which is why `check-leaks` stays enabled rather than being relaxed."* Re-measured on the installed mocha 11.7.6 by
+instrumenting `Runner.prototype.globals`, that was **a race, not an invariant**. `init()` suspends at
+`await server.register([...])` (`app.js:L87`) **before** the nine bare assignments at `app.js:L282-L290`, so those keys
+appear in a microtask continuation, while Mocha takes its one snapshot when it constructs the Runner — after every file
+is loaded. A full run snapshots **42** keys with the eight enumerable model names present; a single spec file —
+`mocha --file ./test/setup.js test/lib/models/plugins/paginate.js` — snapshots **34** with them absent, and in that
+shape the barrier is itself what lets `init()` resume, so eight brand-new globals appear *during* a hook and the run
+fails with `global leak(s) detected: 'User', 'Course', …` **even though every test passed**. Five of the six model and
+plugin specs could not be run on their own, and `npm test -- <one file>` is the ordinary way to run one.
+
+**What actually guarantees it now** is an eager key reservation in `test/setup.js`, immediately after the `app.js`
+require: the nine names are created as global **keys** (`if (!(name in global)) { global[name] = undefined; }`) so the
+snapshot contains them whatever the file count, while the **values** stay `app.js`'s to assign. `File` is skipped by
+the `in` test because Node 22 already defines it as a non-enumerable built-in that `Object.keys(global)` never
+reported — which is why the failure above names eight keys, not nine. The barrier gained a second job, a drift check
+that fails the run by name if `app.js` ever stops assigning a reserved name rather than letting the reserved
+`undefined` reach a spec. **Nothing was relaxed:** `.mocharc.json` still carries `check-leaks: true` and exactly the
+four keys of section 3.8 — the `--global` allowance list that would also have worked was rejected because it needs a
+fifth — and a throwaway spec that assigns a genuinely new global still fails the run with
+`global leak(s) detected: '__blitzyStillDetected__'` and exit 1.
 
 One further measured subtlety is recorded here because it is easy to get wrong: `app.js:L351-L354` — `L358-L361` in
 the delivered tree — wraps `init()` in a `.catch()` that logs and calls `process.exit(1)` before the export, so **the
@@ -1258,14 +1281,21 @@ the guard, being loaded as a "spec" would execute a capture on every test run.
 What the glob does **not** do is order `test/setup.js` correctly. An earlier revision of this subsection claimed the
 default pattern loads `test/setup.js` "before Mocha takes its leak snapshot", and that "ordering is the only reason
 `--check-leaks` passes". Both halves are wrong, and
-[section 13.1](#131-two-mocha-load-order-landmines-one-of-which-could-have-destroyed-the-development-database) is the
+[section 13.1](#131-the-mocha-load-order-landmine-that-could-have-destroyed-the-development-database) is the
 authoritative account: Mocha 11 collects spec files **alphabetically**, so under the glob alone `test/setup.js` loads
-**last** — which is the destructive landmine that section records, not a useful ordering. The **`require` key** is what
-loads it before any spec, and that is the ordering `--check-leaks` depends on: with `test/setup.js` required first, its
-`require('../app.js')` starts `init()` while Mocha is still loading files, so the nine sloppy-mode model globals are
-already present when the leak snapshot is taken. The root hook in that file is a separate mechanism with a separate
-job — an `await` barrier for consumers of the booted server — and it is **not** what establishes the snapshot; see
-[section 13.2](#132-the-root-hook-plugin-and-the-lazy-supertest-agent).
+**last** — which is the destructive landmine that section records, not a useful ordering. The **`--file
+./test/setup.js` flag in `package.json`'s test script** is what loads it before any spec — not a `require` key, which
+section 13.1 part 4 records was tried and removed because `.mocharc.json` is specified to carry exactly four keys.
+
+**And load order is not what `--check-leaks` depends on either.** A second earlier claim — that starting `init()` early
+means "the nine sloppy-mode model globals are already present when the leak snapshot is taken" — was **re-measured and
+falsified**: `init()` suspends at `await server.register([...])` (`app.js:L87`) *before* the assignments at
+`app.js:L282-L290`, so a full run snapshots **42** keys with those names and a single-spec-file run snapshots **34**
+without them, failing the run with a false `global leak(s) detected` after every test passed. What establishes the
+snapshot unconditionally is the **eager key reservation** in `test/setup.js`, and the root barrier in that file is a
+separate mechanism with two separate jobs — an `await` barrier for consumers of the booted server, and a drift check on
+the reservation; see [section 13.2](#132-the-root-suite-barrier-and-the-lazy-supertest-agent). `check-leaks` is still
+on, still unrelaxed, and still catches a genuinely new global.
 
 > **Delivered, and the guard is in the tree rather than merely specified.** `.mocharc.json` **is committed** — four
 > keys, `reporter`, `recursive`, `check-leaks` and `exit`, and deliberately nothing else — and
@@ -4717,6 +4747,20 @@ test tree can state for itself. It was removed.
    `database: trinket`. Any pre-existing `$NODE_CONFIG` is merged rather than replaced, so the parallel-clone port
    overrides in the setup notes still work; a malformed one is left to throw, so a broken override fails the
    bootstrap loudly instead of silently reverting to the file layers.
+
+   **`CLONE_INDEX` is validated at the point it is read, and gets the same loud treatment.** The per-clone suffix is
+   sanitised with `replace(/[^A-Za-z0-9_-]/g, '')`, so a value made only of stripped characters collapses to the empty
+   string: `CLONE_INDEX='../'` selected the database `test_`, and a value such as `-x` selects `test_-x`. Neither
+   matches the allow-list in part 3 — it requires a letter or digit immediately after the separator — so the drop guard
+   refused, correctly and fail-closed, but it refused **later**, from a timer during the db helper's module load, with a
+   message advising the reader to *"Set CLONE_INDEX"*, which they had. Falling back to the shared `test` database would
+   have been worse than the confusion: it hands two parallel clones the same database to drop, which is the exact
+   hazard the namespace exists to prevent. So the sanitised suffix is now matched against
+   `/^[A-Za-z0-9][A-Za-z0-9_-]*$/` in `test/setup.js` and a value that fails throws there, naming the variable, its raw
+   value, the reduced suffix and the database name it would have selected. Measured after the change:
+   `9`→`test_9`, `0`→`test_0`, unset→`test`, `'../../evil; DROP'`→`test_evilDROP` (still sanitised, not rejected — it
+   reduces to a legal suffix), while `'../'` and `'-x'` abort the run with `Exception during run: Error: test/setup.js:
+   CLONE_INDEX="…" reduces to …` and exit 1.
 3. **The drops fail closed.** `test/helpers/db.js` holds a `TEST_DATABASE = 'test'` literal and an
    `assertTestDatabase(operation)` guard that throws unless `mongoose.connection.name` is exactly that, and it runs
    before **both** `dropDatabase()` calls — the one in `reset()` and the one in `checkState()`'s initializing branch.
@@ -4767,7 +4811,55 @@ a property that does not exist.
 before it loads any spec file, and a `before()` called outside every `describe` attaches to the **root suite**, which
 runs ahead of every test in the run regardless of which file registered it or when — so the barrier works even though
 the bootstrap is reached through a `require` from a helper rather than through a preload. A `typeof before ===
-'function'` guard keeps the module requirable outside Mocha. AAP 0.7.6 names both admissible shapes for this repair —
+'function'` guard keeps the module requirable outside Mocha.
+
+**The barrier is not, and never was, what lets `--check-leaks` stay on.** That claim stood in this appendix and in
+`test/setup.js`'s own comment, and both are now corrected. `init()` suspends at `await server.register([...])`
+(`app.js:L87`) **before** the nine bare assignments at `app.js:L282-L290`, so the model globals come into existence in
+a microtask continuation, whereas Mocha takes its single leak snapshot when it constructs the Runner — after all files
+are loaded. Whether the two orders lined up depended only on how much work happened in between. Instrumenting
+`Runner.prototype.globals` on the installed mocha 11.7.6 measured both outcomes: a full run snapshots **42** keys with
+the eight enumerable model names present and passes, while `mocha --file ./test/setup.js <one spec>` snapshots **34**
+without them and then fails the root hook with
+`global leak(s) detected: 'User', 'Course', 'Lesson', 'Material', 'Trinket', 'Interaction', 'Folder',
+'CourseInvitation'` — a **false** failure, after every test in the file passed. Reproduced on five of the six model and
+plugin specs (`plugins/paginate`, `plugins/roles`, `models/trinket`, `models/course`, `models/lesson`); `models/user`
+alone happened to win the race; any two files together also won it.
+
+**The fix is an eager global-key reservation, placed immediately after the `app.js` require:**
+
+```js
+var MODEL_GLOBALS = ['User', 'Course', 'Lesson', 'Material', 'File', 'Trinket', 'Interaction', 'Folder',
+  'CourseInvitation'];
+
+MODEL_GLOBALS.forEach(function(name) {
+  if (!(name in global)) {
+    global[name] = undefined;
+  }
+});
+```
+
+Three properties make it the right shape rather than merely a working one. It reserves **keys, not values** — the nine
+models stay `app.js`'s to assign, so the bootstrap never becomes a second source of truth for what a model is, and
+`undefined` is written rather than a stand-in object so nothing can mistake a reserved key for a booted model. It
+**skips `File`** through the `in` test, because Node 22 defines `File` as a non-enumerable built-in that
+`Object.keys(global)` never reported and that `app.js` overwrites in place — which is exactly why the failure above
+names eight keys and not nine. And it **relaxes nothing**: `.mocharc.json` keeps `check-leaks: true` and exactly the
+four keys of section 3.8, the `--global User,Course,…` allowance list that would also have worked was rejected because
+it needs a fifth key, and a throwaway spec assigning a genuinely new global still fails the run
+(`global leak(s) detected: '__blitzyStillDetected__'`, exit 1) — measured after the fix, then deleted.
+
+**The barrier gained the matching drift check.** A reserved key that `app.js` never fills in would otherwise reach a
+spec as `undefined` and surface as a bare `Cannot read properties of undefined` from whichever line dereferenced it
+first — `test/lib/models/user.js:L11` reads `User.hooks.pre.save.encryptPassword` at load time, so that line is one
+dereference away. The hook therefore compares the reservation list against `global` after `await app` and throws
+`test/setup.js reserved global keys that app.js never assigned: <names>` instead. Verified by simulation rather than by
+inspection: with a `--require` preload that makes `require('./lib/models/folder')` yield `undefined`, the run fails
+with exactly that message naming `Folder`.
+
+**Verified state.** All six single-spec-file invocations exit 0 (21, 12, 9, 2, 1 and 7 passing respectively), the full
+suite is unchanged at **271 passing, 0 failing, exit 0**, and the instrumented snapshot on a single-spec run now reports
+42 keys with all eight enumerable model names present. AAP 0.7.6 names both admissible shapes for this repair —
 *"hoisted into a root hook or made lazy inside the agent accessor"* — and both are in the tree. The earlier
 `module.exports = { mochaHooks : { beforeAll } }` root-hook **plugin** form was removed with the `require` key that
 was its only loader: Mocha looks for `mochaHooks` exports in preloaded files, not in specs.
@@ -4782,6 +4874,31 @@ threw `TypeError: Cannot read properties of undefined (reading 'address')`. The 
 `app.then(...)` and the agent is built **lazily** through a new `agentFor(flow)` accessor, with the constructor
 setting `this.agent = null`. Top-level `await` is unavailable in CommonJS — which CommonJS must remain, for the
 sloppy-mode reason recorded in the plan — so laziness is the mechanism.
+
+**A `.then()` capture is a microtask, and that left one window open.** A consumer that requires the harness *after*
+the promise has already settled and issues a request in the **same synchronous turn** finds the harness's own
+`resolvedServer` still `null`, because its continuation has not run yet — so it is told the promise "has not resolved
+yet" when in fact the server has been up for seconds. Measured: `await app` in a probe, then
+`require('./helpers/flow')` and `flow.get('/about')` in one turn threw; the identical call one `setImmediate` later
+answered **200**. No spec does this today, but a lazily-required harness inside an `it()` would, and it would fail
+against a description of a state it is not in.
+
+The window is closed by publishing the booted server from the bootstrap, which is the earliest point in the run:
+`test/setup.js` registers its own `app.then(...)` at load time and exposes the handle as `module.exports.server`
+(`var bootstrap = { server : null };` … `module.exports = bootstrap;`). `agentFor` reads
+`resolvedServer || setup.server`, so the harness still stands on its own capture when it is the entry point and falls
+back to the bootstrap's in exactly the window its own capture cannot cover. Because the bootstrap's continuation is
+registered **before** the root barrier `await`s the same promise, the handle is populated for every hook and test that
+follows. Two properties are preserved deliberately: the exports stay a plain object with no behaviour, so this file
+remains a valid no-op "spec" for the default glob and the benign require cycles with `test/helpers/db.js` and
+`test/helpers/catbox-redis.js` — neither of which reads those exports — are unaffected; and the guard is still the
+**explanatory `Error`**, never a bare `TypeError`. Verified after the change: the late-require same-tick request answers
+**200 `text/html; charset=utf-8`** with the unchanged `private, s-maxage=0, max-age=0, no-cache, no-store,
+must-revalidate, proxy-revalidate` header, the agent is bound to the identical `server.listener`, `GET /home` still
+answers **302** with `lastRedirect.pathname === '/login'`, a request issued **before** the promise settles still raises
+the explanatory error with `instanceof TypeError === false`, the falsy-resolved-server path (`app.js` requesting
+`process.exit(1)`, promise resolving to `undefined`) raises the same explanatory error, and all five entry directions —
+`setup`, `db`, `defaults`, `catbox-redis`, `flow` — still resolve `db.mongo.database === 'test'`.
 
 ### 13.3 Sinon 22 removed or redefined three things the suite used
 
@@ -4817,6 +4934,26 @@ is required and is the kind of detail that silently breaks a test: v3 `SISMEMBER
 **boolean**, and the reply reaches its caller unwrapped — `lib/util/store/emailStore.js:20-22` returns it straight out
 of `blockListLookup`, which `lib/controllers/users.js:100` reads as `isBlocked` — so `sIsMember` alone is coerced.
 No production file changed.
+
+**One more divergence the adapter has to answer for: a short call must reject, not hang.** Driving a
+callback-shaped double from a promise means appending the adapter's own callback as the next positional argument — so a
+call that is short of a required argument has that callback consumed **as** the missing argument, redis-mock never
+invokes it, and the promise **never settles**. Measured on the installed 0.56.3 before the repair: `get()`,
+`expire('k')`, `lRange('l', 0)` and `sIsMember('s')` all hung indefinitely, which inside a spec surfaces as a 2000 ms
+Mocha timeout naming the *test* rather than the call, so a future call-site typo would be diagnosed as a slow test. The
+faithful answer was measured rather than invented: against the **real** redis 4.7.1 client on the live redis 7.4
+server, `client.get()` rejects with `TypeError: Invalid argument type` and `client.expire('k')` with
+`TypeError: Cannot read properties of undefined (reading 'toString')` — v4 fails while *encoding* the command and never
+reaches the server's own `ERR wrong number of arguments` reply. The adapter therefore carries a
+`REDIS_V4_MINIMUM_ARGUMENTS` map (`del` 1, `exists` 1, `expire` 2, `get` 1, `incr` 1, `lIndex` 2, `lPush` 2, `lRange` 3,
+`lRem` 3, `rPush` 2, `sIsMember` 2, `set` 2 — the minimums node-redis v4 declares) and rejects a short call with a
+`TypeError` naming the command and both counts. The counts were censused against every call site in the tree
+(`lib/util/store.js:201-213` and the five modules under `lib/util/store/`) and **all of them already satisfy the
+minimums**, so the guard cannot reject a call the application makes; verified after the change, all twelve commands
+reject promptly while every correct-arity round trip is byte-for-byte what it was — `set`→`'OK'`, `get`→the value,
+`exists`→`1` as a number, list ops→`['z','a','b']` / `'z'` / `['z','b']`, `incr`→`1`,`2`, `sIsMember`→a boolean — and
+the `WRONGTYPE` and `ERR value is not an integer or out of range` rejections still propagate unchanged. The surface is
+still exactly **fifteen** members.
 
 ### 13.5 `test/helpers/db.js`: a latent base defect, not a migration regression
 

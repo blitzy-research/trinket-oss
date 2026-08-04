@@ -450,7 +450,7 @@ module.exports = function() {
 
       before(function(done) {
         flow.switchUser(PARITY_SLOT);
-        flow.register(PARITY_ACCOUNT, function(registerError, response) {
+        flow.register(PARITY_ACCOUNT, function(registerError) {
           if (registerError) {
             return done(registerError);
           }

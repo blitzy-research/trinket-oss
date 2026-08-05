@@ -616,7 +616,11 @@ describe('S3 storage contract', function() {
 });
 
 /**
- * `config/aws.js` itself: the client lifecycle and the hand-rolled presigner.
+ * `config/aws.js` itself: the client lifecycle and the delegated presigner.
+ *
+ * Presigning is `@aws-sdk/s3-request-presigner`'s, not this repository's (review finding SV-05), so the
+ * presigning tests below pin two things: the URL shape callers depend on - origin, path encoding and
+ * expiry - and the fact that no signing is implemented here.
  *
  * These tests deliberately do NOT stub getS3Client - they are about it. The presigning tests inject
  * credentials through the environment for their duration, because the shipped configuration leaves
@@ -697,7 +701,7 @@ describe('config/aws.js', function() {
       aws.destroyS3Client();
     });
 
-    it('signs a virtual-hosted URL with exactly the SigV4 query parameters v2 sent', function() {
+    it('signs a virtual-hosted URL with the SigV4 query parameters v2 sent', function() {
       return aws.getSignedDownloadUrl({ Bucket : 'my-bucket', Key : 'folder/a b+c(1)!.png' }, 900)
         .then(function(url) {
           var parsed = new URL(url);
@@ -706,14 +710,10 @@ describe('config/aws.js', function() {
           parsed.host.should.eql('my-bucket.s3.' + config.aws.region + '.amazonaws.com');
 
           // AWS canonical encoding: space -> %20 (never +), and the five characters
-          // encodeURIComponent leaves alone are finished by hand. Getting this wrong produces a
+          // encodeURIComponent leaves alone are escaped too. Getting this wrong produces a
           // syntactically valid URL whose signature S3 silently rejects.
           parsed.pathname.should.eql('/folder/a%20b%2Bc%281%29%21.png');
 
-          Array.from(parsed.searchParams.keys()).sort().should.eql([
-            'X-Amz-Algorithm', 'X-Amz-Content-Sha256', 'X-Amz-Credential', 'X-Amz-Date',
-            'X-Amz-Expires', 'X-Amz-Signature', 'X-Amz-SignedHeaders'
-          ]);
           parsed.searchParams.get('X-Amz-Algorithm').should.eql('AWS4-HMAC-SHA256');
           parsed.searchParams.get('X-Amz-Content-Sha256').should.eql('UNSIGNED-PAYLOAD');
           parsed.searchParams.get('X-Amz-SignedHeaders').should.eql('host');
@@ -721,13 +721,56 @@ describe('config/aws.js', function() {
           parsed.searchParams.get('X-Amz-Signature').should.match(/^[0-9a-f]{64}$/);
           parsed.searchParams.get('X-Amz-Credential')
             .should.contain('/' + config.aws.region + '/s3/aws4_request');
-
-          // The presigner PACKAGE would additionally append these two. aws-sdk v2 never sent either, and
-          // config/aws.js deliberately does not reproduce them - that omission is the whole reason the
-          // package could be dropped, so it is pinned rather than assumed.
-          url.should.not.contain('x-id=');
-          url.should.not.contain('x-amz-checksum-mode=');
         });
+    });
+
+    it('carries the two operation-metadata parameters the official presigner adds', function() {
+      // THE ONE DELIBERATE SHAPE CHANGE (review finding SV-05). An earlier revision hand-rolled the
+      // signature through three `@internal` SDK members and emitted exactly the seven X-Amz-* keys
+      // aws-sdk v2 sent. @aws-sdk/s3-request-presigner - the AWS-supported package, which is what
+      // config/aws.js now uses because an `@internal` member carries no semver signal - additionally
+      // hoists `x-id=GetObject` and `x-amz-checksum-mode=ENABLED` into the query and signs them, so the
+      // digest differs too. The URL is not part of the R-6 parity corpus (the asset feature is
+      // flag-disabled in the shipped configuration), so nothing replays differently. It is pinned HERE
+      // rather than left unasserted so the shape is deliberate and a later regression to a hand-rolled
+      // signer would fail rather than pass quietly.
+      return aws.getSignedDownloadUrl({ Bucket : 'my-bucket', Key : 'k.png' }, 900).then(function(url) {
+        var parsed = new URL(url);
+
+        Array.from(parsed.searchParams.keys()).sort().should.eql([
+          'X-Amz-Algorithm', 'X-Amz-Content-Sha256', 'X-Amz-Credential', 'X-Amz-Date',
+          'X-Amz-Expires', 'X-Amz-Signature', 'X-Amz-SignedHeaders',
+          'x-amz-checksum-mode', 'x-id'
+        ]);
+        parsed.searchParams.get('x-id').should.eql('GetObject');
+        parsed.searchParams.get('x-amz-checksum-mode').should.eql('ENABLED');
+      });
+    });
+
+    it('implements no signing of its own, and delegates to the supported package', function() {
+      // The checkpoint rule this closes: no custom request signing, and no dependency on an @internal
+      // SDK member. Asserted against the module SOURCE because the absence of a code path cannot be
+      // asserted against its behavior.
+      var source = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'config', 'aws.js'), 'utf8');
+
+      // Comments are stripped before the negative assertions, because the module's own docblock NAMES
+      // the three retired `@internal` members in order to explain why they were retired. A substring
+      // test over the raw file would fail on the documentation rather than on the code. There is no
+      // string literal in this module containing `//`, so the crude line-comment rule is exact here.
+      var code = source.replace(/\/\*[\s\S]*?\*\//g, '')
+                       .split('\n')
+                       .map(function(line) { return line.replace(/\/\/.*$/, ''); })
+                       .join('\n');
+
+      source.should.contain("require('@aws-sdk/s3-request-presigner')");
+      code.should.contain('presigner.getSignedUrl(');
+      code.should.not.contain('endpointProvider(');
+      code.should.not.contain('config.signer()');
+      code.should.not.contain('.presign(');
+      code.should.not.contain('createHmac');
+      // And the package is a declared dependency at an exact version, not a transitive accident.
+      require('../../../package.json').dependencies
+        .should.have.property('@aws-sdk/s3-request-presigner', '3.1098.0');
     });
 
     it('honours the caller expiry rather than a fixed one', function() {

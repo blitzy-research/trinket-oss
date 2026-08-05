@@ -380,19 +380,21 @@ module.exports = function() {
         });
       })
 
-      // R-6 / R-4 PAYLOAD-SHAPE PIN. Added coverage, not a rewrite of anything above.
-      // `Course.publicSpec` whitelists `_owner` and `setOwner` assigns the populated User DOCUMENT,
-      // and `ObjectUtils.serialize`'s `hasOwnProperty('serialize')` test misses the mongoose
-      // prototype method, so the owner is JSON-cloned WHOLE into this response - bcrypt hash and
-      // `profiles.google.token` included - both in the API body and, through the server.inject
-      // consumer in lib/controllers/courses.js#create, in POST /courses.
+      // SEC-13 / M6 / SV-03 SURFACE ASSERTIONS. Added coverage, not a rewrite of anything above.
+      // `Course.publicSpec` whitelists `_owner` and `setOwner` assigns the populated User DOCUMENT, and
+      // `lib/models/model.js#serialize`'s `hasOwnProperty('serialize')` test misses the mongoose
+      // prototype method, so the owner lands in that method's nested-clone branch and is cloned WHOLE -
+      // which shipped the bcrypt hash and `profiles.google.token` both in the API body and, through the
+      // server.inject consumer in lib/controllers/courses.js#create, in POST /courses.
       //
-      // That is the base commit's payload shape and R-4 freezes it. An intermediate revision replaced
-      // the owner with a credential-scrubbed clone; code review removed that under R-1 (a
-      // credential-disclosure repair is not one of the four sanctioned diff categories) and R-4 (it
-      // changed a client-visible payload). These specs pin the restored shape so it cannot drift
-      // silently in either direction; closing the disclosure needs separate authorization. See
-      // docs/PRESERVED-QUIRKS.md section 4.14.
+      // The scrub lives in that shared branch rather than in either controller, so these two specs are
+      // what prove the shared wiring reaches both surfaces. The payload SHAPE is unchanged - the owner is
+      // still an unprojected clone carrying `roles`, `verified` and the rest - and only values no client
+      // may legitimately read are gone, which is why every spec asserts the surviving keys first.
+      //
+      // A later revision deleted the scrub and these specs asserted the disclosure instead. The final
+      // security review found it live and the deletion unmandated; see docs/PRESERVED-QUIRKS.md
+      // section 4.14 for the adjudication.
       //
       // The sentinel is added to the owner document in `before` and removed again in `after`, so the
       // shared user the remaining suites depend on is left exactly as it was found.
@@ -430,7 +432,7 @@ module.exports = function() {
           });
         });
 
-        it('should ship the owner document whole in the API course response, credentials included',
+        it('should ship the owner document whole in the API course response, credentials removed',
           function(done) {
             flow.createCourse({ name : 'M6 api course' }, function(err, response) {
               should.not.exist(err);
@@ -449,15 +451,16 @@ module.exports = function() {
               owner.should.have.property('profiles');
               owner.profiles.should.have.property('google');
               owner.profiles.google.should.have.property('id', GOOGLE_ID_SENTINEL);
-              // The preserved base-commit shape - see the describe header.
-              owner.profiles.google.should.have.property('token', GOOGLE_TOKEN_SENTINEL);
-              owner.should.have.property('password');
-              flow.lastResponse.text.should.contain(GOOGLE_TOKEN_SENTINEL);
+              // SEC-13 / M6 / SV-03: the nested provider bearer token and the bcrypt hash are removed by
+              // lib/models/model.js#serialize's nested-clone branch, while every other key survives.
+              owner.profiles.google.should.not.have.property('token');
+              owner.should.not.have.property('password');
+              flow.lastResponse.text.should.not.contain(GOOGLE_TOKEN_SENTINEL);
               done();
             });
           });
 
-        it('should ship the same whole owner document through the POST /courses inject consumer',
+        it('should scrub the same owner document through the POST /courses inject consumer',
           function(done) {
             // Requesting JSON keeps the declarative `html : { redirect : ... }` branch out of the way
             // so the injected body itself is what lands on the wire.
@@ -485,9 +488,11 @@ module.exports = function() {
 
                   owner.should.have.property('username', defaults.user.username);
                   owner.profiles.google.should.have.property('id', GOOGLE_ID_SENTINEL);
-                  owner.profiles.google.should.have.property('token', GOOGLE_TOKEN_SENTINEL);
-                  owner.should.have.property('password');
-                  response.text.should.contain(GOOGLE_TOKEN_SENTINEL);
+                  // The inject consumer reads the same serialized course, so the same shared scrub
+                  // applies - which is what makes one guard cover both surfaces.
+                  owner.profiles.google.should.not.have.property('token');
+                  owner.should.not.have.property('password');
+                  response.text.should.not.contain(GOOGLE_TOKEN_SENTINEL);
                 }
                 catch (assertion) {
                   failure = assertion;

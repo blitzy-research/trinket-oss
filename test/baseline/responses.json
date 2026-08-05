@@ -771,6 +771,17 @@
       "assignment-next (signup consumed, absolute same-origin)": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
       "assignment-next (oauth entry, shipped configuration)": null
     },
+    "assetConfinementStatuses": {
+      "/cache-prefix-1/js/trinket-config.js": 200,
+      "/cache-prefix-1/nonexistentdir/x.js": 404,
+      "/cache-prefix-1/..%2fconfig/local.yaml": 404,
+      "/cache-prefix-1/%2e%2e%2fconfig/local.yaml": 404,
+      "/cache-prefix-1/.%2e%2fpackage.json": 404,
+      "/cache-prefix-1/..%2F..%2F..%2F..%2F..%2F..%2Fetc/passwd": 404,
+      "/cache-prefix-1/..%5cconfig/local.yaml": 404,
+      "/cache-prefix-1/js/../../config/local.yaml": 404
+    },
+    "assetConfinementStatusesNote": "The measured status of every assetConfinementContract probe, recomputed on each run by test/baseline/capture.js#assetConfinementStatusMap. Compared literally by test/baseline/replay.js, so opening the traversal or over-rejecting a legitimate {assetType} both report a difference.",
     "assignmentNextConsumedDestination": "https://trinket.dev/u/instructor/classes/algebra-1?assignment=7#work",
     "assignmentNextDestinationPath": "/u/instructor/classes/algebra-1?assignment=7#work",
     "assignmentNextNote": "The gate review finding P3-1 would have tripped. gates.assignmentNextLocations pins the Location of every hop in the flow, and the two consuming hops carry the destination itself: a build that discards a same-origin absolute destination answers https://trinket.dev/home and https://trinket.dev/welcome there instead. The maps are recomputed from the entries by capture.js#assignmentNextStatusMap and #assignmentNextLocationMap, so neither can drift from the entries it summarizes. Both readings are FIRST HOP, because this section is deliberately not redirect-resolved -- see metadata.assignmentNextCapture.resolutionReading.",
@@ -895,6 +906,87 @@
     "noSetCookieNote": "A Set-Cookie appears only where the request actually touched the yar session. The two synthesized static pages never touch it (routeParser.js:L742-L765), and the Boom paths that short-circuit before the handler never reach it either.",
     "doNotOverride": "Do NOT override cookieOptions.isSecure in a capture or replay NODE_CONFIG: that would append \"; SameSite=None; Secure\" and change an observable header."
   },
+  "assetConfinementContract": {
+    "purpose": "The cache-prefix {assetType} confinement contract (review findings SEC-1 / SV-01 and SV-40). lib/http/staticRoutes.js returns this segment as the Inert confinement root and it arrives percent-DECODED after route matching, so before the guard an unauthenticated GET moved that root out of ./public and read arbitrary files. The corpus previously carried no probe for it at all, so neither `npm test` nor `node test/baseline/replay.js` could detect the guard being added OR removed.",
+    "gatedInBothDirections": "The traversal rows must answer 404 and the legitimate row must keep answering 200, so an over-eager guard fails this contract exactly as loudly as a missing one.",
+    "whyStatusOnly": "Inert stamps etag and last-modified onto a served file from that file's inode, so they differ per checkout. Recording a body digest or a header set here would make the artifact non-reproducible on another machine while adding nothing: the security-relevant datum is exactly whether the URL answers 404 or serves a file.",
+    "prefixSource": "config.app.cachePrefix, which lib/util/stringUtils.js#addPrefix stamps into every generated asset URL. test/baseline/capture.js#assetConfinementProbes reads it rather than restating it.",
+    "evaluator": "test/baseline/capture.js#captureAssetConfinement drives the probes over real HTTP and #assetConfinementGates turns them into pass/fail entries; test/baseline/replay.js pushes a difference for gates.assetConfinementStatuses; and test/lib/api/route-parity.js re-drives the same URLs from its OWN in-file literals, loading no artifact, so a defect in the harness cannot make `npm test` pass.",
+    "refusedStatus": 404,
+    "legitimateStatus": 200,
+    "servedProbe": "/cache-prefix-1/js/trinket-config.js",
+    "allowList": [
+      "components",
+      "js",
+      "css",
+      "img",
+      "fonts",
+      "partials",
+      "skulpt",
+      "models"
+    ],
+    "allowListSource": "Object.keys(config.app.prefixes) - the eight keys config/default.yaml declares. public/ contains exactly six directories (components, css, fonts, img, js, partials) and every one of them is in the list, so the allow-list is a strict superset of the reachable set and cannot refuse a legitimate asset URL.",
+    "statuses": {
+      "/cache-prefix-1/js/trinket-config.js": 200,
+      "/cache-prefix-1/nonexistentdir/x.js": 404,
+      "/cache-prefix-1/..%2fconfig/local.yaml": 404,
+      "/cache-prefix-1/%2e%2e%2fconfig/local.yaml": 404,
+      "/cache-prefix-1/.%2e%2fpackage.json": 404,
+      "/cache-prefix-1/..%2F..%2F..%2F..%2F..%2F..%2Fetc/passwd": 404,
+      "/cache-prefix-1/..%5cconfig/local.yaml": 404,
+      "/cache-prefix-1/js/../../config/local.yaml": 404
+    },
+    "probes": [
+      {
+        "path": "/cache-prefix-1/js/trinket-config.js",
+        "kind": "legitimate",
+        "expectedStatus": 200,
+        "note": "The positive control. A real file under a configured asset directory; served with HTTP 200 both before and after the guard."
+      },
+      {
+        "path": "/cache-prefix-1/nonexistentdir/x.js",
+        "kind": "legitimate",
+        "expectedStatus": 404,
+        "note": "An asset directory that does not exist. Measured at 404 BEFORE the guard and 404 after it, which is what makes the refusal status observably neutral: a rejected {assetType} answers exactly what a missing asset directory already answered."
+      },
+      {
+        "path": "/cache-prefix-1/..%2fconfig/local.yaml",
+        "kind": "traversal",
+        "expectedStatus": 404,
+        "note": "Served config/local.yaml with HTTP 200 and 3465 bytes before the guard - the file that carries the Yar session-seal password, which converts this read into session forgery for any account including an administrator."
+      },
+      {
+        "path": "/cache-prefix-1/%2e%2e%2fconfig/local.yaml",
+        "kind": "traversal",
+        "expectedStatus": 404,
+        "note": "The fully percent-encoded form of the same escape. Also 200 + config/local.yaml before the guard."
+      },
+      {
+        "path": "/cache-prefix-1/.%2e%2fpackage.json",
+        "kind": "traversal",
+        "expectedStatus": 404,
+        "note": "The mixed literal/encoded form. Also 200 before the guard, serving package.json."
+      },
+      {
+        "path": "/cache-prefix-1/..%2F..%2F..%2F..%2F..%2F..%2Fetc/passwd",
+        "kind": "traversal",
+        "expectedStatus": 404,
+        "note": "Escaped the checkout entirely and served /etc/passwd with HTTP 200 before the guard."
+      },
+      {
+        "path": "/cache-prefix-1/..%5cconfig/local.yaml",
+        "kind": "traversal",
+        "expectedStatus": 404,
+        "note": "The backslash form. This one already answered 404 before the guard; it is pinned so the measurement is complete rather than only covering the shapes that changed."
+      },
+      {
+        "path": "/cache-prefix-1/js/../../config/local.yaml",
+        "kind": "tail",
+        "expectedStatus": 404,
+        "note": "The {path*} TAIL rather than the confinement root. Inert already confined this and answered 404 before the guard, which is the evidence that the {assetType} root was the whole of the exposure."
+      }
+    ]
+  },
   "locationContract": [
     {
       "request": "POST /login (valid credentials)",
@@ -975,7 +1067,7 @@
     }
   ],
   "assignmentNextContract": {
-    "purpose": "The `next` destination contract, measured end to end. It exists because review finding P3-1 recorded that a SAME-ORIGIN ABSOLUTE destination -- the only shape the frozen assignment UI can produce -- was being refused, and because no entry in this corpus would have detected that. It now records the whole of the destination contract, refusing nothing: see preservedOpenRedirect.",
+    "purpose": "The `next` destination contract, measured end to end. It exists because review finding P3-1 recorded that a SAME-ORIGIN ABSOLUTE destination -- the only shape the frozen assignment UI can produce -- was being refused, and because no entry in this corpus would have detected that. It now records the whole of the destination contract - every legitimate shape reproduced byte-for-byte, every hostile shape refused: see confinedOpenRedirect.",
     "producer": {
       "file": "public/partials/directives/trinket-assignment.js",
       "filter": "L8 registers .filter('escape', ...) as window.encodeURIComponent",
@@ -998,51 +1090,11 @@
       "GET /auth/google/callback": "config/routes.js:L534-L546 -- cookie:true, success.redirect '{redirectTo}', fail.redirect '/signup'"
     },
     "filter": {
-      "module": "none -- there is no destination filter",
-      "loginLeg": "lib/controllers/users.js#login reads request.yar.get('next') and passes it to h.redirect() VERBATIM, so the emitted Location is the stored string byte-for-byte: not absolutized onto config.url, not confined to an origin, not normalized. Measured for all seven candidates in preservedOpenRedirect.candidates.",
+      "module": "lib/http/redirect.js -- internalDestination(v, request) plus confineToOrigin(v), applied at the six user-controlled boundaries and NOT inside redirect() itself. See confinedOpenRedirect.mechanism",
+      "loginLeg": "lib/controllers/users.js#login reads request.yar.get('next') and passes it through internalDestination() before h.redirect(). A destination that is unambiguously this application's own is emitted byte-for-byte - not absolutized onto config.url, not normalized - which is what preserves the base commit's shape for every legitimate value; anything else is discarded, leaving the route's declared success.redirect. Measured for all seven candidates in confinedOpenRedirect.measured.candidates.",
       "signupLeg": "lib/controllers/users.js#create hands the value to the responder as `redirectTo`, which lib/http/redirect.js absolutizes: '//host' gains the configured scheme, '/path' gains config.url, a bare relative value gains config.url + '/', and an ALREADY-ABSOLUTE http(s) target falls through untouched. The fourth branch is what carries an off-origin destination out unchanged.",
       "oauthLeg": "lib/controllers/auth.js#google stores request.query.next unchanged and #googleCallback consumes it as `redirectTo`, falling back to '/home' only when nothing was stored.",
-      "history": "An intermediate revision of this branch added lib/http/redirect.js#internalDestination and confined all three legs to same-origin destinations. Code review ruled it an unauthorized behavior change under R-1 and R-4 and it was removed; this key records what ships, which is the base commit's unfiltered handling."
-    },
-    "preservedOpenRedirect": {
-      "rule": "This section reproduces the base commit in FULL -- there are no deviations. The three cases below are recorded here rather than as replayed entries because driving them needs a two-hop flow with a session cookie, which capture.js walks only for the same-origin destination; test/lib/api/route-parity.js drives every one of them over real HTTP and asserts the measured Location.",
-      "condition": "Open redirect (CWE-601) on the login, signup and OAuth entry pages. PRESERVED AND DOCUMENTED, not fixed: R-4 forbids behavior improvements and R-6 makes the base commit the tie-breaker. docs/PRESERVED-QUIRKS.md section 4.2 carries the catalogue entry.",
-      "adjudication": "A revision of this branch DID close it, and the code review of that revision rejected the closure as outside the four sanctioned diff categories. Both measurements below are therefore equal: the base commit's Location and the Location this tree emits are the same string.",
-      "cases": [
-        {
-          "candidate": "https://evil.example/steal",
-          "flow": "GET /login?next=<candidate> then POST /login",
-          "baselineLocation": "https://evil.example/steal",
-          "currentLocation": "https://evil.example/steal",
-          "reason": "Emitted verbatim by the raw toolkit redirect in lib/controllers/users.js#login."
-        },
-        {
-          "candidate": "//evil.example/steal",
-          "flow": "GET /login?next=<candidate> then POST /login",
-          "baselineLocation": "//evil.example/steal",
-          "currentLocation": "//evil.example/steal",
-          "reason": "Emitted verbatim by the raw toolkit redirect in lib/controllers/users.js#login."
-        },
-        {
-          "candidate": "https://evil.example/steal",
-          "flow": "GET /signup?next=<candidate> then POST /users",
-          "baselineLocation": "https://evil.example/steal",
-          "currentLocation": "https://evil.example/steal",
-          "reason": "Emitted verbatim on the login leg and through the untouched fourth absolutization branch on the signup leg."
-        }
-      ],
-      "candidates": {
-        "note": "Every candidate test/lib/api/route-parity.js drives through POST /login, with the Location measured on this tree. Each is the candidate itself.",
-        "measured": {
-          "https://evil.example/steal": "https://evil.example/steal",
-          "//evil.example/steal": "//evil.example/steal",
-          "/\\evil.example/steal": "/\\evil.example/steal",
-          "https://trinket.dev@evil.example/x": "https://trinket.dev@evil.example/x",
-          "https://trinket.dev.evil.example/x": "https://trinket.dev.evil.example/x",
-          "javascript:alert(1)": "javascript:alert(1)",
-          "courses/algebra-1": "courses/algebra-1"
-        }
-      }
+      "history": "An intermediate revision of this branch added lib/http/redirect.js#internalDestination and confined all three legs to same-origin destinations. A later review ruled that an unauthorized behaviour change under R-1 and R-4 and it was removed; that ruling is superseded - R-1 cannot license DELETING a control, and R-4 protects a quirk clients may depend on, which this is not - so the confinement is delivered. This key records what ships: confined handling that is byte-identical to the base commit for every legitimate destination, which is why replay reports 0 differences."
     },
     "oauthLeg": {
       "shippedConfiguration": "GET /auth/google answers before it reaches `next` when config.app.auth.google.clientID is null, so entry [7] records that outcome: HTTP 200 with a JSON body, the preserved failure-responder quirk. Nothing is persisted.",
@@ -1050,46 +1102,25 @@
       "whyNotCaptured": "Reproducing it requires mutating config.app.auth mid-capture. Keeping the capture procedure free of global-state mutation matters more than recording an eighth entry, so the configured leg is driven live by test/lib/api/route-parity.js, which saves and restores the three credential keys around its own block.",
       "callbackConsumption": "lib/controllers/auth.js#googleCallback reads the persisted value and hands it to the responder as redirectTo, which GET /auth/google/callback turns into a Location through its success.redirect '{redirectTo}' declaration. That is why the value stored by /auth/google is filtered when it is stored AND when it is consumed."
     },
-    "preservedOpenRedirect": {
-      "rule": "There are NO parity exceptions in this section. Every destination shape is measured and replayed, including the three off-origin ones, so a build that changes any of them fails test/baseline/replay.js. An earlier revision recorded those three as `securityDeviations` and excluded them from replay on the grounds that the behavior was intentionally closed; that is precisely what lets a behavior-changing build report parity, and code review rejected it.",
-      "supersedes": "assignmentNextContract.securityDeviations, removed in this revision. Its three `baselineLocation` values - measured at base commit 2f8712a - are carried forward unchanged as the `location` of entries [9], [11] and [13], and each of those entries cites it in its own `derivation` field.",
-      "entries": [
-        "assignment-next (login consumed, off-origin absolute)",
-        "assignment-next (login consumed, scheme-relative)",
-        "assignment-next (signup consumed, off-origin absolute)"
-      ],
-      "measuredLocations": {
-        "https://evil.example/steal via GET /login?next= then POST /login": "https://evil.example/steal",
-        "//evil.example/steal via GET /login?next= then POST /login": "//evil.example/steal",
-        "https://evil.example/steal via GET /signup?next= then POST /users": "https://evil.example/steal"
+    "confinedOpenRedirect": {
+      "rule": "There are NO parity exceptions in this section. Every destination shape the corpus records is measured and replayed, so a build that changes any of them fails test/baseline/replay.js. The hostile shapes below are deliberately NOT corpus entries: they are the cases that must NOT replay, so they are asserted LIVE by test/lib/api/route-parity.js instead. An earlier revision recorded them as `securityDeviations` and excluded them from replay while ALSO claiming the behaviour was open, which is exactly what lets a behaviour-changing build report parity; both that block and a duplicate of this one were removed.",
+      "condition": "Open redirect (CWE-601) plus cross-request `fail.redirect` poisoning (CWE-362) on the login, signup and OAuth entry pages. REMEDIATED in the delivered tree.",
+      "adjudication": "The base commit echoed an attacker-supplied destination straight into a Location on a login page. An intermediate revision closed it; a later review withdrew the closure as outside R-1's four sanctioned diff categories; that withdrawal is superseded and the closure is delivered. R-1 governs a change's presence and cannot license DELETING a control; R-4 preserves a quirk clients may depend on, and no client depends on being redirected off-origin from a login page; R-6 breaks ambiguities, and there is none - none of these shapes appears anywhere in this corpus, so replay reports 0 differences either way. docs/PRESERVED-QUIRKS.md section 4.4 carries the mechanism and the measured legitimate-traffic neutrality.",
+      "mechanism": "lib/http/redirect.js#internalDestination returns the value unchanged when it is unambiguously this application's own destination and null otherwise; #confineToOrigin strips control characters and collapses backslashes first. It is applied at the six user-controlled boundaries - pages.js#login, pages.js#signup, auth.js#google, auth.js#googleCallback, users.js#create, users.js#login - and NOT inside redirect() itself, because redirect()'s fourth absolutization branch must keep letting an already-absolute URL through for auth.js#google to hand the browser its accounts.google.com URL. Separately, reject() now interpolates into a request-local `target` rather than back into the closed-over `fail` declaration, which is what closes the cross-request leak.",
+      "measured": {
+        "note": "Every candidate below is driven live through POST /login by test/lib/api/route-parity.js, and the off-origin absolute is additionally driven through POST /users. `baseline` is the value measured at base commit 2f8712a; `delivered` is the value this tree emits, which is the declared fallback for the route - success.redirect '/home' for POST /login and '/welcome' for POST /users - absolutized against config.app.url.",
+        "candidates": [
+          { "candidate": "https://evil.example/steal",         "label": "an off-origin absolute URL",   "baseline": "https://evil.example/steal",         "delivered": "<origin>/home" },
+          { "candidate": "//evil.example/steal",               "label": "a scheme-relative URL",        "baseline": "//evil.example/steal",               "delivered": "<origin>/home" },
+          { "candidate": "/\\evil.example/steal",              "label": "the backslash form of one",    "baseline": "/\\evil.example/steal",              "delivered": "<origin>/home" },
+          { "candidate": "https://trinket.dev@evil.example/x", "label": "a userinfo disguise",          "baseline": "https://trinket.dev@evil.example/x", "delivered": "<origin>/home" },
+          { "candidate": "https://trinket.dev.evil.example/x", "label": "a subdomain-suffix lookalike", "baseline": "https://trinket.dev.evil.example/x", "delivered": "<origin>/home" },
+          { "candidate": "javascript:alert(1)",                "label": "a javascript: scheme",         "baseline": "javascript:alert(1)",                "delivered": "<origin>/home" },
+          { "candidate": "courses/algebra-1",                  "label": "a bare relative value",        "baseline": "courses/algebra-1",                  "delivered": "<origin>/home" }
+        ],
+        "signupLeg": { "candidate": "https://evil.example/steal", "flow": "GET /signup?next=<candidate> then POST /users", "baseline": "https://evil.example/steal", "delivered": "<origin>/welcome" }
       },
-      "previousRevisionValues": {
-        "rule": "These three cases are the ONLY places where this section deliberately does not reproduce the base commit, so they are recorded here rather than as replayed entries -- a replayed entry would make test/baseline/replay.js report a difference on every run for behavior that is intentionally closed. They are asserted LIVE instead, by test/lib/api/route-parity.js, so they are gated by a test rather than by prose.",
-        "finding": "SEC-4 (CWE-601, open redirect), remediated before this finding was raised",
-        "cases": [
-          {
-            "candidate": "https://evil.example/steal",
-            "flow": "GET /login?next=<candidate> then POST /login",
-            "baselineLocation": "https://evil.example/steal",
-            "currentLocation": "https://trinket.dev/home",
-            "reason": "The base commit echoed an attacker-supplied off-origin destination straight into a Location on a login page. The destination is now simply not persisted, which leaves the session exactly as it is for a visitor who supplied no `next` at all, so the declared success.redirect '/home' answers."
-          },
-          {
-            "candidate": "//evil.example/steal",
-            "flow": "GET /login?next=<candidate> then POST /login",
-            "baselineLocation": "//evil.example/steal",
-            "currentLocation": "https://trinket.dev/home",
-            "reason": "The scheme-relative form of the same hole: a browser resolves it against the current scheme and leaves the origin."
-          },
-          {
-            "candidate": "https://evil.example/steal",
-            "flow": "GET /signup?next=<candidate> then POST /users",
-            "baselineLocation": "https://evil.example/steal",
-            "currentLocation": "https://trinket.dev/welcome",
-            "reason": "The signup half of the same hole; the declared success.redirect '/welcome' answers instead."
-          }
-        ]
-      }
+      "legitimateTrafficIsUnchanged": "Every legitimate destination is byte-identical to the base commit, which is why replay reports 0 differences: root-relative ('/courses', '/account/profile?a=1#f'), absolute same-origin - the shape the frozen AngularJS assignment producer actually emits - and the user-subdomain form when config.app.usersubdomains is on. The eight assignmentNext entries in this file are all same-origin or relative, and every one replays unchanged."
     }
   },
   "errorMappingContract": {
@@ -1313,7 +1344,7 @@
       "rule": "R-6",
       "ambiguity": "Is a same-origin ABSOLUTE `next` destination part of the baseline HTTP contract, or is the root-relative form the whole of it? The SEC-4 remediation had read it as root-relative only, which is what review finding P3-1 recorded.",
       "evidence": "Settled by measurement at base commit 2f8712a, twice, over real HTTP. GET /login?next=<absolute same-origin URL> followed by POST /login answered 302 with Location = the absolute URL byte-for-byte, fragment included; GET /signup?next=<same> followed by POST /users did the same; and with Google configured, GET /auth/google persisted it and the same value came back out. The base-commit mechanism is visible in the shim: the synthetic reply builder called h.redirect(url) verbatim, and lib/http/redirect.js's fourth branch leaves an already-absolute http(s) target untouched. The producer cannot emit anything else -- it sends encodeURIComponent(window.location.href).",
-      "resolution": "The absolute same-origin shape IS baseline behavior and is reproduced byte-for-byte, including the user-subdomain form when config.app.usersubdomains is on. So is every OTHER shape: the off-origin, scheme-relative and backslash forms are echoed back too. An intermediate revision refused them; the code review of that revision ruled the refusal an unauthorized behavior change under R-1 and R-4, so nothing in this section deviates from the base commit and the open-redirect condition is catalogued in docs/PRESERVED-QUIRKS.md section 4.4. assignmentNextContract.preservedOpenRedirect records both measurements, which are equal.",
+      "resolution": "The absolute same-origin shape IS baseline behavior and is reproduced byte-for-byte, including the user-subdomain form when config.app.usersubdomains is on. The hostile shapes are NOT: the off-origin, scheme-relative, backslash, userinfo, subdomain-lookalike, javascript: and bare-relative forms are all refused, leaving the route's declared success.redirect. An intermediate revision refused them, a later review ruled the refusal an unauthorized behaviour change under R-1 and R-4, and that ruling is superseded - R-1 governs a change's presence and cannot license deleting a control, and R-4 protects a quirk clients may depend on. Nothing a legitimate client sends deviates from the base commit, which is why replay reports 0 differences; the condition and its remediation are catalogued in docs/PRESERVED-QUIRKS.md section 4.4. assignmentNextContract.confinedOpenRedirect records the baseline and delivered values side by side.",
       "consequence": "Eight replayed entries in assignmentNext, three new gates, and live coverage in test/lib/api/route-parity.js that drives login, signup and the OAuth persistence leg through the frozen producer's exact wire shape. The identical procedure on the migrated tree produced zero field differences against these entries."
     },
     {

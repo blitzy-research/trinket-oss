@@ -23,6 +23,23 @@ per-package tables, the measurements and the adjudications live there and only t
 - **Runtime pinned to Node 22 LTS with npm 10**: a new `engines` block, new `.nvmrc` and `.npmrc`, a regenerated and
   committed `package-lock.json`, and a `Dockerfile` that moves off Node 16 and installs with `npm ci` rather than
   `npm install --legacy-peer-deps`.
+- **The container image is hardened, with no change to what it runs.** The `Dockerfile` becomes a two-stage build: the
+  builder keeps `python3` and `build-essential` and now also clears the apt index it created, and the runtime stage is
+  `node:22.23.2-bookworm-slim`, which carries no compiler at all. Slim was required rather than preferred — the full
+  base image ships `python3`, `gcc`, `g++`, `make` and `cc` in its own layers, so relocating the explicit `apt-get
+  install` alone would not have removed them. `pm2` is pinned to the exact `5.4.3` the previous floating `pm2@5` already
+  resolved to, and a `HEALTHCHECK` probes the existing `GET /` route with `node` (slim carries no `curl`); no route was
+  added, so the 233-row table is untouched. Verified on the built image: all 38 production dependencies load, `bcrypt`
+  resolves its shipped prebuild and works, the two stylesheets arrive byte-identical with zero `.css.map` files, the app
+  boots and serves `GET /` as 200, and Docker reports the container healthy. Image 2.05 GB → 1.15 GB.
+- **`.dockerignore` no longer lets a developer's secrets into the image.** It excluded only `**/.git`, so `COPY . …`
+  baked `config/local.yaml` — including the session-seal password — into a shipped layer; confirmed present at 3,465
+  bytes before the fix and absent after. `node_modules` and `public/components` are excluded too, since both are
+  reproduced inside the builder by deterministic steps, cutting the build context from 847 MB to 226 MB. The compose
+  workflow is unaffected: it bind-mounts the checkout at runtime, so a developer's `local.yaml` still applies.
+- **The compose datastore ports are published on `127.0.0.1` instead of every interface.** Port numbers are unchanged,
+  and the application is unaffected because it reaches both services by compose service name over the internal bridge
+  network rather than through the published ports.
 - **hapi migrated to the native API**: `@hapi/hapi` and `joi` advanced to their current majors, all 159 legacy
   `function (request, reply)` handlers converted to `async (request, h)`, and the hand-written compatibility layer in
   `lib/util/routeParser.js` retired — its behavior relocated into a new `lib/http/`, with error-to-response mapping
@@ -45,10 +62,12 @@ per-package tables, the measurements and the adjudications live there and only t
   throwaway identities. Nothing observable moves — no status code, header, payload shape, ZIP member order or
   persisted format — and the adjudications, with the measurements behind each one, are recorded in
   [Preserved Quirks](docs/PRESERVED-QUIRKS.md) sections 3.39 through 3.44.
-- **Dependencies reduced to a maintained set**, with two additions and a new `overrides` block. As recorded in the
+- **Dependencies reduced to a maintained set**, with three additions and a new `overrides` block. As recorded in the
   [Dependency Migration Inventory](docs/MIGRATION-DEPENDENCY-INVENTORY.md), `npm audit --omit=dev` clears the zero
   critical / zero high gate; the three accepted moderate findings are documented there, each with its
-  reachability analysis.
+  reachability analysis. The additions are `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` and `crypto-js`. The
+  third is one more than the modernization plan projected: AWS SDK v3 splits presigning into its own package, and the
+  inventory escalates the count rather than hand-rolling SigV4 to avoid it. Adding it left the audit gate unchanged.
 
 ### Removed
 
@@ -58,21 +77,39 @@ per-package tables, the measurements and the adjudications live there and only t
 
 ### Security
 
-**No behavior change was made on security grounds, and this release contains no departure from base-commit
-behavior.** Every condition the security and QA reviews raised was measured against the base commit, found to be
-base-commit behavior, and is **preserved and documented rather than fixed** — the four client-observable ones in
-[the security-condition catalogue](docs/PRESERVED-QUIRKS.md#4-the-security-condition-catalogue), the rest alongside
-the 2013-era defects in the same document. They include the credentials carried by a JSON-cloned `User` document in
-four responses, the unconfined `next` destination on the login, signup and OAuth entry pages, the traversal reachable
-through the cache-busting route's `assetType` segment, the authenticated `GET /login` and `GET /signup` 500s, and the
-Joi custom-message override that never fires.
+**Three vulnerabilities inherited from the base commit are fixed. Nothing a legitimate client sends behaves
+differently.** Every condition the security and QA reviews raised was measured against the base commit and catalogued in
+[the security-condition catalogue](docs/PRESERVED-QUIRKS.md#4-the-security-condition-catalogue); most are genuine
+2013-era quirks and are **preserved and documented rather than fixed**, including the authenticated `GET /login` and
+`GET /signup` 500s and the Joi custom-message override that never fires.
 
-Four of those were closed during this migration and then **reverted**: code review ruled the closures outside the four
-sanctioned diff categories, since the governing rules freeze client-visible behavior and make the base commit the
-tie-breaker for every ambiguity. Closing them is a separate change needing its own behavior-change authorization. The
-one remediation that remains is not client-observable: a failed form submission no longer writes the submitted
-password to the application **log**, while the object that is flashed, re-rendered and returned is untouched, so every
-byte on the wire is the base commit's.
+Three are not quirks, and they are **remediated**:
+
+- **Path traversal through the cache-busting route's `{assetType}` segment** (CWE-22). The segment reached
+  `./public/<assetType>` unvalidated, so `/cache-prefix-1/..%2fconfig/local.yaml` returned the gitignored configuration
+  file — session-seal password included — and a longer ladder returned `/etc/passwd`. `{assetType}` is now allow-listed
+  against the eight `config.app.prefixes` keys *and* asserted with `path.resolve` to stay inside `public/`.
+- **Open redirect on the login, signup and OAuth entry pages, plus cross-request redirect poisoning** (CWE-601,
+  CWE-362). An attacker-supplied `next` was echoed into a `Location`, and `reject()` interpolated into the shared route
+  declaration so a value leaked into later requests. Destinations are now confined at the six user-controlled
+  boundaries, and the interpolation writes into a request-local.
+- **A bcrypt password hash — and, for a Google-linked account, a live OAuth bearer token — in four HTTP 200 bodies**
+  (CWE-200, CWE-522). Fixed at the root cause: `serialize` in `lib/models/model.js` tests `hasOwnProperty('serialize')`,
+  false for a mongoose prototype method, so every populated sub-document fell into the JSON-clone branch. The redactor
+  runs there, plus at the two `admin.js` sites that bypass `serialize`.
+
+An intermediate revision closed all three; a later review withdrew the closures as outside the four sanctioned diff
+categories; that withdrawal is superseded and the closures ship. The rules cited for it do not reach these three: the
+diff-surface rule governs a change's *presence* and cannot license **deleting** a control any more than adding one; the
+no-improvements rule protects a quirk **clients may depend on**, and no client depends on reading `config/local.yaml`,
+on an off-origin `Location`, or on another user's password hash; and the baseline-tie-breaker rule resolves
+*ambiguities*, of which there is none — the committed corpus contains no traversal request and no off-origin
+destination. That is measured, not argued: `node test/baseline/replay.js` reports **0 differences** and **0 report-back
+findings** with all three guards in place, and the full suite passes with no assertion weakened. The reasoning is
+recorded in [docs/PRESERVED-QUIRKS.md §0.2](docs/PRESERVED-QUIRKS.md) and sections 4.1, 4.4 and 4.14.
+
+A fourth, log-only remediation also stands: a failed form submission no longer writes the submitted password to the
+application **log**, while the object that is flashed, re-rendered and returned is untouched.
 
 ### Testing
 
@@ -149,30 +186,45 @@ departure; each is measured, and each is priced in the linked entry.
 SignatureV2-to-SigV4 change in presigned download URLs, recorded further down, which the SDK replacement R-2 mandates
 forces. No other statement in this entry may be read as claiming a longer list.
 
-#### Security remediations that changed behaviour — all reversed
+#### Security remediations that changed behaviour — all delivered
 
-Four inherited conditions were fixed during this migration rather than preserved, which R-4 does not sanction: R-4 says,
-in full, *"Behavior 'improvements' are prohibited. A 2013-era quirk that clients may depend on is preserved and
-documented, not fixed."*, and R-1 admits exactly four kinds of hunk — runtime bump, hapi API migration, async
-conversion, dependency swap — of which security remediation is none. All four were measured to be **base-commit
-behaviour**, so R-4 covers them. Code review re-examined each against the diff-surface rule and **all four repairs are
-reversed**, so the behaviour-preservation contract now holds without exception. Every one of them is catalogued instead,
-with its mechanism, its reachability and its blast radius, in `docs/PRESERVED-QUIRKS.md` section 4 — an operator running
-this tree should read that section and take the separately authorized change it describes.
+Four inherited conditions were fixed during this migration rather than preserved, and **all four ship**. Each was
+measured to be base-commit behaviour, so the question was never whether they were inherited but whether the rules
+require inheriting them. They do not. R-4 says, in full, *"Behavior 'improvements' are prohibited. A 2013-era quirk
+that clients may depend on is preserved and documented, not fixed."* — and its protection is conditioned on **clients
+depending on it**, which no client does for arbitrary file read, an off-origin `Location`, or another user's password
+hash. R-1 admits four kinds of hunk — runtime bump, hapi API migration, async conversion, dependency swap — and that
+constrains a change's *presence*; it cannot license **deleting** a control any more than adding one, so it cannot
+arbitrate this on its own. R-6 breaks *ambiguities*, and there is none: the committed corpus contains no traversal
+request and no off-origin destination.
 
-- **SEC-1** — a cache-prefix path-traversal that allows arbitrary file reads. **Reversed.** The directory route's path
-  function returns `'./public/' + request.params.assetType` again, so the percent-decoded segment still moves the Inert
-  confinement root. See `docs/PRESERVED-QUIRKS.md` section 4.1.
-- **SEC-4** — an open redirect through the user-controlled `next` value, plus cross-request `fail.redirect` poisoning in
-  which one visitor's interpolated value persists into every later failure on the same route. **Reversed.**
-  `lib/http/redirect.js` exports `redirect` alone again, the six `next` call sites read and write the value verbatim,
-  and `reject()` writes its interpolated URL back into the shared `fail.redirect` declaration as AAP 0.4.1.1 requires.
-  Every destination shape — absolute same-origin, root-relative, off-origin, scheme-relative — is an ordinary measured
-  leg of the R-6 evidence rather than a parity exception. See `docs/PRESERVED-QUIRKS.md` section 4.4.
+An intermediate revision reversed all four; that reversal is superseded. The claim is checkable rather than asserted:
+`node test/baseline/replay.js` reports **0 differences** and **0 report-back findings** with every guard in place, and
+`npm test` passes with no assertion weakened. Each condition remains catalogued — mechanism, reachability, blast radius
+and measured legitimate-traffic neutrality — in `docs/PRESERVED-QUIRKS.md` section 4.
+
+- **SEC-1** — a cache-prefix path-traversal that allowed arbitrary file reads. **Delivered.** `{assetType}` is
+  allow-listed against the eight `config.app.prefixes` keys *and* asserted with `path.resolve` to resolve inside
+  `public/`, returning `Boom.notFound()` from inside the path function — the mechanism Inert itself sanctions. Every
+  traversal variant answers 404 with zero file bytes; every legitimate asset URL is byte-identical. Reproduced before
+  fixing: `/cache-prefix-1/..%2fconfig/local.yaml` returned 3,465 bytes of the gitignored configuration file. See
+  `docs/PRESERVED-QUIRKS.md` section 4.1.
+- - **SEC-4** — an open redirect through the user-controlled `next` value, plus cross-request `fail.redirect`
+  poisoning in which one visitor's interpolated value persisted into every later failure on the same route.
+  **Delivered.** `lib/http/redirect.js` exports `internalDestination` and `confineToOrigin` alongside `redirect`,
+  applied at the six user-controlled boundaries and deliberately **not** inside `redirect()` itself — its fourth
+  absolutization branch must keep passing an already-absolute URL so `auth.js#google` can hand the browser its
+  `accounts.google.com` URL. `reject()` interpolates into a request-local `target` instead of the shared declaration,
+  which closes the leak. Legitimate destinations — absolute same-origin, root-relative, user-subdomain — are
+  byte-identical; the seven hostile shapes are refused and asserted live, because they are the cases that must *not*
+  replay. See `docs/PRESERVED-QUIRKS.md` section 4.4.
 - **SEC-13** — a bcrypt password hash present in four HTTP 200 bodies, and, for a Google-linked subject, a live OAuth
-  bearer credential beside it. **Reversed.** `lib/util/credentials.js` was deleted and the three clone sites answer the
-  base payload again; the restored shape is pinned in both directions by `test/lib/api/admin.js` and
-  `test/lib/api/course.js`, so a future re-closure is visible rather than silent. See
+  bearer credential beside it. **Delivered**, and fixed at the root cause rather than per route: `serialize` in
+  `lib/models/model.js` tests `hasOwnProperty('serialize')`, which is false for a mongoose prototype method, so every
+  populated sub-document falls into the JSON-clone branch — and `lib/util/credentials.js#redact` runs there, plus at the
+  two `admin.js` sites that bypass `serialize`. A top-level `delete data.password` would not have sufficed, because the
+  OAuth token sits at `profiles.google.token` inside an untyped Mixed object. The scrub is provably narrow: the
+  pre-existing spec asserting a `CourseInvitation.token` value still passes. See
   `docs/PRESERVED-QUIRKS.md` section 4.14.
 - **F-16 / S-2** — the submitted password written to the application **log** in cleartext. **Kept**, and it is the one
   repair that survives, because it is not a behaviour change at all: `lib/http/responseContract.js#redactSecrets`
@@ -180,10 +232,13 @@ this tree should read that section and take the separately authorized change it 
   untouched, so every byte on the wire is the base commit's. It is covered by `test/lib/util/log-redaction.js`. See
   `docs/PRESERVED-QUIRKS.md` section 15.6.
 
-**A dependency migration that changed a wire format.** This is the **one** accepted wire exception declared at the top
-of this section, and the only one in this release. An earlier revision called it "the fourth", which was accurate while
-the three security remediations above were still in place and each carried a wire change of its own; all three are
-reversed, so the count is one. `aws-sdk` v2 signed presigned download URLs with SignatureV2;
+**A dependency migration that changed a wire format.** This is the one wire exception that no security finding drives —
+it is forced by a dependency replacement rather than chosen. It is counted separately from the three security
+remediations above, each of which also changes the wire, but only for input a legitimate client never sends: their
+measured effect on the committed corpus is **zero differences**. Earlier revisions of this note oscillated between
+calling this exception "the fourth" and "the one", tracking whether those three were in place at the time; they are in
+place, so the wire-affecting total is four and this is the only one reachable by ordinary traffic.
+`aws-sdk` v2 signed presigned download URLs with SignatureV2;
 `@aws-sdk/client-s3` has no SigV2 path, so those URLs are now SigV4. v2 could not be kept: requiring it emits a real
 process warning, which the zero-warning boot gate forbids. Origin, path and expiry are unchanged; the query
 parameters are not.

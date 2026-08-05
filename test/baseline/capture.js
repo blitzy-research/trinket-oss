@@ -19,7 +19,7 @@
  *     test/baseline/. replay.js re-exports both rather than keeping a second copy, because two copies
  *     of a gate is how a gate rots: an earlier revision enforced the anchor in replay.js while this
  *     file reported it UNEVALUATED, and route-table.json could not then name a single honest evaluator.
- *   - `routeTableGates()` turns all ten clauses AND the verdict into pass/fail entries of this CLI's
+ *   - `routeTableGates()` turns all eleven clauses AND the verdict into pass/fail entries of this CLI's
  *     gate summary, so a --dry-run exits non-zero on drift and a write is refused.
  *   - `mergeMeasuredRouteTable()` REGENERATES `gates.documentedAnchorGateSatisfied` from this run's own
  *     evaluation, and `recordReproducedCounts()` regenerates the provenance block's section sizes, so
@@ -124,7 +124,13 @@ var childProcess = require('child_process'),
     http         = require('http'),
     os           = require('os'),
     path         = require('path'),
-    nodeUtil     = require('node:util');
+    nodeUtil     = require('node:util'),
+    // The ENDPOINT half of assertDisposableDatabase()'s gate, shared verbatim with
+    // test/helpers/db.js - the tree's other destructive caller - so the two cannot diverge
+    // (review finding SV-04). Requiring nothing and touching nothing on load is a precondition of
+    // this file being able to use it at all: this is a CLI, not a Mocha spec, so it cannot pull in
+    // test/helpers/db.js, whose first statement requires the chai/sinon bootstrap.
+    endpointGate = require('../helpers/disposable-endpoint');
 
 var ARTIFACT_PATH    = path.join(__dirname, 'responses.json'),
     ROUTE_TABLE_PATH = path.join(__dirname, 'route-table.json');
@@ -454,19 +460,33 @@ function effectiveNodeConfig() {
 }
 
 /**
- * Fails closed unless the live mongoose connection is pointed at a database it is safe to mutate. This
- * is test/helpers/db.js#assertDisposableDatabase applied to a second destructive caller, with one extra
- * clause: when this process configured the runtime itself, the connection must be on exactly the
- * database configureRuntime() forced, so a stray NODE_CONFIG layer or a later reconnect cannot move the
- * deletes somewhere else.
+ * Fails closed unless the live mongoose connection is pointed at a database it is safe to mutate.
  *
- * Both halves are required. NODE_ENV alone is not enough, because NODE_CONFIG can repoint the database
- * without touching NODE_ENV. The name alone is not enough either, because a deployment could own a
- * database called `test`.
+ * FIVE clauses, all required. An earlier revision of this function carried only the first four and its
+ * docblock claimed to be "test/helpers/db.js#assertDisposableDatabase applied to a second destructive
+ * caller" - which was not true, and review finding SV-04 is what caught it. db.js validates the
+ * ENDPOINT as well as the name, and this function did not, so a `local.yaml` or a NODE_CONFIG layer
+ * naming a remote, credentialed, SRV-resolved, replica-set or TLS endpoint whose database happened to be
+ * called `test` passed this gate and was written to. The endpoint clause below closes that, and it is
+ * the SAME code db.js runs: test/helpers/disposable-endpoint is one side-effect-free module both
+ * destructive callers require, so neither can be hardened without the other.
+ *
+ * Why each clause is necessary on its own:
+ *   1. NODE_ENV - a floor, but not sufficient: NODE_CONFIG can repoint the database without touching it.
+ *   2. An open connection whose two database names agree - mongoose's record and the driver's, so a
+ *      mismatch cannot slip a non-disposable name past the pattern.
+ *   3. The DISPOSABLE_DATABASE name pattern - necessary, but a deployment could own a database called
+ *      `test`, which is exactly why clause 5 exists.
+ *   4. FORCED_DATABASE - when this process configured the runtime itself, the connection must be on
+ *      exactly the database configureRuntime() forced, so a stray NODE_CONFIG layer or a later reconnect
+ *      cannot move the deletes somewhere else. This clause is this function's own; db.js has no
+ *      equivalent because nothing forces a database on its behalf.
+ *   5. The ENDPOINT - a credential-free loopback mongod with no SRV cluster, no replica set and no TLS.
  *
  * @param   {string} operation A short label naming the caller, used in the thrown message.
  * @returns {string} The validated database name.
- * @throws  {Error}  When the environment, the connection or the database name is not safe to mutate.
+ * @throws  {Error}  When the environment, the connection, the database name or the endpoint is not safe
+ *   to mutate.
  */
 function assertDisposableDatabase(operation) {
   if (process.env.NODE_ENV !== 'test') {
@@ -501,6 +521,20 @@ function assertDisposableDatabase(operation) {
     throw new Error('capture.js refused to ' + operation + ' in the database ' + JSON.stringify(name) +
                     ': this run forced ' + JSON.stringify(FORCED_DATABASE) + ', so something moved the ' +
                     'connection after configureRuntime() ran.');
+  }
+
+  // THE ENDPOINT CLAUSE (review finding SV-04). The four clauses above all describe the database NAME and
+  // the process; none of them describes the SERVER. configureRuntime() forces db.mongo.host to a loopback
+  // address, but a NODE_CONFIG layer or a config/local.yaml is read alongside that and can move the host
+  // without moving the name - so the host the driver actually resolved is read back off the live
+  // connection here, immediately before anything is written, rather than being assumed from what this
+  // process asked for.
+  var endpointReasons = endpointGate.nonDisposableIdentityReasons(require('mongoose').connection);
+
+  if (endpointReasons.length) {
+    throw new Error('capture.js refused to ' + operation + ' in the database ' + JSON.stringify(name) +
+                    ': ' + endpointGate.refusalTail(endpointReasons) + ' configureRuntime() forces that ' +
+                    'identity through $NODE_CONFIG; a run that reaches here has had it overridden.');
   }
 
   return name;
@@ -1479,7 +1513,7 @@ function captureAssignmentLeg(server, rules, entries, leg) {
  * migrated tree must reproduce byte-for-byte. The off-origin and scheme-relative destinations are NOT
  * deviations: the base commit echoed them straight back and so does this tree, because code review ruled
  * the intermediate same-origin filter an unauthorized behavior change under R-1 and R-4. They are
- * recorded in responses.json#assignmentNextContract.preservedOpenRedirect and asserted live by
+ * recorded in responses.json#assignmentNextContract.confinedOpenRedirect and asserted live by
  * test/lib/api/route-parity.js rather than replayed, because driving them needs a two-hop cookie-bearing
  * flow that this corpus deliberately does not walk.
  *
@@ -1615,6 +1649,13 @@ function captureCorpus(server, corpus) {
   }).then(function(entries) {
     measured.assignmentNext = entries;
 
+    // The cache-prefix confinement probes (SEC-1 / SV-40). Placed after the three response sections and
+    // before the resolution pass because they need nothing from either: no identity, no cookie and no
+    // flash state, so they cannot perturb what the sections above measured.
+    return captureAssetConfinement(server);
+  }).then(function(entries) {
+    measured.assetConfinement = entries;
+
     // Step 4. Every primary reading above is already recorded, so this pass is additive in fact.
     return resolveUnauthenticated(server, measured.unauthenticated);
   }).then(function() {
@@ -1625,6 +1666,138 @@ function captureCorpus(server, corpus) {
   }).finally(function() {
     return cleanupIdentities();
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Asset confinement — the cache-prefix {assetType} probes (review finding SEC-1 / SV-01)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The cache-prefix route's {assetType} segment IS the Inert confinement root
+ * (lib/http/staticRoutes.js), and it arrives percent-DECODED after route matching. Before the guard was
+ * restored, an unauthenticated GET could move that root out of ./public and read any file the process
+ * could read - including config/local.yaml and therefore the Yar session-seal password, which converts a
+ * file read into session forgery for any account.
+ *
+ * The corpus carried no probe for it at all, so neither `npm test` nor `node test/baseline/replay.js`
+ * could detect the guard being added OR removed (review finding SV-40). These probes close that in BOTH
+ * directions: the traversal rows must answer 404, and the two positive controls must keep answering what
+ * a legitimate asset URL has always answered, so a guard that over-rejects fails just as loudly as a
+ * missing one.
+ *
+ * Only the STATUS is gated, deliberately. Inert stamps `etag` and `last-modified` on a served file from
+ * that file's inode, which differ per checkout, so recording a body digest or a header set here would
+ * make the artifact non-reproducible on another machine while adding nothing: the security-relevant
+ * datum is exactly "does this URL answer 404 or does it serve a file".
+ *
+ * The prefix is read from config.app.cachePrefix rather than restated, because that value is what
+ * lib/util/stringUtils.js#addPrefix stamps into every generated asset URL.
+ */
+function assetConfinementProbes() {
+  // `config` is required HERE rather than at module load, exactly as liveAppUrlOrigin() does: node-config
+  // snapshots its layers on first require, and this file must stay inert until configureRuntime() has
+  // installed the capture override.
+  var prefix = '/' + require('config').app.cachePrefix + '1';
+
+  return [
+    { path : prefix + '/js/trinket-config.js', kind : 'legitimate',
+      note : 'the positive control: a real file under a configured asset directory' },
+    { path : prefix + '/nonexistentdir/x.js', kind : 'legitimate',
+      note : 'an asset directory that does not exist answered 404 before the guard and answers 404 ' +
+             'after it, so the guard adds no new status here' },
+    { path : prefix + '/..%2fconfig/local.yaml', kind : 'traversal',
+      note : 'served config/local.yaml with HTTP 200 before the guard - the Yar session-seal password' },
+    { path : prefix + '/%2e%2e%2fconfig/local.yaml', kind : 'traversal',
+      note : 'the fully percent-encoded form of the same escape; also 200 before the guard' },
+    { path : prefix + '/.%2e%2fpackage.json', kind : 'traversal',
+      note : 'the mixed literal/encoded form; also 200 before the guard' },
+    { path : prefix + '/..%2F..%2F..%2F..%2F..%2F..%2Fetc/passwd', kind : 'traversal',
+      note : 'escaped the checkout entirely and served /etc/passwd with HTTP 200 before the guard' },
+    { path : prefix + '/..%5cconfig/local.yaml', kind : 'traversal',
+      note : 'the backslash form, which answered 404 before the guard as well - pinned so the ' +
+             'measurement is complete rather than only the cases that changed' },
+    { path : prefix + '/js/../../config/local.yaml', kind : 'tail',
+      note : 'the {path*} TAIL rather than the root: Inert already confined this and answered 404 ' +
+             'before the guard, which is why the root was the whole of the exposure' }
+  ];
+}
+
+/**
+ * Drives every probe over real HTTP and records `{ path, kind, status }` for each, in declaration order.
+ *
+ * @param   {Object} server The listening hapi server.
+ * @returns {Promise<Array>} One entry per probe.
+ */
+function captureAssetConfinement(server) {
+  var probes  = assetConfinementProbes(),
+      entries = [];
+
+  function step(index) {
+    if (index >= probes.length) {
+      return Promise.resolve(entries);
+    }
+
+    return httpRequest(server, { method : 'GET', path : probes[index].path }).then(function(response) {
+      entries.push({
+        path   : probes[index].path,
+        kind   : probes[index].kind,
+        status : response.status
+      });
+
+      return step(index + 1);
+    });
+  }
+
+  return step(0);
+}
+
+/** The probe statuses keyed by path, which is the shape the artifact publishes and replay compares. */
+function assetConfinementStatusMap(entries) {
+  var map = {};
+
+  (entries || []).forEach(function(entry) {
+    map[entry.path] = entry.status;
+  });
+
+  return map;
+}
+
+/**
+ * Gate entries for the confinement contract: the whole status map, plus the two directional invariants
+ * stated independently of it so a wholesale artifact edit cannot satisfy them by agreeing with itself.
+ *
+ * @param   {Object} committedCorpus The committed responses artifact.
+ * @param   {Object} measured        The measurement, carrying `assetConfinement`.
+ * @returns {Array}  Gate entries.
+ */
+function assetConfinementGates(committedCorpus, measured) {
+  var contract = committedCorpus.assetConfinementContract,
+      entries  = measured.assetConfinement || [];
+
+  if (!contract) {
+    return [unevaluatedGate('assetConfinement contract',
+                            'responses.json carries no assetConfinementContract block')];
+  }
+
+  function statusesOfKind(kind) {
+    return entries.filter(function(entry) {
+      return entry.kind === kind;
+    }).map(function(entry) {
+      return entry.status;
+    }).filter(function(status, index, all) {
+      return all.indexOf(status) === index;
+    }).sort();
+  }
+
+  return [
+    gate('assetConfinement statuses', contract.statuses, assetConfinementStatusMap(entries)),
+    gate('assetConfinement probeCount', contract.probes.length, entries.length),
+    // The two directional invariants. Every traversal shape must be refused, and the legitimate asset
+    // must still be served - an over-eager guard is a parity failure too.
+    gate('assetConfinement every traversal refused', [contract.refusedStatus], statusesOfKind('traversal')),
+    gate('assetConfinement legitimate asset still served', contract.legitimateStatus,
+         (assetConfinementStatusMap(entries)[contract.servedProbe] || null))
+  ];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1862,24 +2035,34 @@ function registrationOrderCanonical(live) {
  * lets that artifact name one honest evaluator and what lets mergeMeasuredRouteTable() REGENERATE
  * gates.documentedAnchorGateSatisfied instead of carrying a hand-authored boolean (review finding
  * P3-1). test/baseline/replay.js re-exports this function; test/lib/api/route-parity.js recomputes the
- * same ten clauses from its own in-file literals, sharing no code and loading no artifact, so a defect
+ * same eleven clauses from its own in-file literals, sharing no code and loading no artifact, so a defect
  * here cannot make that suite pass.
  *
- * Ten clauses, all of them the Specification's own published values for this table, plus the table
+ * ELEVEN clauses, all of them the Specification's own published values for this table, plus the table
  * itself: the frozen digest literal is still stored verbatim; the row count; the method distribution;
  * the /api/ path count; the pre-handler count; the three auth buckets; the 233 canonical rows the
- * digest stands for, compared as a sorted multiset against the base-commit capture; and the
- * registration-order contract, whose fingerprint is re-derived from config.routes. Any drift in any of
+ * digest stands for, compared as a sorted multiset against the base-commit capture; the
+ * registration-order contract, whose fingerprint is re-derived from config.routes; and a sha256
+ * RECOMPUTED from the live table under the artifact's published serialization. Any drift in any of
  * them lands in `failures` and makes `satisfied` false, so a regression FAILS this gate instead of
  * being recorded as expected.
  *
- * Why the gate is the table and not a recomputed digest string: the Specification publishes its value
- * as 32 hexadecimal characters labelled sha256, where a SHA-256 is 64, and publishes no serialization
- * for it — no field set, no separator, no sort collation, no trailing-newline convention — so no
- * verifier can recompute the string itself from any input (route-table.json#adjudications ADJ-4 records
- * the exhaustive search). What the literal names is a specific 233-row table, and THAT is pinned here
- * exactly, clause by clause. Reverse-engineering a serialization to force a string match is forbidden
- * by ADJ-4 and would prove nothing about the table.
+ * Why there are two digest clauses, and what each one is worth. Clause 1 compares two literals — this
+ * file's DOCUMENTED_DIGEST against the artifact's stored copy — which detects an edit to the stored
+ * anchor but computes nothing. Clause 11 is the one that computes: it applies the artifact's published
+ * canonicalization to the LIVE route table and requires the result to equal gates.measuredSha256. Before
+ * clause 11 existed this gate could report `satisfied` on a run where no digest had been derived from the
+ * running server at all — the live comparison lived in routeTableGates() instead, so the evaluator the
+ * artifact names was not the evaluator doing the work (review finding SV-32).
+ *
+ * What neither clause does is recompute the Specification's own 32-character literal, and that is a
+ * limit of the published value rather than a gap in this gate: it is 32 hexadecimal characters labelled
+ * sha256 where a SHA-256 is 64, and no serialization is published for it — no field set, no separator,
+ * no sort collation, no trailing-newline convention — so no verifier can derive the string from any
+ * input (route-table.json#adjudications ADJ-4 records the exhaustive search). Reverse-engineering a
+ * serialization to force a string match is forbidden by ADJ-4 and would prove nothing about the table.
+ * What the literal names is a specific 233-row table; that table is pinned here exactly, clause by
+ * clause, and the digest that CAN be recomputed over it now is.
  *
  * @param   {Object} live           A canonicalizeLiveTable() result, or a captureRouteTable() result —
  *                                 both carry `gates`, `canonical` and `byKey`.
@@ -1916,6 +2099,32 @@ function documentedAnchorGate(live, committedTable) {
   clause('registrationOrderContract',
          { unresolvedDeclarations : [], fingerprint : gates.registrationOrderFingerprint },
          { unresolvedDeclarations : order.missing, fingerprint : sha256(order.canonical.join('\n')) });
+  // CLAUSE 11 — A DIGEST THIS GATE ACTUALLY RECOMPUTES (review finding SV-32).
+  //
+  // Clause 1 compares DOCUMENTED_DIGEST to gates.documentedDigest: a literal in this file against a
+  // literal in the artifact. That is a real check - it catches an edit to the stored anchor - but it
+  // computes nothing, so before this clause existed `satisfied` could be true on a run where no digest
+  // had been derived from the running server at all. A live digest comparison did exist, but in
+  // routeTableGates() rather than here, which meant the artifact's own named evaluator was not the thing
+  // doing the recomputing.
+  //
+  // This closes that by applying the artifact's PUBLISHED serialization to the LIVE table and requiring
+  // the result to equal the stored digest. The recipe is not invented here: route-table.json's
+  // `canonicalization` block publishes rowFormat, the sort ("Array.prototype.sort() default, UTF-16
+  // code-unit ascending"), the join ("\n") and no trailing newline, plus a `reproduce` one-liner, and
+  // `sha256(live.canonical.slice().sort().join('\n'))` is exactly that recipe. Both digest widths are
+  // asserted together so a truncation cannot pass the long form.
+  //
+  // What this clause deliberately does NOT do is recompute the 32-character documented literal. That
+  // value is 32 characters where a SHA-256 is 64 and no serialization is published for it, so no input
+  // exists to derive it from (route-table.json#adjudications ADJ-4 records the exhaustive search).
+  // Reverse-engineering one to force a string match is forbidden by ADJ-4 and would prove nothing. The
+  // recomputable digest is the measured one, and it is now recomputed INSIDE the gate rather than beside
+  // it.
+  clause('measuredSha256RecomputedFromLiveTable',
+         { measuredSha256 : gates.measuredSha256, measuredSha256First32 : gates.measuredSha256First32 },
+         { measuredSha256        : sha256(live.canonical.slice().sort().join('\n')),
+           measuredSha256First32 : sha256(live.canonical.slice().sort().join('\n')).slice(0, 32) });
 
   return {
     documentedDigest : DOCUMENTED_DIGEST,
@@ -1949,7 +2158,7 @@ function countableAnchorsReproduced(verdict) {
  * available even under --routes-only.
  *
  * `byKey` and `canonical` are carried through so the anchor gate can be evaluated from this result
- * directly, which is what makes routeTableGates() able to gate all ten clauses. Neither field is ever
+ * directly, which is what makes routeTableGates() able to gate all eleven clauses. Neither field is ever
  * written to the artifact: mergeMeasuredRouteTable() copies only the keys it names.
  */
 function captureRouteTable(server) {
@@ -2781,7 +2990,8 @@ function routeTableGates(committedTable, measured) {
   // SHA-256 is 64, and it is published with no serialization — so no verifier can recompute the STRING
   // from any input. The gate is therefore reported as UNREPRODUCIBLE and NOT as a pass, which is the
   // honest report: the anchor the literal names is enforced instead over the 233-row table itself, by
-  // the ten clauses above, which are recomputed live and are mandatory PASS/FAIL. The verdict is
+  // the eleven clauses above, which are recomputed live and are mandatory PASS/FAIL - and clause 11 of
+  // which recomputes the full-width sha256 this table CAN be hashed to (review finding SV-32). The verdict is
   // admissible only because the artifact declares it (gates.documentedDigestReproduced), and the one
   // thing that must never happen is a run that manufactures agreement with the string.
   gates.push(unreproducibleGate('route-table gates.documentedDigest (' +
@@ -2790,7 +3000,8 @@ function routeTableGates(committedTable, measured) {
                                 'serialization; route-table.json#adjudications records the exhaustive ' +
                                 'sweep that found no input producing it. The anchor is enforced over ' +
                                 'the 233-row table by capture.js#documentedAnchorGate instead, whose ' +
-                                'ten clauses are gated individually above.',
+                                'eleven clauses are gated individually above, the last of which ' +
+                                'recomputes the full-width sha256 this table CAN be hashed to.',
                                 committedTable.gates.documentedDigestReproduced));
 
   return gates;
@@ -3268,6 +3479,15 @@ function mergeMeasuredIntoCommitted(committed, measured, buildArtifacts, provena
   merged.gates.assignmentNextStatuses          = assignmentNextStatusMap(measured.assignmentNext);
   merged.gates.assignmentNextLocations         =
     assignmentNextLocationMap(measured.assignmentNext);
+  // The cache-prefix confinement probes. Recomputed like every other gate above, so a --write run
+  // records what this run measured rather than carrying a stale verdict forward.
+  merged.gates.assetConfinementStatuses        =
+    assetConfinementStatusMap(measured.assetConfinement);
+
+  if (merged.assetConfinementContract && measured.assetConfinement) {
+    merged.assetConfinementContract.statuses =
+      assetConfinementStatusMap(measured.assetConfinement);
+  }
 
   // The build artifacts, and ONLY the halves this run could actually measure. An absent stylesheet means
   // the checkout was never built (responses.json#buildArtifacts.precondition), which is not evidence
@@ -3288,7 +3508,8 @@ function mergeMeasuredIntoCommitted(committed, measured, buildArtifacts, provena
     'firstHopStatusDistribution', 'resolvedStatusDistribution', 'hopCountHistogram',
     'redirectingRouteCount', 'redirectingRoutePaths', 'redirectResolution',
     'authenticatedFirstHopStatuses',
-    'assignmentNextEntryCount', 'assignmentNextStatuses', 'assignmentNextLocations'
+    'assignmentNextEntryCount', 'assignmentNextStatuses', 'assignmentNextLocations',
+    'assetConfinementStatuses'
   ];
 
   Object.keys(merged.gates).forEach(function(key) {
@@ -3578,7 +3799,10 @@ function reportRouteTable(measured) {
 function reportCorpus(measured) {
   console.log('capture.js: unauthenticated=' + measured.unauthenticated.length +
               ' authenticated=' + measured.authenticated.length +
-              ' assignmentNext=' + (measured.assignmentNext || []).length);
+              ' assignmentNext=' + (measured.assignmentNext || []).length +
+              ' assetConfinement=' + (measured.assetConfinement || []).length);
+  console.log('capture.js: assetConfinement statuses=' +
+              JSON.stringify(assetConfinementStatusMap(measured.assetConfinement)));
   console.log('capture.js: firstHopDistribution=' +
               JSON.stringify(statusDistribution(measured.unauthenticated)) +
               ' resolvedDistribution=' +
@@ -3656,7 +3880,8 @@ function main() {
       differences = differences.concat(compareCorpus(committed, measured));
       gates       = gates
         .concat(corpusGates(committed, measured, liveAppUrlOrigin()))
-        .concat(cookieContractGates(committed, measured));
+        .concat(cookieContractGates(committed, measured))
+        .concat(assetConfinementGates(committed, measured));
       reportCorpus(measured);
 
       return routeTable;
@@ -3833,6 +4058,9 @@ module.exports = {
   POLICY                   : POLICY,
   RUNTIME                  : RUNTIME,
   DISPOSABLE_DATABASE      : DISPOSABLE_DATABASE,
+  // Re-exported rather than re-declared, so a test can assert that this CLI and test/helpers/db.js
+  // enforce the identical endpoint rule rather than two lookalikes (review finding SV-04).
+  endpointGate             : endpointGate,
   THROWAWAY                : THROWAWAY,
   ASSIGNMENT               : ASSIGNMENT,
   COMPARED_FIELDS          : COMPARED_FIELDS,
@@ -3877,6 +4105,10 @@ module.exports = {
   assignmentEntryPath      : assignmentEntryPath,
   removeAssignmentSignupUser : removeAssignmentSignupUser,
   captureAssignmentNext    : captureAssignmentNext,
+  assetConfinementProbes   : assetConfinementProbes,
+  captureAssetConfinement  : captureAssetConfinement,
+  assetConfinementStatusMap : assetConfinementStatusMap,
+  assetConfinementGates    : assetConfinementGates,
   captureCorpus            : captureCorpus,
   md5                      : md5,
   liveServerAuthDefault    : liveServerAuthDefault,

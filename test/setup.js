@@ -41,7 +41,7 @@ process.env.NODE_CONFIG_PERSIST_ON_CHANGE = 'N';
 //
 //    An earlier revision of this file forced only `database`, which left the other ten keys to be supplied
 //    by arbitrary configuration. `config/test.yaml:8-11` does declare `host: localhost, port: 27017,
-//    database: test`, but `local.yaml` loads AFTER it and `config/local.example.yaml:29-31` - the template
+//    database: test`, but `local.yaml` loads AFTER it and `config/local.example.yaml:42-44` - the template
 //    the setup documentation tells developers to copy - selects `host: mongodb` and `database: trinket`,
 //    which is also `config/default.yaml:365-367`'s value. So a developer following the documented flow
 //    aimed the drops at a remote host, under whatever credentials that host carried, and only the *name*

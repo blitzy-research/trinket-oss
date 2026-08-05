@@ -35,15 +35,31 @@ services:
       - mongodb
   redis:
     image: redis:7.4
+    # Published on the LOOPBACK interface only. `16379:6379` binds 0.0.0.0, which put an
+    # unauthenticated Redis - the session store - on every interface of the host, reachable
+    # by anyone who could route to it; read access to it is a full authentication bypass,
+    # because the sealed session records live there (review finding SV-28).
+    #
+    # This costs the application nothing: `app` reaches Redis as `redis:6379` over the
+    # `trinket` bridge network below, never through the published port. The published port
+    # exists purely so a developer on the host can attach `redis-cli`, and 127.0.0.1 serves
+    # that identically. The host-side port number is unchanged, so every documented
+    # `redis-cli -p 16379` invocation keeps working.
     ports:
-      - 16379:6379
+      - 127.0.0.1:16379:6379
     container_name: redis
     networks:
       - trinket
   mongodb:
     image: mongo:6.0
+    # Loopback-only for the same reason as `redis` above, and with the same zero
+    # application impact: `app` reaches this service as `mongodb:27017` over the bridge
+    # network, not through the published port. Unbound, `17017:27017` exposed an
+    # unauthenticated MongoDB holding every user record - including the bcrypt password
+    # hashes - on all host interfaces (review finding SV-28). The host-side port number is
+    # unchanged, so `mongosh --port 17017` still works from the host.
     ports:
-      - 17017:27017
+      - 127.0.0.1:17017:27017
     container_name: mongodb
     volumes:
       - mongodb_data:/data/db

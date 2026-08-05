@@ -3,15 +3,20 @@ var sinon    = require('sinon'),
     flow     = require('../../helpers/flow'),
     defaults = require('../../helpers/defaults');
 
-// R-6 / R-4 PAYLOAD-SHAPE PINS. Both admin response surfaces JSON-clone a WHOLE User document rather
-// than projecting `User.publicSpec`, so the administered user's bcrypt hash and - when that user has
-// linked Google - the live OAuth bearer credential at `profiles.google.token` are part of the payload.
-// That is the base commit's shape and R-4 freezes it; the two specs below pin it so it cannot drift in
-// either direction without a test failing. An intermediate revision scrubbed those values out, which
-// code review rejected under R-1 (a credential-disclosure repair is not one of the four sanctioned diff
-// categories) and R-4 (it changed a client-visible payload). See docs/PRESERVED-QUIRKS.md section 4.14;
-// closing the disclosure needs separate authorization, and these assertions are what make the current
-// state deliberate rather than accidental.
+// SEC-13 / M6 / SV-03 SURFACE ASSERTIONS. Both admin response surfaces JSON-clone a WHOLE User document
+// in the HANDLER rather than projecting `User.publicSpec`, which flattens it before any responder runs -
+// so the shared scrub in lib/models/model.js#serialize cannot reach them and each carries
+// `Credentials.redact` itself. Before that, the administered user's bcrypt hash and - when that user has
+// linked Google - the live OAuth bearer credential at `profiles.google.token` were both part of the
+// payload. The payload SHAPE is still the base commit's; only values no client may legitimately read are
+// gone, which is why the specs below assert the surviving keys FIRST and the absent credentials second.
+//
+// A later revision deleted the scrub and these specs asserted the disclosure instead, on the argument
+// that a credential-disclosure repair is not one of R-1's four sanctioned diff categories. The final
+// security review found it live and the deletion unmandated: R-1 cannot license removing a control any
+// more than adding one, R-4 conditions preservation on a quirk clients may depend on, and no client
+// depends on receiving another user's password hash and provider bearer token. See
+// docs/PRESERVED-QUIRKS.md section 4.14.
 //
 // The sentinels are written onto a real user and read back out of the response bytes, so the assertions
 // hold whatever the surrounding suites left in the database.
@@ -90,9 +95,8 @@ module.exports = function() {
         });
       });
 
-      // R-6 payload-shape pins for the two whole-document clones. Added coverage, not a rewrite of
-      // anything above: both surfaces were previously unasserted, so nothing recorded what they
-      // actually put on the wire.
+      // The two whole-document clones. Added coverage, not a rewrite of anything above: both surfaces
+      // were previously unasserted, so nothing recorded what they actually put on the wire.
       describe('and the user I am administering is linked to Google', function() {
         before(function(done) {
           user.profiles = { google : { id : GOOGLE_ID_SENTINEL, token : GOOGLE_TOKEN_SENTINEL } };
@@ -110,7 +114,7 @@ module.exports = function() {
           });
         });
 
-        it('should render the whole cloned user document in the search page, credentials included',
+        it('should render the cloned user document in the search page without its credentials',
           function(done) {
             // GET /admin/users?q=... is admin.index -> userSearch, whose result is dumped wholesale
             // into lib/views/admin/includes/users.html through `{{ data | json("pretty") | safe }}`.
@@ -121,16 +125,17 @@ module.exports = function() {
                 should.not.exist(err);
                 response.statusCode.should.eql(200);
                 response.text.should.contain(user.username);
+                // The non-credential half of the provider profile still renders, which is what proves
+                // the scrub is a deny-list rather than a projection.
                 response.text.should.contain(GOOGLE_ID_SENTINEL);
-                // The preserved base-commit shape: the clone is unprojected, so both credential
-                // classes reach the rendered page. See the file header.
-                response.text.should.contain(GOOGLE_TOKEN_SENTINEL);
-                response.text.should.contain(user.password);
+                // SEC-13 / M6 / SV-03: neither credential class reaches the rendered page.
+                response.text.should.not.contain(GOOGLE_TOKEN_SENTINEL);
+                response.text.should.not.contain(user.password);
                 done();
               });
           });
 
-        it('should answer the whole cloned user document from the role grant, credentials included',
+        it('should answer the cloned user document from the role grant without its credentials',
           function(done) {
             // POST /api/admin/user/{userId}/grant answers { success, user } with the same
             // whole-document clone. 'trinket-connect' is used rather than 'trinket-teacher' because
@@ -147,9 +152,11 @@ module.exports = function() {
                 response.body.should.have.property('user');
                 response.body.user.username.should.eql(user.username);
                 response.body.user.profiles.google.should.have.property('id', GOOGLE_ID_SENTINEL);
-                response.body.user.profiles.google.should.have.property('token',
-                                                                        GOOGLE_TOKEN_SENTINEL);
-                response.body.user.should.have.property('password', user.password);
+                // SEC-13 / M6 / SV-03: the nested provider bearer token and the bcrypt hash are both
+                // removed, while every other key of the clone is byte-identical.
+                response.body.user.profiles.google.should.not.have.property('token');
+                response.body.user.should.not.have.property('password');
+                JSON.stringify(response.body).should.not.contain(GOOGLE_TOKEN_SENTINEL);
                 done();
               });
           });

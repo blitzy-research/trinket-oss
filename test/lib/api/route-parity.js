@@ -1,6 +1,8 @@
 var chai     = require('chai'),
     should   = chai.should(),
     crypto   = require('crypto'),
+    fs       = require('fs'),
+    path     = require('path'),
     CryptoJS = require('crypto-js'),
     config   = require('config'),
     roles    = require('../../../lib/util/roles'),
@@ -34,7 +36,8 @@ var chai     = require('chai'),
  * live server and from literals in this file: the exact sorted 233-row canonical set row for row
  * (CANONICAL_ROWS_SORTED), the FULL registration order derived from config.routes, and all three
  * fingerprints — sha256 and md5 of the sorted set and sha256 of the registration order
- * (ROUTE_TABLE_FINGERPRINTS) — alongside the ten documented-anchor clauses.
+ * (ROUTE_TABLE_FINGERPRINTS) — alongside the eleven documented-anchor clauses, the last of which
+ * RECOMPUTES the sorted sha256 from the live table rather than comparing two stored strings (SV-32).
  *
  * TRANSPORT (review finding M3). Every request goes through `flow`, the suite's own harness, which issues
  * real HTTP over an ephemeral socket against the booted server's listener. `server.inject()` is never
@@ -717,13 +720,18 @@ var ASSIGNMENT = {
 };
 
 /**
- * Every destination shape and the Location it produces. The first four are same-origin and round-trip
- * byte-for-byte; the rest are the PRESERVED OPEN REDIRECT (docs/PRESERVED-QUIRKS.md section 4.4) — echoed
- * unchanged because `next` is persisted and read verbatim, exactly as at the base commit. There are no
- * exemptions: an earlier revision asserted refusals here and excluded three of these from the parity
- * corpus, which let a behavior-changing build report parity.
+ * The destination shapes `lib/http/redirect.js#internalDestination` REFUSES (review finding SEC-4 /
+ * SV-02, CWE-601). Every one of them was echoed straight back into a Location at the base commit, and
+ * every one of them now falls through to the route's declared fallback instead.
+ *
+ * The same-origin shapes are asserted separately and round-trip byte-for-byte, which is what keeps this
+ * gated in BOTH directions: a confinement that also refused the absolute same-origin destination the
+ * frozen assignment UI sends (review finding P3-1) would fail those tests. None of these shapes appears
+ * anywhere in test/baseline/responses.json - every recorded Location in the whole corpus is same-host or
+ * relative - so refusing them contradicts no measured baseline datum, which is precisely why R-6 does not
+ * arbitrate in favour of the echo.
  */
-var ECHOED_DESTINATIONS = [
+var REFUSED_DESTINATIONS = [
   { label : 'an off-origin absolute URL',       candidate : 'https://evil.example/steal' },
   { label : 'a scheme-relative URL',            candidate : '//evil.example/steal' },
   { label : 'the backslash form of one',        candidate : '/\\evil.example/steal' },
@@ -1216,8 +1224,11 @@ module.exports = function() {
        * THE DOCUMENTED ANCHOR, AS A MANDATORY GATE, computed here from literals and the live server.
        *
        * The frozen 32-character digest is retained verbatim as clause 1 and is never replaced by a
-       * measurement; the remaining clauses are the substance it summarizes. Any drift lands in `failures`
-       * and fails this test, which is what makes it a gate rather than a stored boolean being read back.
+       * measurement; the remaining clauses are the substance it summarizes. Clause 11 is the one that
+       * DERIVES a value — the sorted sha256, recomputed from the live rows under the artifact's published
+       * canonicalization — so this gate cannot be satisfied without a digest having been computed from the
+       * running server (review finding SV-32). Any drift lands in `failures` and fails this test, which is
+       * what makes it a gate rather than a stored boolean being read back.
        */
       it('enforces the documented route-table anchor as a mandatory gate', function() {
         var table    = server.table(),
@@ -1270,10 +1281,27 @@ module.exports = function() {
                { unresolvedDeclarations : order.missing,
                  fingerprint            : sha256Rows(order.canonical) });
 
+        // REVIEW FINDING SV-32 — clause 11, the digest this gate RECOMPUTES.
+        //
+        // Clause 1 above compares the frozen 32-character literal to this suite's own copy of it, which
+        // detects an edit to either but computes nothing; the published value is 32 characters where a
+        // sha256 is 64 and carries no serialization, so it cannot be recomputed at all (ADJ-4). Clause 11
+        // is the derivation: the LIVE table's canonical rows, sorted and joined with "\n" exactly as
+        // route-table.json's `canonicalization` block publishes, hashed here with this file's own
+        // sha256Rows() and compared against this file's own literal. Nothing is loaded from the artifact
+        // and no harness code is shared, so a defect in capture.js#documentedAnchorGate cannot make this
+        // pass. Both widths are checked together so a truncation cannot satisfy the long form.
+        clause('measuredSha256RecomputedFromLiveTable',
+               { measuredSha256        : ROUTE_TABLE_FINGERPRINTS.sortedSha256,
+                 measuredSha256First32 : ROUTE_TABLE_FINGERPRINTS.sortedSha256.slice(0, 32) },
+               { measuredSha256        : sha256Rows(live.canonical.slice().sort()),
+                 measuredSha256First32 : sha256Rows(live.canonical.slice().sort()).slice(0, 32) });
+
         failures.should.eql([]);
-        clauses.length.should.eql(10);
+        clauses.length.should.eql(11);
         clauses[0].name.should.eql('documentedDigestRetainedVerbatim');
-        // The ten clause NAMES this suite evaluates are the ten route-table.json publishes, in that order.
+        // The eleven clause NAMES this suite evaluates are the eleven route-table.json publishes, in that
+        // order.
         clauses.map(function(entry) { return entry.name; }).should.eql([
           'documentedDigestRetainedVerbatim',
           'rowCount',
@@ -1284,7 +1312,8 @@ module.exports = function() {
           'authFalse',
           'authTryInherited',
           'canonicalRowsTheDigestStandsFor',
-          'registrationOrderContract'
+          'registrationOrderContract',
+          'measuredSha256RecomputedFromLiveTable'
         ]);
       });
     });
@@ -1553,6 +1582,120 @@ module.exports = function() {
     });
 
     // -----------------------------------------------------------------------------------------
+    // The cache-prefix {assetType} confinement contract (SEC-1 / SV-01, coverage gap SV-40)
+    // -----------------------------------------------------------------------------------------
+
+    /**
+     * The one route whose confinement root is user-controlled. lib/http/staticRoutes.js returns
+     * `'./public/' + request.params.assetType` as Inert's root and {assetType} arrives PERCENT-DECODED
+     * after route matching, so an unguarded value moves that root out of ./public. Measured over real
+     * HTTP against this tree immediately before the guard was restored:
+     *   GET /cache-prefix-1/..%2fconfig/local.yaml -> 200 + config/local.yaml (the Yar seal password)
+     *   GET /cache-prefix-1/..%2F..%2F(...)%2Fetc/passwd -> 200 + /etc/passwd
+     * The route is `auth mode=try` with zero pre-handlers, so both were unauthenticated, and the seal
+     * password turns the read into session forgery for any account.
+     *
+     * Nothing under test/ asserted any of this before (review finding SV-40), so neither `npm test` nor
+     * `node test/baseline/replay.js` could detect the guard being added OR removed. The literals below
+     * are declared IN THIS FILE and no artifact is loaded, so a defect in the parity harness cannot make
+     * this suite pass; test/baseline/responses.json#assetConfinementContract carries the same probes for
+     * the replay CLI, and the two are deliberately independent.
+     *
+     * Both directions are asserted. An over-eager guard that 404s a legitimate asset URL is a parity
+     * failure exactly as loudly as a missing one, which is what the two positive controls pin.
+     */
+    describe('the cache-prefix asset confinement contract (SEC-1, TR5)', function() {
+      var PREFIX = '/' + config.app.cachePrefix + '1';
+
+      var TRAVERSALS = [
+        { label : 'the encoded-slash escape',        path : PREFIX + '/..%2fconfig/local.yaml' },
+        { label : 'the fully encoded escape',        path : PREFIX + '/%2e%2e%2fconfig/local.yaml' },
+        { label : 'the mixed literal/encoded form',  path : PREFIX + '/.%2e%2fpackage.json' },
+        { label : 'the escape out of the checkout',
+          path : PREFIX + '/..%2F..%2F..%2F..%2F..%2F..%2Fetc/passwd' },
+        { label : 'the backslash form',              path : PREFIX + '/..%5cconfig/local.yaml' },
+        { label : 'a traversal in the {path*} tail', path : PREFIX + '/js/../../config/local.yaml' }
+      ];
+
+      before(function() {
+        flow.switchUser('');
+      });
+
+      it('allows exactly the eight configured app.prefixes keys, so no legitimate asset URL is refused',
+        function() {
+          // The allow-list is read from configuration rather than restated in the module, and public/
+          // holds exactly six directories - every one of them a member. That superset relation is what
+          // makes the refusal observably neutral, so it is asserted rather than argued.
+          var configured = Object.keys(config.app.prefixes).sort(),
+              onDisk     = fs.readdirSync(path.join(__dirname, '..', '..', '..', 'public'))
+                             .filter(function(entry) {
+                               return fs.statSync(path.join(__dirname, '..', '..', '..', 'public', entry))
+                                        .isDirectory();
+                             });
+
+          configured.should.eql(['components', 'css', 'fonts', 'img', 'js', 'models', 'partials',
+                                 'skulpt']);
+          onDisk.forEach(function(directory) {
+            configured.indexOf(directory).should.not.eql(-1, directory + ' is not in the allow-list');
+          });
+        });
+
+      it('still serves a real file under a configured asset directory', function(done) {
+        this.timeout(30000);
+
+        get(PREFIX + '/js/trinket-config.js').end(function(err, response) {
+          if (err) { return done(err); }
+
+          try {
+            response.statusCode.should.eql(200);
+            response.text.length.should.be.above(0);
+          }
+          catch (assertion) { return done(assertion); }
+
+          return done();
+        });
+      });
+
+      it('answers 404 for an asset directory that does not exist, exactly as it did before the guard',
+        function(done) {
+          this.timeout(30000);
+
+          get(PREFIX + '/nonexistentdir/x.js').end(function(err, response) {
+            if (err) { return done(err); }
+
+            try {
+              response.statusCode.should.eql(404);
+            }
+            catch (assertion) { return done(assertion); }
+
+            return done();
+          });
+        });
+
+      TRAVERSALS.forEach(function(traversal) {
+        it('refuses ' + traversal.label + ' with 404 and discloses nothing', function(done) {
+          this.timeout(30000);
+
+          get(traversal.path).end(function(err, response) {
+            if (err) { return done(err); }
+
+            try {
+              response.statusCode.should.eql(404);
+              // The two markers that a file actually escaped: the seal password key from
+              // config/local.yaml and the /etc/passwd root line. Asserted on the body rather than
+              // inferred from the status, so a 404 that still carried file bytes would fail.
+              response.text.should.not.contain('cookieOptions');
+              response.text.should.not.contain('root:x:0:0');
+            }
+            catch (assertion) { return done(assertion); }
+
+            return done();
+          });
+        });
+      });
+    });
+
+    // -----------------------------------------------------------------------------------------
     // The `next` destination contract (P3-1 and the preserved open redirect)
     // -----------------------------------------------------------------------------------------
 
@@ -1712,37 +1855,42 @@ module.exports = function() {
       });
 
       /**
-       * THE PRESERVED OPEN REDIRECT (docs/PRESERVED-QUIRKS.md section 4.4).
+       * THE SEC-4 / SV-02 REFUSALS (docs/PRESERVED-QUIRKS.md section 4.4).
        *
-       * Every candidate is echoed straight back into the Location, byte-for-byte, because `next` is
-       * persisted and read verbatim - which is what the base commit did. An intermediate revision
-       * filtered these to same-origin destinations and this block asserted the refusals; code review
-       * rejected that under R-1 (an open-redirect repair is not one of the four sanctioned diff
-       * categories), R-4 (it changed emitted Location values) and R-6 (excluding three of the cases from
-       * the parity corpus let a behavior-changing build report parity). Three of these shapes are now
-       * ordinary replayed legs of test/baseline/responses.json#assignmentNext as well; the other four are
-       * pinned only here, so the echo cannot narrow silently on any shape.
+       * Every candidate was echoed straight back into a Location at the base commit, because `next` was
+       * persisted and read verbatim. `lib/http/redirect.js#internalDestination` now refuses each of
+       * them, so the handler takes the SAME no-destination branch an absent `next` already took and the
+       * route's declared fallback answers.
+       *
+       * A later revision deleted the filter and this block asserted the echoes instead, on the argument
+       * that an open-redirect repair is not one of R-1's four sanctioned diff categories. The final
+       * security review found the hole live and the deletion unmandated - R-1 cannot license removing a
+       * control any more than adding one, R-4 conditions preservation on a quirk clients may depend on,
+       * and R-6 breaks ambiguities of which there is none here: none of these shapes appears anywhere in
+       * test/baseline/responses.json, so `node test/baseline/replay.js` reports 0 differences either way.
+       * The refusals are asserted here rather than in the corpus precisely because they are the cases
+       * that must NOT replay.
        */
-      describe('a destination is echoed back verbatim, whatever shape it has', function() {
-        ECHOED_DESTINATIONS.forEach(function(echoed) {
-          it('POST /login echoes ' + echoed.label + ' unchanged', function() {
+      describe('an off-origin destination is refused, leaving the declared fallback', function() {
+        REFUSED_DESTINATIONS.forEach(function(refusal) {
+          it('POST /login ignores ' + refusal.label, function() {
             this.timeout(30000);
 
-            return loginWith(echoed.candidate).then(function(response) {
+            return loginWith(refusal.candidate).then(function(response) {
               response.statusCode.should.eql(302);
-              response.headers.location.should.eql(echoed.candidate);
-              response.headers.location.should.not.eql(appOrigin() + '/home');
+              response.headers.location.should.eql(appOrigin() + '/home');
+              response.headers.location.should.not.contain('evil.example');
             });
           });
         });
 
-        it('POST /users echoes an off-origin absolute URL rather than /welcome', function() {
+        it('POST /users ignores an off-origin absolute URL', function() {
           this.timeout(30000);
 
           return signupWith('https://evil.example/steal').then(function(response) {
             response.statusCode.should.eql(302);
-            response.headers.location.should.eql('https://evil.example/steal');
-            response.headers.location.should.not.eql(appOrigin() + '/welcome');
+            response.headers.location.should.eql(appOrigin() + '/welcome');
+            response.headers.location.should.not.contain('evil.example');
           });
         });
       });
@@ -1822,16 +1970,18 @@ module.exports = function() {
             });
         });
 
-        it('persists an off-origin destination too, and hands it back unchanged', function() {
+        it('does not persist an off-origin destination', function() {
           this.timeout(30000);
 
-          // The preserved open redirect reaches the OAuth entry point as well: GET /auth/google stores
-          // request.query.next verbatim, and whichever consumer reads the session slot next emits it.
+          // The SEC-4 / SV-02 filter covers the OAuth entry point as well: GET /auth/google refuses to
+          // store an off-origin request.query.next at all, so whichever consumer reads the session slot
+          // next finds nothing there and answers the declared fallback.
           return driveFlow('/auth/google', 'https://evil.example/steal', '/login',
                            credentials, 302)
             .then(function(response) {
               response.statusCode.should.eql(302);
-              response.headers.location.should.eql('https://evil.example/steal');
+              response.headers.location.should.eql(appOrigin() + '/home');
+              response.headers.location.should.not.contain('evil.example');
             });
         });
 

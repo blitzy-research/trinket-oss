@@ -33,8 +33,9 @@
  *      which is the array app.js:L304 hands to server.route(). Every countable gate in the artifact
  *      is recomputed from the live table as well. On top of those, documentedAnchorGate() evaluates
  *      the Technical Specification's own published anchor for this table as a MANDATORY pass/fail
- *      gate — ten clauses, computed live, including that the frozen 32-character digest literal is
- *      still stored verbatim and that the 233 canonical rows it names are unchanged.
+ *      gate — eleven clauses, computed live, including that the frozen 32-character digest literal is
+ *      still stored verbatim, that the 233 canonical rows it names are unchanged, and that the sorted
+ *      sha256 RECOMPUTED from those live rows equals the stored one (review finding SV-32).
  *      The table is ALSO derived a second, independent way — through capture.js#captureRouteTable,
  *      which walks config.routes and hashes for itself — and driftGates() compares the two derivations
  *      against EACH OTHER as well as against the artifact, so "the two implementations agree" is
@@ -105,7 +106,7 @@ function sha256(text) {
  *
  * An earlier revision carried its own line-for-line copy of authDescriptor, canonicalRow,
  * liveServerAuthDefault and canonicalizeLiveTable, differing from capture.js's only in what `byKey`
- * holds; a later one declared the ten-clause anchor gate and the published digest literal here while
+ * holds; a later one declared the anchor gate and the published digest literal here while
  * route-table.json named capture.js as their home. Two copies of a canonicalizer, or a gate declared in
  * one file and advertised as living in another, is exactly how a gate rots: it came to be enforced in
  * one file and marked UNEVALUATED in the other, and the artifact could not name a single honest
@@ -557,6 +558,12 @@ function replayResponses(server, committedCorpus) {
     pushDifference(differences, 'responses', 'gates.assignmentNextLocations',
                    committedCorpus.gates.assignmentNextLocations,
                    capture.assignmentNextLocationMap(measured.assignmentNext));
+    // The cache-prefix {assetType} confinement probes (review findings SEC-1 / SV-01 and SV-40). Gated in
+    // BOTH directions by construction: the traversal rows are recorded at 404 and the legitimate row at
+    // 200, so re-opening the escape and over-rejecting a real asset each report a difference here.
+    pushDifference(differences, 'responses', 'gates.assetConfinementStatuses',
+                   committedCorpus.gates.assetConfinementStatuses,
+                   capture.assetConfinementStatusMap(measured.assetConfinement));
     pushDifference(differences, 'responses', 'selectionRule.expectedCount',
                    committedCorpus.selectionRule.expectedCount, measured.unauthenticated.length);
     pushDifference(differences, 'responses', 'selectionRule.paths',
@@ -571,6 +578,7 @@ function replayResponses(server, committedCorpus) {
       // message asymmetry, gated explicitly here (review finding P4-A).
       gateEntries : capture.corpusGates(committedCorpus, measured, capture.liveAppUrlOrigin())
                       .concat(capture.cookieContractGates(committedCorpus, measured))
+                      .concat(capture.assetConfinementGates(committedCorpus, measured))
                       .concat(errorMappingGates(committedCorpus, measured))
     };
   });
@@ -1168,6 +1176,7 @@ function loadArtifacts() {
       committedCorpus = loadRequiredArtifact('responses', capture.ARTIFACT_PATH,
                                              ['metadata', 'gates', 'selectionRule', 'requestPolicy',
                                               'normalizationContract', 'errorMappingContract',
+                                              'assetConfinementContract',
                                               'buildArtifacts', 'unauthenticated', 'authenticated',
                                               'assignmentNext']);
 

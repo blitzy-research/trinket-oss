@@ -21,6 +21,10 @@ require('../setup');
 var _            = require('underscore'),
     db           = require('../../config/db'),
     mongoose     = require('mongoose'),
+    // The ENDPOINT half of this gate used to be declared here. It now lives in one side-effect-free
+    // module that test/baseline/capture.js requires too, because that second destructive caller had no
+    // endpoint check at all (review finding SV-04) and two copies of a security gate drift.
+    endpointGate = require('./disposable-endpoint'),
     initializing = true,
     instance;
 
@@ -40,107 +44,11 @@ var DISPOSABLE_DATABASE = /^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/;
 // documentation said so: a production deployment can legitimately own a database called `test`. So the
 // HOST the driver is actually talking to is validated too, against a loopback-only allow-list.
 //
-// Only loopback is disposable. A test suite that drops a database has no business reaching another machine,
-// and every documented way of running this suite - `npm test`, and test/setup.js's forced
-// `db.mongo.host: localhost` - stays on the loopback interface. `::1` is listed in both its bare and its
-// bracketed form because a connection string may carry either.
-var DISPOSABLE_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]'];
-
-/**
- * Reads every host the live connection is addressing, as `host:port` strings.
- *
- * Two sources are consulted and both must agree with the allow-list. `connection.host` is what mongoose
- * recorded, and the driver's own `options.hosts` is the authoritative seed list - it is what exposes a
- * SECOND seed, which `config/db.js:L20-L30` appends whenever `db.mongoread.host` is set.
- *
- * @param {object} connection The live mongoose connection.
- * @returns {string[]|null} The addressed endpoints, or `null` when they cannot be determined.
- */
-function connectionEndpoints(connection) {
-  var client = typeof connection.getClient === 'function' ? connection.getClient() : connection.client,
-      options = client && (client.options || (client.s && client.s.options)),
-      seeds = options && options.hosts,
-      endpoints = [];
-
-  // De-duplicated, because mongoose's record and the driver's seed list normally describe the same
-  // endpoint and naming it twice would only make the refusal message harder to read. Both are still read:
-  // a discrepancy between them adds an entry rather than hiding one.
-  function record(endpoint) {
-    if (endpoints.indexOf(endpoint) === -1) {
-      endpoints.push(endpoint);
-    }
-  }
-
-  if (connection.host) {
-    record(String(connection.host) + ':' + connection.port);
-  }
-
-  if (Array.isArray(seeds)) {
-    seeds.forEach(function(seed) {
-      // The driver models a seed as a HostAddress object; older shapes and connection strings can present
-      // it as a plain string. Both are accepted, and anything else is reported verbatim so an unrecognised
-      // shape fails closed rather than being read as loopback.
-      record(seed && typeof seed === 'object' ? String(seed.host) + ':' + seed.port : String(seed));
-    });
-  }
-
-  return endpoints.length ? endpoints : null;
-}
-
-/**
- * Describes any part of the live connection identity that makes the endpoint non-disposable.
- *
- * @param {object} connection The live mongoose connection.
- * @returns {string[]} Human-readable reasons; empty when the identity is a credential-free loopback server.
- */
-function nonDisposableIdentityReasons(connection) {
-  var client = typeof connection.getClient === 'function' ? connection.getClient() : connection.client,
-      options = client && (client.options || (client.s && client.s.options)),
-      endpoints = connectionEndpoints(connection),
-      reasons = [];
-
-  if (!options) {
-    reasons.push('the driver client exposes no options, so the endpoint cannot be identified');
-
-    return reasons;
-  }
-
-  if (!endpoints) {
-    reasons.push('no host could be read from the connection');
-  }
-  else {
-    endpoints.forEach(function(endpoint) {
-      var host = endpoint.slice(0, endpoint.lastIndexOf(':'));
-
-      if (DISPOSABLE_HOSTS.indexOf(host) === -1) {
-        reasons.push('it addresses the non-loopback host ' + JSON.stringify(endpoint));
-      }
-    });
-  }
-
-  // A credential means somebody provisioned this server for something. Checked on the driver's resolved
-  // credentials and on mongoose's own record, because a connection string can carry them either way.
-  if (options.credentials || connection.user || connection.pass) {
-    reasons.push('it authenticates as ' +
-      JSON.stringify((options.credentials && options.credentials.username) || connection.user || 'a user'));
-  }
-
-  // An SRV record, a replica set or TLS all describe a provisioned cluster rather than a throwaway local
-  // mongod, and none of the three is reachable through the identity test/setup.js forces.
-  if (options.srvHost) {
-    reasons.push('it resolves the SRV cluster ' + JSON.stringify(options.srvHost));
-  }
-
-  if (options.replicaSet) {
-    reasons.push('it targets the replica set ' + JSON.stringify(options.replicaSet));
-  }
-
-  if (options.tls) {
-    reasons.push('it negotiates TLS');
-  }
-
-  return reasons;
-}
+// The implementation moved to ./disposable-endpoint (review finding SV-04). It was declared here and
+// nowhere else, which meant the tree's OTHER destructive caller - test/baseline/capture.js - had no
+// endpoint check at all while claiming in its own docblock to be this function applied to a second
+// caller. It is now one module both files require, so neither can be hardened without the other.
+var nonDisposableIdentityReasons = endpointGate.nonDisposableIdentityReasons;
 
 /**
  * Fails closed unless the process is running as a test AND the live connection is pointed at a disposable
@@ -192,9 +100,7 @@ function assertDisposableDatabase(operation) {
 
   if (reasons.length) {
     throw new Error('db helper refused to ' + operation + ' the database ' + JSON.stringify(name) +
-      ': the live connection is not a disposable endpoint because ' + reasons.join(', ') + '. Only a ' +
-      'credential-free loopback mongod (' + DISPOSABLE_HOSTS.join(', ') + ') with no SRV cluster, no ' +
-      'replica set and no TLS is treated as disposable. test/setup.js forces that identity through ' +
+      ': ' + endpointGate.refusalTail(reasons) + ' test/setup.js forces that identity through ' +
       '$NODE_CONFIG; a run that reaches here has had it overridden.');
   }
 

@@ -15,8 +15,21 @@ app:
   plugins:
     session:
       cookieOptions:
-        # CHANGE THIS - must be at least 32 characters
-        password: 'change-this-to-a-secure-password-min-32-chars!'
+        # CHANGE THIS. It must be at least 32 characters, and it must be SECRET: this value is the
+        # key that seals and verifies every session cookie, so anyone who knows it can forge a
+        # session for any account.
+        #
+        # The placeholder below is deliberately TOO SHORT, so app.js's startup guard rejects it and
+        # the application refuses to boot until it is replaced. That is the point. An earlier
+        # revision of this file shipped a 46-character placeholder, which SATISFIED the length guard
+        # - the only check there is - so copying this file verbatim produced a server that started
+        # normally while sealing its sessions with a password published in the repository
+        # (review finding SV-36). Failing closed is the correct default for a secret.
+        #
+        # Generate one instead of inventing one:
+        #
+        #     node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+        password: 'REPLACE_ME'
         domain: ''
         isSecure: false  # Set true in production with HTTPS
 

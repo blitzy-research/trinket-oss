@@ -36,8 +36,8 @@
  *     The evaluator sits in the harness that OWNS route-table.json for two reasons, and review finding
  *     P3-1 is both of them: that artifact publishes capture.js as the evaluator's home, and the stored
  *     verdict `gates.documentedAnchorGateSatisfied` can only be REGENERATED rather than hand-authored by
- *     the file that writes the artifact. capture.js therefore both evaluates the gate — turning all ten
- *     clauses and the verdict into entries of its own gate summary, so a --dry-run exits non-zero and a
+ *     the file that writes the artifact. capture.js therefore both evaluates the gate — turning all
+ *     eleven clauses and the verdict into entries of its own gate summary, so a --dry-run exits non-zero and a
  *     write is refused — and still reports the digest STRING through `unreproducibleGate()`, whose verdict
  *     is admissible only while the artifact declares `gates.documentedDigestReproduced === 'none'`. The
  *     canonicalizer is shared the same way, so there is exactly one implementation of every half.
@@ -67,6 +67,10 @@ var chai    = require('chai'),
     should  = chai.should(),
     fs      = require('fs'),
     path    = require('path'),
+    // Used to recompute the route-table digest INDEPENDENTLY of the harness, which is what makes the
+    // clause-11 assertions evidence rather than a tautology (review finding SV-32).
+    crypto  = require('crypto'),
+    config  = require('config'),
     capture = require('../../baseline/capture'),
     replay  = require('../../baseline/replay');
 
@@ -288,14 +292,14 @@ describe('the R-6 baseline harness', function() {
       replaySource.should.contain('var DOCUMENTED_DIGEST    = capture.DOCUMENTED_DIGEST;');
     });
 
-    it('evaluates exactly the ten clauses route-table.json publishes, in that order', function() {
+    it('evaluates exactly the eleven clauses route-table.json publishes, in that order', function() {
       var verdict   = replay.documentedAnchorGate(measuredFromArtifact(), committedTable),
           published = committedTable.gates.documentedAnchorGate.clauses.map(function(text) {
             return String(text).split(' ')[0];
           });
 
       verdict.clauses.map(function(clause) { return clause.name; }).should.eql(published);
-      verdict.clauses.length.should.eql(10);
+      verdict.clauses.length.should.eql(11);
       verdict.failures.should.eql([]);
       verdict.satisfied.should.eql(true);
       verdict.documentedDigest.should.eql(replay.DOCUMENTED_DIGEST);
@@ -347,6 +351,84 @@ describe('the R-6 baseline harness', function() {
       verdict.satisfied.should.eql(false);
     });
 
+    // -----------------------------------------------------------------------------------------
+    // Clause 11 — the digest this gate actually recomputes (review finding SV-32)
+    // -----------------------------------------------------------------------------------------
+
+    /**
+     * The point of clause 11 is that it DERIVES a value rather than comparing two stored ones. Clause 1
+     * cannot do that — the published 32-character literal has no published serialization to recompute it
+     * from (ADJ-4) — so before clause 11 the gate could report `satisfied` without any digest having been
+     * computed from the running server. These four tests pin the derivation itself: that the measured side
+     * is a real hash of the live rows, that it is not read out of the artifact, that it moves when the rows
+     * move, and that it uses the SORTED serialization the artifact publishes rather than registration order.
+     */
+    it('RECOMPUTES the measured digest from the live rows rather than reading it back', function() {
+      var measured = measuredFromArtifact(),
+          verdict  = replay.documentedAnchorGate(measured, committedTable),
+          clause   = verdict.clauses.filter(function(entry) {
+            return entry.name === 'measuredSha256RecomputedFromLiveTable';
+          })[0],
+          // Computed here, independently, straight from the artifact's published recipe.
+          expected = crypto.createHash('sha256')
+                       .update(measured.canonical.slice().sort().join('\n'), 'utf8').digest('hex');
+
+      clause.satisfied.should.eql(true);
+      clause.measured.measuredSha256.should.eql(expected);
+      clause.measured.measuredSha256First32.should.eql(expected.slice(0, 32));
+
+      // The documented side is the artifact's stored digest, so the clause is a comparison of a DERIVED
+      // value against a STORED one — which is exactly what clause 1 is not.
+      clause.documented.measuredSha256.should.eql(committedTable.gates.measuredSha256);
+      clause.documented.measuredSha256First32.should.eql(committedTable.gates.measuredSha256First32);
+
+      // And the derived value is a full-width sha256, unlike the 32-character published literal.
+      clause.measured.measuredSha256.length.should.eql(64);
+      clause.measured.measuredSha256.should.not.eql(replay.DOCUMENTED_DIGEST);
+    });
+
+    it('FAILS the measuredSha256RecomputedFromLiveTable clause when a live row changes', function() {
+      var measured = measuredFromArtifact();
+
+      measured.canonical[0] = 'GET | /injected | false | 0';
+
+      var verdict = replay.documentedAnchorGate(measured, committedTable);
+
+      // Both row clauses must fail together. That they cannot be made to disagree is the property being
+      // asserted: the digest is a function of the rows, so no row edit can satisfy one and break the other.
+      verdict.failures.should.contain('measuredSha256RecomputedFromLiveTable');
+      verdict.failures.should.contain('canonicalRowsTheDigestStandsFor');
+      verdict.satisfied.should.eql(false);
+    });
+
+    it('FAILS the clause when the artifact\'s stored digest is edited to anything else', function() {
+      var tampered = JSON.parse(JSON.stringify(committedTable));
+
+      tampered.gates.measuredSha256 = crypto.createHash('sha256').update('not the table').digest('hex');
+
+      var verdict = replay.documentedAnchorGate(measuredFromArtifact(), tampered);
+
+      verdict.failures.should.contain('measuredSha256RecomputedFromLiveTable');
+      verdict.satisfied.should.eql(false);
+    });
+
+    it('uses the SORTED serialization, so a permutation is caught by the order clause instead',
+      function() {
+        var measured = measuredFromArtifact(),
+            rotated  = measured.canonical.slice(1).concat(measured.canonical.slice(0, 1));
+
+        measured.canonical = rotated;
+
+        var verdict = replay.documentedAnchorGate(measured, committedTable),
+            failed  = verdict.failures;
+
+        // A permutation of the same 233 rows sorts to the same list, so the sorted digest is UNCHANGED.
+        // This is the artifact's published contract ("sort, join \n"), not an accident, and it is why the
+        // registration-order fingerprint is a separate clause rather than being folded into this one.
+        failed.should.not.contain('measuredSha256RecomputedFromLiveTable');
+        failed.should.not.contain('canonicalRowsTheDigestStandsFor');
+      });
+
     it('is ENFORCED by the replay run, not merely computed', function() {
       // These are what turn the verdict into recorded differences, which is what sets replay's exit code.
       // The artifact's own stored flag is ANDed with the freshly measured verdict, so neither a stale
@@ -369,7 +451,7 @@ describe('the R-6 baseline harness', function() {
       committedTable.gates.documentedDigestReproduced.should.eql('none');
     });
 
-    it('gates all ten clauses AND the verdict inside the capture CLI, not only inside the replay',
+    it('gates all eleven clauses AND the verdict inside the capture CLI, not only inside the replay',
       function() {
         // REVIEW FINDING P3-1. route-table.json claims capture.js#routeTableGates turns every clause and
         // the verdict into pass/fail entries; these are the lines that make the claim true. main() sets
@@ -431,13 +513,19 @@ describe('the R-6 baseline harness', function() {
     });
 
     it('leaves only genuine preconditions UNEVALUATED', function() {
-      // The remaining UNEVALUATED gates are the absent CSS artifacts and the corpus skipped under
-      // --routes-only. Those are real preconditions (`npm run build` needs public/components hydrated),
-      // not bypassed contracts. Nothing for the anchor.
+      // The remaining UNEVALUATED gates are the absent CSS artifacts, the corpus skipped under
+      // --routes-only, and an artifact that predates the asset-confinement contract. Those are real
+      // preconditions (`npm run build` needs public/components hydrated), not bypassed contracts.
+      // Nothing for the anchor.
       var unevaluated = captureSource.match(/unevaluatedGate\(/g) || [];
 
-      // One declaration plus three calls: two build-artifact gates and the --routes-only corpus gate.
-      unevaluated.length.should.eql(4);
+      // One declaration plus four calls: two build-artifact gates, the --routes-only corpus gate, and
+      // the assetConfinementContract gate for an artifact generated before that block existed. The last
+      // one cannot be reached through replay.js at all - loadArtifacts() lists
+      // `assetConfinementContract` among the required blocks, so a missing one is a precondition failure
+      // there - and it exists so that capture.js's own gate summary reports the absence rather than
+      // silently gating nothing.
+      unevaluated.length.should.eql(5);
 
       // The retired key is COMPARED against, never interpolated into a printed reason. Interpolating it
       // is what produced the literal string "undefined" in a gate nobody evaluated; passing it as the
@@ -446,8 +534,257 @@ describe('the R-6 baseline harness', function() {
     });
 
     it('names the same clause count the artifact advertises', function() {
-      committedTable.gates.documentedAnchorGate.clauses.length.should.eql(10);
+      committedTable.gates.documentedAnchorGate.clauses.length.should.eql(11);
       committedTable.gates.documentedAnchorGateSatisfied.should.eql(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // The destructive-operation endpoint gate (review finding SV-04)
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * capture.js and test/helpers/db.js are the only two modules in this tree that destroy data, and
+   * before SV-04 only db.js checked WHICH SERVER it was destroying data on. capture.js validated
+   * NODE_ENV, the database name pattern and the name it had forced - all of which a remote,
+   * credentialed, SRV-resolved, replica-set or TLS endpoint can satisfy, because a provisioned
+   * deployment may legitimately own a database called `test`.
+   *
+   * These tests pin two things: that the rule is ONE implementation rather than two lookalikes, and
+   * that it refuses every hazardous connection shape. They drive the pure functions with synthetic
+   * connection objects and never open a socket - SV-04 says "Do not runtime-test", and nothing in this
+   * repository may point a driver at a non-loopback host to prove a negative.
+   */
+  describe('the destructive-operation endpoint gate (SV-04)', function() {
+
+    var endpointGate = require('../../helpers/disposable-endpoint');
+
+    /**
+     * Builds a synthetic mongoose-connection shape. Only the fields the gate reads are modelled.
+     *
+     * @param   {Object} spec Any of host, port, user, pass, hosts, credentials, srvHost, replicaSet, tls.
+     * @returns {Object} A connection-like object.
+     */
+    function connection(spec) {
+      return {
+        host     : spec.host,
+        port     : spec.port || 27017,
+        user     : spec.user,
+        pass     : spec.pass,
+        client   : { options : { hosts       : spec.hosts,
+                                 credentials : spec.credentials,
+                                 srvHost     : spec.srvHost,
+                                 replicaSet  : spec.replicaSet,
+                                 tls         : spec.tls } }
+      };
+    }
+
+    /** A credential-free loopback mongod - the only identity the gate accepts. */
+    function disposable(extra) {
+      var spec = { host : 'localhost', hosts : [{ host : 'localhost', port : 27017 }] };
+
+      Object.keys(extra || {}).forEach(function(key) { spec[key] = extra[key]; });
+
+      return connection(spec);
+    }
+
+    it('is one shared implementation, not a copy in each destructive caller', function() {
+      var dbSource      = fs.readFileSync(path.join(__dirname, '../../helpers/db.js'), 'utf8'),
+          captureSource = fs.readFileSync(capture.__filename || path.join(__dirname,
+                            '../../baseline/capture.js'), 'utf8');
+
+      // Both destructive callers require the shared module...
+      dbSource.should.contain("require('./disposable-endpoint')");
+      captureSource.should.contain("require('../helpers/disposable-endpoint')");
+
+      // ...and NEITHER declares the rule itself any more. These were the two copies SV-04's fix merged;
+      // if a later edit re-inlines either one, this fails rather than silently allowing them to drift.
+      dbSource.should.not.contain('function nonDisposableIdentityReasons(');
+      captureSource.should.not.contain('function nonDisposableIdentityReasons(');
+      dbSource.should.not.contain('var DISPOSABLE_HOSTS =');
+      captureSource.should.not.contain('var DISPOSABLE_HOSTS =');
+
+      // And capture.js re-exports the very object db.js uses, so the two cannot be different functions.
+      capture.endpointGate.should.equal(endpointGate);
+      capture.endpointGate.nonDisposableIdentityReasons.should.be.a('function');
+    });
+
+    it('loads without side effects, which is what lets the CLI share it with the Mocha helper',
+      function() {
+        var source = fs.readFileSync(path.join(__dirname, '../../helpers/disposable-endpoint.js'),
+                       'utf8'),
+            // Comments are stripped first: this module's header EXPLAINS why it may not require
+            // anything, and naming `require(` in that explanation must not trip the check on itself.
+            code   = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+
+        // The reason this module exists separately at all: test/helpers/db.js opens a connection and
+        // pulls in the chai/sinon bootstrap on require, so capture.js - a CLI that runs outside Mocha -
+        // could never have required it. A require() creeping in here would recreate that problem.
+        code.should.not.contain('require(');
+        code.should.not.contain('process.env');
+        code.should.not.contain('mongoose');
+
+        // It is pure functions over an argument, so it holds no module-level mutable state either.
+        code.should.contain('function nonDisposableIdentityReasons(connection)');
+        code.should.contain('module.exports');
+      });
+
+    it('accepts every loopback spelling a connection string can carry', function() {
+      endpointGate.nonDisposableIdentityReasons(disposable()).should.eql([]);
+      endpointGate.nonDisposableIdentityReasons(
+        connection({ host : '127.0.0.1', hosts : [{ host : '127.0.0.1', port : 27017 }] })).should.eql([]);
+      endpointGate.nonDisposableIdentityReasons(
+        connection({ host : '[::1]', hosts : ['[::1]:27017'] })).should.eql([]);
+      endpointGate.nonDisposableIdentityReasons(
+        connection({ host : '::1', hosts : [{ host : '::1', port : 27017 }] })).should.eql([]);
+    });
+
+    it('refuses a non-loopback host, including one that appears only as a second seed', function() {
+      var remote = endpointGate.nonDisposableIdentityReasons(
+                     connection({ host  : 'db.prod.example.com',
+                                  hosts : [{ host : 'db.prod.example.com', port : 27017 }] }));
+
+      remote.length.should.eql(1);
+      remote[0].should.contain('non-loopback host');
+      remote[0].should.contain('db.prod.example.com:27017');
+
+      // config/db.js appends a SECOND seed whenever db.mongoread.host is set, so a gate that read only
+      // mongoose's own `connection.host` would call this loopback and be wrong.
+      var second = endpointGate.nonDisposableIdentityReasons(
+                     connection({ host  : 'localhost',
+                                  hosts : [{ host : 'localhost', port : 27017 },
+                                           { host : 'replica.example.com', port : 27017 }] }));
+
+      second.length.should.eql(1);
+      second[0].should.contain('replica.example.com:27017');
+    });
+
+    it('refuses a credential, from either the driver or mongoose', function() {
+      endpointGate.nonDisposableIdentityReasons(disposable({ credentials : { username : 'admin' } }))
+        .should.eql(['it authenticates as "admin"']);
+      endpointGate.nonDisposableIdentityReasons(disposable({ user : 'root' }))
+        .should.eql(['it authenticates as "root"']);
+      endpointGate.nonDisposableIdentityReasons(disposable({ pass : 'secret' }))
+        .should.eql(['it authenticates as "a user"']);
+    });
+
+    it('refuses an SRV cluster, a replica set and TLS', function() {
+      endpointGate.nonDisposableIdentityReasons(disposable({ srvHost : 'cluster0.mongodb.net' }))
+        .should.eql(['it resolves the SRV cluster "cluster0.mongodb.net"']);
+      endpointGate.nonDisposableIdentityReasons(disposable({ replicaSet : 'rs0' }))
+        .should.eql(['it targets the replica set "rs0"']);
+      endpointGate.nonDisposableIdentityReasons(disposable({ tls : true }))
+        .should.eql(['it negotiates TLS']);
+    });
+
+    it('fails closed when the connection cannot be identified at all', function() {
+      // Neither of these is a loopback server; a gate that returned "no reasons" for an unreadable
+      // connection would treat "I could not tell" as "it is safe".
+      endpointGate.nonDisposableIdentityReasons({ host : 'localhost', port : 27017 })
+        .should.eql(['the driver client exposes no options, so the endpoint cannot be identified']);
+      endpointGate.nonDisposableIdentityReasons({ client : { options : {} } })
+        .should.eql(['no host could be read from the connection']);
+    });
+
+    it('reports every reason at once, so one refusal does not mask the rest', function() {
+      var reasons = endpointGate.nonDisposableIdentityReasons(
+                      connection({ host        : 'db.example.com',
+                                   hosts       : [{ host : 'db.example.com', port : 27017 }],
+                                   credentials : { username : 'admin' },
+                                   srvHost     : 'cluster0.mongodb.net',
+                                   replicaSet  : 'rs0',
+                                   tls         : true }));
+
+      reasons.length.should.eql(5);
+      endpointGate.refusalTail(reasons).should.contain('db.example.com');
+      endpointGate.refusalTail(reasons).should.contain('credential-free loopback mongod');
+    });
+
+    it('is wired into the capture CLI\'s destructive gate, after the four name clauses', function() {
+      var captureSource = fs.readFileSync(path.join(__dirname, '../../baseline/capture.js'), 'utf8'),
+          gateBody      = captureSource.slice(
+                            captureSource.indexOf('function assertDisposableDatabase(operation) {'));
+
+      gateBody = gateBody.slice(0, gateBody.indexOf('\n}\n'));
+
+      // The endpoint check must be INSIDE assertDisposableDatabase, not merely imported at the top of
+      // the file, and it must read the LIVE connection rather than what configureRuntime() asked for.
+      gateBody.should.contain('endpointGate.nonDisposableIdentityReasons(');
+      gateBody.should.contain("require('mongoose').connection");
+      gateBody.should.contain('endpointGate.refusalTail(');
+      // It throws rather than returning, so a refusal cannot be ignored by a caller that drops the value.
+      gateBody.should.contain('throw new Error(');
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // The asset-confinement contract (review findings SEC-1 / SV-01 and SV-40)
+  // -------------------------------------------------------------------------------------------
+
+  describe('the asset-confinement contract (SV-40)', function() {
+
+    it('publishes a probe for every shape, with the traversals recorded as refusals', function() {
+      var contract = committedCorpus.assetConfinementContract;
+
+      contract.probes.length.should.eql(8);
+      contract.refusedStatus.should.eql(404);
+      contract.legitimateStatus.should.eql(200);
+
+      var traversals = contract.probes.filter(function(probe) {
+        return probe.kind === 'traversal';
+      });
+
+      traversals.length.should.be.above(4);
+      traversals.forEach(function(probe) {
+        probe.expectedStatus.should.eql(contract.refusedStatus);
+      });
+
+      // The positive controls are what make this gated in BOTH directions: an over-eager guard that
+      // refused a real asset URL would fail the contract too.
+      contract.probes.filter(function(probe) {
+        return probe.path === contract.servedProbe;
+      })[0].expectedStatus.should.eql(contract.legitimateStatus);
+    });
+
+    it('keeps the published gate and the contract in agreement, probe for probe', function() {
+      // Two copies of the same measurement would be how this rots, so they are asserted equal rather
+      // than trusted. The gate is the value replay.js compares; the contract is the prose a reader sees.
+      var contract = committedCorpus.assetConfinementContract,
+          fromProbes = {};
+
+      contract.probes.forEach(function(probe) {
+        fromProbes[probe.path] = probe.expectedStatus;
+      });
+
+      committedCorpus.gates.assetConfinementStatuses.should.eql(contract.statuses);
+      contract.statuses.should.eql(fromProbes);
+    });
+
+    it('recomputes the gate on every write rather than carrying it forward', function() {
+      captureSource.should.contain("'assetConfinementStatuses'");
+      captureSource.should.contain('merged.gates.assetConfinementStatuses');
+      captureSource.should.contain('captureAssetConfinement(server)');
+      // Enforced in all three places, exactly as the documented anchor is: the capture CLI's gate
+      // summary, the replay CLI's difference list, and a suite that shares no code with either.
+      captureSource.should.contain('.concat(assetConfinementGates(committed, measured))');
+      replaySource.should.contain("'gates.assetConfinementStatuses'");
+      replaySource.should.contain('capture.assetConfinementGates(committedCorpus, measured)');
+      replaySource.should.contain("'assetConfinementContract',");
+    });
+
+    it('reads the cache prefix from configuration rather than restating it', function() {
+      // A hard-coded prefix would stop matching the route the moment config.app.cachePrefix moved, and a
+      // probe that reaches no route answers 404 for the wrong reason - which is the one way this gate
+      // could pass while the hole was open.
+      captureSource.should.contain("require('config').app.cachePrefix");
+      committedCorpus.assetConfinementContract.probes.forEach(function(probe) {
+        probe.path.indexOf('/' + config.app.cachePrefix).should.eql(0);
+      });
+    });
+
+    it('allow-lists exactly the eight configured asset prefixes', function() {
+      committedCorpus.assetConfinementContract.allowList.slice().sort()
+        .should.eql(Object.keys(config.app.prefixes).slice().sort());
     });
   });
 

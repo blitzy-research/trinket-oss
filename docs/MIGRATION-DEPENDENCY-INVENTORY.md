@@ -25,7 +25,7 @@ R-3 imposes three obligations, and this file is how each is met.
 - **Every replaced or major-bumped package.** Completeness is auditable rather than asserted: the dependency name
   sets of the base-commit `package.json` and the committed `package.json` were extracted and diffed, and every name
   in the symmetric difference appears below. The base commit declared **58 runtime and 11 development**
-  dependencies; the committed manifest declares **37 runtime and 10 development** dependencies. Both figures are
+  dependencies; the committed manifest declares **38 runtime and 10 development** dependencies. Both figures are
   re-derivable in one command —
   `node -e "var p=require('./package.json');console.log(Object.keys(p.dependencies).length, Object.keys(p.devDependencies).length)"` —
   and the rubric tables below agree with them row for row.
@@ -53,7 +53,7 @@ tempting upgrade was refused* should read that catalogue; this document records 
 
 - **Lockfile entry counts exclude the root entry.** `package-lock.json`'s `packages` map carries one entry keyed `""`
   for the project itself. Every count below is of the entries *other* than that one, so base = **677** and committed =
-  **465**; add one to each for the raw `Object.keys(...).length`. Earlier revisions mixed the two conventions inside a
+  **466**; add one to each for the raw `Object.keys(...).length`. Earlier revisions mixed the two conventions inside a
   single document and consequently contradicted themselves; the rule above is now applied uniformly.
 - **Mocha run totals are deliberately not published.** A pass total moves every time this changeset adds a spec, and
   earlier revisions quoted a stale one in four places. The non-volatile form — ***`npm test` exits 0 with zero
@@ -67,14 +67,14 @@ tempting upgrade was refused* should read that catalogue; this document records 
 
 | Measure | Base commit | Committed |
 |---|---|---|
-| Runtime dependencies | 58 | **37** |
+| Runtime dependencies | 58 | **38** |
 | Development dependencies | 11 | **10** |
 | `engines` block | **absent entirely** | present — `node >=22.12.0 <23.0.0`, `npm >=10.0.0 <11.0.0` |
 | `packageManager` field | **absent entirely** | present — `npm@10.9.9` |
 | `overrides` block | **absent entirely** | present, **3** entries: `brace-expansion` 2.1.4, `diff` 9.0.0 and `serialize-javascript` 7.0.7 |
 | `package-lock.json` | present, lockfileVersion 3 | regenerated, lockfileVersion 3, committed |
 
-The net runtime reduction of 21 is 23 departures from the runtime block set against 2 additions, and those 23
+The net runtime reduction of 20 is 23 departures from the runtime block set against 3 additions, and those 23
 decompose exactly, with no remainder:
 
 - **11** declared but never required, deleted outright — Rubric 4
@@ -87,18 +87,30 @@ decompose exactly, with no remainder:
 - **3** removed with no replacement at all, because the only consumer was deleted or the binding was never read —
   `optimist`, `tab`, `node-uuid` — Rubric 3
 - **2** replaced by a newly added maintained package — `aws-sdk` and `node-cryptojs-aes` — Rubric 3
-- offset by **only 2 additions**: `@aws-sdk/client-s3` 3.1098.0 and `crypto-js` 4.2.0
+- offset by **3 additions**: `@aws-sdk/client-s3` 3.1098.0, `@aws-sdk/s3-request-presigner` 3.1098.0 and
+  `crypto-js` 4.2.0
 
-That is 23 departures against 2 additions: `58 - 23 + 2 = 37`. The development total is the 2 dead development
+Note that the departure count and the addition count are **not** two views of one number: 2 originals were replaced
+but 3 packages were added, because `aws-sdk` v2 was monolithic and its v3 successor is modular, so the one original
+is succeeded by **two** scoped packages — the S3 client and the presigner. `node-cryptojs-aes` accounts for the third
+addition one-for-one. The one-to-two expansion is the whole of the arithmetic difference, and it is the subject of the
+escalation recorded as Item 6 in *Reconciliation against the plan's dependency projections* below.
+
+That is 23 departures against 3 additions: `58 - 23 + 3 = 38`. The development total is the 2 dead development
 packages removed and `chokidar` gained: `11 - 2 + 1 = 10`. Both figures were re-measured by diffing the two manifests'
 dependency name sets rather than by carrying an estimate forward.
 
-**Only two packages were added**, which is what the plan specified. AWS SDK v3 is modular where v2 was monolithic, so
-`aws-sdk`'s presigned-URL capability does not live in `@aws-sdk/client-s3` — an enumeration of that package's **707**
-exports found **zero** presign-related symbols. Rather than add a third package for it, presigning is implemented in
-`config/aws.js` on the client's own resolved configuration: `client.config.endpointProvider(...)` supplies the bucket
-addressing and `client.config.signer()` returns the same `SignatureV4MultiRegion` instance the separate presigner
-package would itself have used. See Rubric 3 for the parity measurement.
+**Three packages were added, where the plan projected two.** The deviation is recorded here rather than buried,
+escalated as Item 6 of the reconciliation below, and it has one cause. AWS SDK v3 is modular where v2 was monolithic,
+so `aws-sdk`'s presigned-URL capability does not live in `@aws-sdk/client-s3` — an enumeration of that package's
+**707** exports found **zero** presign-related symbols. Presigning is therefore a second scoped package by AWS's own
+design, and `@aws-sdk/s3-request-presigner` 3.1098.0 is declared at exactly the client's version. An earlier revision
+of this changeset instead implemented presigning inside `config/aws.js` against the client's own resolved
+configuration — `client.config.endpointProvider(...)` for bucket addressing and `client.config.signer()` for the
+signature — specifically to hold the addition count at two. Code review rejected that as hand-rolled
+security-sensitive code built on `@internal` members (finding SV-05), and the supported package was adopted. The
+measured consequences of the swap, including the proof that the emitted URL is unchanged where callers can observe it,
+are in *Presigned download URLs: the second AWS package* under Rubric 3.
 
 **There are no private-registry packages.** Every dependency resolves from the public npm registry, with exactly one
 exception at the base commit: `marked`, which was declared as the git URL
@@ -222,8 +234,8 @@ recorded as closed below, so that the direction of travel is visible: `engines.n
 | 2 | **ESCALATION** | one `overrides` entry, pinning `brace-expansion` to `5.0.9` | **three** entries: `brace-expansion` **2.1.4**, `diff` 9.0.0, `serialize-javascript` 7.0.7 | Two escalations in one row. The projected literal `5.0.9` **breaks `minimatch` outright** when forced in, so the pinned value is the lowest version that closes the advisory *and* leaves the resolved tree working. The two additional entries close the only HIGH advisories the development toolchain carried, which R-2 requires and which no single-entry block can reach. *Item 2 in full* below |
 | 3 | **COUNT** | 11 development dependencies remaining | **10** | The projection carried the base figure forward without subtracting the 2 dead development packages it enumerated itself; `chokidar` is then gained. `11 - 2 + 1 = 10` |
 | 4 | **CLOSED** | `chokidar` among the dead **runtime** removals | **out of `dependencies`**, declared in `devDependencies` at 3.6.0 | **Now aligned with the plan's runtime block.** An earlier revision escalated this as a retention, because `nunjucks` resolves `chokidar` for itself at runtime and deleting it breaks the very environment G7 is measured in. Relocating rather than deleting satisfies both: the runtime dependency block no longer names it, and `npm test` and a non-production boot still work. See *`chokidar` deserves its own note* below |
-| 5 | **COUNT** | 12 dead runtime removals and 8 replaced-by-built-in | **11** deleted outright, **1** relocated to `devDependencies`, **4** replaced by a Node built-in, **3** removed with no replacement at all, **2** replaced by a newly added package — plus **2** replaced by a local in-repo module that were never declared | Four arithmetic differences compound. *Item 5 in full* below |
-| 6 | **COUNT** | 2 packages added — `@aws-sdk/client-s3` and `crypto-js` | **exactly those 2** | The projection is met, but only after a candidate third addition was carried and then rejected by measurement. *Item 6 in full* below |
+| 5 | **COUNT** | 12 dead runtime removals and 8 replaced-by-built-in | **11** deleted outright, **1** relocated to `devDependencies`, **4** replaced by a Node built-in, **3** removed with no replacement at all, **2** replaced by a newly added package (which between them account for **3** additions, because AWS SDK v3 is modular — Item 6) — plus **2** replaced by a local in-repo module that were never declared | Four arithmetic differences compound. *Item 5 in full* below |
+| 6 | **ESCALATION** | 2 packages added — `@aws-sdk/client-s3` and `crypto-js` | **3** — those two plus `@aws-sdk/s3-request-presigner` **3.1098.0**, pinned to the client's exact version | The projected literal is satisfiable only by hand-writing SigV4 presigning against three `@internal` SDK members, which code review rejected as an unsupportable security-sensitive implementation (finding SV-05) and which R-1's four sanctioned categories do not license. AWS ships presigning as a *separate package by design*: an enumeration of `@aws-sdk/client-s3`'s **707** exports found **zero** presign symbols, so the capability cannot be reached from the two-package set at all. Adopting it costs nothing on either gate the plan sets — `npm audit --omit=dev` is **unchanged** at `{critical: 0, high: 0, moderate: 3}`, precisely §0.6.1.7's projection, and the emitted URL is unchanged in origin, path encoding and expiry. *Item 6 in full* below |
 
 **Item 1 in full — closed, and how.** `.npmrc` sets `engine-strict=true`, which turns the `engines` block from advice
 into an enforced gate, so an upper bound below npm 11 does not merely warn: it makes every npm command **fail** on a
@@ -236,7 +248,7 @@ above, on the reasoning that AAP §0.9.6's `git clean -xfd && npm ci && npm run 
 that happens to be installed; they ask for **npm 10**, pinned, so the toolchain is reproducible. The right response to
 a checkout carrying npm 11 is therefore to move the checkout onto the pinned resolver, which is exactly what
 `packageManager: "npm@10.9.9"` names and what the container image has always installed. The bounded form was then
-validated end to end under that resolver rather than assumed: with npm 10.9.9, `npm ci` exits 0 (426 packages added),
+validated end to end under that resolver rather than assumed: with npm 10.9.9, `npm ci` exits 0 (427 packages added),
 `npm run build` exits 0 and reproduces both stylesheet artifacts byte-for-byte, and `npm test` exits 0. The EBADENGINE
 refusal under npm 11 is the pin working, and `.npmrc`, `README.md` and `docs/setup.md` all now say so and give the two
 one-line commands that switch a local toolchain — `corepack prepare npm@10.9.9 --activate`, or
@@ -299,31 +311,64 @@ And two of the entries the plan counts among the replaced originals were never m
 replaced by
 `lib/util/catbox-mongoose.js` — the latter appears in neither the base `package.json` nor the base
 `package-lock.json`, so it cannot be subtracted from a declared count. Measured against the two manifests' dependency
-name sets: 11 deleted + 1 relocated + 2 strategies + 4 + 3 + 2 = **23** departures, **2** added, **37** runtime.
+name sets: 11 deleted + 1 relocated + 2 strategies + 4 + 3 + 2 = **23** departures, **3** added, **38** runtime.
 
-**Item 6 in full, because it is the one row where a package was added and then taken back out again.** The v3 swap
-itself is **mandated by AAP G5 and §0.7.2**, which record it as gate-mandated because requiring the v2 SDK fires a real
-`process.on('warning')` event that the zero-warning boot gate forbids. AWS SDK v3 is **modular where v2 was
-monolithic**: v2 served presigned URLs *synchronously* through `client.getSignedUrl('getObject', {...})` for the
-export-download redirect in `lib/controllers/users.js`, and `@aws-sdk/client-s3` ships **no presigner at all** — an
-enumeration of its **707** exports found **zero** presign-related symbols, and v3 offers no synchronous form anywhere.
+**Item 6 in full — why the third addition is unavoidable, and what it cost.** The v3 swap itself is **mandated by AAP
+G5 and §0.7.2**, which record it as gate-mandated because requiring the v2 SDK fires a real `process.on('warning')`
+event that the zero-warning boot gate forbids. AWS SDK v3 is **modular where v2 was monolithic**: v2 served presigned
+URLs *synchronously* through `client.getSignedUrl('getObject', {...})` for the export-download redirect in
+`lib/controllers/users.js`, and `@aws-sdk/client-s3` ships **no presigner at all** — an enumeration of its **707**
+exports found **zero** presign-related symbols, and v3 offers no synchronous form anywhere. So the projection of two
+additions and the mandate to leave v2 collide: one capability the application already had cannot be reached from the
+two-package set.
 
-`@aws-sdk/s3-request-presigner` 3.1098.0 was therefore declared for a time, and it was a near-zero-footprint addition:
-it pins to the same version as the client, all six of its dependencies were already in the tree transitively, and
-regenerating the lockfile added 1 package, removed 0 and changed 0 resolved versions. It was nonetheless **removed**,
-because presigning can be done on the client's own resolved configuration — `client.config.endpointProvider(...)` plus
-`client.config.signer().presign(...)`, which is the same machinery that package uses internally — and the shipped
-result was measured signature-identical to an independent from-scratch SigV4 reference rather than assumed so.
+An earlier revision of this changeset resolved that collision in favour of the count. It held the manifest at two
+additions and implemented presigning inside `config/aws.js` against the client's own resolved configuration —
+`client.config.endpointProvider(...)` for bucket addressing and `client.config.signer().presign(...)` for the
+signature — on the reasoning that this is the same machinery the separate package uses internally, and it measured the
+result signature-identical to an independent from-scratch SigV4 reference.
 
-The objection that the alternative to declaring the package is *hand-rolling SigV4*, a large security-sensitive
-addition in breach of R-1, was considered and does not apply to what shipped: **no signing is implemented here.** The
-delivered code asks the client for its own resolved endpoint and its own signer, and the four-case signature
-comparison against the independent reference is what proves it. The committed manifest contains no
-`@aws-sdk/s3-request-presigner` entry — `grep '"@aws-sdk' package.json` returns `@aws-sdk/client-s3` alone. See
-*Presigned download URLs, without a second AWS package* in Rubric 3.
+**Code review rejected that reading, and it was right to (finding SV-05).** Three objections survive the parity
+measurement. First, all three members relied on are `@internal`: `client.config.endpointProvider`,
+`client.config.signer` and `signer.presign` carry no semver guarantee, so a patch bump of a package this changeset
+pins by range can silently change or remove them — and the drift is already observable, in that the installed client
+declares `version = "3.1097.0"` in its own metadata while resolving as 3.1098.0. Second, "no signing is implemented
+here" was true only of the HMAC; the *envelope* — canonical query construction, AWS extended URI encoding of path
+segments, the `X-Amz-Content-Sha256` spelling, header hoisting — was hand-written, and every one of those is a place
+where a security-sensitive detail can be got wrong without any test noticing. Third, a signature comparison proves the
+implementation agrees with a reference *today*, on the cases chosen; it cannot prove it will keep agreeing.
+
+The package was therefore adopted. `@aws-sdk/s3-request-presigner` **3.1098.0** is declared with `--save-exact` at
+precisely the client's version, and the footprint is as small as an addition gets: all six of its dependencies were
+already in the tree transitively, so regenerating the lockfile **added 1 package, removed 0, and changed 0 resolved
+versions**, and `lockfileVersion` stays 3. `config/aws.js` now contains **no** signing code and no `@internal` member
+access at all — `getSignedDownloadUrl` is one `getSignedUrl(client, new GetObjectCommand(...), { expiresIn })` call.
+
+**What it cost on the plan's own gates: nothing.** `npm audit --omit=dev` after the addition is
+`{"info":0,"low":0,"moderate":3,"high":0,"critical":0}` — byte-for-byte the figure published in *The audit gate*
+below and exactly the `{critical: 0, high: 0, moderate: 3}` AAP §0.6.1.7 projects, with the same three advisories
+(`bull`, `highlight.js`, `uuid`) and no fourth. `npm ci` exits 0. The emitted URL keeps its origin, its path encoding
+and its expiry, so nothing a caller reads changes; the two additions to the query string are enumerated and
+measured in *Presigned download URLs: the second AWS package* under Rubric 3.
+
+**Why this is an ESCALATION and not a correction.** §0.8.7's precedence rule is that an explicit AAP requirement
+outranks a projected literal. Here the projected literal is "2 packages added" in §0.6.1.4; the explicit requirements
+it collides with are G5's zero-warning boot gate (which forbids staying on v2) and R-1's closed list of four
+sanctioned change categories (which does not license adding a hand-written SigV4 envelope). The literal loses under
+that rule, and the manifest reflects it. But this document does not get the last word: if the escalation is
+adjudicated the other way, the presigner comes back out and the earlier implementation returns with it.
 
 Both figures were verified by extracting and diffing the two manifests' dependency name sets rather than by
-recounting prose: 22 runtime names removed, 2 added, 38 remaining; 2 development names removed, 0 added, 9 remaining.
+recounting prose: **23** runtime names removed, **3** added, **38** remaining; **2** development names removed, **1**
+added, **10** remaining. The diff is re-derivable in one command, which reads the base manifest out of git rather than
+relying on any figure in this document:
+
+```
+node -e "var c=require('child_process'),b=JSON.parse(c.execSync('git show 2f8712a:package.json')),n=require('./package.json'),d=function(x,y){return{removed:Object.keys(x).filter(function(k){return!(k in y)}),added:Object.keys(y).filter(function(k){return!(k in x)})}};console.log(d(b.dependencies,n.dependencies),d(b.devDependencies,n.devDependencies))"
+```
+
+The removed set it prints is the 23 names enumerated in *Net manifest shape* above; the added set is the 3 recorded
+there.
 
 **`chokidar` deserves its own note, because it is the one package the plan's removal list gets wrong.** It has
 **zero** direct require sites across all 96 scanned JavaScript files, which is why the plan lists it among the dead
@@ -644,7 +689,9 @@ deleted — but had an argv path survived, the choice would have been a Node bui
 
 **Reason for this rubric: `dead` or `incompatible`.** An entry appears here only when the same package could not be
 carried forward at all. The eleven rows below break down as follows, counted from the table itself: **two** were
-replaced by a newly added registry package, which is where both of this modernization's package additions come from;
+replaced by a newly added registry package, which is where all **three** of this modernization's package additions
+come from — `aws-sdk` alone accounts for two of them, because its v3 successor is modular and splits the client from
+the presigner, which is the escalation recorded as Item 6 of the reconciliation above;
 **four** were replaced by a Node built-in; **two** were replaced by a local in-repo module; and **three** needed no
 replacement at all, because their only consumer was deleted or because the binding was never read in the first place.
 One of the eleven is not a package but a deprecated Node built-in **API** — `url.parse()` — recorded here because it
@@ -654,7 +701,7 @@ correspond to a manifest removal.
 
 | Original package | Version at base commit | Replacement | Target | Reason | Verification and notes |
 |---|---|---|---|---|---|
-| `aws-sdk` | 2.1693.0 | **`@aws-sdk/client-s3`** | **3.1098.0** | `incompatible` | **Gate-mandated, not discretionary** — requiring the v2 SDK on Node 22 fires a real `process.on('warning')` event with `name === "NOTE"`, which the zero-warning boot gate forbids. v2's global-singleton configuration has no v3 equivalent. *The AWS client replacement in full* below |
+| `aws-sdk` | 2.1693.0 | **`@aws-sdk/client-s3`** plus **`@aws-sdk/s3-request-presigner`** | **3.1098.0** both, pinned exact | `incompatible` | **Gate-mandated, not discretionary** — requiring the v2 SDK on Node 22 fires a real `process.on('warning')` event with `name === "NOTE"`, which the zero-warning boot gate forbids. v2's global-singleton configuration has no v3 equivalent. **One original, two replacements**, because v3 is modular and presigning is a separate package: `@aws-sdk/client-s3`'s **707** exports contain **zero** presign symbols. *The AWS client replacement in full* below, and *Presigned download URLs: the second AWS package* |
 | `request` | 2.88.2 | the global **`fetch`** built into Node 22 | *(no package added)* | `dead` | Formally deprecated upstream and unmaintained. Affects `lib/controllers/auth.js`, `lib/controllers/users.js` and `lib/util/recaptcha.js`, all of which were being converted to async/await anyway. The one place the swap needed more than an await is the OAuth token exchange, where `request`'s `form` option serialized through `qs`: see *The `request` replacement's one serializer detail* below |
 | `q` | 1.0.1 | native **`Promise`**, `Promise.all`, `Promise.allSettled` | *(no package added)* | `dead` | Classified `dead` **not because it is vulnerable, but because the language subsumed it.** The async conversion removes its last consumer as a side effect: the four `Q.defer()` sites plus the `Q.all` and `Q.allSettled` calls in `lib/workers/exports.js`, and the usage in `test/helpers/mail.js` |
 | `node-uuid` | 1.4.8 | **removed — no replacement required** | *(no package added)* | `dead` | Deprecated by its own author in favour of the `uuid` package, but **no package was needed**: the base commit never read the binding it imported. *The `node-uuid` removal in full* below |
@@ -686,7 +733,7 @@ five delta characters with `null` fields, `~ - . _` with unicode and reserved se
 
 **The AWS client replacement in full.**
 
-**Gate-mandated, not discretionary.** Requiring the v2 SDK on Node 22 fires a **real `process.on('warning')` event with `name === "NOTE"`** — not a plain console write — which the zero-deprecation-warning boot gate forbids. v2's `AWS.config.update` global singleton has **no v3 equivalent**, so `config/aws.js` moves to per-client `S3Client` configuration. The v2 SDK was constructed at **7 call sites in 3 files** — `lib/util/file.js` (4), `lib/workers/exports.js` (2) and `lib/controllers/users.js` (1) — covering `PutObjectCommand`, `GetObjectCommand` and `DeleteObjectCommand`. **Per-client configuration is not per-call construction:** v2's clients carried no agent of their own and every send resolved the same process-global agent singleton, and a v2 client had no `destroy` method at all, so those 7 constructions shared **one** socket pool for the life of the process. Each v3 client owns its own pool, so `config/aws.js` holds **one** lazily-built shared `S3Client`, reached through `getS3Client()` at the 6 surviving command call sites and by the presigner, and released by `destroyS3Client()` on the hapi server's `stop` event in `app.js`. Both halves were measured against the installed SDKs; the reasoning is recorded in that file's `RESOURCE LIFECYCLE` section. Presigned URLs are served by this same package with **no second dependency** — see *Presigned download URLs, without a second AWS package* below
+**Gate-mandated, not discretionary.** Requiring the v2 SDK on Node 22 fires a **real `process.on('warning')` event with `name === "NOTE"`** — not a plain console write — which the zero-deprecation-warning boot gate forbids. v2's `AWS.config.update` global singleton has **no v3 equivalent**, so `config/aws.js` moves to per-client `S3Client` configuration. The v2 SDK was constructed at **7 call sites in 3 files** — `lib/util/file.js` (4), `lib/workers/exports.js` (2) and `lib/controllers/users.js` (1) — covering `PutObjectCommand`, `GetObjectCommand` and `DeleteObjectCommand`. **Per-client configuration is not per-call construction:** v2's clients carried no agent of their own and every send resolved the same process-global agent singleton, and a v2 client had no `destroy` method at all, so those 7 constructions shared **one** socket pool for the life of the process. Each v3 client owns its own pool, so `config/aws.js` holds **one** lazily-built shared `S3Client`, reached through `getS3Client()` at the 6 surviving command call sites and by the presigner, and released by `destroyS3Client()` on the hapi server's `stop` event in `app.js`. Both halves were measured against the installed SDKs; the reasoning is recorded in that file's `RESOURCE LIFECYCLE` section. Presigning is **not** in this package and is served by a second scoped one, `@aws-sdk/s3-request-presigner`, which is handed this same shared client — see *Presigned download URLs: the second AWS package* below
 
 **The `url.parse()` replacement in full, because it is the one row where the replacement is a language feature rather
 than a package.** Measured under `--pending-deprecation`: a single `url.parse()` call fires a real
@@ -753,38 +800,56 @@ surviving `argv` handling in the 269-line shipped `routeParser.js`. Had any argv
 have been the choice rather than another package, because `optimist`'s obvious modern successor is unusable from
 CommonJS for the reason given above.
 
-### Presigned download URLs, without a second AWS package
+### Presigned download URLs: the second AWS package
 
 v2 generated presigned URLs **synchronously**, via `client.getSignedUrl('getObject', {Bucket, Key, Expires: 3600})`,
 for the export-download redirect at `lib/controllers/users.js`. `@aws-sdk/client-s3` contains **no presigner at all**
 — zero presign-related symbols among its **707** exports — and v3 offers no synchronous form. AWS publishes
-`@aws-sdk/s3-request-presigner` for this, but adding it would have made a **third** direct dependency where the plan
-sanctions exactly two, so it was not added.
+`@aws-sdk/s3-request-presigner` for exactly this, and **it is declared**, at `3.1098.0` with `--save-exact`, matching
+the client version rather than floating against it. That makes three package additions where the plan projected two;
+the collision and its adjudication are Item 6 of *Reconciliation with the plan's projected figures* above.
 
-Instead, `config/aws.js` presigns using the client's own resolved configuration, which is the same machinery that
-package uses internally: `client.config.endpointProvider({Bucket, Region, ...})` resolves the bucket addressing, and
-`client.config.signer()` returns the `SignatureV4MultiRegion` instance whose `presign(request, {expiresIn})` produces
-the signed query. `getSignedDownloadUrl(params, expiresIn)` returns a `Promise<string>`, so the accessor is
-asynchronous where v2's was synchronous — the one call-site shape that changed.
+`config/aws.js#getSignedDownloadUrl` is now a single delegation — `getSignedUrl(getS3Client(), new
+GetObjectCommand({Bucket, Key}), { expiresIn })` — and contains **no signing code of any kind**. It returns a
+`Promise<string>`, so the accessor is asynchronous where v2's was synchronous; that remains the one call-site shape
+that changed.
 
-**Parity was measured, not assumed**, across three fixtures — a key containing a space, a dotted bucket name that
-forces path-style addressing, and a key containing `+ ( ) ! ' *` — at two expiry values. The official presigner was
-used only as an **oracle, inside a throwaway scratch install outside the repository**; it appears in neither
-`package.json` nor `package-lock.json`, verified by name search against both:
+**An earlier revision implemented this in-repo, and that implementation is gone.** It presigned against the client's
+own resolved configuration — `client.config.endpointProvider({Bucket, Region, …})` for bucket addressing and
+`client.config.signer().presign(request, {expiresIn})` for the signature — and its output was measured byte-identical
+to an independent from-scratch `node:crypto` SigV4 reference across three fixtures. Code review nonetheless rejected it
+(finding SV-05): all three members it reached for are `@internal` and carry no semver guarantee, and the query
+envelope around the HMAC — canonical query construction, AWS extended URI encoding, the `X-Amz-Content-Sha256`
+spelling, header hoisting — was hand-written security-sensitive code that R-1 does not sanction. The two encoding
+facts that revision had to establish by measurement, that path segments need AWS **extended** URI encoding which
+escapes `! ' ( ) *` beyond `encodeURIComponent`, and that the unsigned-payload header must be spelled
+`X-Amz-Content-Sha256`, are now the SDK's responsibility rather than this repository's. They are recorded here only
+because they explain what the delegation bought.
 
-- the shipped implementation's full URL is **byte-identical** to an independent, from-scratch `node:crypto` SigV4
-  query-presign reference, in all three cases;
-- `@aws-sdk/s3-request-presigner`'s own `X-Amz-Signature` matches that same reference, so the shipped signature
-  matches the official package's signature for the same canonical request;
-- origin, path and `X-Amz-Expires` match the official package's output in all three cases.
+**What the delivered URL looks like, measured.** For a virtual-hosted bucket the emitted URL is
+`https://<bucket>.s3.<region>.amazonaws.com/<extended-encoded-key>?…`; for a bucket name containing dots it falls back
+to path-style, `https://s3.<region>.amazonaws.com/<bucket>/<key>?…`. Both forms are unchanged from the earlier in-repo
+implementation, and both are asserted at `test/lib/util/file-storage.js`. The query carries exactly **nine**
+parameters, in this sorted order:
 
-Two implementation details were established by measurement and are load-bearing: path segments must use AWS
-**extended** URI encoding, which additionally escapes `! ' ( ) *` that `encodeURIComponent` leaves raw, and the
-unsigned-payload header must be spelled `X-Amz-Content-Sha256`. Getting either wrong yields a valid-looking URL whose
-signature S3 rejects.
+`X-Amz-Algorithm=AWS4-HMAC-SHA256`, `X-Amz-Content-Sha256=UNSIGNED-PAYLOAD`, `X-Amz-Credential`, `X-Amz-Date`,
+`X-Amz-Expires`, `X-Amz-Signature`, `X-Amz-SignedHeaders=host`, `x-amz-checksum-mode=ENABLED`, `x-id=GetObject`.
 
-One deliberate difference from the official presigner is documented rather than reproduced: the shipped URL omits
-`x-id=GetObject` and `x-amz-checksum-mode=ENABLED`, which are v3 operation metadata that aws-sdk v2 never emitted.
+The last two are v3 operation metadata that aws-sdk v2 never emitted and that the earlier in-repo implementation
+deliberately omitted. **They are now present**, because they are what the supported presigner emits and suppressing
+them would mean reaching back into the request to strip them. They are signed rather than appended, so they cannot be
+removed from a generated URL without invalidating it. Nothing in this application reads them: the URL is handed
+straight to `h.redirect(...)` and S3 is the only consumer.
+
+**`expiresIn` is the only option passed, and that is a measured decision rather than an omission.** An earlier
+revision also passed `signableHeaders: new Set(['host'])` and `unhoistableHeaders: new Set()`, on the reading that
+`X-Amz-SignedHeaders=host` and the unsigned-payload spelling had to be requested explicitly. Both are already the
+presigner's defaults for `GetObjectCommand`. Pinning `signingDate` to a fixed instant and diffing the full URL with the
+two options against the same URL without them, across three key shapes — a key containing a space, a key containing
+the five extended-encoding characters `+ ( ) ! ' *`, and a plain key — produced **byte-identical output every time,
+including the same `X-Amz-Signature` digest**. Both were therefore removed. Options that provably change nothing are
+worse than absent ones: they assert that the defaults are unsuitable, and the next reader has to re-run the
+measurement to find out they are not.
 
 **The signature version itself is a REPORTED DEVIATION, not an accepted one, and review finding F-10 is right that the
 earlier wording understated it.** R-6 measurement against a scratch install of `aws-sdk` 2.1693.0 shows the true
@@ -799,10 +864,12 @@ that decision exists this row is **open**, it is listed in the changelog's *Devi
 in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 4.16. Practical mitigation of the exposure window: these URLs are
 generated per request with a 3,600-second expiry and are never persisted, so no stored artifact carries the old shape.
 
-**Only two packages are added to the manifest by this entire modernization: `@aws-sdk/client-s3` 3.1098.0 and
-`crypto-js` 4.2.0** — exactly the two the plan sanctions. Everything else in this document is a bump, a removal, or a
-move to a Node built-in or a local module. The additions cover exactly the two cases where a Node built-in could not
-do the job: S3 access, and an AES envelope that had to stay byte-compatible with a frozen browser decryptor.
+**Three packages are added to the manifest by this entire modernization: `@aws-sdk/client-s3` 3.1098.0,
+`@aws-sdk/s3-request-presigner` 3.1098.0 and `crypto-js` 4.2.0** — one more than the plan projects, for the single
+reason set out in Item 6. Everything else in this document is a bump, a removal, or a move to a Node built-in or a
+local module. The additions still cover only the two *capabilities* a Node built-in could not supply — S3 access, and
+an AES envelope that had to stay byte-compatible with a frozen browser decryptor — and the third package exists
+because AWS splits the first of those capabilities across two modules, not because a third capability was introduced.
 
 ## Rubric 4 — Removed: declared but never required
 
@@ -1058,14 +1125,27 @@ the plan's measurement and this one looks like. The regenerated figures above ar
 plan's are left visible so the one-finding drift is not mistaken for a discrepancy in the manifest.
 
 **Committed result, re-measured under the pinned resolver.** `npm ci` under npm 10.9.9 against the committed lockfile
-exits 0 and installs **426 packages** — npm's own summary line reads `added 426 packages, and audited 427 packages`,
-the audited figure being the 426 plus the root project, the same root-exclusion convention the lockfile counts above
-use. Corroborated two further ways on the delivered tree, both giving 426: a walk of `node_modules` counting
-directories that contain a `package.json`, and `npm ls --all --parseable`. An earlier revision published **428** here
-and in the sibling catalogue; that figure is **superseded by re-measurement**, and no cause is claimed for it — the
-`uuid` override whose removal Rubric 1 records is *not* the explanation, because reinstating it was measured to leave
-the lockfile at the same **465** entries, merely hoisting `uuid` to `11.1.1` instead of resolving `8.3.2` beneath
-`bull`. `npm audit --omit=dev` reports:
+exits 0 and installs **427 packages** — npm's own summary line reads `added 427 packages, and audited 428 packages`,
+the audited figure being the 427 plus the root project, the same root-exclusion convention the lockfile counts above
+use. Two independent measures of the delivered tree agree, and both need one subtraction to be meaningful:
+
+- `npm ls --all --parseable` prints **428** lines, of which one is the project root: **427**.
+- A recursive walk of `node_modules` finds **467** `package.json` files, of which **40** are dual-format sub-manifests
+  rather than packages — the `dist/commonjs/package.json` and `dist/esm/package.json` shims that `@hapi/tlds`, `diff`,
+  `glob`, `foreground-child`, `@redis/client`, `@noble/hashes` and others use to declare `type` per output directory:
+  **427**.
+- The lockfile's **466** entries reconcile to the same figure from the other direction: **39** of them are never
+  installed on this platform, every one of them marked `"optional": true` — the `@esbuild/*` cross-platform binaries,
+  the `@msgpackr-extract/*` prebuilds, `fsevents`, `nodejieba` and the `bare-*`/`react-native-b4a` shims — and
+  `466 - 39 = 427`. Those same 39 are what `npm ls --all` reports as `UNMET OPTIONAL DEPENDENCY`; it exits **0** and
+  reports **zero** invalid, missing or extraneous packages.
+
+An earlier revision published **426** here and in the sibling catalogue, and one before it **428**. Both are
+**superseded**: the count moved to 427 when `@aws-sdk/s3-request-presigner` was added, which Item 6 of the
+reconciliation records, and that addition is also why the lockfile now holds **466** entries rather than 465. The
+`uuid` override whose removal Rubric 1 records is *not* implicated in any of this drift, because reinstating it was
+measured to leave the lockfile entry count unchanged, merely hoisting `uuid` to `11.1.1` instead of resolving `8.3.2`
+beneath `bull`. `npm audit --omit=dev` reports:
 
 ```json
 { "info": 0, "low": 0, "moderate": 3, "high": 0, "critical": 0, "total": 3 }
@@ -1077,6 +1157,12 @@ set**, package for package: the `uuid`-in-`bull` pair and the deliberate `highli
 carried a `uuid` override that took this to 1 moderate; it was removed because the plan specifies which three findings
 are accepted, and a better number is not a licence to change the specified dependency shape. See *Why there is no
 `uuid` override* in Rubric 1.
+
+**Adding `@aws-sdk/s3-request-presigner` did not move this gate.** The production audit was re-run immediately after
+the addition and is byte-for-byte the block above — same three advisories, same severities, no fourth. That is a
+load-bearing fact for the escalation in Item 6: the third package buys a supported presigner at **zero** cost against
+the one dependency gate AAP §0.6.1.7 sets, because all six of its own dependencies were already resolved in the tree
+by `@aws-sdk/client-s3`.
 
 ### The three accepted moderate findings
 
@@ -1115,6 +1201,49 @@ revision of this paragraph published the **pre-override** reading (`2` high, `5`
 figure the next subsection gives; the numbers above are the delivered tree's, and the two agree. `vite` and `sass` are
 held for the stylesheet reason given in Rubric 5, and the gate the plan sets is `npm audit --omit=dev`, which is what
 the production table above measures.
+### Current advisory status, verified against the live advisory service
+
+An earlier review recorded this as unverifiable: six or more web searches returned nothing and documentation fetching
+was blocked, so the dependency set's *current* advisory status was marked unconfirmed and treated as approval-blocking
+(finding SV-06). That gap is now closed, and it was closed by querying the **advisory database directly** rather than by
+searching for prose about it. `npm audit` is not an offline heuristic — it POSTs the dependency tree to npm's bulk
+advisory endpoint and reports what the GitHub Advisory Database says at that moment. The same endpoint can be queried
+explicitly, which is what was done:
+
+```
+POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk   ->  HTTP 200
+```
+
+Every `name@version` pair in the committed lockfile was submitted — **414 distinct names, 442 name-version pairs** —
+and the response named exactly **four** packages carrying any current advisory: `esbuild`, `highlight.js`, `uuid` and
+`vite`. That agrees with both audit scopes above, and the one apparent discrepancy is explained rather than left
+hanging: the production audit lists **five** names because it reports `bull` as the *path* to the `uuid` advisory
+(`bull.via = ["uuid"]`), not as a package with an advisory of its own.
+
+The result that matters for R-2 is the negative one. **Zero current advisories were returned for any package this
+modernization introduced or advanced**, each queried at its exact committed version: `@aws-sdk/client-s3` 3.1098.0,
+`@aws-sdk/s3-request-presigner` 3.1098.0, `crypto-js` 4.2.0, `@hapi/hapi` 21.4.10, `joi` 18.2.3, `mongoose` 6.13.10,
+`bcrypt` 6.0.0, `marked` 4.3.0, `archiver` 7.0.1, `nodemailer` 9.0.3 — and all three `overrides` targets,
+`brace-expansion` 2.1.4, `diff` 9.0.0 and `serialize-javascript` 7.0.7. The overrides were additionally confirmed
+**effective** rather than merely declared: every instance of each in the lockfile resolves to the pinned version
+(`brace-expansion` 2 instances, `diff` 1, `serialize-javascript` 1), so no unpinned copy survives beneath a consumer.
+
+Two of the four findings are examined in the subsections around this one. The `uuid` finding is worth stating here
+because its unreachability is now **measured rather than asserted**: advisory GHSA-w5hq-g745-h8pq concerns a missing
+buffer bounds check in `v3`/`v5`/`v6` *when a `buf` argument is supplied*, and `bull` calls `uuid` at exactly three
+sites — `bull/lib/queue.js:120`, `bull/lib/queue.js:1412` and `bull/lib/timer-manager.js:74` — every one of them
+`uuid.v4()` with **no arguments at all**. The vulnerable path is doubly out of reach: wrong function, and no `buf`.
+
+**And npm's own offered remediation is a strict regression, which is why the finding is accepted rather than fixed.**
+`npm audit` proposes `bull@1.1.3` — three majors backwards from the committed 4.16.5 — and that release's declared
+dependencies were read from the registry rather than guessed: `redis@^2.6.3`, `node-uuid@^1.4.7`, `bluebird@^3.4.6`,
+`semver@^5.3.0`, `debuglog`, `disturbed`. Querying those against the same advisory service returns a **HIGH** on
+`redis` in the `>=2.6.0 <3.1.1` range, so the "fix" would move the production audit from **0 high** to **1 high**. It
+would also reinstate `node-uuid`, which npm itself marks `deprecated: "Use uuid module instead"` and which is one of
+the 23 runtime packages this migration removed as dead (present in the base commit's manifest, absent from the current
+one), and `bluebird`, a promise library whose removal is the point of AAP G3. Accepting three unreachable moderates is
+the only disposition consistent with the gate G4 actually sets.
+
 ### The one accepted HIGH finding, in the development tree
 
 The gate AAP G4 sets is `npm audit --omit=dev`, and the production table above measures it at 0 critical and 0 high.
@@ -1273,7 +1402,7 @@ The remaining items complete the surface:
   concrete, and the counts below use the **same convention as the audit section above — package entries excluding the
   root entry**, so that the two sections agree: the base lock had **677** package entries, of which **exactly one**
   carried no `integrity` field and exactly one `resolved` URL was not an anonymous registry tarball — both the
-  `marked` fork entry, resolved over `git+ssh://`. The current lock has **465** entries, **zero** without
+  `marked` fork entry, resolved over `git+ssh://`. The current lock has **466** entries, **zero** without
   `integrity`, and **zero** non-registry
   `resolved` URLs, so every artifact `npm ci` fetches is now hash-verified and reachable without a git binary or SSH
   credentials. Both counts and both zero-checks are re-derivable from the committed files with
@@ -1281,12 +1410,37 @@ The remaining items complete the surface:
 - **The `Dockerfile` moves off its Node 16 base to a Node 22 LTS base, and its install step becomes `npm ci`.** The
   base commit ran `npm install --legacy-peer-deps`; that escape hatch is precisely the pinning-as-workaround R-2
   forbids, because it lets the resolver silently drift away from the lockfile.
-- **The `Dockerfile` base image is pinned to an exact patch release, `node:22.23.2-bookworm`, not to the floating
-  `22-bookworm` tag**, because a floating tag lets both the interpreter and its bundled npm move between image builds —
-  the opposite of what the pin exists to guarantee. It then runs `npm install -g npm@10.9.9`, so the image's package
-  manager is fixed at the exact release `packageManager` names, inside the declared `npm >=10.0.0 <11.0.0` range, even
-  if the base tag is ever re-pointed. The base image already bundles npm 10.9.8, so this fixes an exact release rather
-  than correcting a violation.
+- **The `Dockerfile` base images are pinned to an exact patch release, not to the floating `22-bookworm` tag**, because
+  a floating tag lets both the interpreter and its bundled npm move between image builds — the opposite of what the pin
+  exists to guarantee. It then runs `npm install -g npm@10.9.9`, so the image's package manager is fixed at the exact
+  release `packageManager` names, inside the declared `npm >=10.0.0 <11.0.0` range, even if the base tag is ever
+  re-pointed. The base image already bundles npm 10.9.8, so this fixes an exact release rather than correcting a
+  violation.
+- **The `Dockerfile` is a two-stage build, and the runtime stage is `node:22.23.2-bookworm-slim`** (review finding
+  SV-41). The builder — on the full `node:22.23.2-bookworm` — installs `python3` and `build-essential`, hydrates and
+  digest-verifies the component tarball, runs `npm ci`, and runs `npm run build`; the runtime stage copies the finished
+  tree and installs no compiler. The `-slim` choice is not cosmetic and was forced by measurement: the **full** base
+  image ships `python3`, `gcc`, `g++`, `make`, `cc` and `curl` *in its own layers* — `dpkg -l build-essential` reports
+  nothing installed there, yet all six are on `PATH` — so moving the explicit `apt-get install` into the builder alone
+  removes only the meta-package and the apt index, not the compilers. On `-slim` all six are absent. The runtime stage
+  was verified end-to-end on this tree: all **38** production dependencies `require` cleanly, `bcrypt` resolves its
+  shipped prebuild (`bcrypt/prebuilds/linux-x64/bcrypt.glibc.node` — nothing in this lockfile compiles, so there is no
+  build output to lose across the stage boundary) and hashes and verifies correctly, the two stylesheets arrive at
+  265,727 and 296,352 bytes with the committed digests and zero `.css.map` files, the application boots and serves
+  `GET /` as 200 `text/html; charset=utf-8`, and Docker's own `HEALTHCHECK` evaluator reports the container **healthy**.
+  Image size falls from 2.05 GB to 1.15 GB. `pm2` is pinned to `5.4.3` — the release the previous floating `pm2@5`
+  already resolved to, so the supervisor does not move — and the `HEALTHCHECK` probes with `node` rather than `curl`,
+  because `-slim` carries no `curl` and a probe whose binary is missing reports unhealthy forever while measuring
+  nothing.
+- **`.dockerignore` excludes `config/local.yaml`, `node_modules` and `public/components`** in addition to `**/.git`.
+  The first is a security correction found by inspecting a built image: the build context is not the repository, so
+  `COPY . …` copied whatever was on disk, and every image built from a developer's working tree baked that developer's
+  gitignored session-seal password into a shipped layer — confirmed present at 3,465 bytes in an image built before the
+  exclusion and absent after. The other two are reproduced inside the builder by steps whose whole purpose is to be
+  deterministic (`npm ci` from the committed lockfile; the digest-verified release tarball), so letting host copies in
+  both slowed every build and let host state influence them. Build context falls from 847 MB to 226 MB, and everything
+  the build reads — including `test/baseline/responses.json`, which the `postbuild` stylesheet gate consults — was
+  verified still present.
 - **Verified working toolchain: node v22.23.2 with npm 10.9.9.** Both sit inside the committed `engines` constraint,
   which is satisfiable by a stock Node 22 LTS as measured above — so a checkout installs without touching its package
   manager, and `engine-strict=true` rejects anything outside the range instead of warning.

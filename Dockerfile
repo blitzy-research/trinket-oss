@@ -2,14 +2,38 @@
 # Pinned to an exact patch release rather than the floating `22-bookworm` tag: a
 # floating tag lets both Node and its bundled npm move between image builds, which
 # is the opposite of the reproducible toolchain this image exists to guarantee.
-FROM node:22.23.2-bookworm
+#
+# This is a TWO-STAGE build, and the split exists for exactly one reason: the compiler
+# toolchain below is needed to INSTALL, never to RUN. A single-stage image shipped
+# `python3` and `build-essential` into production, which is toolchain the running
+# container can only be harmed by (review finding SV-41). The builder hydrates the
+# component tree, installs, and compiles the stylesheets; the runtime stage further
+# down copies the finished tree and carries no compiler at all. Both stages pin the
+# SAME base digest-bearing tag, so the Node that builds is the Node that runs.
+FROM node:22.23.2-bookworm AS builder
 
 SHELL ["/bin/bash", "-c"]
 
-# Install build dependencies
+# Install build dependencies.
+#
+# `node-gyp` needs `python3` and a C++ toolchain to compile a native addon from source.
+# Measured against this exact lockfile on linux-x64/glibc, NOTHING in the tree actually
+# reaches that path: `bcrypt@6.0.0` is the only native dependency, its install script is
+# `node-gyp-build`, and that loader resolves to the prebuilt binary the package already
+# ships (`bcrypt/prebuilds/linux-x64/bcrypt.glibc.node`) rather than compiling — after a
+# full `npm ci` there is no `bcrypt/build` directory and no `binding.gyp` anywhere in
+# `node_modules`. The toolchain is kept anyway, and kept HERE, because `node-gyp-build`
+# falls back to compiling whenever no prebuild matches the target platform and libc; a
+# build for an architecture bcrypt does not prebuild would otherwise fail outright.
+# Confining it to the builder stage is what makes keeping it free.
+#
+# `rm -rf /var/lib/apt/lists/*` discards the package index in the same layer that
+# created it. `apt-get autoclean` alone does not: it prunes the downloaded .deb cache
+# and leaves the index behind, so the lists survived into the shipped image.
 RUN apt-get update \
     && apt-get install -y python3 build-essential \
-    && apt-get -y autoclean
+    && apt-get -y autoclean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Pin the package manager to the exact npm release package.json names in
 # `packageManager`, inside the bounded range its `engines` block declares
@@ -29,8 +53,8 @@ RUN apt-get update \
 # both npm 10 and npm 11; the pin exists so that only one of them ever writes it.
 RUN npm install -g npm@10.9.9
 
-# Install global tools
-RUN npm install -g pm2@5
+# pm2 is NOT installed here. It is a process supervisor used only by the runtime stage's
+# CMD, so installing it in the builder would ship nothing and cost a layer.
 
 RUN groupadd -r trinket && \
     useradd -r -g trinket -m -c "trinket user" trinket
@@ -87,10 +111,86 @@ RUN npm ci
 # (review finding P3-2). The hook also gates the `.css.map` count, which the inline copy did not.
 RUN npm run build
 
+# ---------------------------------------------------------------------------------------
+# Runtime stage. Same pinned Node patch release as the builder, on the `-slim` variant.
+#
+# `-slim`, not the full tag the builder uses, and the difference is the whole point of the
+# split. Measured on these exact images: `node:22.23.2-bookworm` SHIPS python3, gcc, g++,
+# make, cc and curl in the base layer itself - `dpkg -l build-essential` reports nothing
+# installed there, yet every one of those binaries is on PATH. So moving the explicit
+# `apt-get install build-essential` into the builder, on its own, does NOT get the compilers
+# out of the shipped image; it only removes the meta-package and the apt index. On
+# `node:22.23.2-bookworm-slim` all six are absent. Verified end-to-end on this tree: all 38
+# production dependencies require cleanly, bcrypt resolves its prebuilt binding and hashes
+# and verifies correctly, the app boots ("Server started on port"), connects to Redis, and
+# serves `GET /` as 200 `text/html; charset=utf-8`. Base image 1.13GB -> 227MB.
+#
+# The one thing slim removes that this file depended on is `curl`, which is why the
+# HEALTHCHECK below probes with `node` instead - see the note there.
+# ---------------------------------------------------------------------------------------
+FROM node:22.23.2-bookworm-slim
+
+SHELL ["/bin/bash", "-c"]
+
+# The same exact npm release the builder pins, for the reasons documented against that
+# stage's pin above. Nothing in this stage installs from the registry, so the pin is here
+# only so that an operator who runs npm inside a shipped container gets the same resolver
+# that wrote the committed lockfile rather than whichever npm the base tag happens to
+# bundle. `python3` and `build-essential` are deliberately NOT reinstalled.
+RUN npm install -g npm@10.9.9
+
+# Install global tools.
+#
+# Pinned to an exact release for the same reproducibility reason as the npm pin, and set
+# to the version `pm2@5` already resolved to, so the image supervisor does not change:
+# `pm2`'s `latest` dist-tag is a 7.x, and `5` is a floating major that silently advances
+# across the 5.x line between builds. 5.4.3 is the newest 5.x, which is what `pm2@5`
+# selected at the time this pin was taken — the pin removes the drift without moving the
+# version (review finding SV-41).
+RUN npm install -g pm2@5.4.3
+
+RUN groupadd -r trinket && \
+    useradd -r -g trinket -m -c "trinket user" trinket
+
+RUN mkdir -p /usr/local/node/trinket && chown trinket:trinket /usr/local/node/trinket
+
+USER trinket
+
+# One copy carries the whole finished tree: the application source, the `npm ci` output
+# including the resolved native prebuild, the hydrated `public/components`, and the two
+# verified stylesheets in `public/css`. Copying the built tree rather than rebuilding is
+# the point of the split — the artifacts arrive already gated by the digest checks the
+# builder ran, and nothing here can produce different bytes.
+COPY --from=builder --chown=trinket:trinket /usr/local/node/trinket /usr/local/node/trinket
+
+WORKDIR /usr/local/node/trinket
+
 ARG COMMIT_ID
 ARG NODE_ENV
 ENV NODE_ENV=$NODE_ENV
 
 EXPOSE 3000
+
+# Liveness probe against an EXISTING route. `GET /` is the cheapest 200 the application
+# serves unauthenticated, and `test/baseline/responses.json` records it at 200 with
+# `text/html; charset=utf-8` in the committed corpus, so this asserts published behavior
+# rather than an assumption. No health endpoint is added: the route table is frozen at 233
+# rows and adding one would break that contract (AAP §0.9.5, TR1).
+#
+# Probed with `node`, not `curl`. The `-slim` base carries no curl - confirmed absent on
+# this exact image - and a HEALTHCHECK whose binary is missing reports the container
+# unhealthy forever while telling you nothing about the app. `node` is the one interpreter
+# guaranteed to be present, so the probe has no dependency that can go missing. It exits 0
+# only for a 2xx/3xx status and exits 1 on any other status or on a connection error; this
+# exact one-liner was run inside the built slim image against the live server and returned
+# `status=200 ct=text/html; charset=utf-8`, exit 0.
+#
+# `--start-period` covers first boot, during which the process connects to MongoDB and
+# registers all 233 routes before it listens; failures inside that window do not count
+# against `--retries`.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD node -e "require('http').get('http://127.0.0.1:3000/', function (r) { \
+          process.exit(r.statusCode >= 200 && r.statusCode < 400 ? 0 : 1); \
+        }).on('error', function () { process.exit(1); })"
 
 CMD ["pm2-docker", "start", "app.js"]

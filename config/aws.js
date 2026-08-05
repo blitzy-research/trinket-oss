@@ -25,23 +25,42 @@
  * Errors carry $metadata.httpStatusCode and name rather than code / statusCode, so
  * a caller that branches on an error must still return the status it returns today.
  *
- * Presigning is implemented here on top of @aws-sdk/client-s3 alone, with no
- * presigner package: the client's own resolved configuration publishes everything a
- * signed GET needs - config.endpointProvider() applies the SDK's bucket-addressing
- * rules and config.signer() resolves the same SignatureV4 instance
- * @aws-sdk/s3-request-presigner would have used. Measured over keys containing
- * spaces and the characters + ( ) ! ' * and over both virtual-hosted and (dotted
- * bucket) path-style addressing: the endpoint, the AWS-encoded object path and every
- * signed query parameter match that package exactly, and each signature matches an
- * independent from-scratch SigV4 computation over the same canonical request. The
- * package's own URLs additionally carry x-id=GetObject and
- * x-amz-checksum-mode=ENABLED - operation metadata that aws-sdk v2 never sent, and
- * the only reason its signature digest differs from this one. That is what licenses
- * dropping it: @aws-sdk/client-s3 and crypto-js are the only two packages this
- * modernization adds to the manifest.
+ * Presigning is delegated to @aws-sdk/s3-request-presigner - the AWS-supported
+ * package for it - and no signing is implemented in this repository (review finding
+ * SV-05, CWE-327). An earlier revision hand-rolled the presigned URL from the
+ * client's own resolved configuration, reaching three members the shipped type
+ * definitions mark `@internal`: `client.config.endpointProvider()`,
+ * `client.config.signer()` and `signer.presign()`. That was measured
+ * signature-identical to an independent SigV4 reference at the time, which is
+ * exactly the problem: an `@internal` member carries no semver signal, so it can
+ * change in a patch release with nothing to notice it. The installed client already
+ * embeds `version = "3.1097.0"` while resolving as 3.1098.0, which is the shape that
+ * drift takes.
+ *
+ * ONE OBSERVABLE CONSEQUENCE, recorded deliberately rather than hidden, and measured
+ * rather than estimated. The official presigner adds TWO operation-metadata
+ * parameters the hand-rolled form omitted - `x-amz-checksum-mode=ENABLED` and
+ * `x-id=GetObject` - taking the query from 7 parameters to 9, and it signs them, so
+ * the digest differs too. Diffing the two parameter sets for the same call gives
+ * added = [x-amz-checksum-mode, x-id] and removed = [], so nothing a caller reads
+ * disappeared: origin, path encoding and X-Amz-Expires are unchanged. Neither
+ * aws-sdk v2 nor the hand-rolled form sent either parameter. Because both are signed
+ * rather than appended, they cannot be stripped from a generated URL without
+ * invalidating it, and there is no option to suppress them. The URL is not part of
+ * the R-6 parity corpus - the asset feature is flag-disabled in the shipped
+ * configuration and `GET /api/users/assets` is the corpus's single baseline 500 - so
+ * nothing replays differently; the change is catalogued in
+ * docs/PRESERVED-QUIRKS.md and in the migration dependency inventory alongside the
+ * SignatureV2 -> SignatureV4 move the SDK replacement already forced.
+ *
+ * This is the third and last package the modernization adds to the manifest, beside
+ * @aws-sdk/client-s3 and crypto-js. The Technical Specification projected two; the
+ * deviation is reconciled in docs/MIGRATION-DEPENDENCY-INVENTORY.md exactly as the
+ * `chokidar` and `brace-expansion` deviations already are.
  */
 
 var awsS3      = require('@aws-sdk/client-s3')
+    , presigner = require('@aws-sdk/s3-request-presigner')
     , config   = require('config');
 
 // Resolved once at require time, so every client below shares one snapshot of the
@@ -91,87 +110,46 @@ function destroyS3Client() {
   client.destroy();
 }
 
-// AWS URI-encoding for one path or query component. AWS canonical requests leave
-// only the RFC 3986 unreserved set (A-Z a-z 0-9 - _ . ~) unescaped, while
-// encodeURIComponent also passes ! ' ( ) * through untouched, so those five are
-// finished by hand. Getting this wrong does not fail loudly - it produces a
-// syntactically valid URL whose signature S3 rejects.
-function encodeUriComponentForAws(value) {
-  return encodeURIComponent(value).replace(/[!'()*]/g, function (character) {
-    return '%' + character.charCodeAt(0).toString(16).toUpperCase();
+/**
+ * Presigned GET URL for an object. `params` takes the same { Bucket, Key } shape v2
+ * accepted; `expiresIn` is the lifetime in seconds that v2 spelled Expires.
+ *
+ * Signed by @aws-sdk/s3-request-presigner, which resolves the client's own endpoint
+ * and credentials, so bucket addressing follows the SDK's rules rather than a local
+ * guess: a DNS-compatible bucket yields
+ * https://<bucket>.s3.<region>.amazonaws.com/<key> and a name that is not - one
+ * containing dots, for instance - falls back to path style
+ * https://s3.<region>.amazonaws.com/<bucket>/<key>. Object-key encoding is the
+ * SDK's, which is the AWS canonical form: a space becomes %20 rather than +, and
+ * the five characters encodeURIComponent leaves untouched (! ' ( ) *) are escaped.
+ *
+ * Signed with the SHARED client rather than a throwaway one. Presigning performs no
+ * network I/O, so a per-call client would exist only to carry region and credentials
+ * and would leave its socket pool behind on every signed download.
+ *
+ * expiresIn is the ONLY option passed. X-Amz-Content-Sha256=UNSIGNED-PAYLOAD and
+ * X-Amz-SignedHeaders=host - the two properties an S3 presigned GET must carry - are
+ * already the presigner's defaults for this command, so nothing is configured to
+ * obtain them. An earlier revision also passed `signableHeaders: new Set(['host'])`
+ * and `unhoistableHeaders: new Set()`; both were measured INERT and removed. Under a
+ * fixed signingDate, with and without them, the emitted URL is byte-identical -
+ * same nine query parameters and the same X-Amz-Signature digest - across three key
+ * shapes (a space, the five extended-encoding characters, and a plain key). Passing
+ * options that change nothing would imply the defaults are unsuitable.
+ *
+ * @param   {Object} params    { Bucket, Key }.
+ * @param   {Number} expiresIn Lifetime in seconds.
+ * @returns {Promise<String>}  The absolute signed URL.
+ */
+function getSignedDownloadUrl(params, expiresIn) {
+  var command = new awsS3.GetObjectCommand({
+    Bucket   : params.Bucket
+    , Key    : params.Key
   });
-}
 
-// Serialize a signed request back into an absolute URL. Query names and values
-// are AWS-URI-encoded (X-Amz-Credential contains slashes, which must appear as
-// %2F) and emitted in sorted order so the same inputs always yield the same URL.
-function formatSignedUrl(signedRequest) {
-  var authority = signedRequest.hostname + (signedRequest.port ? ':' + signedRequest.port : '')
-      , query   = signedRequest.query || {}
-      , pairs   = Object.keys(query).sort().map(function (name) {
-        return encodeUriComponentForAws(name) + '=' + encodeUriComponentForAws(query[name]);
-      });
-
-  return signedRequest.protocol + '//' + authority + signedRequest.path + '?' + pairs.join('&');
-}
-
-// Presigned GET URL for an object. params takes the same { Bucket, Key } shape
-// v2 accepted; expiresIn is the lifetime in seconds that v2 spelled Expires.
-//
-// The request is assembled from the client's own resolved configuration so that
-// bucket addressing follows the SDK's rules rather than a local guess:
-// endpointProvider yields https://<bucket>.s3.<region>.amazonaws.com for a
-// DNS-compatible bucket and falls back to path-style
-// https://s3.<region>.amazonaws.com/<bucket> for one that is not (a bucket name
-// containing dots, for instance). The flags below are the SDK's own defaults for
-// this application, which configures none of the corresponding S3 client options.
-//
-// X-Amz-Content-Sha256 is sent as a header and hoisted into the query by the
-// signer, which is how every S3 presigned GET declares an unsigned payload. The
-// SDK's presigner package additionally appends x-id=GetObject and
-// x-amz-checksum-mode=ENABLED, which are operation metadata rather than part of
-// the signed-download contract - aws-sdk v2 never sent either - so they are
-// deliberately not reproduced here.
-//
-// Signed with the shared client rather than a throwaway one. Presigning performs no
-// network I/O, so a per-call client existed only to carry region and credentials and
-// left its socket pool behind on every signed download. Every signed parameter is
-// unchanged: the same Bucket and Key, and the same expiresIn, so the URL still
-// carries X-Amz-Expires with the caller's value.
-async function getSignedDownloadUrl(params, expiresIn) {
-  var client     = getS3Client()
-      , region   = await client.config.region()
-      , endpoint = client.config.endpointProvider({
-        Bucket                          : params.Bucket
-        , Region                        : region
-        , UseFIPS                       : false
-        , UseDualStack                  : false
-        , ForcePathStyle                : false
-        , Accelerate                    : false
-        , UseGlobalEndpoint             : false
-        , DisableMultiRegionAccessPoints: false
-      }).url
-      , signer   = await client.config.signer();
-
-  // endpoint.pathname is '/' for virtual-hosted addressing and '/<bucket>' for
-  // path-style, so the trailing slash is trimmed before the key is appended.
-  var objectPath = endpoint.pathname.replace(/\/+$/, '')
-      + '/' + params.Key.split('/').map(encodeUriComponentForAws).join('/');
-
-  var signedRequest = await signer.presign({
-    method       : 'GET'
-    , protocol   : endpoint.protocol
-    , hostname   : endpoint.hostname
-    , port       : endpoint.port ? Number(endpoint.port) : undefined
-    , path       : objectPath
-    , query      : {}
-    , headers    : {
-      host                   : endpoint.hostname
-      , 'X-Amz-Content-Sha256': 'UNSIGNED-PAYLOAD'
-    }
-  }, { expiresIn : expiresIn });
-
-  return formatSignedUrl(signedRequest);
+  return presigner.getSignedUrl(getS3Client(), command, {
+    expiresIn : expiresIn
+  });
 }
 
 module.exports = {

@@ -52,19 +52,20 @@ Trinket lets students and educators write and run code directly in the browser, 
    cp config/local.example.yaml config/local.yaml
    ```
 
-3. **Replace the session secret before starting anything.** `config/local.example.yaml` ships a placeholder
-   (`change-this-to-a-secure-password-min-32-chars!`) that is published in this repository and is therefore public.
-   `app.js` checks only that the value is at least 32 characters long, so the placeholder **starts the application
-   successfully** - and `docker compose` publishes the app on `0.0.0.0:3000`, so anyone who can reach the port can
-   forge session cookies with a secret they already know. Generate your own and write it in:
+3. **Replace the session secret before starting anything.** `config/local.example.yaml` ships `REPLACE_ME`, which is
+   deliberately shorter than the 32 characters `app.js` requires, so the application **refuses to start** until you
+   replace it. An earlier revision shipped a 46-character placeholder that satisfied the guard, so the template booted a
+   server whose session cookies were sealed with a password published in this repository - and `docker compose`
+   publishes the app on `0.0.0.0:3000`, so anyone who could reach the port could forge session cookies with a secret
+   they already knew (review finding SV-36). Generate your own and write it in:
    ```bash
    node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
    ```
    Put the output in `config/local.yaml` under `app.plugins.session.cookieOptions.password`, then confirm the
    placeholder is gone:
    ```bash
-   grep -q 'change-this-to-a-secure-password' config/local.yaml \
-     && echo 'REFUSING TO START: session secret is still the published placeholder' \
+   grep -q 'REPLACE_ME' config/local.yaml \
+     && echo 'WILL NOT START: session secret is still the placeholder' \
      || echo 'session secret replaced'
    ```
 

@@ -56,26 +56,29 @@ When using the Docker workflow, Docker and Git are all you need - everything els
    cp config/local.example.yaml config/local.yaml
    ```
 
-3. **Generate a session secret and replace the placeholder, before starting anything.**
-   `config/local.example.yaml` ships `change-this-to-a-secure-password-min-32-chars!`. That value is committed to this
-   repository, so it is public; it is also 46 characters long, and `app.js`'s startup guard checks only that the secret
-   is at least 32 characters, so it **does not fail closed** - the application starts with it. `docker compose`
-   publishes the app on `0.0.0.0:3000`, so leaving it in place lets anyone who can reach the port mint and forge
-   `session` cookies with a secret they already have. Generate your own:
+3. 3. **Generate a session secret and replace the placeholder, before starting anything.** `config/local.example.yaml`
+   ships `REPLACE_ME`, which is deliberately too short: `app.js`'s startup guard requires at least 32 characters, so
+   the application **refuses to boot** until you replace it. That is intentional - a secret should fail closed. An
+   earlier revision shipped a 46-character placeholder that *satisfied* the guard, so copying the template verbatim
+   produced a running server whose session cookies were sealed with a password published in this repository; since
+   `docker compose` publishes the app on `0.0.0.0:3000`, anyone who could reach the port could mint and forge
+   `session` cookies with a secret they already had (review finding SV-36). Generate your own:
    ```bash
    node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
    ```
    Write the output into `config/local.yaml` under `app.plugins.session.cookieOptions.password`, then verify:
    ```bash
-   grep -q 'change-this-to-a-secure-password' config/local.yaml \
-     && echo 'DO NOT START: session secret is still the published placeholder' \
+   grep -q 'REPLACE_ME' config/local.yaml \
+     && echo 'WILL NOT START: session secret is still the placeholder' \
      || echo 'session secret replaced'
    ```
 
-   The example file itself is left carrying that placeholder on purpose: `config/*.yaml` is frozen by this
-   modernization's scope, and making the shipped value fail the startup guard would change `app.js`'s observable
-   startup behaviour, which the same scope forbids. The check above is therefore documented rather than enforced in
-   code - see `docs/PRESERVED-QUIRKS.md`.
+   You do not have to rely on that check: `REPLACE_ME` is shorter than the 32 characters `app.js` requires, so leaving
+   it in place makes the application exit 1 with `ERROR: Session cookie password not configured!` rather than start
+   insecurely. The **guard** in `app.js` is unchanged - it still tests length and nothing else, which is the base
+   commit's observable startup contract. Only the template moved, and that is safe because `config/local.example.yaml`
+   is not a configuration layer at all: node-config's `baseNames` do not include `local.example`, so no resolved value
+   depends on it. See `docs/PRESERVED-QUIRKS.md`.
 
 4. Start the services:
    ```bash
@@ -150,7 +153,8 @@ repository that does is `git clean -xfd`, which is confined to
 | `db.redis.*` | Redis application cache and background queues (in-memory fallback otherwise) |
 | `features.trinkets.*` | Feature flags to enable/disable trinket languages |
 
-Without email configured, password reset is unavailable but users can still register, log in, and use all coding features. Without S3, the asset upload feature is disabled.
+Without email configured, password reset is unavailable but users can still register, log in, and use all coding
+features. Without S3, the asset upload feature is disabled.
 
 **Redis is not the session store.** Sessions are iron-sealed cookies issued by Hapi's Yar plugin and stored
 server-side in **MongoDB**: `app.js` registers a `sessions` cache whose engine is the in-repo
@@ -300,12 +304,23 @@ value — so no assertion was weakened. Every one is enumerated, with the measur
 
 ## Services
 
-| Service | Port | Description |
-|---------|------|-------------|
-| app | 3000 | Trinket web application |
-| mongodb | 17017 | MongoDB database |
-| redis | 16379 | Redis (optional - uses in-memory fallback if disabled) |
-| nginx | 443 | HTTPS proxy (optional) |
+| Service | Port | Bound on | Description |
+|---------|------|----------|-------------|
+| app | 3000 | all interfaces | Trinket web application |
+| mongodb | 17017 | `127.0.0.1` only | MongoDB database |
+| redis | 16379 | `127.0.0.1` only | Redis (optional - uses in-memory fallback if disabled) |
+| nginx | 443 | all interfaces | HTTPS proxy (optional) |
+
+The two datastore ports are published to the loopback interface only. They previously bound every interface, which put
+an unauthenticated MongoDB holding every user record and an unauthenticated Redis holding every sealed session on the
+whole network — read access to the session store alone is an authentication bypass (review finding SV-28). The port
+*numbers* are unchanged, so `mongosh --port 17017` and `redis-cli -p 16379` still work from the host exactly as before,
+and the application is unaffected either way because it reaches both services by their compose service names
+(`mongodb:27017`, `redis:6379`) over the internal bridge network rather than through the published ports.
+
+Reaching either datastore from another machine is therefore deliberately no longer possible without an explicit change.
+If you need that, add authentication first — `requirepass` for Redis and a SCRAM user for MongoDB — rather than
+re-widening the binding on its own.
 
 ## Creating an Admin User
 

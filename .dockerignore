@@ -1,1 +1,25 @@
+# Build-context exclusions. Everything here is either reproduced inside the image by a
+# verified step, or must never enter an image at all.
+
 **/.git
+
+# config/local.yaml is the gitignored developer override, and on a real checkout it holds
+# the >=32-character Yar session-seal password that app.js refuses to start without. The
+# build context is not the repository: `COPY . …` copies whatever is on disk, so without
+# this line every image built from a developer's working tree baked that developer's
+# session secret into a shipped layer, readable by anyone who could pull the image. Nothing
+# in the container needs it - the deployed configuration comes from NODE_ENV and the
+# environment - so it is excluded outright rather than managed.
+config/local.yaml
+
+# node_modules is produced inside the builder by `npm ci` from the committed lockfile.
+# Shipping the host's copy into the context (210MB here) both slows every build and lets
+# host state influence a step whose entire purpose is to be determined by the lockfile
+# alone.
+node_modules
+
+# public/components is the 435MB vendored component tree. The builder downloads it from the
+# tagged release and checks it against a published sha256 before extracting; letting an
+# unverified host copy into the context would put bytes into the image that never passed
+# that gate, and would silently defeat the check for anyone who already had the tree.
+public/components

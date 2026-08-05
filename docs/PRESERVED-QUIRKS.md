@@ -3416,6 +3416,63 @@ commented; it already carries three lines explaining why the swallow is load-bea
 when the archive was never finalized, and letting that out would replace the error the job is actually reporting. No
 edit was made, because a second comment saying the same thing would itself be churn.
 
+### 3.46 The route parser's eleven unused bindings stay, because only the inventory's own removals may leave its require chain
+
+**The ambiguity.** A later counting-gate review raised finding **F-3** (LOW, "Dead code") against
+`lib/util/routeParser.js` L1-L13: eleven of the thirteen bindings in the opening declaration block have zero
+value-position references anywhere in the delivered file, and the finding proposed deleting them, reading AAP §0.8.1's
+four mandated dead-import removals as a precedent for removing any unused import. The same finding also recorded that
+"leaving the bindings is also fully compliant" and classed the defect as cosmetic, so it offered two outcomes and left
+the choice open. That is the ambiguity, and R-6 makes the plan and the base commit — not the reading that produces the
+smaller file — decide it.
+
+**The measurement.** Reproduced over the delivered file with comments and string literals stripped and the declaration
+block itself excluded: `util` 0, `Joi` 0, `Boom` 0, `_` 0, `crypto` 0, `fs` 0, `path` 0, `ObjectUtils` 0,
+`StringUtils` 0, `HAS_EXT` 0 and `JSON_EXT` 0, against `config` 3 and `accepts` 1, both live. The observation is
+correct: eleven bindings are unused. **Nine of them went unused because the sanctioned extraction moved their
+consumers**, and each binding now lives where its consumers do — `Joi` at `lib/http/validation.js:L22`; `Boom` at
+`lib/http/errorMap.js:L11`, `lib/http/preHandlers.js:L50`, `lib/http/responseContract.js:L37` and
+`lib/http/staticRoutes.js:L21`; `util` at `validation.js:L21` and `responseContract.js:L36`; `_` at `redirect.js:L14`
+and `validation.js:L23`; `fs` and `path` at `staticRoutes.js:L18-L19`; `ObjectUtils` and `StringUtils` at
+`responseContract.js:L39-L40`; and `JSON_EXT` re-declared at `responseContract.js:L42` and read at its L337 and L469.
+**The other two were already unused at the base commit**: `git show 2f8712a:lib/util/routeParser.js` carries `crypto`
+at L9 and `HAS_EXT` at L15 with zero references of their own, so deleting them would not be migration tidying at all —
+it would be tidying of 2013-era code, which is the case R-1 speaks to most directly.
+
+**What decided it: the bindings stay.** Four sources agree, and the diff-surface rule is the operative one.
+
+- **R-1 states that benefit is not the test.** "Opportunistic cleanup, style normalization, latent-bug repair and
+  architectural improvement are out of bounds even when obviously beneficial." AAP §0.8.1's dead-import removals are an
+  enumerated list of four sites — `lib/controllers/courses.js:L4`, `lib/controllers/files.js:L2`,
+  `lib/util/helpers.js:L4` and `lib/controllers/pages.js:L3`, all four verified absent in the delivered tree — each
+  removed because the plan named it, not because a sweep was authorised.
+- **This file's own implementation spec forbids the removal by name and pairs it with a verification gate.** Exactly
+  three entries were to leave the declaration block — `mod_tab`, `executable` and `argv` — and every other binding was
+  to be preserved "even the ones that become unused once Concern 2 relocates", checked by a require-preservation gate
+  that reads a zero count for `crypto` or `HAS_EXT` as evidence of unsanctioned cleanup and instructs that they be
+  restored.
+- **The same question was already adjudicated in this document.** Section 3.45 declined the identical proposal for the
+  unused `diff` require in `lib/controllers/courses.js` on the same reading of R-1, and gave as its reason "so that the
+  next reader does not re-propose them". Deciding it differently here would leave the two entries contradicting each
+  other over one rule.
+- **The review rated both outcomes compliant.** Its own text records that leaving the bindings "is also fully
+  compliant", and its work-item table marks the removal optional. Where a finding offers two compliant outcomes and the
+  plan mandates one of them, the plan is what breaks the tie.
+
+**What did leave this file's require chain, and why that is a different question.** Three entries went, each with a
+sanctioned reason. `tab` and `optimist` are this file's two R-3 inventory removals: the `-R` route-table dumper was the
+only consumer of either, and it was Hapi-4 compatibility machinery, so both packages left with it. The legacy
+`node:url` module went with the repo-wide `url.parse()` → static `URL.parse()` migration that the zero-warning
+deprecation gate mandates and that the dependency inventory records; all **seven** base-commit `require('url')` sites
+are gone, and this file's was vestigial — every standalone `url` token in the base file is a local parameter or a
+property (`function(url)`, `url: url`, `request.url.pathname`, `config.app.url`), never the module.
+
+**Reproducing the decision.** `grep -c "HAS_EXT" lib/util/routeParser.js` → **2** (the declaration, plus the note
+described next), `grep -c "require('crypto')" lib/util/routeParser.js` → **1**, and
+`grep -n "require('tab')\|require('optimist')" lib/util/routeParser.js` → empty. The declaration block carries a
+five-line note pointing back at this section, so the next census to raise the question finds the answer at the site as
+well as here.
+
 
 ## 4. The security-condition catalogue
 

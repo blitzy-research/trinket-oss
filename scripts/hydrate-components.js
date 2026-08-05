@@ -101,10 +101,23 @@ var REQUIRED_PATHS = [
 
 // THE SERVED SURFACE. One representative file per top-level entry that lib/views/**, public/js/**,
 // public/partials/** or config/default.yaml actually requests over HTTP, censused from the tree
-// rather than guessed. These are NOT read by the stylesheet build - they are read by the browser
-// through the eight Inert directory routes lib/http/staticRoutes.js mounts - which is exactly why
-// the SCSS fingerprint above cannot see them going missing. One file per entry is deliberate: the
-// point is to detect a top-level entry that is present but hollow, not to re-checksum 435 MB.
+// rather than guessed. These are NOT read by the stylesheet build - they are read by the browser,
+// which is exactly why the SCSS fingerprint above cannot see them going missing.
+//
+// Two of the routes lib/http/staticRoutes.js appends carry them, and NEITHER is one of the eight
+// app.prefixes directory routes: config/default.yaml declares those eight keys with no values, so
+// the loop that would mount them emits nothing at all, as the comment at its head records. What
+// serves these files instead, both measured over real HTTP against the running application:
+//   - rendered pages pass their asset paths through the `cachePrefix` nunjucks filter, whose
+//     fallback in lib/util/stringUtils.js#addPrefix emits '/cache-prefix-<ms>/<path>', and the
+//     cache-prefix directory route answers it - GET /cache-prefix-<ms>/components/dist/lodash.min.js
+//     -> 200, which is RUNTIME_ASSET_PATHS' 'dist/lodash.min.js' entry;
+//   - paths written literally, such as config/default.yaml's app.ngapps.main entry
+//     '/components/ng-file-upload.min.js', fall through to the '/{path*}' catch-all (directory
+//     ./public, index: true) - also measured at 200.
+//
+// One file per entry is deliberate: the point is to detect a top-level entry that is present but
+// hollow, not to re-checksum 435 MB.
 var RUNTIME_ASSET_PATHS = [
   path.join('Mathjax-siunitx', 'siunitx.js'),
   path.join('Processing.js', 'processing.min.js'),

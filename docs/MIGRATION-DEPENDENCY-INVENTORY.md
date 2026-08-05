@@ -1137,10 +1137,28 @@ use. Two independent measures of the delivered tree agree, and both need one sub
   `glob`, `foreground-child`, `@redis/client`, `@noble/hashes` and others use to declare `type` per output directory:
   **427**.
 - The lockfile's **466** entries reconcile to the same figure from the other direction: **39** of them are never
-  installed on this platform, every one of them marked `"optional": true` — the `@esbuild/*` cross-platform binaries,
-  the `@msgpackr-extract/*` prebuilds, `fsevents`, `nodejieba` and the `bare-*`/`react-native-b4a` shims — and
-  `466 - 39 = 427`. Those same 39 are what `npm ls --all` reports as `UNMET OPTIONAL DEPENDENCY`; it exits **0** and
-  reports **zero** invalid, missing or extraneous packages.
+  installed on this platform, every one of them marked `"optional": true`, and `466 - 39 = 427`. The 39 are, in full and
+  by group: the **21** other-platform `@esbuild/*` binaries, of which `@esbuild/linux-x64` is the one that does install;
+  the **10** other-platform `@parcel/watcher-*` prebuilds, reached because `sass` 1.98.0 declares `@parcel/watcher` as an
+  optional dependency and that package declares twelve platform prebuilds of its own, two of which install here; the
+  **5** other-platform `@msgpackr-extract/*` prebuilds; **`fsevents`**, declared `"os": ["darwin"]` and listed as an
+  optional dependency by `chokidar`, `rollup` and `vite` alike; **`nodejieba`**, an optional dependency of `pinyin`,
+  which `limax` depends on; and **`nan`**, which is `nodejieba`'s own dependency and therefore never lands either. An
+  earlier revision of this sentence named the `bare-*` and `react-native-b4a` shims in place of `@parcel/watcher-*` and
+  `nan`; that was wrong in both directions and is corrected here. The five `bare-*` entries — `bare-events`, `bare-fs`,
+  `bare-path`, `bare-stream` and `bare-url` — are in the lockfile but are **installed**, so they cannot be among the 39,
+  and `react-native-b4a` does not appear in the lockfile at all.
+- **`npm ls --all`'s unmet-optional list is a different list, and conflating the two is what produced the superseded
+  membership above.** Measured here under npm 11.18.0, it prints **50** `UNMET OPTIONAL DEPENDENCY` lines covering
+  **46** distinct names, for three reasons that all pull it away from the lockfile's 39: it prints one line per unmet
+  *tree position*, so `fsevents` appears three times (`chokidar`, `rollup` and `vite` each declare it) and `bare-buffer`
+  and `bare-abort-controller` twice each; it includes unmet **optional peers that never entered the lockfile at all** —
+  `less`, `lightningcss`, `stylus`, `sugarss` and `terser` from `vite`, `bare-abort-controller` from `bare-events` and
+  `bare-stream`, `bare-buffer` from `bare-fs` and `bare-stream`, and `react-native-b4a` from `b4a`; and it **omits**
+  `nan`, because npm never walks into the uninstalled `nodejieba` that requires it. So `react-native-b4a` and the
+  `bare-*` names are real, but they are `npm ls` observations rather than lockfile entries, which is precisely the
+  distinction the sentence above now keeps. `npm ls --all` exits **0** and reports **zero** invalid, missing or
+  extraneous packages either way, and `npm ls --all --parseable` still prints the **428** lines the bullet above counts.
 
 An earlier revision published **426** here and in the sibling catalogue, and one before it **428**. Both are
 **superseded**: the count moved to 427 when `@aws-sdk/s3-request-presigner` was added, which Item 6 of the

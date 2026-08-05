@@ -240,7 +240,7 @@ Every figure here was re-measured on the delivered tree with the command shown, 
 | Production audit | `npm audit --omit=dev` | **0 critical, 0 high, 3 moderate** — exactly the plan's projected set | ✅ |
 | Deprecation | `node --pending-deprecation app.js` with a `process.on('warning')` collector and a 3-second soak | zero process warnings | ✅ |
 | R-6 response/route replay | `node test/baseline/replay.js` | **0 differences**; unauthenticated 58, authenticated 7, assignment-`next` 8 | ✅ |
-| R-6 documented route-table anchor | `test/baseline/route-table.json#gates.documentedAnchorGate`, recomputed live by ONE shared evaluator — `capture.js#documentedAnchorGate`, declared in the harness that owns the artifact and **re-exported** unchanged by `test/baseline/replay.js` — and enforced by all three owners: the capture CLI's per-clause gate entries, the replay CLI's diff, and `test/lib/api/route-parity.js`, which recomputes the same clauses plus the exact sorted 233-row set and all three fingerprints from literals of its own | all **10** clauses satisfied — the frozen 32-character literal is retained verbatim and the 233-row table it names is byte-identical, clause by clause; the literal itself is not recomputable by any verifier (32 characters, labelled sha256, no serialization published — see §3.22) | ✅ **enforced as a mandatory gate** |
+| R-6 documented route-table anchor | `test/baseline/route-table.json#gates.documentedAnchorGate`, recomputed live by ONE shared evaluator — `capture.js#documentedAnchorGate`, declared in the harness that owns the artifact and **re-exported** unchanged by `test/baseline/replay.js` — and enforced by all three owners: the capture CLI's per-clause gate entries, the replay CLI's diff, and `test/lib/api/route-parity.js`, which recomputes the same clauses plus the exact sorted 233-row set and all three fingerprints from literals of its own | all **11** clauses satisfied — the frozen 32-character literal is retained verbatim and the 233-row table it names is byte-identical, clause by clause; the literal itself is not recomputable by any verifier (32 characters, labelled sha256, no serialization published — see §3.22) | ✅ **enforced as a mandatory gate** |
 | Test suite | `npm test` | exit **0**, **zero failures**, `--check-leaks` active, process terminates on its own | ✅ |
 
 ### 0.1 The suite is green, and how the four contradicted oracles got there without being weakened
@@ -347,8 +347,8 @@ own right — and each cross-references the other.
 | 8 | `npm run setup-vendor` does not exist but two documents cite it | `docs/overview.md:L39`, `COMPONENTS.md:L5` |
 | 9 | The client-shipped AES key | `lib/util/roles.js:L13` |
 | 10 | The unchecked-`err` crash path in reCAPTCHA verification | `lib/util/recaptcha.js:L18` |
-| 11 | The permanently-`undefined` `server` parameter | base `lib/util/routeParser.js:L594` vs `L71`, now `lib/util/routeParser.js:L234` vs `lib/http/preHandlers.js:L64` (and `L112`) |
-| 12 | The leftover `console.log` calls — **64** matching lines at the base commit, **66** now (**59 → 58** `.js` calls) | 64 base-commit sites across `app.js`, `config/`, `lib/`, `scripts/` |
+| 11 | The permanently-`undefined` `server` parameter | base `lib/util/routeParser.js:L594` vs `L71`, now `lib/util/routeParser.js:L216` vs the single-parameter `lib/http/preHandlers.js:L40` (which reads `request.server` at `L87` instead) |
+| 12 | The leftover `console.log` calls — **64** matching lines at the base commit, **64** now (**59 → 58** `.js` calls) | 64 base-commit sites across `app.js`, `config/`, `lib/`, `scripts/` |
 | 13 | The permanently no-op `gleak` machinery | `app.js:L29-L36`, `L317-L339`, `L341-L345`, `L348` |
 
 ### 1.1 Authenticated `GET /login` and `GET /signup` return HTTP 500
@@ -715,7 +715,7 @@ always come from, so the resolution of every string-form reference is untouched 
 233-row table, both fingerprints, the pre-handler count of 161 and the whole 58-route corpus are byte-identical. What
 remains forbidden is the thing the paragraph above forbids: **passing a real server object in**.
 
-### 1.12 The leftover `console.log` calls — 64 matching lines at the base commit, 66 now
+### 1.12 The leftover `console.log` calls — 64 matching lines at the base commit, 64 now
 
 **What it is.** The codebase writes unstructured log lines to standard output alongside its real logger. At the base
 commit the cited source surface carries **64** `console.log` matching lines — **59** in server-side JavaScript and
@@ -724,13 +724,13 @@ single request.
 
 **Evidence, with the census decomposed.** The census command is
 `grep -rn "console\.log" app.js config/ lib/ scripts/ | wc -l`, measured against both commit `2f8712a` and the
-delivered tree. Its headline number is **64 at the base commit and 66 now** — but that single
+delivered tree. Its headline number is **64 at the base commit and 64 now** — but that single
 number mixes four different things, so all four are stated separately:
 
 | Measurement | Base commit | Current tree |
 |---|---|---|
-| the census command above, counting every **matching line** | 64 | **66** |
-| of which are in `.js` files (add `--include=*.js`) | 59 | **60** |
+| the census command above, counting every **matching line** | 64 | **64** |
+| of which are in `.js` files (add `--include=*.js`) | 59 | **58** |
 | of which are **browser-side**, inside `lib/views/**.html` templates | 5 | 5 |
 | of which are in a non-`.js`, non-template file | 0 | **1** |
 | comment-stripped `console.log(` **call expressions** in those `.js` files | 59 | **58** |
@@ -739,7 +739,7 @@ The five template hits are in `lib/views/base.html` (2), `lib/views/admin/index.
 `lib/views/admin/includes/featured-courses.html` (1). They are client-side script inside Nunjucks templates, they
 never run in the server process, and `lib/views/**` is frozen, so they could not move even if they were noise.
 
-The sixth non-`.js` line is `config/local.example.yaml:31`, added by this changeset: it is a **YAML comment** showing an
+The sixth non-`.js` line is `config/local.example.yaml:28`, added by this changeset: it is a **YAML comment** showing an
 operator how to mint a session secret (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`), so
 the line-counting census matches it while nothing executes it.
 
@@ -753,7 +753,7 @@ console.log('ROUTE: Calling handler for', request.method, request.path);
 **Why it is preserved.** R-1, and this is the most tempting cleanup in the entire codebase, so it is stated
 plainly: **every measured `console.log` other than those three stays.** The current count over the same source
 surface is therefore **63 calls** — 58 server-side JavaScript calls plus the 5 frozen template calls — behind a
-headline of 66 matching lines, for the reasons decomposed below. Removing logging to
+headline of 64 matching lines, for the reasons decomposed below. Removing logging to
 reduce per-request overhead is **not a sanctioned diff category**. Performance is explicitly incidental to this
 change and may not be used to justify any hunk.
 
@@ -761,23 +761,22 @@ The three per-request traces disappear **only** because they live inside the del
 were part of the shim's synthetic-reply machinery, and the shim's removal is squarely inside the framework-migration
 category. They were not removed for being noisy.
 
-> **Reconciling the count after the change — measured, and it is not a one-line drop.** The headline census is **64
-> at the base commit and 66 now**, because the command counts *matching lines* and four separate movements partly
-> cancel. `lib/util/routeParser.js` goes from **3 matching lines and 3 calls to zero of either** — exactly the three
-> per-request traces above, which left with the shim machinery. `lib/controllers/users.js` goes from **18 lines and 18
-> calls to 20 lines and 18 calls**: the two additions are *comments that mention* `console.log`, which a line-counting
-> command also matches, while its 18 real calls are untouched. And the two build scripts this changeset adds each
-> contribute **one** line and one call — `scripts/hydrate-components.js:92` and `scripts/verify-css-artifacts.js:43`,
-> both the same `log()` helper, which is how a build step reports what it is doing. That is
-> `59 - 3 + 2 + 1 + 1 = 60` matching `.js` lines and `59 - 3 + 0 + 1 + 1 = 58` comment-stripped
-> calls, with the 5 template lines unchanged either way and one non-`.js` line added, which is exactly the table above
-> (`60 + 5 + 1 = 66`). No other file in
-> `app.js`, `config/`, `lib/` or `scripts/` moves at all. Earlier drafts of this section reported the post-change
-> headline as **63**, as **61** and as **64**; the last of those omitted `scripts/verify-css-artifacts.js` and
-> `config/local.example.yaml` from the arithmetic, which review finding **F9** caught. The table above is the measured
-> value, re-taken on the delivered tree with the census command verbatim. **No `console.log` call outside the deleted
-> shim machinery was removed**, which is the invariant this section exists to protect, and it holds: the only per-file
-> deltas are `routeParser.js` 3→0, `users.js` 18→20 lines with 18 calls unchanged, and the two new scripts 0→1 each.
+> **Reconciling the count after the change — measured, and the headline coincidence is not a no-op.** The headline
+> census is **64 at the base commit and 64 now**, and the two figures agree only because the movements underneath
+> them cancel exactly. `lib/util/routeParser.js` goes from **3 matching lines and 3 calls to zero of either** —
+> exactly the three per-request traces above, which left with the shim machinery. The two build scripts this
+> changeset adds each contribute **one** line and one call — `scripts/hydrate-components.js:158` and
+> `scripts/verify-css-artifacts.js:37`, both the same `log()` helper, which is how a build step reports what it is
+> doing. And one non-`.js` line arrives, the `config/local.example.yaml` comment above. That is
+> `59 - 3 + 1 + 1 = 58` matching `.js` lines, which are also `58` comment-stripped calls because every one of the 58
+> is a real call expression, with the 5 template lines unchanged either way — exactly the table above
+> (`58 + 5 + 1 = 64`). No other file in
+> `app.js`, `config/`, `lib/` or `scripts/` moves at all: the only per-file deltas are `routeParser.js` 3→0,
+> `hydrate-components.js` 0→1 and `verify-css-artifacts.js` 0→1, `lib/controllers/users.js` holding at **18 lines
+> and 18 calls** on both sides. Every figure here was re-taken on the delivered tree with the census command
+> verbatim, and against the base commit extracted with `git archive 2f8712a`. **No `console.log` call outside the
+> deleted shim machinery was removed**, which is the invariant this section exists to protect, and the per-file
+> census is how it is checked.
 
 **What a naive fix would have broken.** Nothing observable to an HTTP client — but deleting the **58** server-side
 calls that remain would carry 58 unattributable hunks, and any operator grepping container logs for `ROUTE:` or for
@@ -847,8 +846,9 @@ returning 500. A naive repair would have turned the single most obvious "bug" in
 It is delivered as a Boom JSON payload rather than a rendered `50x.html`, recorded as
 `gates.serverErrorDeliveredAs` in `test/baseline/responses.json`.
 
-**B. The licence drift.** `package.json:L99` declares `"license": "MIT"` while `README.md:L111` and
-`docs/index.md:L17` both state **CC0 1.0 Universal (Public Domain Dedication)**. This is logged and deliberately
+**B. The licence drift.** `package.json:L90` — `L99` at the base commit, before the dependency edits shortened the
+manifest — declares `"license": "MIT"` while `README.md:L210` and
+`docs/index.md:L30` both state **CC0 1.0 Universal (Public Domain Dedication)**. This is logged and deliberately
 unreconciled: reconciling it falls outside the four sanctioned diff categories, and choosing which of the two is
 correct is a legal decision, not an engineering one. **No inline caveat was added to either document** — annotating
 them would itself be the documentation edit R-1 excludes.
@@ -1818,12 +1818,13 @@ the member — measured as zero occurrences in `lib/controllers/trinket.js` and 
 frames. A migration that supplies a missing handler **adds a feature**; a migration that deletes the declaration
 **removes a route**. Both are excluded by the request's own exclusion list.
 
-**What baseline decided.** They are **inert by fallback, not broken.** `lib/util/routeParser.js:L52` resolves the
+**What baseline decided.** They are **inert by fallback, not broken.** `lib/util/routeParser.js:L55` resolves the
 handler with `require('../controllers/' + controller)[handlerName]`, which yields `undefined`; the wrapper's
-`if (handler)` test at **L201** is therefore false, and control falls through to **L218**,
-`return request.success(request.params);`. The three routes answer through the declarative response contract carrying
+`if (handler)` test at **L182** is therefore false, and control falls through to **L199**,
+`return h.respond(request.params);` — the base commit's `return request.success(request.params);` in its delivered
+spelling. The three routes answer through the declarative response contract carrying
 the route's own parameters as the payload — an empty object for all three — rather than throwing. Validation is
-unaffected, because the wrapper validates at **L196**, *before* the handler check: `POST /api/interest` still rejects
+unaffected, because the wrapper validates at **L177**, *before* the handler check: `POST /api/interest` still rejects
 an invalid payload exactly as it did at baseline, and only a valid payload reaches the fallback.
 
 **The two GET routes never even reach the fallback.** Both carry `pre: [helpers.validLang, 'isAdmin(user)']`, and
@@ -3419,7 +3420,8 @@ edit was made, because a second comment saying the same thing would itself be ch
 ### 3.46 The route parser's eleven unused bindings stay, because only the inventory's own removals may leave its require chain
 
 **The ambiguity.** A later counting-gate review raised finding **F-3** (LOW, "Dead code") against
-`lib/util/routeParser.js` L1-L13: eleven of the thirteen bindings in the opening declaration block have zero
+`lib/util/routeParser.js` L8-L20 — the block the file's own header comment at L1-L7 now points here about: eleven
+of the thirteen bindings in that opening declaration block have zero
 value-position references anywhere in the delivered file, and the finding proposed deleting them, reading AAP §0.8.1's
 four mandated dead-import removals as a precedent for removing any unused import. The same finding also recorded that
 "leaving the bindings is also fully compliant" and classed the defect as cosmetic, so it offered two outcomes and left
@@ -3431,10 +3433,10 @@ block itself excluded: `util` 0, `Joi` 0, `Boom` 0, `_` 0, `crypto` 0, `fs` 0, `
 `StringUtils` 0, `HAS_EXT` 0 and `JSON_EXT` 0, against `config` 3 and `accepts` 1, both live. The observation is
 correct: eleven bindings are unused. **Nine of them went unused because the sanctioned extraction moved their
 consumers**, and each binding now lives where its consumers do — `Joi` at `lib/http/validation.js:L22`; `Boom` at
-`lib/http/errorMap.js:L11`, `lib/http/preHandlers.js:L50`, `lib/http/responseContract.js:L37` and
-`lib/http/staticRoutes.js:L21`; `util` at `validation.js:L21` and `responseContract.js:L36`; `_` at `redirect.js:L14`
+`lib/http/errorMap.js:L11`, `lib/http/preHandlers.js:L26`, `lib/http/responseContract.js:L34` and
+`lib/http/staticRoutes.js:L21`; `util` at `validation.js:L21` and `responseContract.js:L33`; `_` at `redirect.js:L14`
 and `validation.js:L23`; `fs` and `path` at `staticRoutes.js:L18-L19`; `ObjectUtils` and `StringUtils` at
-`responseContract.js:L39-L40`; and `JSON_EXT` re-declared at `responseContract.js:L42` and read at its L337 and L469.
+`responseContract.js:L36-L37`; and `JSON_EXT` re-declared at `responseContract.js:L39` and read at its L328 and L440.
 **The other two were already unused at the base commit**: `git show 2f8712a:lib/util/routeParser.js` carries `crypto`
 at L9 and `HAS_EXT` at L15 with zero references of their own, so deleting them would not be migration tidying at all —
 it would be tidying of 2013-era code, which is the case R-1 speaks to most directly.
@@ -3470,8 +3472,8 @@ property (`function(url)`, `url: url`, `request.url.pathname`, `config.app.url`)
 **Reproducing the decision.** `grep -c "HAS_EXT" lib/util/routeParser.js` → **2** (the declaration, plus the note
 described next), `grep -c "require('crypto')" lib/util/routeParser.js` → **1**, and
 `grep -n "require('tab')\|require('optimist')" lib/util/routeParser.js` → empty. The declaration block carries a
-five-line note pointing back at this section, so the next census to raise the question finds the answer at the site as
-well as here.
+seven-line note at `L1-L7` pointing back at this section, so the next census to raise the question finds the answer at
+the site as well as here.
 
 
 ## 4. The security-condition catalogue
@@ -3656,8 +3658,9 @@ It was never materialized in memory. The `request`-to-`fetch` dependency swap re
 buffering one, so this is a **regression introduced by the conversion**, and R-4 requires restoring the base
 commit's shape rather than keeping the new one.
 
-**The remediation — raw `node:http`/`node:https`, not `fetch`.** The handler at
-`lib/controllers/users.js:L1701-L1873` dispatches through `LEGACY_HTTP_MODULES` — a two-key map of the `node:http` and
+**The remediation — raw `node:http`/`node:https`, not `fetch`.** The `downloadRemoteAsset()` helper at
+`lib/controllers/users.js:L1561-L1660`, called from the handler at `L773`, dispatches through
+`LEGACY_HTTP_MODULES` — declared at `L1511`, a two-key map of the `node:http` and
 `node:https` cores keyed by the parsed protocol — and pipes the response straight to disk with
 `response.pipe(out)`, which is the base commit's `request.get(url).…pipe(fs.createWriteStream(destPath))` shape
 restored member for member. `fetch` was rejected here rather than merely used carefully: it transparently decodes
@@ -3752,12 +3755,12 @@ visitor redirects every later visitor off-site.
 (`git show 2f8712a:lib/util/routeParser.js` L482-L514), and the raw `h.redirect(next)` is the base commit's
 raw-toolkit redirect (`git show 2f8712a:lib/controllers/users.js` L176-L178).
 
-**Disposition: REMEDIATED.** Both mechanisms are closed in the delivered tree. `lib/http/redirect.js:L304-L308`
+**Disposition: REMEDIATED.** Both mechanisms are closed in the delivered tree. `lib/http/redirect.js:L265-L269`
 exports **three** members — `redirect`, `internalDestination` and `confineToOrigin`; the six boundaries that filter the
-destination resolve at `auth.js:L102`, `auth.js:L293`, `pages.js:L45`, `pages.js:L66`, `users.js:L83` and
-`users.js:L158`; and `lib/http/responseContract.js:L446` reads `var target = fail.redirect;` into a **request-local**
-variable and confines it at `:L452-L453`, so nothing writes back into the shared declaration. Every hostile candidate
-is measured and asserted **in the remediated state** by `test/lib/api/route-parity.js:L1882, L1890, L1893, L1984`,
+destination resolve at `auth.js:L87`, `auth.js:L270`, `pages.js:L36`, `pages.js:L54`, `users.js:L61` and
+`users.js:L126`; and `lib/http/responseContract.js:L417` reads `var target = fail.redirect;` into a **request-local**
+variable and confines it at `:L423-L424`, so nothing writes back into the shared declaration. Every hostile candidate
+is measured and asserted **in the remediated state** by `test/lib/api/route-parity.js:L1831, L1842 and L1933`,
 which assert `headers.location.should.not.contain('evil.example')` — so re-opening the hole fails the suite before it
 reaches a reviewer, which is the intended tripwire. The authorizing adjudication is **§0.2**. The paragraphs below
 record the delivered mechanism, its measured neutrality, and the one design decision a reader must not undo.
@@ -4066,10 +4069,10 @@ current design assumes.**
 
 ### 4.11 SEC-11 — `Math.random()` six-character course access codes (MEDIUM) — PRESERVED
 
-**What it is.** `generateAccessCode()` at `lib/controllers/course.js:L1745-L1755` draws **six** characters, via
+**What it is.** `generateAccessCode()` at `lib/controllers/course.js:L1709-L1719` draws **six** characters, via
 `Math.floor(Math.random() * possible.length)`, from the 55-character alphabet
 `"ABCDEFGHJKLMNPRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"` — about **34.7 bits** from a non-cryptographic
-generator. The code is minted at `L966` and looked up by `findByAccessCode` at `lib/models/course.js:L280-L282`,
+generator. The code is minted at `L938` and looked up by `findByAccessCode` at `lib/models/course.js:L280-L282`,
 which makes the join path an existence oracle with no throttling, so a successful guess grants course access.
 
 **The code has two consumers, and they differ in reachability — this is the part worth getting right.** The two
@@ -6509,11 +6512,11 @@ sub-document includes the owner's **bcrypt password hash**, e-mail address and r
 through the admin JSON view.
 
 **The evidence.** Two things combine. `lib/controllers/course.js#createCourse` answers `h.respond({ course : course })`
-at `L64`, handing the responder a mongoose document whose `_owner` path is populated. And the route declaration at
+at `L56`, handing the responder a mongoose document whose `_owner` path is populated. And the route declaration at
 `config/api_routes.js:L11-L25` declares **no `reply` field-projection spec at all**, so
-`lib/http/responseContract.js:L183-L185` takes the `ObjectUtils.serialize` branch rather than the `ObjectUtils.pull`
+`lib/http/responseContract.js:L296-L298` takes the `ObjectUtils.serialize` branch rather than the `ObjectUtils.pull`
 branch — and `serialize` walks every own key of every nested object, dropping only `null` and `undefined`
-(`lib/util/objectUtils.js:L34-L64`). `User.publicSpec` at `lib/models/user.js:L358-L360` is
+(`lib/util/objectUtils.js:L34-L64`). `User.publicSpec` at `lib/models/user.js:L353-L355` is
 `{ id, name, username, fullname, email, avatar, settings }` and is **byte-identical at the base commit**, but it
 governs the `publicModel` projection only; a populated association is not routed through it.
 
@@ -6644,13 +6647,13 @@ number for the reason given under [section
 every failure response in the application — at the base commit **73** `request.fail(` call sites reached it, per
 [section 3.14](#314-the-fail-and-spread-census-was-refined) — and it is character-identical on both sides of the
 migration. R-1 excludes it as latent-bug repair, and the request's own performance and logging directive is explicit
-that the leftover logging stays: the `console.log` census is **64 matching lines at base and 66 now**, recorded in [section
-1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-66-now), and removing logging is not one of the four
+that the leftover logging stays: the `console.log` census is **64 matching lines at base and 64 now**, recorded in [section
+1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-64-now), and removing logging is not one of the four
 sanctioned diff categories.
 
 **What a naive fix would still break, and what the delivered one does instead.** Redacting the payload **in place** at
 the emitter would change the diagnostic output of every failure path in the application at once, not just signup — the
-very stream [section 1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-66-now) freezes — and redacting at
+very stream [section 1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-64-now) freezes — and redacting at
 the validation bridge by mutating what `reject` receives would be worse, because that argument is **also** the value
 flashed to the session as `'failure'` and rendered back into the form, so the redaction would leak out of the log and
 into the page. The delivered remediation does neither: it inspects a **copy**, so the flashed object and every

@@ -408,7 +408,7 @@ this codebase calls, so each is a **manifest-only edit with zero call-site chang
 
 | Package | Original (installed) | Target | Reason | Verification and notes |
 |---|---|---|---|---|
-| `accepts` | 1.1.4 | **1.3.8** | `security` | Clears high findings in `accepts` and in `negotiator`. Verified still callable as a factory whose `.types` function returns `html` and `json`. **Bumped, never dropped**: `accepts(request).types(['html','json'])` — `lib/util/routeParser.js:L325` at the base commit, `L128` in the delivered tree after the shim was retired — is what selects the HTML-versus-JSON response branch, so dropping it would change content negotiation |
+| `accepts` | 1.1.4 | **1.3.8** | `security` | Clears high findings in `accepts` and in `negotiator`. Verified still callable as a factory whose `.types` function returns `html` and `json`. **Bumped, never dropped**: `accepts(request).types(['html','json'])` — `lib/util/routeParser.js:L325` at the base commit, `L131` in the delivered tree after the shim was retired — is what selects the HTML-versus-JSON response branch, so dropping it would change content negotiation |
 | `js-yaml` | 3.0.2 | **3.15.0** | `security` | Clears two critical findings, including the `argparse` advisory. **Deliberately stays on the 3.x line**: `safeLoad` is still present, so `config/routes.js:L7` needs no edit at all. Advancing to 4.x or 5.x would force the `safeLoad` to `load` rename for **zero** additional security benefit |
 | `mime` | 1.2.11 | **1.6.0** | `security` | `lookup`, `extension` and `charsets` all verified present. **Chosen over a swap to a differently named package precisely because it touches zero call sites — R-1 was the recorded tie-breaker.** See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.3 |
 | `lodash` | 4.17.23 | **4.18.1** | `security` | The advisory targets `_.template`, which is unreachable here — only `_.extend`, `_.find` and `lodash.escape` are used — but the bump costs nothing and closes the finding |
@@ -709,7 +709,7 @@ correspond to a manifest removal.
 | `node-uuid` | 1.4.8 | **removed — no replacement required** | *(no package added)* | `dead` | Deprecated by its own author in favour of the `uuid` package, but **no package was needed**: the base commit never read the binding it imported. *The `node-uuid` removal in full* below |
 | `node-cryptojs-aes` | 0.4.0 | **`crypto-js`** | **4.2.0** | `dead` | Unmaintained. **Bit-compatibility proven bidirectionally** before the swap was accepted: both emit the OpenSSL `Salted__` and MD5-EvpKDF envelope, and ciphertext length is **88** in both directions. This mattered because `lib/util/roles.js` ships the payload to a browser that decrypts it with a frozen client-side decryptor — see [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 1.9 |
 | **`node:url`'s `url.parse()`** *(a deprecated built-in API, not a package)* | Node 22's built-in | the **non-throwing static `URL.parse()`**, with the `null` case neutralized | *(no package added)* | `incompatible` | **Gate-mandated** — a single `url.parse()` call fires a real `DEP0169` warning event that the zero-warning boot gate forbids. All 8 base-commit call sites went to the **same** replacement, in two spellings. *The `url.parse()` replacement in full* below |
-| `optimist` | 0.6.1 | **removed — no replacement required** | *(no package added)* | `dead` | Deprecated upstream. Its only consumer was the argv parsing for the `-R` route-table dumper in `lib/util/routeParser.js`. Because that dumper is pure Hapi-4 compatibility machinery it was **deleted outright**, so **`node:util`'s `parseArgs` was not required either**. Verified in the shipped file: zero `parseArgs` and zero `node:util` references, and zero `parseArgs` anywhere else in the tree. Had any argv path survived, the built-in would have been the choice, because this package's obvious modern successor is unusable from CommonJS for the reason given above |
+| `optimist` | 0.6.1 | **removed — no replacement required** | *(no package added)* | `dead` | Deprecated upstream. Its only consumer was the argv parsing for the `-R` route-table dumper in `lib/util/routeParser.js`. Because that dumper is pure Hapi-4 compatibility machinery it was **deleted outright**, so **`node:util`'s `parseArgs` was not required either**. Verified in the shipped file: zero `parseArgs` and zero `node:util` references. The only `parseArgs` consumers anywhere in the tree are the two baseline CLIs, `test/baseline/capture.js` and `test/baseline/replay.js`, which parse their own flags with `node:util.parseArgs` in strict mode. Had any argv path survived here, the built-in would have been the choice, because this package's obvious modern successor is unusable from CommonJS for the reason given above |
 | `tab` | 0.1.0 | **removed — no replacement required** | *(no package added)* | `dead` | Unmaintained. Its sole consumer was the same `-R` route-table dumper in `lib/util/routeParser.js`, so deleting the dumper meant **a local column formatter was not required**. Verified in the shipped file: zero `emitTable` references and no formatting helper of any kind |
 | `mkdirp` | 0.3.5 | **`fs.promises.mkdir`** with `{recursive: true}` | *(no package added)* | `incompatible` | **Not `dead` — actively maintained.** The problem is the calling convention: `mkdirp` 1 and above is promise-native, which breaks the `util.promisify` wrapper the base commit applied to it at `2f8712a:lib/controllers/courses.js:L7`. Moving to the built-in is simultaneously the smaller diff and one dependency fewer |
 | `rimraf` | 2.2.8 | **`fs.promises.rm`** with `{recursive: true, force: true}` | *(no package added)* | `incompatible` | **Not `dead` — actively maintained.** `rimraf` 4 and above dropped the callback form entirely, which is the form the base commit used at `2f8712a:lib/controllers/courses.js:L8` |
@@ -796,11 +796,15 @@ scoped `@hapi/catbox-redis` that *was* declared is a separate row in Rubric 4. S
 not anticipate.** AAP §0.5.2.1 maps `optimist` onto `node:util`'s `parseArgs` and `tab` onto "a local column
 formatter". Neither was needed. Their sole consumer was the argv parsing and column formatting for the `-R`
 route-table dumper in `lib/util/routeParser.js`; that dumper is pure Hapi-4 compatibility machinery, so it was
-**deleted outright**. Verified across `app.js`, `config/`, `lib/`, `scripts/` and `test/`: zero `parseArgs`
-references, zero `node:util` references, zero `emitTable` references, no formatting helper of any kind, and no
-surviving `argv` handling in the 269-line shipped `routeParser.js`. Had any argv path survived, the built-in would
-have been the choice rather than another package, because `optimist`'s obvious modern successor is unusable from
-CommonJS for the reason given above.
+**deleted outright**. Verified across `app.js`, `config/`, `lib/`, `scripts/` and `test/`: zero `emitTable`
+references, no formatting helper of any kind, and no surviving `argv` handling in the 241-line shipped
+`routeParser.js`, which carries zero `parseArgs` and zero `node:util` references of its own. The **only**
+`parseArgs` and `node:util` references in the tree are in the two baseline CLIs — `test/baseline/capture.js:L126`
+and `L3755`, `test/baseline/replay.js:L92` and `L1023` — which parse their own flags with `node:util.parseArgs` in
+strict mode, so an unknown flag is refused rather than absorbed; that is a property of the parity harness, not a
+survival of the deleted dumper. Had any argv path survived here, the built-in would have been the choice rather
+than another package, because `optimist`'s obvious modern successor is unusable from CommonJS for the reason given
+above.
 
 ### Presigned download URLs: the second AWS package
 
@@ -1025,7 +1029,8 @@ Four were dead at the base commit and were named in the plan. Measured at `2f871
 Three more are bindings on the Node built-in `url` module, left behind by the `url.parse()` replacement recorded in
 Rubric 3. Each was verified dead by identifier scan before removal — the declaration was the **only** line in the file
 that referenced the name, comments and string literals excluded. Sites are given as they stood immediately before
-removal, which is also their `2f8712a` position in every case:
+removal, which is also their `2f8712a` position for the first two; the third had moved up three lines by then, because
+the shebang, the blank line under it and the `tab` require left the head of the same block first:
 
 | Deleted import | Site immediately before removal | Dead at base too? |
 |---|---|---|
@@ -1089,7 +1094,7 @@ rows as claiming otherwise. What is durable, and what a reader can verify, is th
 | `mongoose-schema-extend` | **0.2.2** | The sole provider of `Schema.extend`, and **no maintained successor exists**. It is the reason the mongoose 6.x ceiling exists at all |
 | `underscore` | **1.13.8** | Already above the vulnerable range, and 31 require sites depend on its exact semantics |
 | `moment` | **2.30.1** | Already current at migration time; 6 require sites |
-| `nunjucks` | **3.2.4** | The template engine for 79 server-rendered views. It is also the package whose **optional peer dependency** on `chokidar` `^3.3.0` is why `chokidar` 3.6.0 is a declared runtime dependency rather than a Rubric 4 removal — npm does not install an optional peer on the dependent's behalf, measured on both resolver majors, so the declaration is what keeps non-production boots working; the measurement is in *Reconciliation with the plan's projected figures* above |
+| `nunjucks` | **3.2.4** | The template engine for 79 server-rendered views. It is also the package whose **optional peer dependency** on `chokidar` `^3.3.0` is why `chokidar` 3.6.0 is a declared devDependency rather than a Rubric 4 removal — npm does not install an optional peer on the dependent's behalf, measured on both resolver majors, so the declaration is what keeps non-production boots working; the measurement is in *Reconciliation with the plan's projected figures* above |
 | `chokidar` | **3.6.0** | **Required, despite zero direct require sites**, which is why the plan lists it among the dead removals. `nunjucks` declares it an **optional peer dependency** and `require`s it lazily whenever template watching is enabled, and `lib/util/nunjucks.js:L8` enables watching for both development and test — so removing it breaks the very environment the suite runs in. Held rather than bumped because the peer range is `^3.3.0`; chokidar 4 would not satisfy it. The measurement is in *Reconciliation with the plan's projected figures* above |
 | `winston` | **3.19.0** | Already current at migration time; the log surface assigned to the undeclared `log` global at `app.js:L19` |
 | `redis` | **4.7.1** | Already current at migration time, and already the promise-based client API that `config/redis.js` uses |

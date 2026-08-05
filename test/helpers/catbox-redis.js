@@ -1,39 +1,35 @@
 /**
  * In-memory replacement for the session cache engine, so the suite needs no started cache backend.
  *
- * The suite never starts the cache: `config/test.yaml` sets `app.start: false`, so hapi never reaches
- * `server.start()` and never provisions its cache clients. The engine's `start()` is therefore never
- * called, which leaves it unable to serve a single operation, and `@hapi/yar` treats a not-ready cache as
- * fatal on both session load and session commit. Stubbing the engine is what makes the flow-based suite
- * reachable at all.
+ * `config/test.yaml` sets `app.start: false`, so hapi never reaches `server.start()` and never provisions
+ * its cache clients. The engine's `start()` is therefore never called, which leaves it unable to serve a
+ * single operation, and `@hapi/yar` treats a not-ready cache as fatal on both session load and session
+ * commit — so stubbing the engine is what makes the flow-based suite reachable at all.
  *
- * Four methods of the `Engine` prototype exported by lib/util/catbox-mongoose.js are stubbed - `isReady`,
- * `get`, `set` and `drop` - over an in-memory map. `start`, `stop` and `validateSegmentName` stay real:
+ * FOUR methods of the `Engine` prototype exported by lib/util/catbox-mongoose.js are stubbed over an
+ * in-memory map: `isReady`, `get`, `set` and `drop`. `start`, `stop` and `validateSegmentName` stay real —
  * nothing invokes the first two, and catbox calls the third at policy-provisioning time, where the real
- * implementation already answers correctly. Stubbing more than the suite reaches would hide a regression
- * in the parts that still run for real.
+ * implementation already answers correctly. Stubbing more than the suite reaches would hide a regression in
+ * the parts that still run for real.
  *
- * Three properties of the stub are load-bearing. TTL is MILLISECONDS, because that is the unit catbox
- * hands an engine, so there is no seconds conversion. Expiry is LAZY, evaluated on read against the
- * `{item, stored, ttl}` envelope exactly as catbox and the real engine both do, so no timer is created to
- * hold the event loop open. And keys come from the engine's own `_generateKey`, so a stored entry carries
- * the `segment:id` shape production uses rather than a second, independently maintained copy of that join.
+ * Three properties of the stub are load-bearing:
+ *   - TTL is MILLISECONDS, the unit catbox hands an engine, so there is no seconds conversion;
+ *   - expiry is LAZY, evaluated on read against the `{item, stored, ttl}` envelope exactly as catbox and
+ *     the real engine both do, so no timer is created to hold the event loop open;
+ *   - keys come from the engine's own `_generateKey`, so a stored entry carries the `segment:id` shape
+ *     production uses rather than a second, independently maintained copy of that join.
  *
- * `expires` below is an implicit global retained deliberately although the timer it served is gone:
- * Mocha's `check-leaks` baseline is snapshotted after the helpers load, so removing it would change what
- * that check sees.
+ * `expires` below is an implicit global retained deliberately even though nothing writes to it: Mocha's
+ * `check-leaks` baseline is snapshotted after the helpers load, so removing it would change what that
+ * check sees.
  *
- * The fake clones with `structuredClone` on both `set` and `get`, because production does not alias: the
- * engine writes into a Mongoose `Mixed` field and reads back through `.lean()`, so a stored entry is a
- * copy no later in-memory mutation can reach. Sharing one mutable reference silently removed the teeth
- * from every session-invalidation assertion. `structuredClone` rather than a JSON round-trip because it
- * preserves `Date`, as BSON does. `drop` is injectable - `delayDrop`, `failDrop`, `restoreDrop` - so a
- * slow or refused invalidation can be asserted rather than assumed; yar fires `drop` without awaiting it,
- * so use those at engine level only.
- *
- * The evidence behind every claim above - the measured 500s without this helper, the stub-target
- * correction, the millisecond-unit correction and the aliasing measurement - is in
- * docs/PRESERVED-QUIRKS.md section 3.7.
+ * Both `set` and `get` clone with `structuredClone`, because production does not alias — the engine writes
+ * into a Mongoose `Mixed` field and reads back through `.lean()`, so a stored entry is a copy no later
+ * in-memory mutation can reach. Sharing one mutable reference would take the teeth out of every
+ * session-invalidation assertion. `structuredClone` rather than a JSON round-trip because it preserves
+ * `Date`, as BSON does. `drop` is injectable — `delayDrop`, `failDrop`, `restoreDrop` — so a slow or refused
+ * invalidation can be asserted rather than assumed; yar fires `drop` without awaiting it, so use those at
+ * engine level only. See docs/PRESERVED-QUIRKS.md section 3.7.
  */
 
 var CatboxMongoose = require('../../lib/util/catbox-mongoose'),
@@ -82,8 +78,8 @@ sinon.stub(CatboxMongoose.Engine.prototype, 'get').callsFake(async function(key)
   }
 
   return {
-    // Review finding M7 - the read side of the serialization boundary. Handing back the stored object
-    // itself would let a caller's later mutation reach into the cache.
+    // The read side of the serialization boundary: handing back the stored object itself would let a
+    // caller's later mutation reach into the cache.
     item   : cloneAcrossBoundary(record.item),
     stored : record.stored,
     ttl    : record.ttl
@@ -92,7 +88,7 @@ sinon.stub(CatboxMongoose.Engine.prototype, 'get').callsFake(async function(key)
 
 sinon.stub(CatboxMongoose.Engine.prototype, 'set').callsFake(async function(key, value, ttl) {
   cache[this._generateKey(key)] = {
-    // Review finding M7 - the write side of the same boundary.
+    // The write side of the same boundary.
     item   : cloneAcrossBoundary(value),
     stored : Date.now(),
     ttl    : ttl
@@ -172,17 +168,17 @@ module.exports = {
   }
 };
 
-// BOOTSTRAP ORDER ANCHOR. The root `.mocharc.json` declares four keys and deliberately no `require` key,
-// so Mocha's default recursive glob decides load order, and that order puts `test/setup.js` LAST - measured
-// through mocha/lib/cli/collect-files: test/baseline/capture.js, test/baseline/replay.js, this file,
-// test/helpers/db.js, ... , test/setup.js. But `test/setup.js:1-2` is what exports `NODE_ENV=test`, and the
-// very next file, `test/helpers/db.js`, requires `config/db.js`, which reads `require('config')` and calls
-// `mongoose.connect()` at module load. Left to glob order the suite would therefore resolve the DEVELOPMENT
-// config layer and drop the development database, and would boot the application with `app.start: true` and
-// `usersubdomains: true`. Requiring the bootstrap here makes the ordering a require-cache fact instead of a
-// filename fact: this file is the first module the glob loads that participates in the bootstrap, and
-// `require` is idempotent, so `test/setup.js` runs exactly once and always before `config` is first read.
-// It is required at the END rather than the top so the four prototype stubs above are already installed
-// when `test/setup.js:20` boots `app.js`; the resulting cycle back through `test/setup.js:16` resolves to
-// this module's exports, which are - and at the base commit always were - empty.
+// BOOTSTRAP ORDER ANCHOR. `.mocharc.json` carries no `require` key, so Mocha's default recursive glob
+// decides load order and puts `test/setup.js` LAST — behind this file and behind `test/helpers/db.js`, which
+// requires `config/db.js`, which reads `require('config')` and calls `mongoose.connect()` at module load.
+// But `test/setup.js` is what exports `NODE_ENV=test`, so left to glob order the suite would resolve the
+// DEVELOPMENT config layer, drop the development database, and boot the application with `app.start: true`
+// and `usersubdomains: true`.
+//
+// Requiring the bootstrap here makes the ordering a require-cache fact instead of a filename fact: this file
+// is the first module the glob loads that participates in the bootstrap, and `require` is idempotent, so
+// `test/setup.js` runs exactly once and always before `config` is first read. It is required at the END
+// rather than the top so the four prototype stubs above are already installed when the bootstrap boots
+// `app.js`; the cycle back into this module resolves to the exports assigned above, and the bootstrap only
+// requires this file for its side effects.
 require('../setup');

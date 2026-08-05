@@ -1,35 +1,27 @@
 /**
- * The S3 storage contract: `config/aws.js` and `lib/util/file.js` (review finding M-19).
+ * The S3 storage contract: `config/aws.js` and `lib/util/file.js`.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * The aws-sdk v2 -> @aws-sdk/client-s3 v3 migration is the single largest dependency REPLACEMENT in this
- * change - v3 has no callback form, no global configuration singleton and no presigner built into the
- * client - and it had no tests at all. Every assertion below therefore pins a v3 command shape that the
- * v2 code expressed differently, so a regression to a v2 idiom, a wrong bucket, a wrong key derivation or
- * a lost `ContentLength` fails here instead of silently writing to the wrong place in production.
+ * Every assertion below pins a command SHAPE, so a wrong bucket, a wrong key derivation, a lost
+ * `ContentLength` or a change to which command a method issues fails here instead of silently writing to the
+ * wrong place in production.
  *
- * HOW THE SEAM IS CHOSEN
- * ----------------------
- * Exactly one thing is stubbed: `config/aws.js#getS3Client`, replaced with a recorder whose `send()`
- * captures the command object. That is deliberately the LOWEST possible seam - the real
+ * THE SEAM. Exactly one thing is stubbed: `config/aws.js#getS3Client`, replaced with a recorder whose
+ * `send()` captures the command object. That is deliberately the LOWEST possible seam — the real
  * `PutObjectCommand`, `GetObjectCommand` and `DeleteObjectCommand` classes are constructed by the real
- * production code, and the assertions read `command.constructor.name` and `command.input`, so a change to
- * which command a method issues or to any parameter it carries is visible. Nothing else is faked: the real
- * filesystem, the real sha1 digest, the real extension whitelist and the real configuration are used
- * throughout. The presigning tests do not stub at all; they sign with injected credentials and parse the
- * resulting URL.
+ * production code, and the assertions read `command.constructor.name` and `command.input`. Nothing else is
+ * faked: the real filesystem, the real sha1 digest, the real extension whitelist and the real configuration
+ * are used throughout. The presigning tests do not stub at all; they sign with injected credentials and parse
+ * the resulting URL.
  *
- * WHAT IS DELIBERATELY NOT TESTED, AND WHY
- * ----------------------------------------
- * `FileUtil.hashcontents` on an unreadable path. lib/util/file.js documents that its read stream carries
- * no 'error' listener, so an unreadable file emits on a listener-less emitter and CRASHES THE PROCESS
- * rather than rejecting - the base commit's behaviour, preserved under R-4. Exercising it would kill the
- * mocha process, so the unlink-failure branch that needs a failure is driven by stubbing
- * `fs.promises.unlink` instead, which reaches the same branch without the crash.
+ * WHAT IS DELIBERATELY NOT EXERCISED. `FileUtil.hashcontents` on an unreadable path: its read stream carries
+ * no 'error' listener, so an unreadable file emits on a listener-less emitter and CRASHES THE PROCESS rather
+ * than rejecting — preserved behavior, and exercising it would kill the mocha process. The unlink-failure
+ * branch that needs a failure is therefore driven by stubbing `fs.promises.unlink`, which reaches the same
+ * branch without the crash.
  *
- * Every expectation below was MEASURED against the running code first (R-6), including the AWS-encoded
- * object path, the signed query-parameter set and the path-style fallback for a dotted bucket name.
+ * What the assertions cover: the AWS-encoded object path, the swallowed write error, the stream ownership and
+ * synchronous return of the read path, the signed query-parameter set and the path-style fallback for a
+ * dotted bucket name.
  */
 
 var chai     = require('chai'),
@@ -57,9 +49,9 @@ describe('S3 storage contract', function() {
    * `lib/util/file.js#_fileToContainer` opens a read stream, hands it to `_upload`, and then UNLINKS the
    * file it was reading - so whoever receives that stream must consume or discard it. The real client
    * does; a stand-in that merely records the command does not, and the descriptor's deferred open then
-   * fails after the unlink, emits on a stream production attached no 'error' listener to, and reaches
-   * Mocha as an uncaught exception attributed to an unrelated test. Measured. Adopting the body here keeps
-   * this double faithful to the client it replaces instead of introducing a failure mode of its own.
+   * fails after the unlink, emits on a stream production attached no 'error' listener to, and reaches Mocha
+   * as an uncaught exception attributed to an unrelated test. Adopting the body here keeps this double
+   * faithful to the client it replaces instead of introducing a failure mode of its own.
    *
    * @param {Object} command The command the code under test just issued.
    * @returns {void}
@@ -106,9 +98,9 @@ describe('S3 storage contract', function() {
    * `fs.createReadStream` opens its descriptor ASYNCHRONOUSLY, and the recorder standing in for S3
    * resolves without ever consuming the body, so a stream handed to `_upload` can still be waiting to open
    * when `afterEach` unlinks the file underneath it. The late 'ENOENT' then lands on a stream nobody is
-   * listening to and reaches Mocha as an uncaught exception attributed to whichever test is running by
-   * then - measured. Registering the stream so it is destroyed BEFORE the unlink, and carrying a no-op
-   * 'error' listener as a backstop, keeps the failure that matters attributable to the test that caused it.
+   * listening to and reaches Mocha as an uncaught exception attributed to whichever test is running by then.
+   * Registering the stream so it is destroyed BEFORE the unlink, and carrying a no-op 'error' listener as a
+   * backstop, keeps the failure that matters attributable to the test that caused it.
    *
    * @param {string} file Path to a file created by `scratchFile`.
    * @returns {stream.Readable} The registered read stream.
@@ -158,9 +150,7 @@ describe('S3 storage contract', function() {
     scratch = [];
   });
 
-  // -------------------------------------------------------------------------------------------
   // _upload — the single write path every upload funnels through
-  // -------------------------------------------------------------------------------------------
 
   describe('_upload', function() {
     it('issues a PutObjectCommand carrying the bucket, key, body and content type', function() {
@@ -218,9 +208,7 @@ describe('S3 storage contract', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
   // hashcontents — the sha1 that becomes every remote key
-  // -------------------------------------------------------------------------------------------
 
   describe('hashcontents', function() {
     it('resolves the sha1 hex digest of the file contents', function() {
@@ -234,9 +222,7 @@ describe('S3 storage contract', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
   // _fileToContainer — key derivation, the extension whitelist, and both swallows
-  // -------------------------------------------------------------------------------------------
 
   describe('_fileToContainer', function() {
     it('names the object after the digest and the original extension', function() {
@@ -285,7 +271,7 @@ describe('S3 storage contract', function() {
 
     // PRESERVED QUIRK. A failed S3 write is reported to the caller as a SUCCESS: the error is logged and
     // swallowed, so `err` stays null and the result is the same object a successful write produces.
-    // Propagating it would change the status lib/controllers/files.js returns, which R-4 forbids.
+    // Propagating it would change the status lib/controllers/files.js returns.
     it('reports a failed S3 write as a success, with err null', function() {
       var contents = 'abc',
           file     = scratchFile(contents);
@@ -337,9 +323,7 @@ describe('S3 storage contract', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
   // downloadMaterialFile — the synchronous stream contract
-  // -------------------------------------------------------------------------------------------
 
   describe('downloadMaterialFile', function() {
     it('returns a stream SYNCHRONOUSLY and pipes the S3 body into it', function() {
@@ -378,16 +362,15 @@ describe('S3 storage contract', function() {
     });
 
     /**
-     * PRESERVED FATE, measured. A failed S3 read does NOT surface on the returned stream.
+     * PRESERVED FATE. A failed S3 read does NOT surface on the returned stream.
      *
      * lib/util/file.js emits the error on the INNER PassThrough that is piped into the returned one, and
      * `pipe()` does not forward 'error'. With nothing listening on the inner stream the emit is unowned, so
-     * the process takes an UNCAUGHT EXCEPTION - measured, and exactly the fate lib/util/file.js documents
-     * as the structural analogue of the aws-sdk v2 read stream it replaced. Repairing it (an 'error'
-     * forwarder, or rejecting instead) would be the behaviour improvement R-4 forbids.
+     * the process takes the failure rather than the caller. Repairing it — an 'error' forwarder, or rejecting
+     * instead — would be a prohibited behavior improvement.
      *
-     * Pinning it requires care: an uncaught exception inside mocha would fail an unrelated test or kill the
-     * run. The runner's own handlers are therefore detached for the duration of this one test and restored
+     * Pinning it requires care: an uncaught failure inside mocha would fail an unrelated test or kill the run.
+     * The runner's own handlers are therefore detached for the duration of this one test and restored
      * unconditionally afterwards, so the fate is OBSERVED rather than suffered.
      */
     it('lets a failed S3 read escape as an uncaught exception, not on the returned stream', function() {
@@ -424,8 +407,8 @@ describe('S3 storage contract', function() {
         onStream.should.eql([], 'the returned stream must not receive the error');
         // ...it escapes to the process, which is the documented fate.
         seen.length.should.eql(1, 'the failed read must escape to the process, unowned');
-        // MEASURED: the emit throws inside the rejection handler, so the escape is an unhandled
-        // REJECTION. Node's default for one is to terminate the process, which is the v2-equivalent fate.
+        // The emit throws inside the rejection handler, so the escape is an unhandled REJECTION, and Node's
+        // default for one is to terminate the process.
         seen[0].via.should.eql('unhandledRejection');
         seen[0].err.message.should.eql('NoSuchKey');
       }, function(err) {
@@ -436,9 +419,7 @@ describe('S3 storage contract', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
   // removeFile — promise-native, and its rejection must stay reachable
-  // -------------------------------------------------------------------------------------------
 
   describe('removeFile', function() {
     it('deletes the LAST path segment of the url from the named bucket', function() {
@@ -472,8 +453,7 @@ describe('S3 storage contract', function() {
     });
 
     it('returns the S3 promise rather than a bridged callback', function() {
-      // The optional-callback juggling the base commit carried is gone with the callback parameter it
-      // existed to recover. A caller that ignores the result now ignores a promise, and the delete is
+      // `remove` takes no callback: a caller that ignores the result ignores a promise, and the delete is
       // issued either way.
       var pending = FileUtil.removeFile('snapshots', 'https://host/a/b/c.png');
 
@@ -490,9 +470,7 @@ describe('S3 storage contract', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
   // The remaining read and write paths
-  // -------------------------------------------------------------------------------------------
 
   describe('uploadSnapshotFromBuffer', function() {
     it('writes the buffer to the snapshots bucket as image/png with no ContentLength', function() {
@@ -618,9 +596,9 @@ describe('S3 storage contract', function() {
 /**
  * `config/aws.js` itself: the client lifecycle and the delegated presigner.
  *
- * Presigning is `@aws-sdk/s3-request-presigner`'s, not this repository's (review finding SV-05), so the
- * presigning tests below pin two things: the URL shape callers depend on - origin, path encoding and
- * expiry - and the fact that no signing is implemented here.
+ * Presigning is `@aws-sdk/s3-request-presigner`'s, not this repository's, so the presigning tests below pin
+ * two things: the URL shape callers depend on — origin, path encoding and expiry — and the fact that no
+ * signing is implemented here.
  *
  * These tests deliberately do NOT stub getS3Client - they are about it. The presigning tests inject
  * credentials through the environment for their duration, because the shipped configuration leaves
@@ -725,15 +703,13 @@ describe('config/aws.js', function() {
     });
 
     it('carries the two operation-metadata parameters the official presigner adds', function() {
-      // THE ONE DELIBERATE SHAPE CHANGE (review finding SV-05). An earlier revision hand-rolled the
-      // signature through three `@internal` SDK members and emitted exactly the seven X-Amz-* keys
-      // aws-sdk v2 sent. @aws-sdk/s3-request-presigner - the AWS-supported package, which is what
-      // config/aws.js now uses because an `@internal` member carries no semver signal - additionally
-      // hoists `x-id=GetObject` and `x-amz-checksum-mode=ENABLED` into the query and signs them, so the
-      // digest differs too. The URL is not part of the R-6 parity corpus (the asset feature is
-      // flag-disabled in the shipped configuration), so nothing replays differently. It is pinned HERE
-      // rather than left unasserted so the shape is deliberate and a later regression to a hand-rolled
-      // signer would fail rather than pass quietly.
+      // THE SIGNED QUERY SET IS THE OFFICIAL PRESIGNER'S. `@aws-sdk/s3-request-presigner` hoists
+      // `x-id=GetObject` and `x-amz-checksum-mode=ENABLED` into the query and signs them alongside the
+      // X-Amz-* keys, so both the parameter set and the digest are its own. config/aws.js delegates to it
+      // rather than hand-rolling a signature through `@internal` SDK members, which carry no semver signal.
+      // The URL is not part of the parity corpus — the asset feature is flag-disabled in the shipped
+      // configuration — so it is pinned HERE, where a regression to a hand-rolled signer fails rather than
+      // passing quietly.
       return aws.getSignedDownloadUrl({ Bucket : 'my-bucket', Key : 'k.png' }, 900).then(function(url) {
         var parsed = new URL(url);
 

@@ -1,58 +1,56 @@
 /**
- * test/baseline/capture.js — the R-6 baseline capture harness.
+ * test/baseline/capture.js — the baseline capture harness.
  *
  * WHAT THIS IS
- * ------------
  * BOTH artifacts under test/baseline/ name this file in `metadata.regenerationOwner`: it is the harness
- * that owns test/baseline/route-table.json and test/baseline/responses.json in the finished repository.
- * It boots the application exactly the way they were produced, re-measures BOTH halves of the R-6
- * parity contract — the 233-row hapi route table (TR1) and the 58 + 7 + 8 entry response corpus (TR2,
- * TR3, TR4) — reports every difference, evaluates every gate the artifacts publish, and can regenerate
- * them. It is also the shared implementation library for test/baseline/replay.js, which require()s it —
- * the `require.main === module` guard below means requiring this file boots nothing and captures
- * nothing, so a fifth file under test/baseline/ is not needed. test/lib/api/route-parity.js
- * deliberately does NOT require it: that suite is an independent verifier carrying its own literals.
+ * that owns test/baseline/route-table.json and test/baseline/responses.json. It boots the application
+ * exactly the way they were produced, re-reads BOTH halves of the parity contract — the 233-row hapi
+ * route table and the 58 + 7 + 8 entry response corpus — reports every difference, evaluates every gate
+ * the artifacts publish, and can regenerate them. It is also the shared implementation library for
+ * test/baseline/replay.js, which require()s it — the `require.main === module` guard below means
+ * requiring this file boots nothing and captures nothing, so a fifth file under test/baseline/ is not
+ * needed. test/lib/api/route-parity.js deliberately does NOT require it: that suite is an independent
+ * verifier carrying its own literals.
  *
- * OWNERSHIP, published once and truthfully (review finding P3-1). Because this file owns the artifacts,
+ * OWNERSHIP, published once and truthfully. Because this file owns the artifacts,
  * it also owns the things the artifacts declare about themselves:
  *   - `DOCUMENTED_DIGEST` and `documentedAnchorGate()` are declared HERE and nowhere else in
  *     test/baseline/. replay.js re-exports both rather than keeping a second copy, because two copies
- *     of a gate is how a gate rots: an earlier revision enforced the anchor in replay.js while this
- *     file reported it UNEVALUATED, and route-table.json could not then name a single honest evaluator.
+ *     of a gate is how a gate rots: it ends up enforced in one file and UNEVALUATED in the other, and
+ *     route-table.json can no longer name a single honest evaluator.
  *   - `routeTableGates()` turns all eleven clauses AND the verdict into pass/fail entries of this CLI's
  *     gate summary, so a --dry-run exits non-zero on drift and a write is refused.
  *   - `mergeMeasuredRouteTable()` REGENERATES `gates.documentedAnchorGateSatisfied` from this run's own
  *     evaluation, and `recordReproducedCounts()` regenerates the provenance block's section sizes, so
- *     neither is a hand-authored value that can rot (review findings P3-1 and P4-C). Everything the
+ *     neither is a hand-authored value that can rot. Everything the
  *     merge does NOT recompute is reported by name as hand-derived on every write.
  *
- * HARD CONSTRAINTS, all of them from AAP 0.7.5 and from the artifact's own metadata.captureNotes.
- * Every one of these is a correctness requirement, not a preference:
+ * HARD CONSTRAINTS, all of them from the artifact's own metadata.captureNotes. Every one of these is a
+ * correctness requirement, not a preference:
  *
  *   1. REAL HTTP ONLY. Requests are issued with node:http against server.info. This harness NEVER
- *      calls server.inject(): @hapi/shot/lib/request.js:L30 is the sole remaining DEP0169 source in
- *      the dependency tree, and the zero-deprecation boot gate forbids tripping it. There is no
- *      upstream fix — 6.0.3 is the latest published @hapi/shot.
+ *      calls server.inject(): @hapi/shot is the sole remaining DEP0169 source in the dependency tree,
+ *      and the zero-deprecation boot gate forbids tripping it. There is no upstream fix — 6.0.3 is the
+ *      latest published @hapi/shot.
  *      SCOPE OF THAT CLAIM: it is a rule about the HARNESS, not about the application. The
- *      application itself performs internal sub-requests with request.server.inject() at
- *      lib/controllers/courses.js:L24 and lib/controllers/folders.js:L50, both base-identical, so
- *      DEP0169 does fire once a route that injects is exercised. The boot gate is still clean
- *      because nothing injects during boot, and the corpus stays clean because the harness reaches
- *      the app only over a real socket. See docs/PRESERVED-QUIRKS.md section 7.6 for the full
- *      measurement and for why neither inject site may be rewritten.
- *   2. RUNTIME CONFIG OVERRIDE, NEVER A FILE EDIT. config/test.yaml:L3 sets app.start:false, so under
+ *      application itself performs internal sub-requests with request.server.inject() in
+ *      lib/controllers/courses.js and lib/controllers/folders.js, so DEP0169 does fire once a route
+ *      that injects is exercised. The boot gate is still clean because nothing injects during boot,
+ *      and the corpus stays clean because the harness reaches the app only over a real socket. See
+ *      docs/PRESERVED-QUIRKS.md section 7.6 for why neither inject site may be rewritten.
+ *   2. RUNTIME CONFIG OVERRIDE, NEVER A FILE EDIT. config/test.yaml sets app.start:false, so under
  *      NODE_ENV=test the server is constructed but never bound. app.start:true, the bind host, the
- *      port, the disposable database and the >=32-character session cookie password that
- *      app.js:L50-L66 requires are injected through NODE_CONFIG *before* app.js is required.
- *      config/test.yaml is not edited and config/local.yaml is not created: editing either would
- *      change the behavior of the existing mocha suite, which is a prohibited side effect.
- *   3. NEITHER A CAPTURE NOR A VERIFY RUN EVER OVERRIDES app.url, AND NO MEASURED VALUE IS EVER
- *      REBASED ONTO A DIFFERENT ORIGIN. config/app.config.js:L16-L17 computes config.url from
- *      app.url.{protocol,hostname,port}, which config/default.yaml:L30-L33 fixes at
- *      https + trinket.dev + (empty port), and ten of the corpus's sixteen unauthenticated redirects
- *      carry an absolute Location built from it. Injecting that origin so a diff passes, or rewriting
- *      a measured Location onto the recorded origin, would let a build that emits the WRONG
- *      configured origin replay clean — the literal Location is part of what R-5 requires be proven.
+ *      port, the disposable database and the >=32-character session cookie password app.js requires
+ *      are injected through NODE_CONFIG *before* app.js is required. config/test.yaml is not edited
+ *      and config/local.yaml is not created: editing either would change the behavior of the existing
+ *      mocha suite, which is a prohibited side effect.
+ *   3. NEITHER A CAPTURE NOR A VERIFY RUN EVER OVERRIDES app.url, AND NO RECORDED VALUE IS EVER
+ *      REBASED ONTO A DIFFERENT ORIGIN. config/app.config.js computes config.url from
+ *      app.url.{protocol,hostname,port}, which config/default.yaml fixes at https + trinket.dev +
+ *      (empty port), and ten of the corpus's sixteen unauthenticated redirects carry an absolute
+ *      Location built from it. Injecting that origin so a diff passes, or rewriting an observed
+ *      Location onto the recorded origin, would let a build that emits the WRONG configured origin
+ *      replay clean — the literal Location is part of what the redirect-parity evidence rests on.
  *      A run whose live origin differs from metadata.appUrlOrigin is therefore UNABLE TO RUN
  *      (exit 2) and says so, with the remedy: drop the app.url override from config/local.yaml, or
  *      export a NODE_CONFIG app.url that matches the recorded origin. Configuration mismatch is a
@@ -61,18 +59,16 @@
  *      PRIMARY CORPUS IS RECORDED. Every entry's PRIMARY reading is the raw first hop: the status the
  *      server answered and the literal Location it sent, both compared byte for byte. A second,
  *      strictly ADDITIVE reading resolves each unauthenticated entry's Location chain to its terminal
- *      response, because that resolved reading is what the Technical Specification's published
- *      25x200 / 7x401 / 25x404 / 1x500 tally counts (§0.7.5); the first-hop tally is
- *      {200:12, 302:16, 401:7, 404:22, 500:1}. Two rules make the additive reading provably
- *      non-perturbing, and both are load-bearing:
+ *      response, because that resolved reading is what the published 25x200 / 7x401 / 25x404 / 1x500
+ *      tally counts; the first-hop tally is {200:12, 302:16, 401:7, 404:22, 500:1}. Two rules make the
+ *      additive reading provably non-perturbing, and both are load-bearing:
  *        (a) it runs AFTER the unauthenticated, authenticated and assignment sections are all
- *            recorded, so no resolution request can precede a measured value; and
+ *            recorded, so no resolution request can precede a recorded value; and
  *        (b) it NEVER sends a cookie, so it cannot consume a flash message or touch session state.
- *      Both rules exist because the earlier revision broke them and was caught: following the
- *      authenticated chains with the pinned session cookie consumed the post-login flash and changed
- *      the PRIMARY GET /home reading from 18126 raw / 17206 normalized bytes to 18055 / 17135. The
- *      measurement is in docs/PRESERVED-QUIRKS.md; the authenticated and assignment sections
- *      therefore carry NO redirectChain and NO resolved field at all.
+ *      `request.yar` flash storage is single-read, so following the authenticated chains with the
+ *      pinned session cookie consumes the post-login flash and shortens the PRIMARY GET /home body;
+ *      the authenticated and assignment sections therefore carry NO redirectChain and NO resolved
+ *      field at all. See docs/PRESERVED-QUIRKS.md section 3.38.
  *   5. THE NORMALIZATION CONTRACT IS READ FROM THE ARTIFACT, NOT RE-DECLARED HERE. The HTML
  *      normalization rules come from responses.json#normalizationContract, so the harness and the
  *      contract cannot drift apart. The artifact's own prohibition binds this file: "Do NOT normalize
@@ -84,25 +80,24 @@
  *      30112 + CLONE_INDEX (BASELINE_PORT overrides) and the database is forced to
  *      `test_baseline[_<CLONE_INDEX>]` (BASELINE_MONGO_DATABASE overrides). This harness creates and
  *      DELETES two throwaway identities, so before every query and every delete it fails closed
- *      exactly the way test/helpers/db.js:L34-L79 does — NODE_ENV must be `test`, the connection must
- *      be open, mongoose and the driver must agree on the name, and the name must match the
- *      disposable allow-list — and it refuses to delete a document that is not the harness identity
- *      it created. A developer database such as `trinket` fails closed instead of being mutated.
+ *      exactly the way test/helpers/db.js does — NODE_ENV must be `test`, the connection must be open,
+ *      mongoose and the driver must agree on the name, and the name must match the disposable
+ *      allow-list — and it refuses to delete a document that is not the harness identity it created. A
+ *      developer database such as `trinket` fails closed instead of being mutated.
  *   7. WRITING IS THE DEFAULT PURPOSE AND IS STILL HARD TO DO BY ACCIDENT. A plain run captures and
  *      writes both artifacts, because that is what a capture harness is for; --dry-run measures and
- *      diffs and writes absolutely nothing. A writing run refuses unless HEAD is the base commit
- *      recorded in metadata.baseCommit AND no tracked file is modified AND no gitignored configuration
- *      layer such as config/local.yaml is present (review finding F10 — the porcelain read is
- *      --ignored=matching precisely so that one can be seen), so post-migration values, half-finished
- *      values and one operator's private configuration cannot become the baseline. There is no --force:
- *      re-baselining is --adopt-base-commit, which says what it does, and which lifts the commit
- *      condition alone.
+ *      diffs and writes absolutely nothing. A writing run refuses unless HEAD is the commit recorded in
+ *      metadata.baseCommit AND no tracked file is modified AND no gitignored configuration layer such
+ *      as config/local.yaml is present — the porcelain read is --ignored=matching precisely so that one
+ *      can be seen — so post-migration values, half-finished values and one operator's private
+ *      configuration cannot become the baseline. There is no --force: re-baselining is
+ *      --adopt-base-commit, which says what it does, and which lifts the commit condition alone.
  *
  * USAGE
- *   node test/baseline/capture.js                  capture at the recorded base commit and rewrite
- *                                                  BOTH artifacts atomically; refuses (exit 2) off
- *                                                  the base commit, with a modified tracked tree, or
- *                                                  with a gitignored config/local.* layer present
+ *   node test/baseline/capture.js                  capture at the commit metadata.baseCommit records
+ *                                                  and rewrite BOTH artifacts atomically; refuses
+ *                                                  (exit 2) off that commit, with a modified tracked
+ *                                                  tree, or with a gitignored config/local.* layer
  *   node test/baseline/capture.js --write          the same run, said explicitly
  *   node test/baseline/capture.js --dry-run        measure, diff and gate only — writes nothing
  *   node test/baseline/capture.js --dry-run --routes-only
@@ -130,29 +125,27 @@ var childProcess = require('child_process'),
     path         = require('path'),
     nodeUtil     = require('node:util'),
     // The ENDPOINT half of assertDisposableDatabase()'s gate, shared verbatim with
-    // test/helpers/db.js - the tree's other destructive caller - so the two cannot diverge
-    // (review finding SV-04). Requiring nothing and touching nothing on load is a precondition of
-    // this file being able to use it at all: this is a CLI, not a Mocha spec, so it cannot pull in
-    // test/helpers/db.js, whose first statement requires the chai/sinon bootstrap.
+    // test/helpers/db.js — the tree's other destructive caller — so the two cannot diverge.
+    // Requiring nothing and touching nothing on load is a precondition of this file being able to use
+    // it at all: this is a CLI, not a Mocha spec, so it cannot pull in test/helpers/db.js, whose first
+    // statement requires the chai/sinon bootstrap.
     endpointGate = require('../helpers/disposable-endpoint');
 
 var ARTIFACT_PATH    = path.join(__dirname, 'responses.json'),
     ROUTE_TABLE_PATH = path.join(__dirname, 'route-table.json');
 
 /**
- * The literal the Technical Specification publishes for the baseline route table (AAP 0.1.1.3 goal G8,
- * 0.1.2.3 invariant TR1, 0.7.5).
+ * The literal the Technical Specification publishes for the baseline route table.
  *
  * It lives HERE, in the harness that owns route-table.json, and it is the ONLY copy in the tree:
  * test/baseline/replay.js re-exports it rather than declaring a second one, and
  * test/lib/api/route-parity.js carries its own independent literal because that suite deliberately
  * loads neither this module nor the artifact. Clause 1 of documentedAnchorGate() compares this constant
  * against the artifact's stored gates.documentedDigest, so an edit that quietly substituted one of the
- * artifact's own measurements for the published anchor FAILS the gate instead of passing unnoticed.
+ * artifact's own readings for the published anchor FAILS the gate instead of passing unnoticed.
  *
- * Review finding P3-1: the artifact published capture.js as the evaluator's home while the function
- * actually lived in replay.js, and the stored verdict beside it was hand-authored. Both halves are
- * closed by hosting the evaluator, the literal and the regeneration of the verdict in this file.
+ * The evaluator, this literal and the regeneration of the stored verdict all live in this file, so the
+ * artifact names one honest home for all three.
  */
 var DOCUMENTED_DIGEST = 'cd2a7e38a39bd84902ac1a0d69f50e2a';
 
@@ -240,13 +233,13 @@ var DISPOSABLE_DATABASE = /^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/;
  */
 var FORCED_DATABASE = null;
 
-/** The exact merged NODE_CONFIG configureRuntime() installed, for metadata.nodeConfigOverride (F3). */
+/** The exact merged NODE_CONFIG configureRuntime() installed, for metadata.nodeConfigOverride. */
 var EFFECTIVE_NODE_CONFIG = null;
 
 /**
  * Errors raised while removing a throwaway identity. Collected rather than thrown away: a capture that
  * left an identity behind has polluted the datastore it was given, which the run must report as a
- * failure instead of finishing quietly (review finding F9).
+ * failure instead of finishing quietly.
  */
 var CLEANUP_ERRORS = [];
 
@@ -315,9 +308,7 @@ var COMPARED_FIELDS = [
   'resolved'
 ];
 
-// ---------------------------------------------------------------------------------------------
 // Committed artifacts
-// ---------------------------------------------------------------------------------------------
 
 function loadCommittedCorpus() {
   return JSON.parse(fs.readFileSync(ARTIFACT_PATH, 'utf8'));
@@ -327,9 +318,7 @@ function loadCommittedRouteTable() {
   return JSON.parse(fs.readFileSync(ROUTE_TABLE_PATH, 'utf8'));
 }
 
-// ---------------------------------------------------------------------------------------------
 // Runtime configuration — must run before anything requires `config` or `app.js`
-// ---------------------------------------------------------------------------------------------
 
 function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -374,13 +363,13 @@ function resolvePort() {
 
 /**
  * The disposable database this run owns. BASELINE_MONGO_DATABASE wins; otherwise
- * `test_baseline[_<CLONE_INDEX>]`, sanitized the way test/setup.js:L70-L83 sanitizes CLONE_INDEX. The
- * result is validated against DISPOSABLE_DATABASE here, at the point it is chosen, so a bad value fails
- * loudly at configuration time instead of much later from inside a delete.
+ * `test_baseline[_<CLONE_INDEX>]`, sanitized the way test/setup.js sanitizes CLONE_INDEX. The result is
+ * validated against DISPOSABLE_DATABASE here, at the point it is chosen, so a bad value fails loudly at
+ * configuration time instead of much later from inside a delete.
  *
- * Forcing a name at all is review finding F1: without it the capture inherits whatever node-config
- * finally resolved — for a developer who followed docs/setup.md that is the `trinket` DEVELOPMENT
- * database — and this harness deletes documents by a fixed email before it creates them.
+ * Forcing a name at all is mandatory: without it the capture inherits whatever node-config finally
+ * resolved — for a developer who followed docs/setup.md that is the `trinket` DEVELOPMENT database — and
+ * this harness deletes documents by a fixed email before it creates them.
  */
 function resolveDatabase() {
   var explicit = process.env.BASELINE_MONGO_DATABASE;
@@ -422,7 +411,7 @@ function resolveDatabase() {
  * `config` is required.
  *
  * The merged result is both returned AND retained in EFFECTIVE_NODE_CONFIG, so a write run records the
- * override it actually ran under rather than a hand-written literal that can drift from it (F3).
+ * override it actually ran under rather than a hand-written literal that can drift from it.
  */
 function configureRuntime(extraOverrides) {
   process.env.NODE_ENV = 'test';
@@ -466,13 +455,10 @@ function effectiveNodeConfig() {
 /**
  * Fails closed unless the live mongoose connection is pointed at a database it is safe to mutate.
  *
- * FIVE clauses, all required. An earlier revision of this function carried only the first four and its
- * docblock claimed to be "test/helpers/db.js#assertDisposableDatabase applied to a second destructive
- * caller" - which was not true, and review finding SV-04 is what caught it. db.js validates the
- * ENDPOINT as well as the name, and this function did not, so a `local.yaml` or a NODE_CONFIG layer
- * naming a remote, credentialed, SRV-resolved, replica-set or TLS endpoint whose database happened to be
- * called `test` passed this gate and was written to. The endpoint clause below closes that, and it is
- * the SAME code db.js runs: test/helpers/disposable-endpoint is one side-effect-free module both
+ * FIVE clauses, all required. The name on its own is not enough: a `local.yaml` or a NODE_CONFIG layer
+ * naming a remote, credentialed, SRV-resolved, replica-set or TLS endpoint whose database happens to be
+ * called `test` must not pass this gate. Clause 5 checks the ENDPOINT as well as the name, and it is the
+ * SAME code test/helpers/db.js runs: test/helpers/disposable-endpoint is one side-effect-free module both
  * destructive callers require, so neither can be hardened without the other.
  *
  * Why each clause is necessary on its own:
@@ -527,7 +513,7 @@ function assertDisposableDatabase(operation) {
                     'connection after configureRuntime() ran.');
   }
 
-  // THE ENDPOINT CLAUSE (review finding SV-04). The four clauses above all describe the database NAME and
+  // THE ENDPOINT CLAUSE. The four clauses above all describe the database NAME and
   // the process; none of them describes the SERVER. configureRuntime() forces db.mongo.host to a loopback
   // address, but a NODE_CONFIG layer or a config/local.yaml is read alongside that and can move the host
   // without moving the name - so the host the driver actually resolved is read back off the live
@@ -606,9 +592,7 @@ function stopServer(server) {
   return server.stop({ timeout : 1000 }).catch(function() { return undefined; });
 }
 
-// ---------------------------------------------------------------------------------------------
 // Real HTTP
-// ---------------------------------------------------------------------------------------------
 
 /**
  * One real HTTP request. node:http adds only Host and Connection beyond the headers passed in, which
@@ -683,9 +667,7 @@ function httpRequest(server, options) {
   });
 }
 
-// ---------------------------------------------------------------------------------------------
 // Header normalization
-// ---------------------------------------------------------------------------------------------
 
 /**
  * Redacts one Set-Cookie (or Cookie) header value. Two things are neutralized and nothing else: the
@@ -744,9 +726,7 @@ function normalizeRequestHeaders(raw) {
   return normalized;
 }
 
-// ---------------------------------------------------------------------------------------------
 // HTML body normalization — rules read from the artifact, roles-token matches structurally gated
-// ---------------------------------------------------------------------------------------------
 
 /**
  * The measured structural invariants of the roles token produced by lib/util/roles.js#encrypt and
@@ -869,9 +849,7 @@ function normalizeHtmlBody(body, rules, context) {
   return { normalized : normalized, rolesTokens : rolesTokens };
 }
 
-// ---------------------------------------------------------------------------------------------
 // Body shape
-// ---------------------------------------------------------------------------------------------
 
 function extractTitle(html) {
   var match = /<title>([\s\S]*?)<\/title>/i.exec(html);
@@ -884,9 +862,9 @@ function sha256(text) {
 }
 
 /**
- * The three body kinds the corpus records — html, json and empty — reproduced exactly. HTML bodies
- * are never stored verbatim: raw HTML digests were measured to differ between identical runs, so only
- * the normalized digest, the byte counts, the <title> and three structural markers are recorded.
+ * The three body kinds the corpus records — html, json and empty — reproduced exactly. HTML bodies are
+ * never stored verbatim: raw HTML digests differ between otherwise identical runs, so only the
+ * normalized digest, the byte counts, the <title> and three structural markers are recorded.
  */
 function describeBody(contentType, body, rules, context) {
   var bytes = body.length;
@@ -994,9 +972,7 @@ function buildEntry(method, requestPath, response, rules, state) {
 }
 
 
-// ---------------------------------------------------------------------------------------------
 // Redirect resolution — the additive reading (responses.json#requestPolicy.resolutionReading)
-// ---------------------------------------------------------------------------------------------
 
 function isRedirectStatus(status) {
   return RESOLUTION_STATUSES.indexOf(status) !== -1;
@@ -1009,7 +985,7 @@ function isRedirectStatus(status) {
  * stops the chain with `stoppedBecause : "off-site"`.
  *
  * The origin test is EXACT ORIGIN EQUALITY through the non-throwing static URL.parse, never a string
- * prefix (review finding F15). `https://trinket.dev.evil.example/x` and `https://trinket.dev@evil.example/x`
+ * prefix. `https://trinket.dev.evil.example/x` and `https://trinket.dev@evil.example/x`
  * both begin with the configured origin as a string, and a prefix match would have mapped either of them
  * onto the local probe and requested it — a harness that follows an attacker-shaped Location and then
  * records the result as this application's behavior. URL.parse is used rather than `new URL` because it
@@ -1200,9 +1176,7 @@ function attachResolution(entry, resolution) {
 }
 
 
-// ---------------------------------------------------------------------------------------------
 // Corpus selection and capture
-// ---------------------------------------------------------------------------------------------
 
 /**
  * responses.json#selectionRule, reproduced against the LIVE route table rather than against the
@@ -1309,7 +1283,7 @@ function createThrowawayUser() {
 }
 
 /**
- * Removes the throwaway identity, or explains why it did not. Nothing is swallowed (review finding F9):
+ * Removes the throwaway identity, or explains why it did not. Nothing is swallowed:
  * a rejection here means the datastore still holds a document this harness created, so the caller has to
  * see it. Both guards fire before the delete — the database must be disposable, and the document must be
  * this harness's own identity rather than merely something holding the same email.
@@ -1344,8 +1318,8 @@ function removeAssignmentSignupUser() {
 /**
  * Removes BOTH throwaway identities, attempting each one even when the other fails, and collecting the
  * failures instead of raising. This is the function every terminal `finally` calls: a capture must not
- * abandon an identity because an earlier step threw, and it must not report success when it did
- * (review findings F9 and F14). Resolves with the list of errors, which main() turns into exit 2.
+ * abandon an identity because one step threw, and it must not report success when it did not
+ * remove them. Resolves with the list of errors, which main() turns into exit 2.
  */
 function cleanupIdentities() {
   var attempts = [
@@ -1393,15 +1367,14 @@ function extractSessionCookie(response) {
  *   [2] GET /login   authenticated — the flagship 500 quirk;
  *   [3] GET /signup  authenticated — the other half of the flagship quirk;
  *   [4] GET /home    authenticated — the only entry whose body carries a roles token;
- *   [5] GET /account authenticated — the measured RELATIVE redirect;
+ *   [5] GET /account authenticated — the recorded RELATIVE redirect;
  *   [6] GET /logout  authenticated — LAST, because it clears the session.
  *
  * FIRST HOP ONLY, and no chain is resolved here at any point. This section is the reason constraint 4
  * exists: yar session storage is single-read, so a cookie-bearing GET of a redirect target consumes the
- * flash the next recorded page would have rendered. The earlier revision followed these chains with the
- * pinned cookie and silently moved [4]'s own body from 18126 to 18055 bytes. Every entry here therefore
- * carries `status`, `location`, `headers` and `bodyShape` exactly as the server answered, and no
- * `redirectChain` or `resolved` field at all.
+ * flash the next recorded page would have rendered and silently shortens [4]'s own body. Every entry
+ * here therefore carries `status`, `location`, `headers` and `bodyShape` exactly as the server answered,
+ * and no `redirectChain` or `resolved` field at all.
  */
 function captureAuthenticated(server, rules) {
   var entries = [],
@@ -1449,9 +1422,7 @@ function captureAuthenticated(server, rules) {
   });
 }
 
-// ---------------------------------------------------------------------------------------------
-// The assignment `next` supplement (review finding P3-1)
-// ---------------------------------------------------------------------------------------------
+// The assignment `next` supplement
 
 /** The absolute same-origin destination the frozen assignment UI would send, on the live origin. */
 function assignmentDestination() {
@@ -1513,13 +1484,12 @@ function captureAssignmentLeg(server, rules, entries, leg) {
 }
 
 /**
- * The assignment `next` supplement, in exactly the recorded order. Every entry here is a case the
- * migrated tree must reproduce byte-for-byte. The off-origin and scheme-relative destinations are NOT
- * deviations: the base commit echoed them straight back and so does this tree, because code review ruled
- * the intermediate same-origin filter an unauthorized behavior change under R-1 and R-4. They are
- * recorded in responses.json#assignmentNextContract.confinedOpenRedirect and asserted live by
+ * The assignment `next` supplement, in exactly the recorded order. Every entry here is a case the tree
+ * must reproduce byte-for-byte, including the off-origin and scheme-relative destinations, which are
+ * echoed straight back rather than filtered. They are recorded in
+ * responses.json#assignmentNextContract.confinedOpenRedirect and asserted live by
  * test/lib/api/route-parity.js rather than replayed, because driving them needs a two-hop cookie-bearing
- * flow that this corpus deliberately does not walk.
+ * flow that this corpus deliberately does not walk. See docs/PRESERVED-QUIRKS.md section 4.4.
  *
  *   [0][1] login  — absolute same-origin destination, persisted then consumed
  *   [2][3] login  — root-relative destination, the shape that already round-tripped
@@ -1601,7 +1571,7 @@ function captureAssignmentNext(server, rules) {
   }).then(function() {
     return removeAssignmentIdentities().then(function() { return entries; });
   }, function(captureFailure) {
-    // FINALLY-EQUIVALENT CLEANUP (review finding F5). This rejection handler used to remove only the
+    // FINALLY-EQUIVALENT CLEANUP. This rejection handler used to remove only the
     // signup identity and then rethrow, which meant the rejection skipped the SUCCESS-ONLY
     // `removeThrowawayUser()` that followed further down the chain: a failed assignment capture left the
     // primary throwaway user in the database, so the next run started against a datastore the previous
@@ -1625,7 +1595,7 @@ function captureAssignmentNext(server, rules) {
  *   4. resolveUnauthenticated(), cookie-less, after every value above is already recorded. Nothing it
  *      requests can move a recorded reading, because there is no recorded reading left to take.
  * Both throwaway identities are removed in a terminal `finally`, so an exception anywhere above still
- * leaves the disposable database as it was found (review findings F9 and F14).
+ * leaves the disposable database as it was found.
  */
 function captureCorpus(server, corpus) {
   var committed = corpus || loadCommittedCorpus(),
@@ -1653,9 +1623,9 @@ function captureCorpus(server, corpus) {
   }).then(function(entries) {
     measured.assignmentNext = entries;
 
-    // The cache-prefix confinement probes (SEC-1 / SV-40). Placed after the three response sections and
-    // before the resolution pass because they need nothing from either: no identity, no cookie and no
-    // flash state, so they cannot perturb what the sections above measured.
+    // The cache-prefix confinement probes. Placed after the three response sections and before the
+    // resolution pass because they need nothing from either: no identity, no cookie and no flash state,
+    // so they cannot perturb what the sections above recorded.
     return captureAssetConfinement(server);
   }).then(function(entries) {
     measured.assetConfinement = entries;
@@ -1672,22 +1642,16 @@ function captureCorpus(server, corpus) {
   });
 }
 
-// ---------------------------------------------------------------------------------------------
-// Asset confinement — the cache-prefix {assetType} probes (review finding SEC-1 / SV-01)
-// ---------------------------------------------------------------------------------------------
+// Asset confinement — the cache-prefix {assetType} probes
 
 /**
  * The cache-prefix route's {assetType} segment IS the Inert confinement root
- * (lib/http/staticRoutes.js), and it arrives percent-DECODED after route matching. Before the guard was
- * restored, an unauthenticated GET could move that root out of ./public and read any file the process
- * could read - including config/local.yaml and therefore the Yar session-seal password, which converts a
- * file read into session forgery for any account.
+ * (lib/http/staticRoutes.js), and it arrives percent-DECODED after route matching, so the guard there is
+ * what holds the served root inside ./public.
  *
- * The corpus carried no probe for it at all, so neither `npm test` nor `node test/baseline/replay.js`
- * could detect the guard being added OR removed (review finding SV-40). These probes close that in BOTH
- * directions: the traversal rows must answer 404, and the two positive controls must keep answering what
- * a legitimate asset URL has always answered, so a guard that over-rejects fails just as loudly as a
- * missing one.
+ * These probes verify that confinement in BOTH directions: every traversal shape must answer 404, and the
+ * two positive controls must keep answering what a legitimate asset URL has always answered, so a guard
+ * that over-rejects fails just as loudly as a missing one. See docs/PRESERVED-QUIRKS.md section 4.1.
  *
  * Only the STATUS is gated, deliberately. Inert stamps `etag` and `last-modified` on a served file from
  * that file's inode, which differ per checkout, so recording a body digest or a header set here would
@@ -1804,9 +1768,7 @@ function assetConfinementGates(committedCorpus, measured) {
   ];
 }
 
-// ---------------------------------------------------------------------------------------------
 // Route table — the other artifact this harness owns (test/baseline/route-table.json)
-// ---------------------------------------------------------------------------------------------
 
 /**
  * route-table.json#metadata.regenerationOwner names THIS FILE, and its metadata.captureNotes bind it:
@@ -2037,36 +1999,34 @@ function registrationOrderCanonical(live) {
  *
  * THIS IS THE SINGLE IMPLEMENTATION. It lives in the harness that owns route-table.json, which is what
  * lets that artifact name one honest evaluator and what lets mergeMeasuredRouteTable() REGENERATE
- * gates.documentedAnchorGateSatisfied instead of carrying a hand-authored boolean (review finding
- * P3-1). test/baseline/replay.js re-exports this function; test/lib/api/route-parity.js recomputes the
- * same eleven clauses from its own in-file literals, sharing no code and loading no artifact, so a defect
- * here cannot make that suite pass.
+ * gates.documentedAnchorGateSatisfied instead of carrying a hand-authored boolean.
+ * test/baseline/replay.js re-exports this function; test/lib/api/route-parity.js recomputes the same
+ * eleven clauses from its own in-file literals, sharing no code and loading no artifact, so a defect here
+ * cannot make that suite pass.
  *
  * ELEVEN clauses, all of them the Specification's own published values for this table, plus the table
  * itself: the frozen digest literal is still stored verbatim; the row count; the method distribution;
- * the /api/ path count; the pre-handler count; the three auth buckets; the 233 canonical rows the
- * digest stands for, compared as a sorted multiset against the base-commit capture; the
- * registration-order contract, whose fingerprint is re-derived from config.routes; and a sha256
- * RECOMPUTED from the live table under the artifact's published serialization. Any drift in any of
- * them lands in `failures` and makes `satisfied` false, so a regression FAILS this gate instead of
- * being recorded as expected.
+ * the /api/ path count; the pre-handler count; the three auth buckets; the 233 canonical rows the digest
+ * stands for, compared as a sorted multiset against the recorded set; the registration-order contract,
+ * whose fingerprint is re-derived from config.routes; and a sha256 RECOMPUTED from the live table under
+ * the artifact's published serialization. Any drift in any of them lands in `failures` and makes
+ * `satisfied` false, so a regression FAILS this gate instead of being recorded as expected.
  *
  * Why there are two digest clauses, and what each one is worth. Clause 1 compares two literals — this
  * file's DOCUMENTED_DIGEST against the artifact's stored copy — which detects an edit to the stored
  * anchor but computes nothing. Clause 11 is the one that computes: it applies the artifact's published
- * canonicalization to the LIVE route table and requires the result to equal gates.measuredSha256. Before
- * clause 11 existed this gate could report `satisfied` on a run where no digest had been derived from the
- * running server at all — the live comparison lived in routeTableGates() instead, so the evaluator the
- * artifact names was not the evaluator doing the work (review finding SV-32).
+ * canonicalization to the LIVE route table and requires the result to equal gates.measuredSha256. Both
+ * are needed, because a gate that only compares literals can report `satisfied` on a run where no digest
+ * was derived from the running server at all.
  *
  * What neither clause does is recompute the Specification's own 32-character literal, and that is a
  * limit of the published value rather than a gap in this gate: it is 32 hexadecimal characters labelled
  * sha256 where a SHA-256 is 64, and no serialization is published for it — no field set, no separator,
  * no sort collation, no trailing-newline convention — so no verifier can derive the string from any
- * input (route-table.json#adjudications ADJ-4 records the exhaustive search). Reverse-engineering a
+ * input; route-table.json#adjudications ADJ-4 records the exhaustive search. Reverse-engineering a
  * serialization to force a string match is forbidden by ADJ-4 and would prove nothing about the table.
  * What the literal names is a specific 233-row table; that table is pinned here exactly, clause by
- * clause, and the digest that CAN be recomputed over it now is.
+ * clause, and the digest that CAN be recomputed over it is.
  *
  * @param   {Object} live           A canonicalizeLiveTable() result, or a captureRouteTable() result —
  *                                 both carry `gates`, `canonical` and `byKey`.
@@ -2103,28 +2063,24 @@ function documentedAnchorGate(live, committedTable) {
   clause('registrationOrderContract',
          { unresolvedDeclarations : [], fingerprint : gates.registrationOrderFingerprint },
          { unresolvedDeclarations : order.missing, fingerprint : sha256(order.canonical.join('\n')) });
-  // CLAUSE 11 — A DIGEST THIS GATE ACTUALLY RECOMPUTES (review finding SV-32).
+  // CLAUSE 11 — A DIGEST THIS GATE ACTUALLY RECOMPUTES.
   //
   // Clause 1 compares DOCUMENTED_DIGEST to gates.documentedDigest: a literal in this file against a
-  // literal in the artifact. That is a real check - it catches an edit to the stored anchor - but it
-  // computes nothing, so before this clause existed `satisfied` could be true on a run where no digest
-  // had been derived from the running server at all. A live digest comparison did exist, but in
-  // routeTableGates() rather than here, which meant the artifact's own named evaluator was not the thing
-  // doing the recomputing.
+  // literal in the artifact. That catches an edit to the stored anchor but computes nothing, so on its
+  // own it would let `satisfied` be true on a run where no digest was derived from the running server.
   //
-  // This closes that by applying the artifact's PUBLISHED serialization to the LIVE table and requiring
-  // the result to equal the stored digest. The recipe is not invented here: route-table.json's
-  // `canonicalization` block publishes rowFormat, the sort ("Array.prototype.sort() default, UTF-16
-  // code-unit ascending"), the join ("\n") and no trailing newline, plus a `reproduce` one-liner, and
+  // This clause applies the artifact's PUBLISHED serialization to the LIVE table and requires the result
+  // to equal the stored digest. The recipe is not invented here: route-table.json's `canonicalization`
+  // block publishes rowFormat, the sort ("Array.prototype.sort() default, UTF-16 code-unit ascending"),
+  // the join ("\n") and no trailing newline, plus a `reproduce` one-liner, and
   // `sha256(live.canonical.slice().sort().join('\n'))` is exactly that recipe. Both digest widths are
   // asserted together so a truncation cannot pass the long form.
   //
   // What this clause deliberately does NOT do is recompute the 32-character documented literal. That
   // value is 32 characters where a SHA-256 is 64 and no serialization is published for it, so no input
-  // exists to derive it from (route-table.json#adjudications ADJ-4 records the exhaustive search).
+  // exists to derive it from; route-table.json#adjudications ADJ-4 records the exhaustive search.
   // Reverse-engineering one to force a string match is forbidden by ADJ-4 and would prove nothing. The
-  // recomputable digest is the measured one, and it is now recomputed INSIDE the gate rather than beside
-  // it.
+  // recomputable digest is the recorded one, and it is recomputed INSIDE the gate rather than beside it.
   clause('measuredSha256RecomputedFromLiveTable',
          { measuredSha256 : gates.measuredSha256, measuredSha256First32 : gates.measuredSha256First32 },
          { measuredSha256        : sha256(live.canonical.slice().sort().join('\n')),
@@ -2145,7 +2101,7 @@ function documentedAnchorGate(live, committedTable) {
  *
  * This is what route-table.json#gates.documentedAnchorsExceptDigestAllReproduced asserts, and it is
  * computed here so that mergeMeasuredRouteTable() can regenerate the flag instead of copying a stored
- * boolean forward over a measurement that no longer justifies it (review finding P3-1).
+ * boolean forward over a measurement that no longer justifies it.
  *
  * @param   {Object} verdict A documentedAnchorGate() result.
  * @returns {Boolean} true when every clause other than the retention clause is satisfied.
@@ -2208,7 +2164,7 @@ function pushDifference(differences, section, subject, expected, actual) {
  * registration order, the four digests, the seven countable gates, the raw auth tally and the server
  * default. gates.documentedDigest is deliberately NOT compared — the artifact records it as
  * unreproducible in gates.documentedDigestReproduced ("none") and gates.documentedDigestGateSatisfied,
- * and manufacturing a match for it would be exactly the kind of evidence-tampering R-6 forbids.
+ * and manufacturing a match for it would be evidence-tampering.
  */
 function compareRouteTable(committedTable, measured) {
   var differences = [],
@@ -2290,8 +2246,8 @@ function mergeMeasuredRouteTable(committedTable, measured) {
 
   merged.rows = measured.rows;
 
-  // REVIEW FINDING P3-1. Both verdicts are REGENERATED from this run's own evaluation of the anchor rather
-  // than carried across as hand-authored booleans. `merged` already holds the recomputed rows, gates and
+  // Both verdicts are REGENERATED from this run's own evaluation of the anchor rather than carried
+  // across as hand-authored booleans. `merged` already holds the recomputed rows, gates and
   // digests, so the clause set is evaluated against the merged artifact — which is the artifact that is
   // about to be written — and a write whose table no longer satisfies the anchor therefore stores `false`
   // and fails routeTableGates() rather than shipping a stale `true`.
@@ -2310,14 +2266,12 @@ function mergeMeasuredRouteTable(committedTable, measured) {
 }
 
 /**
- * The four section sizes a run reproduced, as a MEASUREMENT.
+ * The four section sizes a run reproduced, as a computed value rather than as prose.
  *
- * REVIEW FINDING P4-C. Both artifacts carried a hand-authored provenance sentence that named those sizes
- * inline, and one of the numbers in it ("14 assignment-next entries") disagreed with the array, the gate,
- * the metadata and both tools, all of which say 8. A prose sentence cannot be recomputed, so the numbers
- * moved out of the prose and into this block, which the generator writes on every capture and which the
- * gates below compare against the live measurement. The sentence now points here instead of restating
- * them, so the same drift cannot recur.
+ * A hand-authored provenance sentence naming those sizes inline cannot be recomputed, so it can drift
+ * from the arrays, the gates and the metadata beside it without anything noticing. The numbers therefore
+ * live in this block, which the generator writes on every capture and which the gates below compare
+ * against the live values; the provenance sentence points here instead of restating them.
  *
  * @param   {Object} routeTable A captureRouteTable() result.
  * @param   {Object} [measured] A captureCorpus() result; absent under --routes-only.
@@ -2354,12 +2308,9 @@ function recordReproducedCounts(artifact, counts) {
 
 // There is deliberately no single-artifact writer here. The route table is the parity DENOMINATOR and the
 // corpus is the parity EVIDENCE, and a generation of one without the other is not a baseline — so the
-// only way to write either is writeArtifactPair(), below, which writes both or neither (review finding
-// F7).
+// only way to write either is writeArtifactPair(), below, which writes both or neither.
 
-// ---------------------------------------------------------------------------------------------
 // Comparison — shared with test/baseline/replay.js
-// ---------------------------------------------------------------------------------------------
 
 function stableStringify(value) {
   if (Array.isArray(value)) {
@@ -2386,9 +2337,7 @@ function describeEntry(entry, index) {
  * under the normalization already applied by buildEntry(). A missing or extra entry is itself a
  * difference — the corpus is a closed set.
  */
-// ---------------------------------------------------------------------------------------------
 // Location origin — deployment configuration, not behavior
-// ---------------------------------------------------------------------------------------------
 
 /**
  * Ten of the sixteen recorded redirects carry an ABSOLUTE Location, and the origin in it comes from
@@ -2398,13 +2347,12 @@ function describeEntry(entry, index) {
  * `config/local.yaml` — declares `http` + `localhost` + 3000, and node-config loads `local.yaml` last.
  * The corpus was captured under the default origin, recorded in `metadata.appUrlOrigin`.
  *
- * THE ORIGIN IS A PRECONDITION, NOT SOMETHING TO NORMALIZE (review finding F2). An earlier revision
- * injected the recorded origin into a verify run and rewrote each measured Location onto it before
- * comparing. Both halves of that were wrong for the same reason: the literal Location is exactly what
- * R-5 requires be proven, so a build that emitted the WRONG configured origin — a broken absolutizer, a
- * config key read from the wrong place — would have replayed clean. This module therefore compares
- * Locations literally and reports a configuration mismatch as UNABLE TO RUN, with the remedy, instead of
- * papering over it. The absolute-versus-relative split stays pinned by `gates.absoluteRedirectCount` and
+ * THE ORIGIN IS A PRECONDITION, NOT SOMETHING TO NORMALIZE. Injecting the recorded origin into a verify
+ * run, or rewriting an observed Location onto it before comparing, would let a build that emits the WRONG
+ * configured origin — a broken absolutizer, a config key read from the wrong place — replay clean. The
+ * literal Location is what the redirect-parity evidence rests on, so this module compares Locations
+ * literally and reports a configuration mismatch as UNABLE TO RUN, with the remedy, instead of papering
+ * over it. The absolute-versus-relative split stays pinned by `gates.absoluteRedirectCount` and
  * `gates.relativeRedirectCount`.
  */
 function appUrlOrigin(url) {
@@ -2430,7 +2378,7 @@ function liveAppUrlOrigin() {
 
 /**
  * Exact origin equality through the non-throwing static URL.parse — never a string comparison of two
- * spellings and never a prefix test (review finding F15 applies here too). Either side being
+ * spellings and never a prefix test. Either side being
  * unparseable is `false`, which fails the precondition rather than passing it by accident.
  */
 function sameOrigin(left, right) {
@@ -2444,7 +2392,7 @@ function sameOrigin(left, right) {
  * The app.url precondition. A corpus entry's absolute Location and every rendered body embed the
  * configured origin, so a run under a different origin is measuring a different deployment
  * configuration, and its differences would describe the checkout rather than the code. That is a reason
- * to STOP with a remedy, not a reason to rewrite the measurement (review finding F2).
+ * to STOP with a remedy, not a reason to rewrite the measurement.
  *
  * @param   {Object} committedCorpus The committed responses.json.
  * @returns {Object} { satisfied, live, recorded, remedy } — `remedy` is null when satisfied.
@@ -2649,9 +2597,9 @@ function assignmentNextStatusMap(entries) {
 }
 
 /**
- * `<state> -> <Location>` for the assignment supplement. This is the gate the P3-1 regression would
- * have tripped: the two consuming hops carry the destination itself, and a build that discarded it
- * would answer the declared success.redirect here instead.
+ * `<state> -> <Location>` for the assignment supplement. The two consuming hops carry the destination
+ * itself, so a build that discarded it would answer the declared success.redirect here instead and fail
+ * this gate.
  */
 function assignmentNextLocationMap(entries) {
   var map = {};
@@ -2664,9 +2612,7 @@ function assignmentNextLocationMap(entries) {
 }
 
 
-// ---------------------------------------------------------------------------------------------
 // Build artifacts — the two CSS files the corpus pins in responses.json#buildArtifacts
-// ---------------------------------------------------------------------------------------------
 
 var BUILD_ARTIFACT_FILES = ['public/css/base.css', 'public/css/embed.css'];
 
@@ -2703,7 +2649,7 @@ function mapFilesUnder(directory) {
  * records, so a missing file means the checkout was never built rather than that the bytes changed.
  *
  * It is, however, MISSING REQUIRED EVIDENCE. buildArtifactGates() reports it UNEVALUATED and a full run
- * turns any UNEVALUATED gate into exit 2 (review findings F4 and F16): the build artifacts are one of
+ * turns any UNEVALUATED gate into exit 2: the build artifacts are one of
  * the two halves of the parity claim, and a run that never looked at them has not verified parity, so it
  * must not exit 0. Hydrate and build, or say explicitly that the run is narrowed.
  */
@@ -2739,9 +2685,7 @@ function measureBuildArtifacts() {
   return measured;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Gates — the artifacts' own published values, recomputed from the measurement
-// ---------------------------------------------------------------------------------------------
 
 /**
  * A gate is a named triple of an expectation the artifact publishes, the value recomputed from this
@@ -2753,7 +2697,7 @@ function measureBuildArtifacts() {
  *                  skipped by --routes-only. It is NEVER a pass, and in a full run it is exit 2
  *                  (unable to run), because "the gate held" and "the gate was never checked" are
  *                  different claims and a run that conflates them can report success having verified
- *                  nothing (review finding F16). It is tolerated only in an explicitly narrowed mode.
+ *                  nothing. It is tolerated only in an explicitly narrowed mode.
  *   UNREPRODUCIBLE the published expectation cannot be recomputed by ANY verifier, permanently, and the
  *                  artifact itself says so. Exactly one gate is in this class — the Technical
  *                  Specification's 32-character route-table digest, which is labelled sha256 where a
@@ -2951,7 +2895,7 @@ function routeTableGates(committedTable, measured) {
              measured.digests.registrationOrderFingerprint)
       ];
 
-  // THE DOCUMENTED ANCHOR, CLAUSE BY CLAUSE (review finding P3-1). Every clause documentedAnchorGate()
+  // THE DOCUMENTED ANCHOR, CLAUSE BY CLAUSE. Every clause documentedAnchorGate()
   // evaluates becomes its own PASS/FAIL entry here, plus the verdict itself, so this CLI enforces the
   // gate the artifact calls mandatory rather than merely printing that some other file does: a --dry-run
   // exits non-zero on any failure and main() REFUSES to write over a failed gate. Naming each clause
@@ -2978,13 +2922,13 @@ function routeTableGates(committedTable, measured) {
   gates.push(gate('route-table gates.documentedAnchorsExceptDigestAllReproduced',
                   committedTable.gates.documentedAnchorsExceptDigestAllReproduced,
                   countableAnchorsReproduced(anchor)));
-  // REVIEW FINDING P4-C. The provenance block's own count of reproduced route rows, gated against this
-  // run rather than left as prose.
+  // The provenance block's own count of reproduced route rows, gated against this run rather than left
+  // as prose.
   gates.push(gate('route-table metadata.toolchainReverification.reproducedCounts.routeRows',
                   (((committedTable.metadata || {}).toolchainReverification || {})
                     .reproducedCounts || {}).routeRows,
                   measured.gates.rowCount));
-  // The artifact's own stored verdict is ANDed with the freshly measured one, so neither a stale `true`
+  // The artifact's own stored verdict is ANDed with the freshly computed one, so neither a stale `true`
   // in the file nor a passing computation on its own can carry the gate. mergeMeasuredRouteTable()
   // regenerates the stored value from this same evaluator, which is what stops it being hand-authored.
   gates.push(gate('route-table gates.documentedAnchorGateSatisfied', true,
@@ -2995,7 +2939,7 @@ function routeTableGates(committedTable, measured) {
   // from any input. The gate is therefore reported as UNREPRODUCIBLE and NOT as a pass, which is the
   // honest report: the anchor the literal names is enforced instead over the 233-row table itself, by
   // the eleven clauses above, which are recomputed live and are mandatory PASS/FAIL - and clause 11 of
-  // which recomputes the full-width sha256 this table CAN be hashed to (review finding SV-32). The verdict is
+  // which recomputes the full-width sha256 this table CAN be hashed to. The verdict is
   // admissible only because the artifact declares it (gates.documentedDigestReproduced), and the one
   // thing that must never happen is a run that manufactures agreement with the string.
   gates.push(unreproducibleGate('route-table gates.documentedDigest (' +
@@ -3056,8 +3000,8 @@ function corpusGates(committedCorpus, measured, origin) {
          pathsWithStatus(unauthenticated, 401).length),
     gate('corpus authRequiredApiUnauthorizedPaths', published.authRequiredApiUnauthorizedPaths,
          pathsWithStatus(unauthenticated, 401)),
-    // REVIEW FINDING P4-C. The provenance block's own count of reproduced corpus entries, gated against
-    // this run. The route-row half is gated in routeTableGates().
+    // The provenance block's own count of reproduced corpus entries, gated against this run. The
+    // route-row half is gated in routeTableGates().
     gate('corpus metadata.toolchainReverification.reproducedCounts (sections)',
          {
            unauthenticated : (((committedCorpus.metadata || {}).toolchainReverification || {})
@@ -3075,8 +3019,8 @@ function corpusGates(committedCorpus, measured, origin) {
     gate('corpus serverErrorEntryCount (1x500)', published.serverErrorEntryCount, serverErrors.length),
     gate('corpus singleServerErrorRoute', published.singleServerErrorRoute,
          serverErrors.length === 1 ? serverErrors[0].method + ' ' + serverErrors[0].path : null),
-    // R-5 evidence: the pre-existing 500 is Boom JSON rather than a rendered 50x.html, because /api/ is
-    // an API request. The body KIND is the assertion; the message is scrubbed by hapi either way.
+    // The pre-existing 500 is Boom JSON rather than a rendered 50x.html, because /api/ is an API
+    // request. The body KIND is the assertion; the message is scrubbed by hapi either way.
     gate('corpus serverError delivered as JSON', 'json',
          serverErrors.length === 1 ? serverErrors[0].bodyShape.kind : null),
     gate('corpus languageFlagFourOhFours (20)', published.languageFlagFourOhFours,
@@ -3097,8 +3041,8 @@ function corpusGates(committedCorpus, measured, origin) {
          statusOf(unauthenticated, 'GET', '/login')),
     gate('corpus unauthenticatedSignupStatus', published.unauthenticatedSignupStatus,
          statusOf(unauthenticated, 'GET', '/signup')),
-    // The flagship R-6 quirk: authenticated GET /login and GET /signup are 500, not 302. A 302 here is a
-    // lib/controllers/pages.js conversion defect, never a corpus to be adjusted.
+    // The flagship quirk: authenticated GET /login and GET /signup are 500, not 302. A 302 here is a
+    // lib/controllers/pages.js defect, never a corpus to be adjusted. See docs/PRESERVED-QUIRKS.md 1.1.
     gate('corpus authenticatedLoginStatus (500 quirk)', published.authenticatedLoginStatus,
          statusOf(authenticated, 'GET', '/login', 'authenticated')),
     gate('corpus authenticatedSignupStatus (500 quirk)', published.authenticatedSignupStatus,
@@ -3215,9 +3159,7 @@ function printGateSummary(gates, quiet) {
   return tally;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Writing — deliberately hard to do by accident
-// ---------------------------------------------------------------------------------------------
 
 function currentHeadCommit() {
   try {
@@ -3284,19 +3226,18 @@ function declaresConfiguration(relativePath) {
  *
  *   - MODIFIED tracked files mean the source being measured is not the commit it claims to be, which
  *     disqualifies the run from writing baseline evidence. assertWritable() REFUSES.
- *   - UNTRACKED paths do not disqualify it: a base-commit capture is performed in a checkout of that
- *     commit with this harness copied in beside it (the harness does not exist at the base commit) and
- *     with node_modules installed from the base lockfile, so untracked paths are expected. They are
+ *   - UNTRACKED paths do not disqualify it: a capture is performed in a checkout of the recorded commit
+ *     with this harness copied in beside it — the harness does not exist at that commit — and with
+ *     node_modules installed from the lockfile beside it, so untracked paths are expected. They are
  *     RECORDED in the artifact instead of silently tolerated, which is what makes the provenance
- *     auditable (review findings F3, F8).
- *   - IGNORED paths are read too, and that is review finding F10. `git status --porcelain` alone cannot
- *     see them, so a gitignored `config/local.yaml` — a layer that outranks `config/default.yaml` for
- *     every key configureRuntime() does not force — appeared in NEITHER list and was invisible to both
- *     the refusal logic and the provenance. `--ignored` makes it visible. The whole ignored set is far
- *     too broad to record (it includes node_modules and the 435 MB component tree), so only the
- *     configuration layers matching UNSANCTIONED_CONFIG_LAYERS that declaresConfiguration() finds
- *     non-empty are kept: those are the ones that change what is measured, and assertWritable()
- *     REFUSES on them.
+ *     auditable.
+ *   - IGNORED paths are read too, because `git status --porcelain` alone cannot see them: a gitignored
+ *     `config/local.yaml` — a layer that outranks `config/default.yaml` for every key configureRuntime()
+ *     does not force — would appear in NEITHER list and stay invisible to both the refusal logic and the
+ *     provenance. `--ignored` makes it visible. The whole ignored set is far too broad to record (it
+ *     includes node_modules and the 435 MB component tree), so only the configuration layers matching
+ *     UNSANCTIONED_CONFIG_LAYERS that declaresConfiguration() finds non-empty are kept: those are the
+ *     ones that change what is captured, and assertWritable() REFUSES on them.
  *
  * @returns {Object|null} { head, trackedModifications, untracked, configLayers } or null when there is
  *   no git metadata.
@@ -3374,7 +3315,7 @@ function npmVersion() {
 /**
  * The versions of the packages the artifact pins, read from the installed tree. Recorded on every write
  * so metadata.dependencyVersions describes the stack the measurement actually ran on rather than the
- * stack whoever last edited the artifact believed it ran on (review finding F3).
+ * stack whoever last edited the artifact believed it ran on.
  */
 function installedDependencyVersions(names) {
   var versions = {};
@@ -3394,16 +3335,15 @@ function installedDependencyVersions(names) {
 /**
  * Decides whether this run may replace the committed evidence, and says exactly why not when it may not.
  *
- * Three conditions, the first two from review finding F8 and the third from review finding F10, and
- * none of them with an escape hatch:
- *   - the SOURCE being measured must be the commit the artifacts are the baseline for. Anything else
+ * Three conditions, none of them with an escape hatch:
+ *   - the SOURCE being captured must be the commit the artifacts are the baseline for. Anything else
  *     writes post-migration or half-finished values over the only thing that makes the migration
  *     falsifiable. --adopt-base-commit lifts this one, deliberately and on the record, because
  *     establishing a new baseline is a real operation that should not require a wildcard --force.
  *   - no tracked file may be modified. A dirty tree at the right commit is not that commit.
  *   - no unsanctioned CONFIGURATION LAYER may be present. A gitignored `config/local.yaml` outranks
  *     `config/default.yaml` and `config/test.yaml` for every key configureRuntime() does not force, so
- *     a corpus captured with one in place measures that operator's configuration rather than the
+ *     a corpus captured with one in place records that operator's configuration rather than the
  *     repository's. --adopt-base-commit does NOT lift this one: adopting a new HEAD is a decision about
  *     WHICH commit is the baseline, not a licence to measure it under an undeclared configuration.
  *     The sanctioned way to vary the runtime is NODE_CONFIG, which configureRuntime() merges and
@@ -3485,16 +3425,16 @@ function entryIdentity(entry) {
 /**
  * Merges measured values into the committed artifact.
  *
- * TWO RULES, both from review finding F6, and the earlier revision broke both:
+ * TWO RULES:
  *
- *   1. THE ARRAYS ARE BUILT FROM THE MEASURED ENTRIES. The old merge mapped over the COMMITTED array, so
- *      an entry the run measured but the artifact did not carry was silently discarded, and an entry the
- *      artifact carried but the run did not measure was silently retained with stale values while the
- *      counts around it moved. The measurement is the evidence; the artifact is what it is written into.
+ *   1. THE ARRAYS ARE BUILT FROM THE CAPTURED ENTRIES, never by mapping over the committed array. An
+ *      entry this run captured but the artifact does not carry must not be discarded, and an entry the
+ *      artifact carries but this run did not capture must not be retained with stale values while the
+ *      counts around it move. The capture is the evidence; the artifact is what it is written into.
  *   2. PROSE IS CARRIED ACROSS BY IDENTITY, NEVER BY ARRAY INDEX. `notes` is hand-authored per entry, and
  *      matching it positionally means one inserted route re-labels every entry after it. The identity is
- *      METHOD + path + state, which is unique across all three sections (verified: 58 + 7 + 8 entries,
- *      73 distinct identities).
+ *      METHOD + path + state, which is unique across all three sections: 58 + 7 + 8 entries, 73 distinct
+ *      identities.
  *
  * Every hand-authored block outside the entries — the contracts, adjudications and the gate keys that are
  * not pure functions of the measurement — is preserved untouched, and the keys that were NOT recomputed
@@ -3540,15 +3480,13 @@ function mergeMeasuredIntoCommitted(committed, measured, buildArtifacts, provena
   merged.metadata.capturedAt = measured.capturedAt;
   merged.metadata.finishedAt = measured.finishedAt;
   merged.metadata.serverUri  = measured.serverUri;
-  // The origin the measurement actually ran under, never the one the previous revision recorded: every
-  // absolute Location and every rendered body in the rows above is relative to this value, so a stale
-  // one would make the artifact describe a surface it does not contain.
+  // The origin this run actually captured under, never a carried-over value: every absolute Location and
+  // every rendered body in the rows above is relative to it, so a stale one would make the artifact
+  // describe a surface it does not contain.
   merged.metadata.appUrlOrigin = measured.appUrlOrigin || merged.metadata.appUrlOrigin;
 
-  // PROVENANCE (review finding F3). Every field here is measured by THIS run, so the artifact cannot
-  // claim a runtime it did not use. The port drift that made an earlier revision record app.port 30514
-  // beside serverUri :30112 is structurally impossible now: both come from the same run, and the
-  // consistency is gated below.
+  // PROVENANCE. Every field here is read from THIS run, so the artifact cannot claim a runtime it did
+  // not use — app.port and the serverUri port come from the same run and their agreement is gated below.
   if (provenance) {
     merged.metadata.node             = provenance.node;
     merged.metadata.npm              = provenance.npm;
@@ -3586,7 +3524,7 @@ function mergeMeasuredIntoCommitted(committed, measured, buildArtifacts, provena
   merged.gates.assignmentNextLocations         =
     assignmentNextLocationMap(measured.assignmentNext);
   // The cache-prefix confinement probes. Recomputed like every other gate above, so a --write run
-  // records what this run measured rather than carrying a stale verdict forward.
+  // records what this run observed rather than carrying a stale verdict forward.
   merged.gates.assetConfinementStatuses        =
     assetConfinementStatusMap(measured.assetConfinement);
 
@@ -3628,7 +3566,7 @@ function mergeMeasuredIntoCommitted(committed, measured, buildArtifacts, provena
 }
 
 /**
- * Replaces BOTH artifacts or NEITHER (review finding F7). The old code wrote route-table.json and then
+ * Replaces BOTH artifacts or NEITHER. The old code wrote route-table.json and then
  * responses.json as two independent operations, so a failure in between — or a `--write --routes-only`
  * run, which could not produce a corpus at all — left the pair describing two different runs, which is
  * exactly the state in which the parity denominator and the parity evidence stop being comparable.
@@ -3681,25 +3619,22 @@ function writeArtifactPair(routeTable, corpus) {
   }
 }
 
-// ---------------------------------------------------------------------------------------------
 // CLI
-// ---------------------------------------------------------------------------------------------
 
 /**
- * Validates a --out destination BEFORE anything is measured, so a run cannot spend two minutes capturing
+ * Validates a --out destination BEFORE anything is captured, so a run cannot spend two minutes capturing
  * and then discover it has nowhere safe to put the result — and, more importantly, so it can never
- * overwrite something that matters (review finding F13). An unvalidated path let
- * `--out test/baseline/responses.json` destroy the committed evidence the run was verifying, and let a
- * traversal or a symlink write anywhere the process could reach.
+ * overwrite something that matters. Without it, `--out test/baseline/responses.json` would destroy the
+ * committed evidence the run is verifying, and a traversal or a symlink could write anywhere the process
+ * can reach.
  *
- * A destination is ALLOWED in exactly two places — a scratch file inside the repository whose name
- * begins with `blitzy_adhoc_test_`, or a new file under the OS temporary directory — and refused
- * everywhere else. The allow-list is deliberate: an earlier revision refused the four in-repository
- * hazards below and then returned ANY out-of-repository path unchecked, so `--out ../dump.json` wrote a
- * 114 KB measurement into the repository's PARENT directory. On a host where several checkouts of this
- * repository sit side by side under one shared root — which is exactly how this project is developed and
- * validated — that parent is another checkout's neighbour, and `--out ../<other-checkout>/x.json` reaches
- * into it. Confining the destination is the only form of this check that actually holds.
+ * A destination is ALLOWED in exactly two places — a scratch file inside the repository whose name begins
+ * with `blitzy_adhoc_test_`, or a new file under the OS temporary directory — and refused everywhere
+ * else. An allow-list rather than a deny-list is deliberate: refusing only the in-repository hazards
+ * below would still let ANY out-of-repository path through, and several checkouts of this repository sit
+ * side by side under one shared root on the hosts this project is developed and validated on, so
+ * `--out ../<other-checkout>/x.json` reaches into a neighbour. Confining the destination is the only
+ * form of this check that holds.
  *
  * Six refusals, each for a distinct hazard:
  *   1. the two committed artifacts, and anything else under test/baseline — the evidence this harness
@@ -3803,14 +3738,14 @@ function isTrackedByGit(relative) {
 
 /**
  * The command line, parsed with node:util.parseArgs — a Node 22 built-in, so no dependency is added and
- * neither optimist (a dead package this change removes) nor a hand-rolled loop is needed. `strict` is on
- * so a mistyped flag fails loudly instead of being silently ignored.
+ * no hand-rolled loop is needed. `strict` is on so a mistyped flag fails loudly instead of being
+ * silently ignored.
  *
- * A PLAIN RUN CAPTURES AND WRITES (review finding F10). That is what this file is: the harness both
- * artifacts name in metadata.regenerationOwner. It is safe to make writing the default because a write
- * is gated on being at the recorded base commit with a clean tracked tree — see assertWritable() — so the
- * accident the old dry-run default was protecting against is now impossible by construction rather than
- * by flag discipline. --write is still accepted so a script can state its intent, and --dry-run is the
+ * A PLAIN RUN CAPTURES AND WRITES. That is what this file is: the harness both artifacts name in
+ * metadata.regenerationOwner. Writing is safe as the default because a write is gated on being at the
+ * commit metadata.baseCommit records, with a clean tracked tree and no unsanctioned configuration
+ * layer — see assertWritable() — so an accidental write is impossible by construction rather than by
+ * flag discipline. --write is still accepted so a script can state its intent, and --dry-run is the
  * verify mode: it writes NOTHING, which is why it refuses --out rather than quietly producing a file.
  *
  * There is no --force. Establishing a new baseline is --adopt-base-commit, which names what it does and
@@ -3850,7 +3785,7 @@ function parseArgv(argv) {
   }
 
   // A narrowed run measures only the route table, so it cannot produce the response corpus — and writing
-  // one artifact of a pair leaves the two describing different runs (review finding F7).
+  // one artifact of a pair leaves the two describing different runs.
   if (parsed['routes-only'] && !dryRun) {
     throw new Error('capture.js: --routes-only skips the HTTP corpus, so a capture cannot write the ' +
                     'artifact pair from it. Use --dry-run --routes-only to verify the route table only.');
@@ -3885,7 +3820,7 @@ function reportDifferences(differences, quiet) {
   });
 }
 
-/** The route-table half of the human-readable summary — the values AAP 0.7.5 names as the anchors. */
+/** The route-table half of the human-readable summary — the published anchor values for this table. */
 function reportRouteTable(measured) {
   console.log('capture.js: route table rows=' + measured.gates.rowCount +
               ' methods=' + JSON.stringify(measured.gates.methods) +
@@ -3925,7 +3860,7 @@ function reportCorpus(measured) {
  * Resolves with the process exit code rather than exiting itself, so the single `process.exit` lives in
  * the guarded entry point below where a synchronous throw is also caught. The three codes mean exactly
  * three different things, and keeping them apart is what lets a caller tell "the code changed" from "this
- * run never checked" (review findings F11 and F16):
+ * run never checked":
  *
  *   0  every required gate was evaluated and held, and either a verification run found no difference or a
  *      capture run wrote the pair;
@@ -4020,7 +3955,7 @@ function main() {
                   'that was not intended is a defect, not a new baseline.');
     }
 
-    // MISSING EVIDENCE IS NOT A PASS (review findings F4 and F16). A full run that could not evaluate a
+    // MISSING EVIDENCE IS NOT A PASS. A full run that could not evaluate a
     // gate has not verified the thing that gate exists to verify, so it reports unable-to-run rather than
     // success. Only an explicitly narrowed run tolerates it, and only for the halves it narrowed away.
     if (tally.unevaluated && !options.routesOnly) {
@@ -4036,8 +3971,8 @@ function main() {
     }
 
     if (options.out) {
-      // Validated by parseArgv before anything was measured, and created exclusively so a race cannot
-      // clobber (review finding F13).
+      // Validated by parseArgv before anything was captured, and created exclusively so a race cannot
+      // clobber.
       fs.writeFileSync(options.out, JSON.stringify(measured || { routeTable : routeTable }, null, 2) +
                        '\n', { encoding : 'utf8', flag : 'wx' });
       console.log('capture.js: measurement written to ' + options.out);
@@ -4056,7 +3991,7 @@ function main() {
     var writable = assertWritable(committed, options);
 
     // A refusal exits 2: the run was asked to capture and produced no evidence, which is neither parity
-    // nor a difference. There is no --force (review finding F8).
+    // nor a difference. There is no --force.
     if (!writable.allowed) {
       console.error('capture.js: REFUSING to write — ' + writable.reason);
       exitCode = 2;
@@ -4088,9 +4023,9 @@ function main() {
           gitState           : {
             trackedModifications : writable.state.trackedModifications.length,
             untracked            : writable.state.untracked,
-            // Always [] in a written artifact, because assertWritable() refuses otherwise (review
-            // finding F10). It is recorded rather than omitted so the artifact states the absence as a
-            // measured fact instead of leaving a reader to infer it from a rule.
+            // Always [] in a written artifact, because assertWritable() refuses otherwise. It is
+            // recorded rather than omitted so the artifact states the absence as an observed fact
+            // instead of leaving a reader to infer it from a rule.
             configLayers         : writable.state.configLayers
           },
           gitStatusClean     : writable.state.trackedModifications.length === 0,
@@ -4103,12 +4038,12 @@ function main() {
         corpus = mergeMeasuredIntoCommitted(committed, measured, buildArtifacts, provenance),
         counts = reproducedCounts(routeTable, measured);
 
-    // REVIEW FINDING P4-C. The reproduced section sizes are written into BOTH artifacts from this run's
-    // own measurement, so the provenance block states a measured fact rather than a transcribed one.
+    // The reproduced section sizes are written into BOTH artifacts from this run's own counts, so the
+    // provenance block states an observed fact rather than a transcribed one.
     recordReproducedCounts(table.artifact, counts);
     recordReproducedCounts(corpus.artifact, counts);
 
-    // Both artifacts or neither (review finding F7).
+    // Both artifacts or neither.
     writeArtifactPair(table.artifact, corpus.artifact);
     console.log('capture.js: wrote ' + ROUTE_TABLE_PATH + ' and ' + ARTIFACT_PATH + ' atomically');
     console.log('capture.js: provenance recorded — node ' + provenance.node + ', npm ' + provenance.npm +
@@ -4140,9 +4075,9 @@ function main() {
 
     return undefined;
   }).catch(function(err) {
-    // ONE terminal handler for the whole chain (review finding F14). The earlier revision paired a
-    // rejection callback with the fulfillment callback that could throw, so a failing artifact write
-    // skipped stopServer() entirely and left the process holding a listening socket.
+    // ONE terminal handler for the whole chain, attached after the steps that can throw rather than
+    // beside them, so a failing artifact write still reaches stopServer() instead of leaving the process
+    // holding a listening socket.
     console.error('capture.js: FAILED — ' + (err && err.stack ? err.stack : err));
     exitCode = 2;
   }).then(function() {
@@ -4152,8 +4087,7 @@ function main() {
 
     if (failures.length) {
       // A capture that could not remove an identity it created has polluted the database it was given.
-      // That is an operational failure, not a difference, and it must not be reported as success
-      // (review finding F9).
+      // That is an operational failure, not a difference, and it must not be reported as success.
       console.error('capture.js: UNABLE TO RUN CLEANLY — ' + failures.length + ' cleanup failure(s): ' +
                     failures.join('; '));
       exitCode = 2;
@@ -4170,7 +4104,7 @@ module.exports = {
   RUNTIME                  : RUNTIME,
   DISPOSABLE_DATABASE      : DISPOSABLE_DATABASE,
   // Re-exported rather than re-declared, so a test can assert that this CLI and test/helpers/db.js
-  // enforce the identical endpoint rule rather than two lookalikes (review finding SV-04).
+  // enforce the identical endpoint rule rather than two lookalikes.
   endpointGate             : endpointGate,
   THROWAWAY                : THROWAWAY,
   ASSIGNMENT               : ASSIGNMENT,
@@ -4290,15 +4224,15 @@ module.exports = {
   main                     : main
 };
 
-// AAP 0.7.5: the mocha spec glob is recursive and would otherwise load this file as a spec and run a
-// full capture on every `npm test`. Requiring this module must therefore be inert — no HTTP, no app.js,
-// no datastore connection, no write and no process.exit happens above this line.
+// The mocha spec glob is recursive and would otherwise load this file as a spec and run a full capture on
+// every `npm test`. Requiring this module must therefore be inert — no HTTP, no app.js, no datastore
+// connection, no write and no process.exit happens above this line.
 //
 // The exit is here rather than inside main() so that one place owns it and so that a SYNCHRONOUS throw —
-// a corrupt artifact, an unknown flag, --write together with --dry-run — is reported and exits 1 instead
-// of surfacing as an unhandled error. Promise.resolve().then(main) is what converts such a throw into a
-// rejection this chain can see. Exiting explicitly is mandatory: app.js:L355's un-unref'd 60-second
-// detectLeaks interval, the module-load mongoose connection at config/db.js:L35 and the eager redis
+// a corrupt artifact, an unknown flag, --write together with --dry-run — is reported and exits rather
+// than surfacing as an unhandled error. Promise.resolve().then(main) is what converts such a throw into a
+// rejection this chain can see. Exiting explicitly is mandatory: the un-unref'd 60-second detectLeaks
+// interval app.js installs, the module-load mongoose connection in config/db.js and the eager redis
 // client each keep the event loop alive after the server has stopped, which is the same reason
 // .mocharc.json carries "exit": true.
 if (require.main === module) {
@@ -4307,7 +4241,7 @@ if (require.main === module) {
   }).catch(function(err) {
     // A synchronous throw before the run even starts — an unknown or contradictory flag, an unsafe --out,
     // a non-disposable database name, a corrupt artifact — is UNABLE TO RUN, not a parity difference, so
-    // it exits 2 like every other precondition failure rather than being reported as one (F16).
+    // it exits 2 like every other precondition failure.
     console.error('capture.js: UNABLE TO RUN — ' + (err && err.message ? err.message : String(err)));
 
     if (process.env.BASELINE_DEBUG && err && err.stack) {

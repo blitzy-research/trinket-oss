@@ -1,40 +1,28 @@
 /**
- * Coverage for the same-origin destination filter (SEC-4 / SV-02, CWE-601), the security remediation the
- * cumulative review found INSIDE this migration's own code rather than in the base commit.
+ * Coverage for the same-origin destination filter in `lib/http/redirect.js#internalDestination`, which
+ * confines a user-controlled `next` destination to this application.
  *
- * `lib/http/redirect.js#internalDestination` confines a user-controlled `next` destination to this
- * application. The comparison is over the HOST[:port] and is deliberately scheme-INSENSITIVE, because at
- * the base commit a same-host destination was echoed into the Location whichever scheme it carried. An
- * intermediate revision compared complete origins instead; that changes the emitted Location - it refuses
- * `http://<configured-host>/x` where configuration publishes `https`, and it refuses the origin the client
- * itself addressed whenever hapi answers plain HTTP behind a TLS-terminating proxy or an ephemeral test
- * listener - so the scheme-insensitive comparison is what ships. The cross-scheme acceptance is a
- * preserved quirk (docs/PRESERVED-QUIRKS.md section 4.4), so it is asserted here in the accepting
- * direction on purpose.
+ * ACCEPTED: a relative destination, an absolute destination on the configured host, and an absolute
+ * destination on the HOST THE REQUEST ITSELF ADDRESSED — which legitimately differs from `config.app.url`
+ * under supertest, under the baseline harness and in development. REFUSED: every other host, and the
+ * malformed and control-character shapes a Location must never carry.
  *
- * WHY THIS FILE EXISTS TWICE OVER. A later revision deleted this file together with the helpers it
- * covers, on the argument that an open-redirect repair is not one of R-1's four sanctioned diff
- * categories. The final security review found the hole live and the deletion unmandated: R-1 cannot
- * license removing a control any more than adding one, R-4 conditions preservation on a quirk clients may
- * depend on, and R-6 breaks ambiguities - of which there is none, because every Location in the committed
- * corpus is same-host or relative. Both are restored, and `node test/baseline/replay.js` reports 0
- * differences with them in place.
+ * The comparison is over the HOST[:port] and is deliberately scheme-INSENSITIVE, so a same-host destination
+ * is accepted whichever scheme it carries. Comparing complete origins instead would change the emitted
+ * Location: it would refuse `http://<configured-host>/x` where configuration publishes `https`, and it would
+ * refuse the origin the client itself addressed whenever hapi answers plain HTTP behind a TLS-terminating
+ * proxy or on an ephemeral test listener. The cross-scheme acceptance is therefore asserted here in the
+ * ACCEPTING direction on purpose. See docs/PRESERVED-QUIRKS.md section 4.4.
  *
- * THE F-16 HALF LIVES ELSEWHERE. When this file was deleted its second describe block - the failure-log
- * redaction coverage for `responseContract.redactSecrets` and `isSecretField` - was extracted VERBATIM
- * into test/lib/util/log-redaction.js, which is still present and still runs. It is deliberately NOT
- * duplicated here: two copies of the same eight assertions is how a suite rots. This file therefore
- * carries the SEC-4 half only, and the pair together is the restored suite.
- *
- * Unit-level on purpose: the remediation needs no listening server, so it runs in milliseconds and cannot
- * disturb the shared database state the serial `test/lib/api` sequence depends on. The HTTP-level
- * assertions for the same contract live in test/lib/api/route-parity.js.
+ * Unit-level on purpose: the filter needs no listening server, so it runs in milliseconds and cannot disturb
+ * the shared database state the serial `test/lib/api` sequence depends on. The HTTP-level assertions for the
+ * same contract live in test/lib/api/route-parity.js, and the failure-log redaction contract lives in
+ * test/lib/util/log-redaction.js.
  *
  * The origin expectations are DERIVED FROM THE LIVE CONFIGURATION rather than hard-coded, because the
- * shipped configuration disagrees with itself on purpose: `config/default.yaml:L29-L32` declares
- * `https` + `trinket.dev` with no port, while the `config/local.yaml` that `docs/setup.md` tells a
- * developer to create declares `http` + `localhost` + 3000. Deriving them means this file asserts the
- * same invariant under either one.
+ * shipped configuration disagrees with itself on purpose: `config/default.yaml` declares `https` +
+ * `trinket.dev` with no port, while the `config/local.yaml` that `docs/setup.md` tells a developer to create
+ * declares `http` + `localhost` + 3000. Deriving them means this file asserts the same invariant under either.
  */
 var should   = require('chai').should(),
     config   = require('config'),
@@ -45,7 +33,7 @@ function canonicalScheme() {
   return config.app.url.protocol === 'http' ? 'http:' : 'https:';
 }
 
-/** The same origin with its scheme flipped - the destination the base commit accepted unchanged. */
+/** The same origin with its scheme flipped, which the host-only comparison accepts. */
 function flippedOrigin() {
   return canonicalScheme() === 'https:'
     ? config.url.replace(/^https:/, 'http:')
@@ -81,10 +69,8 @@ describe('same-origin destination filter (SEC-4)', function() {
   });
 
   it('returns the configured host on the other scheme unchanged, as the base commit did', function() {
-    // Same host, other scheme. The base commit echoed this destination back byte-for-byte, so it is
-    // accepted here too: the comparison is over the host, and a same-host Location cannot leave the
-    // origin. Refusing it would change the emitted Location, which R-4 forbids and which code review
-    // rejected when an intermediate revision compared complete origins. See
+    // Same host, other scheme: accepted, because the comparison is over the host and a same-host Location
+    // cannot leave the origin. Refusing it would change the emitted Location. See
     // docs/PRESERVED-QUIRKS.md section 4.4.
     var destination = flippedOrigin() + '/home';
 
@@ -106,10 +92,10 @@ describe('same-origin destination filter (SEC-4)', function() {
   });
 
   it('honours the origin the client addressed, whichever scheme that connection carries', function() {
-    // The address in use legitimately differs from config.app.url under supertest, under the R-6
-    // harness and in development, which is why the request's own Host counts as this application's.
-    // It is honoured under either scheme - hapi answers plain http behind a TLS-terminating proxy and
-    // on an ephemeral test listener, and the base commit echoed those destinations back unchanged.
+    // The address in use legitimately differs from config.app.url under supertest, under the baseline
+    // harness and in development, which is why the request's own Host counts as this application's. It is
+    // honoured under either scheme, since hapi answers plain http behind a TLS-terminating proxy and on an
+    // ephemeral test listener.
     var request = requestDouble('http://127.0.0.1:34567');
 
     Redirect.internalDestination('http://127.0.0.1:34567/home', request)

@@ -4,8 +4,8 @@ var sinon    = require('sinon'),
     flow     = require('../../helpers/flow'),
     defaults = require('../../helpers/defaults');
 
-// R-6 payload-shape sentinels - the same pair test/lib/api/admin.js uses. See the annotated describe
-// near the foot of this file and docs/PRESERVED-QUIRKS.md section 4.14.
+// Payload-shape sentinels — the same pair test/lib/api/admin.js uses. See the annotated describe near the
+// foot of this file and docs/PRESERVED-QUIRKS.md section 4.14.
 var GOOGLE_TOKEN_SENTINEL = 'ya29.M6-SENTINEL-GOOGLE-BEARER-TOKEN',
     GOOGLE_ID_SENTINEL    = 'M6-SENTINEL-GOOGLE-ID';
 
@@ -49,17 +49,12 @@ module.exports = function() {
           });
         });
 
-        // R-6 ADJUDICATION, MEASURED. The course name is NOT server-rendered on this page. In
-        // lib/views/classes/view.html the `{{ course.name }}` at line 42 sits inside the `{% raw %}` block
-        // opened at line 30 and closed at line 46, so nunjucks emits it verbatim and AngularJS binds it in
-        // the browser. Templates are frozen (`git diff 2f8712a -- lib/views/` is empty, TR5), and
-        // `getCoursePageData` in lib/controllers/classes.js is unchanged from the base commit, so the base
-        // response body did not contain the name either. Measured on this tree over real HTTP: 200,
-        // 20,641 bytes, the literal string `{{ course.name }}` present, `defaults.course.name` absent even
-        // case-insensitively, and the genuinely server-rendered marker
-        // `ng-init="courseId='<id>';userId='<id>';"` present at line 29 - OUTSIDE the raw block. That
-        // marker is asserted instead: it proves both that the page rendered for THIS course and that the
-        // `{% if not course.id %}` unavailable branch did not fire. See docs/PRESERVED-QUIRKS.md.
+        // The course name is NOT server-rendered on this page: in lib/views/classes/view.html the
+        // `{{ course.name }}` sits inside a `{% raw %}` block, so nunjucks emits it verbatim and AngularJS
+        // binds it in the browser. The assertion is therefore on the genuinely server-rendered marker
+        // `ng-init="courseId='<id>';userId='<id>';"`, which sits OUTSIDE the raw block and proves both that
+        // the page rendered for THIS course and that the `{% if not course.id %}` unavailable branch did not
+        // fire. See docs/PRESERVED-QUIRKS.md.
         it('should allow me to get the course using slugs', function(done) {
           flow.getCourseBySlug(defaults.user.username, course.slug, function(err, response) {
             flow.wasOk.should.be.true;
@@ -70,23 +65,19 @@ module.exports = function() {
           });
         });
 
-        // ADDED COVERAGE (review finding F-05). The outline query has two readings and both of them are
-        // baseline behaviour. `?outline=yes` - the form test/helpers/flow.js#getCourseWithOutline has sent
-        // since the base commit - is REJECTED by `Joi.boolean()` (config/api_routes.js:L40), so the route
-        // answers its validation flash and carries no `data`; the boolean form the frozen AngularJS client
-        // sends is accepted and answers the course. An earlier revision of the harness swapped the first
-        // for the second, which made the `When I edit an existing course` suite pass by testing a
-        // different outcome. Both are pinned here so the substitution cannot recur silently, and neither
-        // existing assertion was touched to make room for them.
+        // The outline query has TWO readings and both are pinned, so neither can be silently substituted
+        // for the other. `?outline=yes` — the form test/helpers/flow.js#getCourseWithOutline sends — is
+        // REJECTED by the route's `Joi.boolean()`, so the response carries the validation flash and no
+        // `data`; the boolean form the frozen AngularJS client sends is accepted and answers the course.
         it('should reject a non-boolean outline query and answer the validation flash', function(done) {
           flow.getCourseWithOutline(courseId, function(err, response) {
             flow.lastResponse.statusCode.should.eql(200);
             flow.lastContentType.should.contain('application/json');
             should.not.exist(flow.lastResponse.body.data);
             flow.lastResponse.body.should.have.property('flash');
-            // Measured on this tree: the whole body is
-            // {"flash":{"validation":{"outline":"\"outline\" must be a boolean"}}} - the raw Joi message,
-            // because the custom-message lookup never fires (preserved quirk 1.2).
+            // The whole body is {"flash":{"validation":{"outline":"\"outline\" must be a boolean"}}} — the
+            // raw Joi message, because the custom-message lookup never fires. See
+            // docs/PRESERVED-QUIRKS.md section 1.2.
             flow.lastResponse.body.flash.validation.should.have.property('outline',
               '"outline" must be a boolean');
             done();
@@ -100,8 +91,8 @@ module.exports = function() {
             flow.lastContentType.should.contain('application/json');
             should.exist(flow.lastResponse.body.data);
             flow.lastResponse.body.data.should.have.property('id', courseId);
-            // `lessons` is what the outline query adds - measured key set on this tree:
-            // id, name, slug, description, lessons, _owner, globalSettings, ownerSlug, archived.
+            // `lessons` is what the outline query adds; the full key set is id, name, slug, description,
+            // lessons, _owner, globalSettings, ownerSlug, archived.
             flow.lastResponse.body.data.should.have.property('lessons');
             done();
           });
@@ -112,10 +103,10 @@ module.exports = function() {
         before(function(done) {
           flow.addNewLesson(course.id, function() {
             flow.addNewMaterial(course.id, flow.lastResponse.body.data.id, function() {
-              // The accepted boolean form, because this hook must actually RETURN the outline for the
-              // suite below to have a fixture. The base commit's `?outline=yes` is preserved on
-              // flow#getCourseWithOutline and its rejection is asserted above; using it here would
-              // leave `body.data` undefined and prevent every test in this block from executing.
+              // The accepted boolean form, because this hook must actually RETURN the outline for the suite
+              // below to have a fixture. `?outline=yes` stays on flow#getCourseWithOutline and its rejection
+              // is asserted above; using it here would leave `body.data` undefined and prevent every test in
+              // this block from executing.
               flow.getCourseWithBooleanOutline(course.id, function() {
                 course = flow.lastResponse.body.data;
                 done();
@@ -144,10 +135,10 @@ module.exports = function() {
           });
         });
 
-        // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md (Q2). The stale-slug redirect this
-        // test described has never existed on the wire: a pre-handler cannot redirect by returning a
-        // value, so `request.pre.course` arrives null and every consumer's dereference becomes a
-        // scrubbed 500. Asserting 301 would demand the behaviour improvement R-4 forbids.
+        // The stale-slug redirect this test describes does not exist on the wire: a pre-handler cannot
+        // redirect by returning a value, so `request.pre.course` arrives null and every consumer's
+        // dereference becomes a scrubbed 500. Asserting 301 would demand a prohibited behavior improvement.
+        // See docs/PRESERVED-QUIRKS.md.
         it('should not redirect me when I use the original course slug', function(done) {
           flow.getCourseBySlug(defaults.user.username, course.slug, function(err, response) {
             flow.wasOk.should.be.true;
@@ -195,10 +186,9 @@ module.exports = function() {
           });
         });
 
-        // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md. `lib/models/model.js#serialize` is
-        // byte-identical at the base commit and its array branch is unconditional, so an emptied list is
-        // serialized as `[]` and never omitted. Asserting the empty array is strictly STRONGER than
-        // asserting absence: it proves the material really was pulled.
+        // `lib/models/model.js#serialize`'s array branch is unconditional, so an emptied list is serialized
+        // as `[]` and never omitted. Asserting the empty array is strictly STRONGER than asserting absence:
+        // it proves the material really was pulled. See docs/PRESERVED-QUIRKS.md.
         it('should allow me to delete materials', function(done) {
           flow.deleteMaterial(course.id, course.lessons[0].id, course.lessons[0].materials[0].id, function() {
             flow.wasOk.should.be.true;
@@ -208,7 +198,7 @@ module.exports = function() {
           });
         });
 
-        // R-6 ADJUDICATION - the same unconditional array branch, here for `lessons`. See the twin above.
+        // The same unconditional array branch, here for `lessons`. See the twin above.
         it('should allow me to delete lessons', function(done) {
           flow.deleteLesson(course.id, course.lessons[0].id, function() {
             flow.wasOk.should.be.true;
@@ -280,11 +270,10 @@ module.exports = function() {
           done();
         });
 
-        // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md. A same-lesson reorder never reaches
-        // the handler: `internals.findById`'s argument juggling (byte-identical at the base commit) moves
+        // A same-lesson reorder never reaches the handler: `internals.findById`'s argument juggling moves
         // the Lesson document into its `next` slot when the payload carries no `parent`, and calling a
-        // Mongoose document throws. The 500 is inherited, and client-reachable. Repairing the helper
-        // would be the behaviour improvement R-4 forbids.
+        // Mongoose document throws. The resulting 500 is client-reachable and preserved; repairing the
+        // helper would be a prohibited behavior improvement. See docs/PRESERVED-QUIRKS.md.
         it('should answer 500 when I reorder material within the same lesson', function(done) {
           flow.addNewMaterial(courseId, lessonId, function() {
             flow.moveMaterial(courseId, lessonId, materialId, 1, function() {
@@ -380,24 +369,20 @@ module.exports = function() {
         });
       })
 
-      // SEC-13 / M6 / SV-03 SURFACE ASSERTIONS. Added coverage, not a rewrite of anything above.
-      // `Course.publicSpec` whitelists `_owner` and `setOwner` assigns the populated User DOCUMENT, and
-      // `lib/models/model.js#serialize`'s `hasOwnProperty('serialize')` test misses the mongoose
-      // prototype method, so the owner lands in that method's nested-clone branch and is cloned WHOLE -
-      // which shipped the bcrypt hash and `profiles.google.token` both in the API body and, through the
-      // server.inject consumer in lib/controllers/courses.js#create, in POST /courses.
+      // OWNER-REDACTION SURFACE ASSERTIONS. `Course.publicSpec` whitelists `_owner`, `setOwner` assigns the
+      // populated User DOCUMENT, and `lib/models/model.js#serialize`'s `hasOwnProperty('serialize')` test
+      // misses the mongoose prototype method — so the owner lands in that method's nested-clone branch and is
+      // cloned WHOLE, reaching both the API body and, through the server.inject consumer in
+      // lib/controllers/courses.js#create, POST /courses.
       //
-      // The scrub lives in that shared branch rather than in either controller, so these two specs are
-      // what prove the shared wiring reaches both surfaces. The payload SHAPE is unchanged - the owner is
-      // still an unprojected clone carrying `roles`, `verified` and the rest - and only values no client
-      // may legitimately read are gone, which is why every spec asserts the surviving keys first.
+      // The scrub lives in that shared branch rather than in either controller, so these two specs are what
+      // prove the shared wiring reaches both surfaces. The payload SHAPE is unchanged — the owner is still an
+      // unprojected clone carrying `roles`, `verified` and the rest — and only values no client may
+      // legitimately read are removed, which is why every spec asserts the surviving keys first. See
+      // docs/PRESERVED-QUIRKS.md section 4.14.
       //
-      // A later revision deleted the scrub and these specs asserted the disclosure instead. The final
-      // security review found it live and the deletion unmandated; see docs/PRESERVED-QUIRKS.md
-      // section 4.14 for the adjudication.
-      //
-      // The sentinel is added to the owner document in `before` and removed again in `after`, so the
-      // shared user the remaining suites depend on is left exactly as it was found.
+      // The sentinel is added to the owner document in `before` and removed again in `after`, so the shared
+      // user the remaining suites depend on is left exactly as it was found.
       describe('when the course owner is linked to Google', function() {
         var owner, ownerCourseId;
 
@@ -451,7 +436,7 @@ module.exports = function() {
               owner.should.have.property('profiles');
               owner.profiles.should.have.property('google');
               owner.profiles.google.should.have.property('id', GOOGLE_ID_SENTINEL);
-              // SEC-13 / M6 / SV-03: the nested provider bearer token and the bcrypt hash are removed by
+              // The nested provider bearer token and the bcrypt hash are removed by
               // lib/models/model.js#serialize's nested-clone branch, while every other key survives.
               owner.profiles.google.should.not.have.property('token');
               owner.should.not.have.property('password');
@@ -533,11 +518,10 @@ module.exports = function() {
         });
       });
 
-      // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md. app.js's first `onPreResponse`
-      // (byte-identical at the base commit) converts a 401 into a /login redirect ONLY when the request
-      // is NOT an `/api/` request, and all four helpers below target `/api/` paths, so 302 is unreachable
-      // at either commit. The 302-to-/login contract is still covered on the HTML surface by
-      // test/lib/api/files.js and test/lib/api/logout.js.
+      // app.js's first `onPreResponse` converts a 401 into a /login redirect ONLY when the request is NOT an
+      // `/api/` request, and all four helpers below target `/api/` paths, so 302 is unreachable here. The
+      // 302-to-/login contract is covered on the HTML surface by test/lib/api/files.js and
+      // test/lib/api/logout.js. See docs/PRESERVED-QUIRKS.md.
       it('should not allow me to create a course', function(done) {
         flow.createCourse(function(err, res) {
           flow.wasOk.should.be.true;
@@ -547,7 +531,7 @@ module.exports = function() {
         });
       });
 
-      // R-6 ADJUDICATION - same inherited 401 on an `/api/` path. See the annotated twin above.
+      // The same inherited 401 on an `/api/` path. See the annotated twin above.
       it('should not allow me to add a lesson to a course', function(done) {
         flow.addNewLesson(courseId, function(err, res) {
           flow.wasOk.should.be.true;
@@ -557,7 +541,7 @@ module.exports = function() {
         });
       });
 
-      // R-6 ADJUDICATION - same inherited 401 on an `/api/` path. See the annotated twin above.
+      // The same inherited 401 on an `/api/` path. See the annotated twin above.
       it('should not allow me to add material to a course lesson', function(done) {
         flow.addNewMaterial(courseId, lessonId, function(err, res) {
           flow.wasOk.should.be.true;
@@ -567,7 +551,7 @@ module.exports = function() {
         });
       });
 
-      // R-6 ADJUDICATION - same inherited 401 on an `/api/` path. See the annotated twin above.
+      // The same inherited 401 on an `/api/` path. See the annotated twin above.
       it('should not allow me to delete a course', function(done) {
         flow.deleteCourse(courseId, function() {
           flow.lastResponse.statusCode.should.eql(401);

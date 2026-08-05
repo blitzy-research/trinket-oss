@@ -75,7 +75,7 @@ module.exports = function() {
           flow.lastResponse.statusCode.should.eql(200);
           flow.lastContentType.should.contain('text/html');
 
-          // Review finding M9 - the CONTROL for the case below. lib/views/embed/python.html renders
+          // The CONTROL for the case below. lib/views/embed/python.html renders
           // `<input id="start-value" ... value='{{start if start else "code"}}'/>`, so with no `start`
           // query the marker is 'code'. Pinning it here is what makes the 'result' assertion below
           // meaningful: without this line, a page that always rendered 'result' would satisfy both.
@@ -87,10 +87,8 @@ module.exports = function() {
       });
 
       it('should allow me to embed the trinket with result showing', function(done) {
-        // Review finding M9 - previously a false green. `flow.getEmbeddedTrinket` tested `query.length`
-        // on an object, so `?start=result` was never actually sent and this case issued exactly the same
-        // request as the control above while asserting only 200/HTML. The query is serialized now, and
-        // the assertion is on the OBSERVABLE consequence: lib/controllers/trinket.js#embed copies
+        // With `?start=result` sent, the marker must be 'result'. The assertion is on the OBSERVABLE
+        // consequence rather than on the status: lib/controllers/trinket.js#embed copies
         // `request.query.start` into the view context only when the language is in `config.app.autorun`
         // (python is), and lib/views/embed/python.html renders it into the `start-value` hidden input.
         flow.getEmbeddedTrinket(trinketId, trinketLang, { start : 'result' }, function() {

@@ -1,66 +1,45 @@
 /**
- * Integrity guards for the R-6 baseline harness itself: test/baseline/capture.js and
- * test/baseline/replay.js.
+ * Integrity guards for the baseline harness itself: test/baseline/capture.js and test/baseline/replay.js.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * The parity corpus is the tie-breaker for every behavioral question this migration raises (R-6), so its
- * harness is not ordinary test code - it is the instrument the whole migration is measured with. Code
- * review found four ways the instrument could lie, and each one is closed here by a test that FAILS if
- * the defect returns:
+ * The parity corpus is the tie-breaker for every behavioral question this migration raises, so its harness is
+ * the instrument the whole migration is judged with. These tests guard the four properties that keep the
+ * instrument honest, and each one FAILS if the property is lost:
  *
- *   M-6  Fixture lifecycle. A capture creates up to two throwaway identities. The rejection arm of a
- *        two-arm `.then(onOk, onFail)` chain used to skip the cleanup that lived in the fulfilment arm,
- *        so a failed capture left one identity behind; and a cleanup failure used to be swallowed, so a
- *        run could report success while fixtures survived in the database.
- *   M-7  Gate integrity. The documented route-table anchor was marked UNEVALUATED and printed a reason
- *        interpolating a key that read "undefined", so a run could exit 0 without ever evaluating the
- *        gate the artifact calls mandatory.
- *   M-8  Evidence provenance. A forcing flag could persist measurements taken away from the base commit,
- *        or over a FAILING gate, while metadata.baseCommit and every hand-authored "measured at 2f8712a"
- *        note stayed behind - leaving the artifact asserting a provenance its numbers no longer had.
- *   M-13 Harness correctness. Origin checks used `location.indexOf(origin) === 0`. A prefix test is not
- *        an origin test, and the corpus deliberately carries the exact shapes that defeat one.
+ *   1. FIXTURE LIFECYCLE. A capture creates up to two throwaway identities. Cleanup is
+ *      `capture.cleanupIdentities()` called from ONE terminal `.finally`, so no failure path can skip it; it
+ *      ATTEMPTS both identities, COLLECTS failures in CLEANUP_ERRORS rather than raising — so its own error
+ *      cannot replace the measurement error the caller needs — and main() turns a non-empty
+ *      `cleanupErrors()` into exit 2, so a run cannot report success while fixtures survive in the database.
+ *      The aggregation IS the contract; there is no generic cleanup wrapper.
+ *   2. GATE INTEGRITY. The documented route-table anchor is MANDATORY: a run must not exit 0 without having
+ *      evaluated it. The gate lives in ONE place — `capture.js#documentedAnchorGate`, beside the
+ *      `DOCUMENTED_DIGEST` literal — and `replay.js` RE-EXPORTS both rather than declaring a second copy. The
+ *      evaluator sits in the harness that OWNS route-table.json because that is the only file that can
+ *      REGENERATE the stored verdict `gates.documentedAnchorGateSatisfied` instead of carrying a
+ *      hand-authored boolean. capture.js therefore evaluates the gate — turning all eleven clauses and the
+ *      verdict into entries of its own gate summary, so a --dry-run exits non-zero and a write is refused —
+ *      and still reports the digest STRING through `unreproducibleGate()`, whose verdict is admissible only
+ *      while the artifact declares `gates.documentedDigestReproduced === 'none'`. The canonicalizer is shared
+ *      the same way, so there is exactly one implementation of every half.
+ *   3. EVIDENCE PROVENANCE. The write path is gated by `capture.assertWritable()`, and there is NO forcing
+ *      flag: a stale `--force` earns an unknown-option parse error, and the only sanctioned lift is
+ *      `--adopt-base-commit`, which renames the baseline on the record. An artifact can therefore never
+ *      assert a provenance its numbers do not have.
+ *   4. HARNESS CORRECTNESS. Origins are compared with `capture.sameOrigin()` — exact WHATWG origin
+ *      equality, never a string-prefix test, which the corpus deliberately carries shapes to defeat — and
+ *      preconditioned with `capture.originPrecondition()`. No helper rebases a recorded corpus onto a
+ *      different origin, because an injected origin lets a build that emits the wrong one replay clean.
  *
- * WHICH HARNESS THIS FILE GUARDS
- * ------------------------------
- * The delivered harness divides the M-6/M-7/M-8/M-13 remediations between the two files, and this spec
- * is written against that division rather than against any earlier shape of it. Concretely:
+ * WHAT IS DELIBERATELY NOT DONE HERE. Nothing in this file starts a server, issues a request or writes an
+ * artifact. capture.js and replay.js are both guarded with `require.main === module`, so requiring them is
+ * inert; these tests exercise their pure functions and read their source text. The behavioral half of the
+ * harness is proven by RUNNING it — `node test/baseline/capture.js` and `node test/baseline/replay.js` — which
+ * is a different job from guarding it against regression, and this file is the guard.
  *
- *   - Cleanup is `capture.cleanupIdentities()` called from ONE terminal `.finally`, which ATTEMPTS both
- *     identities, COLLECTS failures in CLEANUP_ERRORS instead of raising, and lets main() turn a
- *     non-empty `cleanupErrors()` into exit 2. There is no generic `runWithCleanup(work, steps)` wrapper;
- *     the aggregation is the contract, and it is what is asserted below.
- *   - The documented anchor gate lives in ONE place, `capture.js#documentedAnchorGate`, together with the
- *     `DOCUMENTED_DIGEST` literal, and `replay.js` RE-EXPORTS both rather than declaring a second copy.
- *     The evaluator sits in the harness that OWNS route-table.json for two reasons, and review finding
- *     P3-1 is both of them: that artifact publishes capture.js as the evaluator's home, and the stored
- *     verdict `gates.documentedAnchorGateSatisfied` can only be REGENERATED rather than hand-authored by
- *     the file that writes the artifact. capture.js therefore both evaluates the gate — turning all
- *     eleven clauses and the verdict into entries of its own gate summary, so a --dry-run exits non-zero and a
- *     write is refused — and still reports the digest STRING through `unreproducibleGate()`, whose verdict
- *     is admissible only while the artifact declares `gates.documentedDigestReproduced === 'none'`. The
- *     canonicalizer is shared the same way, so there is exactly one implementation of every half.
- *   - The write path is gated by `capture.assertWritable()`. There is no forcing flag at all: an
- *     unknown-option parse error is what a stale `--force` now earns, and the only sanctioned lift is
- *     `--adopt-base-commit`, which renames the baseline on the record.
- *   - Origins are compared with `capture.sameOrigin()` (exact WHATWG origin equality) and preconditioned
- *     with `capture.originPrecondition()`. No helper rebases a recorded corpus onto a different origin -
- *     rebasing was removed as a defect, because an injected origin lets a build that emits the wrong one
- *     replay clean.
- *
- * WHAT IS DELIBERATELY NOT DONE HERE
- * ----------------------------------
- * Nothing in this file starts a server, issues a request or writes an artifact. capture.js and replay.js
- * are both guarded with `require.main === module`, so requiring them is inert; these tests exercise their
- * pure functions and read their source text. The behavioral half of the harness is proven by running it -
- * `node test/baseline/capture.js` and `node test/baseline/replay.js` - which is a different job from
- * guarding it against regression, and this file is the guard.
- *
- * The one ambient dependency is `require('config').routes`, which the registrationOrderContract clause
- * walks. It is populated by config/app.config.js, which test/helpers/flow.js requires at load time.
- * Mocha loads every spec file before running any test, so it is always present by the time an `it()`
- * body executes - which is why no gate is ever evaluated at describe-body time below.
+ * The one ambient dependency is `require('config').routes`, which the registrationOrderContract clause walks.
+ * It is populated by config/app.config.js, which test/helpers/flow.js requires at load time. Mocha loads every
+ * spec file before running any test, so it is always present by the time an `it()` body executes — which is
+ * why no gate is ever evaluated at describe-body time below.
  */
 
 var chai    = require('chai'),
@@ -68,7 +47,7 @@ var chai    = require('chai'),
     fs      = require('fs'),
     path    = require('path'),
     // Used to recompute the route-table digest INDEPENDENTLY of the harness, which is what makes the
-    // clause-11 assertions evidence rather than a tautology (review finding SV-32).
+    // clause-11 assertions evidence rather than a tautology.
     crypto  = require('crypto'),
     config  = require('config'),
     capture = require('../../baseline/capture'),
@@ -88,9 +67,7 @@ var captureSource  = fs.readFileSync(CAPTURE_PATH, 'utf8'),
 
 describe('the R-6 baseline harness', function() {
 
-  // -------------------------------------------------------------------------------------------
-  // M-6 — fixture lifecycle
-  // -------------------------------------------------------------------------------------------
+  // Fixture lifecycle
 
   describe('fixture cleanup (review finding M-6)', function() {
     /**
@@ -140,8 +117,8 @@ describe('the R-6 baseline harness', function() {
     it('ATTEMPTS both identities even when the first removal fails', function() {
       return withFailingUserLookup(function() {
         return capture.cleanupIdentities().then(function(failures) {
-          // Both attempts ran, in the recorded order, and each failure is labelled by identity. The
-          // earlier revision reached only one of the two, because the second lived in a fulfilment arm.
+          // Both attempts ran, in the declared order, and each failure is labelled by identity — a cleanup
+          // that stopped at the first failure would leave the second identity behind.
           failures.should.have.length(2);
           failures[0].should.contain('throwaway identity: ');
           failures[1].should.contain('assignment signup identity: ');
@@ -150,8 +127,8 @@ describe('the R-6 baseline harness', function() {
     });
 
     it('RESOLVES rather than rejecting, so a terminal finally cannot lose the real error', function() {
-      // cleanupIdentities() is called from `.finally`. If it rejected, its own error would replace the
-      // measurement error the caller needs, which is exactly what review finding F14 was about.
+      // cleanupIdentities() is called from `.finally`, so if it rejected its own error would replace the
+      // error the caller actually needs to see.
       return withFailingUserLookup(function() {
         return capture.cleanupIdentities().then(function(failures) {
           failures.should.be.an('array');
@@ -220,9 +197,7 @@ describe('the R-6 baseline harness', function() {
       });
   });
 
-  // -------------------------------------------------------------------------------------------
-  // M-7 — the documented anchor gate
-  // -------------------------------------------------------------------------------------------
+  // The documented anchor gate
 
   describe('the documented route-table anchor gate (review finding M-7)', function() {
     /**
@@ -261,10 +236,10 @@ describe('the R-6 baseline harness', function() {
     }
 
     it('is ONE implementation: the gate lives in capture.js and replay.js re-exports it', function() {
-      // Two copies of a gate is how a gate rots - it was enforced in one file and marked UNEVALUATED in
-      // the other. route-table.json can only name a single honest evaluator if there is a single one, and
-      // it names capture.js: the harness that owns the artifact is the only one that can REGENERATE the
-      // stored verdict beside the gate rather than carry a hand-authored boolean (review finding P3-1).
+      // Two copies of a gate is how a gate rots: one file enforces it while the other reports UNEVALUATED.
+      // route-table.json can only name a single honest evaluator if there is a single one, and it names
+      // capture.js — the harness that owns the artifact is the only one that can REGENERATE the stored verdict
+      // beside the gate rather than carry a hand-authored boolean.
       capture.documentedAnchorGate.should.be.a('function');
       capture.DOCUMENTED_DIGEST.should.be.a('string');
       replay.documentedAnchorGate.should.equal(capture.documentedAnchorGate);
@@ -351,17 +326,15 @@ describe('the R-6 baseline harness', function() {
       verdict.satisfied.should.eql(false);
     });
 
-    // -----------------------------------------------------------------------------------------
-    // Clause 11 — the digest this gate actually recomputes (review finding SV-32)
-    // -----------------------------------------------------------------------------------------
+    // Clause 11 — the digest this gate actually recomputes
 
     /**
      * The point of clause 11 is that it DERIVES a value rather than comparing two stored ones. Clause 1
      * cannot do that — the published 32-character literal has no published serialization to recompute it
-     * from (ADJ-4) — so before clause 11 the gate could report `satisfied` without any digest having been
-     * computed from the running server. These four tests pin the derivation itself: that the measured side
-     * is a real hash of the live rows, that it is not read out of the artifact, that it moves when the rows
-     * move, and that it uses the SORTED serialization the artifact publishes rather than registration order.
+     * from (ADJ-4) — so without clause 11 the gate could report `satisfied` while no digest had been computed
+     * from the running server at all. These four tests pin the derivation itself: that the computed side is a
+     * real hash of the live rows, that it is not read out of the artifact, that it moves when the rows move,
+     * and that it uses the SORTED serialization the artifact publishes rather than registration order.
      */
     it('RECOMPUTES the measured digest from the live rows rather than reading it back', function() {
       var measured = measuredFromArtifact(),
@@ -431,7 +404,7 @@ describe('the R-6 baseline harness', function() {
 
     it('is ENFORCED by the replay run, not merely computed', function() {
       // These are what turn the verdict into recorded differences, which is what sets replay's exit code.
-      // The artifact's own stored flag is ANDed with the freshly measured verdict, so neither a stale
+      // The artifact's own stored flag is ANDed with the freshly computed verdict, so neither a stale
       // `true` in the file nor a passing computation alone can carry the gate.
       replaySource.should.contain("'gates.documentedAnchorGate (unsatisfied clauses)',");
       replaySource.should.contain('[], anchorGate.failures);');
@@ -453,9 +426,9 @@ describe('the R-6 baseline harness', function() {
 
     it('gates all eleven clauses AND the verdict inside the capture CLI, not only inside the replay',
       function() {
-        // REVIEW FINDING P3-1. route-table.json claims capture.js#routeTableGates turns every clause and
-        // the verdict into pass/fail entries; these are the lines that make the claim true. main() sets
-        // exit 1 on any FAIL and REFUSES to write over one, so a drifted clause cannot become a baseline.
+        // route-table.json states that capture.js#routeTableGates turns every clause and the verdict into
+        // pass/fail entries; these are the lines that make the statement true. main() sets exit 1 on any FAIL
+        // and REFUSES to write over one, so a drifted clause cannot become a baseline.
         captureSource.should.contain('var anchor = documentedAnchorGate(measured, committedTable);');
         captureSource.should.contain("gate('route-table documentedAnchorGate clause ' + clause.name,");
         captureSource.should.contain("gate('route-table documentedAnchorGate unsatisfied clauses', [], " +
@@ -466,9 +439,9 @@ describe('the R-6 baseline harness', function() {
       });
 
     it('REGENERATES the stored verdicts on write instead of carrying hand-authored booleans', function() {
-      // The other half of P3-1: the artifact published two verdict flags that no code recomputed. Both are
-      // now in mergeMeasuredRouteTable's `recomputed` list and both are derived from this run's own
-      // evaluation of the MERGED artifact - the one about to be written - rather than copied forward.
+      // Both verdict flags the artifact publishes appear in mergeMeasuredRouteTable's `recomputed` list, and
+      // both are derived from this run's own evaluation of the MERGED artifact — the one about to be
+      // written — rather than copied forward.
       captureSource.should.contain("'registrationOrderFingerprint', 'documentedAnchorGateSatisfied',");
       captureSource.should.contain("'documentedAnchorsExceptDigestAllReproduced']");
       captureSource.should.contain('var mergedVerdict = documentedAnchorGate(measured, merged);');
@@ -487,9 +460,8 @@ describe('the R-6 baseline harness', function() {
     });
 
     it('regenerates the provenance section counts rather than restating them in prose', function() {
-      // REVIEW FINDING P4-C. Both artifacts carried a sentence naming the reproduced counts inline, and
-      // one of the numbers in it had drifted. The numbers are a measurement now, written by the generator
-      // and gated against the live run.
+      // A prose sentence naming the reproduced counts inline cannot be recomputed and can therefore drift
+      // from the arrays beside it, so the counts are written by the generator and gated against the live run.
       var counts = committedTable.metadata.toolchainReverification.reproducedCounts;
 
       counts.routeRows.should.eql(committedTable.gates.rowCount);
@@ -539,21 +511,18 @@ describe('the R-6 baseline harness', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
-  // The destructive-operation endpoint gate (review finding SV-04)
-  // -------------------------------------------------------------------------------------------
+  // The destructive-operation endpoint gate
 
   /**
-   * capture.js and test/helpers/db.js are the only two modules in this tree that destroy data, and
-   * before SV-04 only db.js checked WHICH SERVER it was destroying data on. capture.js validated
-   * NODE_ENV, the database name pattern and the name it had forced - all of which a remote,
-   * credentialed, SRV-resolved, replica-set or TLS endpoint can satisfy, because a provisioned
-   * deployment may legitimately own a database called `test`.
+   * capture.js and test/helpers/db.js are the only two modules in this tree that destroy data, and both must
+   * check WHICH SERVER they are destroying data on. NODE_ENV, the database name pattern and a forced name are
+   * not enough on their own: a remote, credentialed, SRV-resolved, replica-set or TLS endpoint can satisfy all
+   * three, because a provisioned deployment may legitimately own a database called `test`.
    *
-   * These tests pin two things: that the rule is ONE implementation rather than two lookalikes, and
-   * that it refuses every hazardous connection shape. They drive the pure functions with synthetic
-   * connection objects and never open a socket - SV-04 says "Do not runtime-test", and nothing in this
-   * repository may point a driver at a non-loopback host to prove a negative.
+   * These tests pin two things: that the rule is ONE implementation rather than two lookalikes, and that it
+   * refuses every hazardous connection shape. They drive the pure functions with synthetic connection objects
+   * and never open a socket — nothing in this repository may point a driver at a non-loopback host to prove a
+   * negative.
    */
   describe('the destructive-operation endpoint gate (SV-04)', function() {
 
@@ -597,8 +566,8 @@ describe('the R-6 baseline harness', function() {
       dbSource.should.contain("require('./disposable-endpoint')");
       captureSource.should.contain("require('../helpers/disposable-endpoint')");
 
-      // ...and NEITHER declares the rule itself any more. These were the two copies SV-04's fix merged;
-      // if a later edit re-inlines either one, this fails rather than silently allowing them to drift.
+      // ...and NEITHER declares the rule itself. If a later edit re-inlines either copy, this fails rather
+      // than silently allowing the two to drift.
       dbSource.should.not.contain('function nonDisposableIdentityReasons(');
       captureSource.should.not.contain('function nonDisposableIdentityReasons(');
       dbSource.should.not.contain('var DISPOSABLE_HOSTS =');
@@ -717,9 +686,7 @@ describe('the R-6 baseline harness', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
-  // The asset-confinement contract (review findings SEC-1 / SV-01 and SV-40)
-  // -------------------------------------------------------------------------------------------
+  // The asset-confinement contract
 
   describe('the asset-confinement contract (SV-40)', function() {
 
@@ -788,9 +755,7 @@ describe('the R-6 baseline harness', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
-  // M-8 — evidence provenance
-  // -------------------------------------------------------------------------------------------
+  // Evidence provenance
 
   describe('write-path provenance (review finding M-8)', function() {
     it('rejects --force as an unknown option rather than honouring it', function() {
@@ -854,14 +819,14 @@ describe('the R-6 baseline harness', function() {
 
     it('refuses to write when HEAD is not the recorded base commit, with adoption the only lift',
       function() {
-        // Behavioral, not a source contract: this tree is above the recorded baseline, so the refusal is
-        // observable. WHICH refusal fires depends on the tree, and all three are correct evidence - a
-        // dirty tree at the right commit is not that commit either, and a tree carrying a gitignored
-        // configuration layer is not the repository's configuration (review finding F10). What must never
-        // happen is a write allowed away from the recorded baseline without adoption.
+        // Behavioral, not a source contract: this tree is past the recorded baseline, so the refusal is
+        // observable. WHICH refusal fires depends on the tree, and all three are correct evidence — a dirty
+        // tree at the right commit is not that commit either, and a tree carrying a gitignored configuration
+        // layer is not the repository's configuration. What must never happen is a write allowed away from
+        // the recorded baseline without adoption.
         //
-        // The three classes are enumerated rather than matched loosely, so a FOURTH refusal appearing
-        // without being recorded here fails this test instead of passing unnoticed.
+        // The three classes are enumerated rather than matched loosely, so a FOURTH refusal appearing without
+        // being recorded here fails this test instead of passing unnoticed.
         var refusalClasses = [
               'tracked file',                        // a modified tracked file
               committedCorpus.metadata.baseCommit,   // HEAD is not the recorded base commit
@@ -915,8 +880,8 @@ describe('the R-6 baseline harness', function() {
     });
 
     it('no longer downgrades an off-base write to a warning', function() {
-      // The old revision printed "WARNING - writing from <head>, which is NOT the recorded base commit"
-      // and then wrote anyway.
+      // A warning that is printed and then written over anyway is not a refusal, so the refusal is asserted
+      // on the return value rather than on the message.
       captureSource.should.not.contain('The artifacts will no longer be baseline evidence');
       captureSource.should.not.contain('which is NOT the recorded base commit');
     });
@@ -929,9 +894,7 @@ describe('the R-6 baseline harness', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
-  // M-13 — exact origin comparison
-  // -------------------------------------------------------------------------------------------
+  // Exact origin comparison
 
   describe('origin classification (review finding M-13)', function() {
     var ORIGIN = 'https://trinket.dev';
@@ -941,9 +904,9 @@ describe('the R-6 baseline harness', function() {
       { value : 'https://trinket.dev',                               local : true },
       { value : 'https://trinket.dev?a=1',                           local : true },
       { value : 'https://trinket.dev#fragment',                      local : true },
-      // The default HTTPS port IS the origin's port, so WHATWG normalizes ":443" away and this really is
-      // the same origin. Measured, not assumed: an exact origin comparison must say true here, and a
-      // check that said false would be rejecting a legitimate self-reference.
+      // The default HTTPS port IS the origin's port, so WHATWG normalizes ":443" away and this really is the
+      // same origin: an exact origin comparison must say true here, and one that said false would be
+      // rejecting a legitimate self-reference.
       { value : 'https://trinket.dev:443/x',                         local : true },
       { value : 'https://trinket.dev.evil.example/steal',            local : false },
       { value : 'https://trinket.dev@evil.example/steal',            local : false },

@@ -68,27 +68,23 @@ module.exports = function() {
         flow.lastRedirect.pathname.should.eql('/welcome');
       });
 
-      // R-6 ADJUDICATION, MEASURED. `GET /welcome` has never rendered a page. There is no
-      // lib/views/welcome.html anywhere in the tree, `config/routes.js:37-39` declares the route with no
-      // `html` key, and `pages.welcome` unconditionally flashes `siteMessage` and then redirects: at the
-      // base commit it was `return reply().redirect('/home')` - the CALL form, whose builder resolved -
-      // so the wire contract is a RELATIVE 302 to '/home' with an EMPTY body, which is exactly what the
-      // migrated `return h.redirect('/home')` still emits (documented as PRESERVED BEHAVIOR in
-      // lib/controllers/pages.js). supertest does not follow redirects, so `text` is '' - measured on this
-      // tree - and no view anywhere in lib/views/** renders a '/{username}/courses/{slug}/copy' link;
-      // `config.app.trinketLibraryUser` (config/test.yaml:6) is referenced nowhere in lib/ or config/.
-      // The copy capability this test was reaching for is still covered by the next test, which POSTs the
-      // copy route directly. See docs/PRESERVED-QUIRKS.md.
+      // `GET /welcome` renders no page: there is no lib/views/welcome.html anywhere in the tree,
+      // `config/routes.js` declares the route with no `html` key, and `pages.welcome` unconditionally
+      // flashes `siteMessage` and then redirects, so the wire contract is a RELATIVE 302 to '/home' with an
+      // EMPTY body. supertest does not follow redirects, so `text` is ''. No view under lib/views/** renders
+      // a '/{username}/courses/{slug}/copy' link, and `config.app.trinketLibraryUser` is referenced nowhere
+      // in lib/ or config/. The copy capability is covered by the next test, which POSTs the copy route
+      // directly. See docs/PRESERVED-QUIRKS.md.
       it('should redirect the welcome page to home with an empty body', function(done) {
         flow.welcome(function() {
           flow.lastResponse.statusCode.should.eql(302);
           flow.lastResponse.redirect.should.be.true;
           flow.lastResponse.headers.location.should.eql('/home');
           flow.lastResponse.text.should.eql('');
-          // Review finding M4. The base commit's own expression is RETAINED here rather than replaced,
-          // pinned at its MEASURED value, so nothing the base suite named is dropped and this site
-          // asserts strictly more than the base commit did. Same treatment as the six sites in
-          // test/lib/models/plugins/roles.js; docs/PRESERVED-QUIRKS.md section 13 records the policy.
+          // The original expression is RETAINED here rather than replaced, and pinned at its expected
+          // value, so this site asserts strictly more than it did before rather than trading one assertion
+          // for another. Same treatment as the six sites in test/lib/models/plugins/roles.js; the policy is
+          // recorded in docs/PRESERVED-QUIRKS.md section 13.
           var copyPath = '/' + libraryUser.username + '/courses/' + sampleCourse.slug + '/copy';
 
           flow.lastResponse.text.should.not.contain(copyPath);
@@ -102,13 +98,10 @@ module.exports = function() {
           .end(function(err, response) {
             should.not.exist(err);
             response.statusCode.should.eql(302);
-            // Dependency swap: the deprecated legacy url-module parser becomes the non-throwing static
-            // WHATWG one. MEASURED here: this Location is ABSOLUTE, so the base is ignored and the
-            // pathname is byte-identical to the legacy reading. `config.url` is still passed - the form
-            // test/helpers/flow.js#setLastResponse uses - because the static form answers null for a
-            // RELATIVE header. The reference is by symbol rather than by line number because line
-            // locators into that file have drifted before; see the URL.parse census in
-            // docs/MIGRATION-DEPENDENCY-INVENTORY.md.
+            // The non-throwing static `URL.parse` is used here. This Location is ABSOLUTE, so the base is
+            // ignored and only the pathname is read; `config.url` is still passed — the form
+            // test/helpers/flow.js#setLastResponse uses — because the static form answers null for a
+            // RELATIVE header. See the URL.parse census in docs/MIGRATION-DEPENDENCY-INVENTORY.md.
             var expectedPath = '/u/' + defaults.user.username + '/classes/' + sampleCourse.slug;
 
             URL.parse(response.headers.location, config.url)

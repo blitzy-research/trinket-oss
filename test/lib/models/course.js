@@ -17,20 +17,12 @@ describe('Course model', function(){
   });
 
   /**
-   * `Course#copy` — review finding M-15.
+   * `Course#copy` — the deep-copy contract, at all three levels.
    *
-   * The original test nested four callbacks, discarded the `err` argument of every one of them, and then
-   * asserted three things about the result: that the name and description matched, and that a `lessons`
-   * property EXISTED. That last assertion is satisfied by an empty array, so the test could not tell a
-   * complete deep copy from a copy that silently lost every lesson and material - and because no `err`
-   * was ever inspected, a failed `save()` anywhere in the chain surfaced as a TypeError on `copy` or as a
-   * timeout rather than as the persistence failure it was. It also left five documents behind on every
-   * run, in a database the rest of the suite shares.
-   *
-   * The test below propagates every error, asserts the copy is a genuine DEEP copy at all three levels -
-   * new identities, equal content, re-owned, and the originals unmutated - and removes every document it
-   * created whatever the outcome. The deferred-work comment the original carried in place of those
-   * assertions ("check lesson and material info") is discharged here rather than inherited.
+   * The test propagates every error, asserts the copy is a genuine DEEP copy of course, lesson and material —
+   * new identities, equal content, re-owned, and the originals unmutated — and removes every document it
+   * created whatever the outcome. Asserting merely that a `lessons` property exists would not do: an empty
+   * array satisfies that, so a copy that silently lost every lesson and material would pass.
    */
   describe('object methods', function() {
     describe('copy', function() {
@@ -62,9 +54,9 @@ describe('Course model', function(){
       afterEach(function() {
         this.timeout(60000);
 
-        // In afterEach rather than at the end of the test body: a failing assertion must not be able to
-        // leave fixtures behind in the shared database. Removal failures are aggregated and reported
-        // rather than swallowed, so a leak is visible instead of silent.
+        // In afterEach rather than at the end of the test body: a failing assertion must not be able to leave
+        // fixtures behind in the shared database. Removal failures are aggregated and reported rather than
+        // swallowed, so a leak is visible instead of silent.
         var pending = created;
 
         created = [];
@@ -104,9 +96,9 @@ describe('Course model', function(){
             lesson,
             course;
 
-        // Both users are persisted rather than merely constructed. The original test never saved them,
-        // which left `copy`'s `user.grant(...)`-adjacent paths operating on documents no query could
-        // find; saving them is what makes the ownership assertions below meaningful.
+        // Both users are PERSISTED rather than merely constructed. Unsaved documents leave `copy`'s
+        // grant-adjacent paths operating on records no query can find, so saving them is what makes the
+        // ownership assertions below meaningful.
         return track(owner).save().then(function() {
           return track(user).save();
         }).then(function() {
@@ -152,7 +144,7 @@ describe('Course model', function(){
             });
           });
         }).then(function(copy) {
-          // ---- the copied course ----
+          // The copied course.
           copy.should.have.property('name', course.name);
           copy.should.have.property('description', course.description);
           copy.should.have.property('lessons');
@@ -165,9 +157,7 @@ describe('Course model', function(){
           idOf(course._owner).should.eql(idOf(owner.id));
           course.should.have.property('ownerSlug', owner.username);
 
-          // ---- the copied lesson: exactly one, with a new identity ----
-          // This is what `should.have.property('lessons')` could never assert: an empty array satisfied
-          // the original test, so a copy that lost every lesson passed it.
+          // The copied lesson: exactly one, with a new identity.
           copy.lessons.length.should.eql(1, 'the copy must carry exactly one lesson');
           idOf(copy.lessons[0]).should.not.eql(idOf(lesson.id));
           course.lessons.length.should.eql(1, 'the original must still carry its own lesson');
@@ -179,7 +169,7 @@ describe('Course model', function(){
             lessonCopy.should.have.property('name', lesson.name);
             idOf(lessonCopy._owner).should.eql(idOf(user.id));
 
-            // ---- the copied material: exactly one, with a new identity and equal content ----
+            // The copied material: exactly one, with a new identity and equal content.
             lessonCopy.materials.length.should.eql(1, 'the copied lesson must carry its material');
             idOf(lessonCopy.materials[0]).should.not.eql(idOf(material.id));
 
@@ -190,7 +180,7 @@ describe('Course model', function(){
               materialCopy.should.have.property('content', material.content);
               idOf(materialCopy._owner).should.eql(idOf(user.id));
 
-              // ---- and the originals are unmutated at every level ----
+              // The originals are unmutated at every level.
               return Material.findById(material.id).then(function(original) {
                 should.exist(original, 'the original material must survive the copy');
                 original.should.have.property('content', 'material content');

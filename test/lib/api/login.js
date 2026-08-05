@@ -6,24 +6,22 @@ var sinon         = require('sinon'),
     defaults      = require('../../helpers/defaults');
 
 /**
- * THE LOGIN API CONTRACT (review finding P6-B).
+ * THE LOGIN API CONTRACT.
  *
- * The review recorded that no test in the tree ever sent `POST /api/users/login`, so the endpoint's
- * `encryptRoles` pre-handler, its reduced six-key projection, its encrypted role token, its success shape
- * and its failure-body behavior were all unverified - and that no test created an account without a
- * password, so the third of `lib/controllers/users.js#login`'s four failure branches was never reached.
- * The block at the end of this file closes both gaps and covers the other three failure branches on both
- * surfaces at the same time.
+ * The block at the end of this file covers `POST /api/users/login` — its `encryptRoles` pre-handler, its
+ * reduced six-key projection, its encrypted role token and its success shape — together with all four of
+ * `lib/controllers/users.js#login`'s failure branches on BOTH surfaces, including the passwordless-account
+ * branch, which needs an account created without a password.
  *
- * The four failure messages are PRESERVED QUIRKS, not defects to be repaired: a failed login reports *why*
- * it failed, so the form is an account-existence oracle, and the unknown-account message echoes the
- * submitted identifier back verbatim. R-4 forbids improving that and R-6 makes the base commit the
- * tie-breaker, so the assertions below pin the exact strings. See docs/PRESERVED-QUIRKS.md section 4.9.
+ * The four failure messages are PRESERVED QUIRKS rather than defects to repair: a failed login reports *why*
+ * it failed, which makes the form an account-existence oracle, and the unknown-account message echoes the
+ * submitted identifier back verbatim. The assertions below therefore pin the exact strings. See
+ * docs/PRESERVED-QUIRKS.md section 4.9.
  *
- * These identities are declared HERE rather than in test/helpers/defaults.js because nothing else uses
- * them: they are created and removed by this block alone, driven through cookie slots no other suite
- * touches, and `flow.activeUser` is restored when the block finishes - which is what keeps the shared
- * session state the serial suites depend on untouched.
+ * These identities are declared HERE rather than in test/helpers/defaults.js because nothing else uses them:
+ * they are created and removed by this block alone, driven through cookie slots no other suite touches, and
+ * `flow.activeUser` is restored when the block finishes — which is what keeps the shared session state the
+ * serial suites depend on untouched.
  */
 var API_IDENTITY = {
   fullname : 'api login',
@@ -138,9 +136,7 @@ module.exports = function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
-  // The login API contract and the four failure branches (review finding P6-B)
-  // -------------------------------------------------------------------------------------------
+  // The login API contract and the four failure branches.
 
   describe('The login API contract (POST /api/users/login)', function() {
     var previousUser = null;
@@ -331,8 +327,8 @@ module.exports = function() {
      *
      * The JSON surface answers HTTP **200** with `{ message, flash }` and no status field, because the
      * declarative failure responder sets no status code and `POST /api/users/login` declares no
-     * `fail.redirect`. That is the base commit's wire behavior, and adding a 401 here would be exactly the
-     * improvement R-4 forbids (lib/http/responseContract.js#reject says so at the branch itself).
+     * `fail.redirect`. That is the wire behavior this suite freezes; answering 401 here instead would be a
+     * prohibited behavior improvement, as lib/http/responseContract.js#reject records at that branch.
      */
     [
       { label : 'an unknown account', slot : 'p6b-unknown',

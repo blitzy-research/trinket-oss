@@ -1,22 +1,16 @@
 /**
- * Coverage for the one security remediation this migration's own code introduced and keeps, because it
- * is not client-observable:
+ * Coverage for the failure-log redaction in `lib/http/responseContract.js#reject`.
  *
- *   F-16 / S-2 (CWE-532) - `lib/http/responseContract.js#reject` logs the failure payload it is handed
- *                          and `lib/http/validation.js` hands it `request.payload`, so a failed signup
- *                          wrote the submitted password to the application log in cleartext. The
- *                          payload is redacted on the way to the LOG ONLY; the object that is flashed,
- *                          re-rendered and returned is untouched, so every byte on the wire is the base
- *                          commit's. That is what keeps it inside the frozen behavior contract.
+ * That responder logs the failure payload it is handed, and `lib/http/validation.js` hands it
+ * `request.payload`, so without redaction a failed signup writes the submitted password to the application
+ * log in cleartext. The payload is redacted on the way to the LOG ONLY: the object that is flashed,
+ * re-rendered and returned is untouched, so not one byte on the wire changes. Both halves are asserted
+ * here — what the log receives, and that the response object is unmodified.
  *
- * The same-origin destination filter this file also used to cover is gone: code review ruled it an
- * unauthorized behavior change under R-1/R-4, so `lib/http/redirect.js` no longer confines a
- * user-controlled `next` and the open-redirect condition is catalogued in
- * docs/PRESERVED-QUIRKS.md section 4.4 instead. The baseline destination behavior that replaced it is
- * asserted over real HTTP in test/lib/api/route-parity.js, where the emitted Location can be measured.
- *
- * Unit-level on purpose: the remediation needs no listening server, so it runs in milliseconds and
- * cannot disturb the shared database state the serial `test/lib/api` sequence depends on.
+ * Unit-level on purpose: the redaction needs no listening server, so it runs in milliseconds and cannot
+ * disturb the shared database state the serial `test/lib/api` sequence depends on. The same-origin
+ * destination filter is a separate contract, asserted in test/lib/util/same-origin-and-log-redaction.js and
+ * over real HTTP in test/lib/api/route-parity.js.
  */
 var should   = require('chai').should(),
     util     = require('util'),

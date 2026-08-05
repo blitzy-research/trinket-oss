@@ -1,53 +1,45 @@
-// This helper is the only module in the tree that DELETES A WHOLE DATABASE, so it takes responsibility
-// for its own preconditions rather than trusting the order Mocha happened to load files in. Requiring
-// the bootstrap first is what guarantees `NODE_ENV=test` (and, for a parallel clone, the CLONE_INDEX
-// database namespace) is in place before `../../config/db` below resolves node-config and opens the
-// connection. Measured on mocha 11.7.6 by calling its own `mocha/lib/cli/collect-files` with this
-// project's options: `collect-files` does not sort, this helper is collected FOURTH of the 45 `.js` files
-// under test/ and test/setup.js is collected LAST (45th), so without this line the connection would be
-// opened against whatever environment the shell happened to carry - which for a developer running
-// `npx mocha` in a working checkout is the DEVELOPMENT database. The two ordinals are what the argument
-// rests on and both are re-verified above; the total is `git ls-files | grep -cE '^test/.*\.js$'` and
-// moves with every suite added.
+// This helper is the only module in the tree that DELETES A WHOLE DATABASE, so it takes responsibility for
+// its own preconditions rather than trusting the order Mocha happened to load files in. Requiring the
+// bootstrap first is what guarantees `NODE_ENV=test` — and, for a parallel clone, the CLONE_INDEX database
+// namespace — is in place before `../../config/db` below resolves node-config and opens the connection.
+// Mocha's file collection does not sort, and it reaches this helper well before `test/setup.js`, so without
+// this line the connection would be opened against whatever environment the shell happened to carry, which
+// for a developer running `npx mocha` in a working checkout is the DEVELOPMENT database.
 //
-// The cycle this creates is benign and deliberate: test/setup.js also requires this file, so when this
-// file is entered first, setup.js's own `db` binding resolves to the partially initialized module
-// (`{}`). setup.js never reads that binding - it requires this module only to start the connection - and
-// by the time any test runs `module.exports` below has been assigned, so every other consumer receives
-// the real instance. Entering setup.js first is equally safe: this file's `require('../setup')` returns
-// setup.js's partial exports, which this file likewise never reads.
+// The cycle this creates is benign and deliberate: test/setup.js also requires this file, so when this file
+// is entered first, setup.js's own `db` binding resolves to the partially initialized module (`{}`).
+// setup.js never reads that binding — it requires this module only to start the connection — and by the time
+// any test runs `module.exports` below has been assigned, so every other consumer receives the real
+// instance. Entering setup.js first is equally safe: this file's `require('../setup')` returns setup.js's
+// partial exports, which this file likewise never reads.
 require('../setup');
 
 var _            = require('underscore'),
     db           = require('../../config/db'),
     mongoose     = require('mongoose'),
-    // The ENDPOINT half of this gate used to be declared here. It now lives in one side-effect-free
-    // module that test/baseline/capture.js requires too, because that second destructive caller had no
-    // endpoint check at all (review finding SV-04) and two copies of a security gate drift.
+    // The ENDPOINT half of this gate lives in one side-effect-free module that test/baseline/capture.js —
+    // the tree's other destructive caller — requires as well, so neither can be hardened without the other
+    // and two copies of a security gate cannot drift apart.
     endpointGate = require('./disposable-endpoint'),
     initializing = true,
     instance;
 
-// SECURITY GATE (review finding M1, CWE-20). `dropDatabase()` deletes everything, and the name it acts
-// on is whatever node-config finally resolved - not necessarily what config/test.yaml says. `local.yaml`
-// is loaded after `test.yaml`, `NODE_CONFIG` is layered above both, and every parallel clone of this
-// repository reads the same files, so the effective target can be a development database, a colleague's
-// database, or another clone's. The name is therefore validated against this pattern IMMEDIATELY before
-// every destructive call, and anything that does not match fails the suite instead of being deleted.
+// THE NAME half of the fail-closed gate. `dropDatabase()` deletes everything, and the name it acts on is
+// whatever node-config finally resolved — not necessarily what config/test.yaml says: `local.yaml` loads
+// after `test.yaml`, `NODE_CONFIG` layers above both, and every parallel clone of this repository reads the
+// same files, so the effective target can be a development database, a colleague's, or another clone's. The
+// name is therefore validated against this pattern IMMEDIATELY before every destructive call, and anything
+// that does not match fails the suite instead of being deleted.
 //
 // `test` is the name config/test.yaml declares. `test_<suffix>` / `test-<suffix>` admit the per-clone
-// namespace test/setup.js derives from CLONE_INDEX. Nothing else is disposable: a name like
-// `trinket`, `trinket_test`, `production` or `test.backup` fails closed.
+// namespace test/setup.js derives from CLONE_INDEX. Nothing else is disposable: a name like `trinket`,
+// `trinket_test`, `production` or `test.backup` fails closed.
 var DISPOSABLE_DATABASE = /^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/;
 
-// THE ENDPOINT half of the gate (review finding F-01). The name alone is not enough, and this helper's own
-// documentation said so: a production deployment can legitimately own a database called `test`. So the
-// HOST the driver is actually talking to is validated too, against a loopback-only allow-list.
-//
-// The implementation moved to ./disposable-endpoint (review finding SV-04). It was declared here and
-// nowhere else, which meant the tree's OTHER destructive caller - test/baseline/capture.js - had no
-// endpoint check at all while claiming in its own docblock to be this function applied to a second
-// caller. It is now one module both files require, so neither can be hardened without the other.
+// THE ENDPOINT half of the gate. The name alone is not enough, because a production deployment can
+// legitimately own a database called `test`, so the connection identity the driver is actually addressing is
+// validated too against a loopback-only allow-list. The implementation lives in ./disposable-endpoint, the
+// single module both destructive callers in this tree require.
 var nonDisposableIdentityReasons = endpointGate.nonDisposableIdentityReasons;
 
 /**
@@ -113,12 +105,11 @@ function DB() {
   // suite with the original error instead of polling for a connection that will never be announced.
   this._initError   = null;
 
-  // `_.bindAll` is kept exactly as the base commit wrote it. Underscore 1.13.8 - the version the base
-  // lockfile already resolved `^1.8.3` to - dropped `_.bind`'s native-bind fast path, so the bound wrappers
-  // report `length === 0` and Mocha, which reads `fn.length` to decide whether a hook is asynchronous
-  // (`mocha/lib/runnable.js:42`), invoked both hooks with no callback. The arity is restored in
-  // test/setup.js, the single surface authorised to adapt this integration, so this destructive helper
-  // carries no adaptation of its own and every existing call site behaves as the base commit wrote it.
+  // `_.bindAll` is kept as it stands. Underscore's `_.bind` no longer takes a native-bind fast path, so the
+  // bound wrappers report `length === 0`, and Mocha reads `fn.length` to decide whether a hook is
+  // asynchronous — so it would invoke both hooks with no callback. The arity is restored in test/setup.js,
+  // the single surface authorised to adapt this integration, which keeps this destructive helper free of
+  // any third-party adaptation of its own.
   _.bindAll(this, 'ensureConnection', 'reset');
 }
 
@@ -143,19 +134,15 @@ _.extend(DB.prototype, {
   /**
    * Empties the test database, WAITING for the connection and the initialization drop first.
    *
-   * Review finding M12. The earlier form opened with `if (!this.isConnected()) return done();` - it
-   * reported SUCCESS while the database was untouched. Two distinct failures followed from that. A suite
-   * whose `before(db.reset)` ran before `checkState()` had announced the connection started over
-   * whatever the previous run left behind, which is the shared-state race that made the API suites
-   * order-dependent in a way their own comments say they must not be; and the initialization drop could
-   * still be in flight, so a reset that "succeeded" could be immediately followed by the initialization
-   * drop deleting fixtures the first test had already created.
+   * Returning early when the connection is not yet up would report SUCCESS over an untouched database, and
+   * two failures follow from that: a suite whose `before(db.reset)` runs before the connection is announced
+   * starts over whatever the previous run left behind, and the initialization drop may still be in flight,
+   * so a reset that "succeeded" can be followed by that drop deleting fixtures the first test created.
    *
-   * `ensureConnection` is the existing barrier for exactly that condition - it polls `_isConnected`,
-   * which `checkState()` sets ONLY after the initialization drop has resolved - so reset now goes
-   * through it rather than past it. There is no new mechanism and no new state: a connection that never
-   * arrives still surfaces as the Mocha hook's own timeout, and `_initError` still short-circuits with
-   * the original error.
+   * `ensureConnection` is the barrier for exactly that condition — it polls `_isConnected`, which
+   * `checkState()` sets ONLY after the initialization drop has resolved — so reset goes through it rather
+   * than past it. A connection that never arrives surfaces as the Mocha hook's own timeout, and
+   * `_initError` short-circuits with the original error.
    *
    * @param {Function} done Mocha's callback; called with an error, or with nothing on success.
    * @returns {void}
@@ -177,11 +164,9 @@ _.extend(DB.prototype, {
         return done(err);
       }
 
-      // Async idiom, and review finding M2 (CWE-252). The base commit passed a callback that discarded
-      // its `err` argument and reported success unconditionally, so a failed drop left every following
-      // test running over stale users, sessions, bcrypt hashes, reset tokens and fixtures while the
-      // suite still looked healthy. The promise form has no argument to discard: a rejection is handed
-      // straight to the Mocha hook, which fails the run at the point of failure.
+      // The promise form has no error argument to discard, which is the point: a rejection is handed
+      // straight to the Mocha hook and fails the run where it happened, rather than leaving every
+      // following test to run over stale users, sessions, hashes, reset tokens and fixtures.
       mongoose.connection.db.dropDatabase().then(
         function() { done(); },
         done
@@ -219,9 +204,9 @@ function checkState() {
           break;
         }
 
-        // Review finding M2. `_isConnected` is set ONLY after the drop has actually succeeded; a
-        // rejection is parked in `_initError` instead, so no test can run against a database that was
-        // supposed to be empty and is not.
+        // `_isConnected` is set ONLY after the drop has actually succeeded; a rejection is parked in
+        // `_initError` instead, so no test can run against a database that was supposed to be empty and
+        // is not.
         mongoose.connection.db.dropDatabase().then(
           function() {
             instance._isConnected = true;

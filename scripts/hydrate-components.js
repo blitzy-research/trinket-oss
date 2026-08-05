@@ -17,46 +17,32 @@
  * imports. Set TRINKET_COMPONENTS_TARBALL to a local copy of the archive to hydrate without
  * network access; every check still applies to it.
  *
- * WHY A COMPLETION MARKER RATHER THAN A SENTINEL FILE (review finding P3-2)
- * ------------------------------------------------------------------------
- * An earlier revision probed for a single `foundation.scss` and returned successfully whenever
- * that one path existed. Three states therefore passed forever, each of them able to change the
- * compiled stylesheets silently:
- *   - an INTERRUPTED extraction that happened to have written that file already;
- *   - a LOCAL MODIFICATION of any imported partial;
- *   - a STALE tree unpacked from a different release than the one pinned here.
- * The fast path is now gated on an atomic completion marker - written only after the archive has
- * been verified AND unpacked AND the result checked, and written by rename so a half-written
- * marker cannot exist - together with a re-measured fingerprint of the imported subtree. Anything
- * that does not match is REHYDRATED rather than accepted.
+ * WHY A COMPLETION MARKER RATHER THAN A SENTINEL FILE. Probing for one imported partial would let
+ * three states pass forever, each able to change the compiled stylesheets silently: an INTERRUPTED
+ * extraction that had already written that file, a LOCAL MODIFICATION of any imported partial, and a
+ * STALE tree unpacked from a different release than the one pinned here. The fast path is therefore
+ * gated on an atomic completion marker - written only after the archive has been verified AND unpacked
+ * AND the result checked, and written by rename so a half-written marker cannot exist - together with a
+ * freshly computed fingerprint of the imported subtree. Anything that does not match is REHYDRATED.
  *
- * WHY THE CHECK REACHES BEYOND THE STYLESHEET IMPORTS (review finding F4)
- * ----------------------------------------------------------------------
- * An earlier revision gated the fast path on the imported SCSS subtree and three Foundation paths
- * alone, which covers every byte the stylesheet build can read - and nothing else. The same
- * gitignored tree also SERVES the browser: `lib/views/**`, `public/js/**` and `config/default.yaml`
- * reference assets under 31 of its top-level entries, from `skulpt` and `blockly` through
- * `glowscript`, `vexflow` and `src-min-noconflict`. Deleting any of them left the SCSS fingerprint
- * intact, so `inspect()` returned `skip`, `npm run build` no-opped the hydration and
- * scripts/verify-css-artifacts.js still passed - while those assets 404'd at runtime. The build was
- * green and the client was broken, which is the worst shape a gate can fail in.
+ * WHY THE CHECK REACHES BEYOND THE STYLESHEET IMPORTS. The same gitignored tree also SERVES the
+ * browser: `lib/views/**`, `public/js/**` and `config/default.yaml` reference assets under most of its
+ * top-level entries. A fingerprint of the imported SCSS subtree alone leaves those unguarded, so a
+ * missing component directory would let the build no-op the hydration and the CSS gate pass while the
+ * assets 404 at runtime. Coverage is two-layered, and the layers catch different damage:
+ *   - RUNTIME_ASSET_PATHS names one representative file inside every top-level entry the application
+ *     references, so a partially deleted or partially extracted component directory is caught even
+ *     though the directory itself still exists;
+ *   - the TOP-LEVEL LISTING FINGERPRINT records the entry names and their types, so a whole entry that
+ *     was removed - or an extra one that does not belong to the pinned archive - is caught even when it
+ *     holds no representative path.
+ * Both are cheap - a few dozen `existsSync` calls and one `readdirSync` - so the verified fast path
+ * costs well under a millisecond and touches neither the network nor the filesystem beyond reading.
  *
- * Coverage is therefore two-layered, and the layers catch different damage:
- *   - RUNTIME_ASSET_PATHS names one representative file inside every top-level entry the
- *     application actually references, so a partially deleted or partially extracted component
- *     directory is caught even though the directory itself still exists;
- *   - the TOP-LEVEL LISTING FINGERPRINT records the entry names and their types, so a whole
- *     top-level entry that was removed - or an extra one that does not belong to the pinned
- *     archive - is caught even when it holds no representative path.
- * Both are cheap: the first is 31 `existsSync` calls and the second is one `readdirSync`, so the
- * verified fast path still costs well under a millisecond and still touches neither the network nor
- * the filesystem beyond reading.
- *
- * The step is still idempotent and still costs nothing to re-run: a verified tree exits 0 without
- * touching the network or the filesystem. A tree that is provably the pinned one but carries no
- * marker - the state the documented manual `curl` procedure and the Docker image build both leave -
- * is ADOPTED by writing the marker, because its bytes already satisfy every check a rehydration
- * would perform and re-downloading 166 MB to learn that would be waste, not rigour.
+ * The step is idempotent: a verified tree exits 0 without touching the network or the filesystem. A
+ * tree that is provably the pinned one but carries no marker - the state the documented manual `curl`
+ * procedure and the Docker image build both leave - is ADOPTED by writing the marker, because its bytes
+ * already satisfy every check a rehydration would perform.
  */
 
 var childProcess = require('child_process');
@@ -100,24 +86,19 @@ var REQUIRED_PATHS = [
 ];
 
 // THE SERVED SURFACE. One representative file per top-level entry that lib/views/**, public/js/**,
-// public/partials/** or config/default.yaml actually requests over HTTP, censused from the tree
-// rather than guessed. These are NOT read by the stylesheet build - they are read by the browser,
-// which is exactly why the SCSS fingerprint above cannot see them going missing.
+// public/partials/** or config/default.yaml requests over HTTP. These are NOT read by the stylesheet
+// build - they are read by the browser, which is why the SCSS fingerprint above cannot see them going
+// missing.
 //
-// Two of the routes lib/http/staticRoutes.js appends carry them, and NEITHER is one of the eight
-// app.prefixes directory routes: config/default.yaml declares those eight keys with no values, so
-// the loop that would mount them emits nothing at all, as the comment at its head records. What
-// serves these files instead, both measured over real HTTP against the running application:
-//   - rendered pages pass their asset paths through the `cachePrefix` nunjucks filter, whose
-//     fallback in lib/util/stringUtils.js#addPrefix emits '/cache-prefix-<ms>/<path>', and the
-//     cache-prefix directory route answers it - GET /cache-prefix-<ms>/components/dist/lodash.min.js
-//     -> 200, which is RUNTIME_ASSET_PATHS' 'dist/lodash.min.js' entry;
-//   - paths written literally, such as config/default.yaml's app.ngapps.main entry
-//     '/components/ng-file-upload.min.js', fall through to the '/{path*}' catch-all (directory
-//     ./public, index: true) - also measured at 200.
+// Two of the routes lib/http/staticRoutes.js appends serve them, and NEITHER is one of the eight
+// app.prefixes directory routes - config/default.yaml declares those keys with no values, so the loop
+// that would mount them emits nothing. What serves these files instead is the cache-prefix directory
+// route, which answers the '/cache-prefix-<ms>/<path>' form the `cachePrefix` nunjucks filter emits,
+// and the '/{path*}' catch-all, which answers paths written literally such as
+// config/default.yaml's app.ngapps.main entries.
 //
 // One file per entry is deliberate: the point is to detect a top-level entry that is present but
-// hollow, not to re-checksum 435 MB.
+// hollow, not to re-checksum the whole tree.
 var RUNTIME_ASSET_PATHS = [
   path.join('Mathjax-siunitx', 'siunitx.js'),
   path.join('Processing.js', 'processing.min.js'),
@@ -162,10 +143,9 @@ var TOP_LEVEL_SHA256 = '417e60c6aced5295cad6be0ca77cc8d123a11a16066e3dffc3795eb3
 
 // The atomic completion marker. It lives INSIDE the hydrated tree so that `git clean -xfd`, which
 // removes the tree, removes the claim about it in the same stroke - a marker that outlived its tree
-// would be the exact defect this replaces. `MARKER_VERSION` is bumped whenever the checks below
-// change, so a marker written by an older hydrator is treated as unverified rather than trusted.
-// It is 2 because review finding F4 widened the checks to the served surface above; a version-1
-// marker records a tree that was never measured against RUNTIME_ASSET_PATHS or the top-level shape.
+// would defeat the point. `MARKER_VERSION` must be bumped whenever the checks below change, so a
+// marker written by an older hydrator is treated as unverified rather than trusted: a version-1 marker
+// records a tree that was never checked against RUNTIME_ASSET_PATHS or the top-level shape.
 var MARKER_NAME = '.hydrated.json';
 var MARKER_PATH = path.join(COMPONENTS_DIR, MARKER_NAME);
 var MARKER_VERSION = 2;
@@ -369,8 +349,8 @@ function inspect() {
     reasons.push(relative + ' is missing, so the tree is partial');
   });
 
-  // Reported after the build-critical paths but gated identically: an asset the browser requests is
-  // as much a part of a complete tree as a partial the stylesheet imports (review finding F4).
+  // Reported after the build-critical paths but gated identically: an asset the browser requests is as
+  // much a part of a complete tree as a partial the stylesheet imports.
   missingRuntime.forEach(function(relative) {
     reasons.push(relative + ' is missing, so a served component directory is incomplete');
   });

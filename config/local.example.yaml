@@ -20,11 +20,8 @@ app:
         # session for any account.
         #
         # The placeholder below is deliberately TOO SHORT, so app.js's startup guard rejects it and
-        # the application refuses to boot until it is replaced. That is the point. An earlier
-        # revision of this file shipped a 46-character placeholder, which SATISFIED the length guard
-        # - the only check there is - so copying this file verbatim produced a server that started
-        # normally while sealing its sessions with a password published in the repository
-        # (review finding SV-36). Failing closed is the correct default for a secret.
+        # the application refuses to boot until it is replaced. Length is the only check there is,
+        # so a long placeholder would let a copy of this file boot with a published secret.
         #
         # Generate one instead of inventing one:
         #
@@ -57,8 +54,8 @@ db:
 # the effective key becomes the literal string "undefined" plus the trinket's PUBLIC
 # short code - which anyone can read out of a trinket URL - so the token can be forged
 # and the platform can be driven as a mail relay. Use a long random value, keep it out
-# of version control, and see docs/PRESERVED-QUIRKS.md section 4.6 (SEC-6) for the
-# measurement and for why the application does not ship a default.
+# of version control, and see docs/PRESERVED-QUIRKS.md section 4.6 for the details and
+# for why the application does not ship a default.
 
 # app:
 #   mail:

@@ -1,31 +1,24 @@
-// THE ENDPOINT HALF OF THE DESTRUCTIVE-OPERATION GATE, extracted so there is exactly ONE of it
-// (review finding SV-04).
+// THE ENDPOINT HALF OF THE DESTRUCTIVE-OPERATION GATE, held in one place so there is exactly ONE of it.
 //
 // Two modules in this tree delete data: test/helpers/db.js drops whole databases between suites, and
-// test/baseline/capture.js creates and removes throwaway identities while recording the R-6 baseline.
-// Both must answer the same question before they act - "is the server I am talking to actually
-// disposable?" - and only the first one did. capture.js validated NODE_ENV, the database NAME pattern and
-// the name configureRuntime() forced, and its own docblock claimed to be "db.js#assertDisposableDatabase
-// applied to a second destructive caller", which was not true: it carried no endpoint check at all, so a
-// `local.yaml` or a NODE_CONFIG layer naming a remote, credentialed, SRV, replica-set or TLS endpoint
-// whose database happened to be called `test` passed the gate and was written to.
+// test/baseline/capture.js creates and removes throwaway identities while capturing the baseline. Both must
+// answer the same question before they act — "is the server I am talking to actually disposable?" — and a
+// name check alone cannot answer it, because a `local.yaml` or a NODE_CONFIG layer can name a remote,
+// credentialed, SRV, replica-set or TLS endpoint whose database happens to be called `test`. Two copies of
+// a security gate drift, and the weaker copy is the one that matters, so the logic lives here once and both
+// callers require it.
 //
-// Duplicating the logic into capture.js would have closed the hole and opened a worse one, because two
-// copies of a security gate drift and the weaker copy is the one that matters. The logic therefore lives
-// here once and both callers require it.
-//
-// WHY THIS MODULE HAS NO SIDE EFFECTS AND NO DEPENDENCIES. test/helpers/db.js cannot be required by
-// capture.js: its first statement is `require('../setup')`, which pulls in chai, chai-as-promised and
-// sinon and forces NODE_ENV, and which that file's own header explains is load-bearing for Mocha's file
-// ordering. capture.js is a CLI that runs outside Mocha. So the shared gate had to be a module that
-// requires nothing, opens nothing, reads no configuration and mutates no environment - it is pure
-// functions over a connection object handed to it. That also makes it directly unit-testable against
-// synthetic connection shapes, which is how it is verified: review finding SV-04 says in terms
-// "Do not runtime-test", and no test in this repository points a driver at a non-loopback host.
+// THIS MODULE HAS NO SIDE EFFECTS AND NO DEPENDENCIES, deliberately. capture.js cannot require
+// test/helpers/db.js: that file's first statement is `require('../setup')`, which pulls in chai,
+// chai-as-promised and sinon and forces NODE_ENV, and capture.js is a CLI that runs outside Mocha. The
+// shared gate therefore requires nothing, opens nothing, reads no configuration and mutates no
+// environment — it is pure functions over a connection object handed to it. That is also what makes it
+// directly unit-testable against synthetic connection shapes, which is how it is verified: no test in this
+// repository points a driver at a non-loopback host.
 //
 // Only loopback is disposable. Something that deletes data has no business reaching another machine, and
-// every documented way of running this harness - `npm test`, test/setup.js's forced
-// `db.mongo.host: localhost`, and capture.js's own configureRuntime() - stays on the loopback interface.
+// every documented way of running this harness — `npm test`, test/setup.js's forced
+// `db.mongo.host: localhost`, and capture.js's own configureRuntime() — stays on the loopback interface.
 // `::1` is listed in both its bare and its bracketed form because a connection string may carry either.
 var DISPOSABLE_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]'];
 

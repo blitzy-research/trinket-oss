@@ -4,43 +4,35 @@ var path      = require('path'),
     spawnSync = require('child_process').spawnSync;
 
 /**
- * Review finding M1 (CWE-20, data loss) - the test-database fail-closed gate.
+ * The test-database FAIL-CLOSED gate.
  *
- * test/helpers/db.js calls `dropDatabase()` twice: once while it initializes, and once per `db.reset()`.
- * The name it acts on is whatever node-config finally resolved, and that is NOT simply whatever
- * config/test.yaml says - `local.yaml` is layered after it and `NODE_CONFIG` above both, so a
- * misconfigured shell, a stray environment variable or a parallel clone can repoint the target at a
- * development database or at another clone's. The gate must therefore refuse, not delete.
+ * test/helpers/db.js calls `dropDatabase()` twice: once while it initializes, and once per `db.reset()`. The
+ * name it acts on is whatever node-config finally resolved, which is NOT simply whatever config/test.yaml
+ * says — `local.yaml` layers after it and `NODE_CONFIG` above both — so a misconfigured shell, a stray
+ * environment variable or a parallel clone can repoint the target at a development database or at another
+ * clone's. The gate must REFUSE, not delete, and that refusal is what these tests pin.
  *
- * This runs in a CHILD PROCESS for two reasons. The guarded code path executes during module load, so it
- * cannot be re-entered inside a suite that has already loaded it; and the whole point is to observe what
- * a DIFFERENT environment does, which means a different process. The pattern matches the existing
- * child-process specs in this directory (oauth-form-encoding.js).
+ * They run in a CHILD PROCESS for two reasons: the guarded code path executes during module load, so it
+ * cannot be re-entered inside a suite that has already loaded it, and the point is to observe what a
+ * DIFFERENT environment does. The positive half of the contract — that a disposable database really is
+ * cleared — is proven by the rest of the suite, which depends on `db.reset()` emptying the database between
+ * the outer boundaries of test/lib/api/index.js.
  *
- * The positive half of the contract - that a disposable database really is cleared - is proven by the
- * rest of the suite, which depends on `db.reset()` emptying the database between the outer boundaries of
- * test/lib/api/index.js.
+ * THIS SPEC IS ITSELF SAFE, by three load-bearing properties:
  *
- * SAFETY, and review finding M4 (data loss in the TEST). An earlier revision of this spec was itself the
- * hazard it exists to describe. It probed two FIXED database names, `notatest_m1guard` and `testing`, and
- * ended by calling `dropDatabase()` on them unconditionally - so two checkouts running in parallel raced
- * each other on the same names, and a mongod that happened to host a real database called `testing` lost
- * it. It also cleared `CLONE_INDEX`, discarding the very isolation the rest of the suite relies on. Three
- * properties fix that, and all three are load-bearing:
+ *   1. EVERY probe name is unique per clone AND per run — `CLONE_INDEX`, the pid and a monotonic counter are
+ *      folded in — so no two processes can address the same probe database. `CLONE_INDEX` is PASSED THROUGH
+ *      rather than cleared, so the isolation the rest of the suite relies on survives.
+ *   2. NOTHING is ever dropped at database level. The probe creates exactly one collection holding exactly
+ *      one sentinel document and removes exactly that, so a database this spec did not create cannot be
+ *      reached and one it did create is left holding nothing.
+ *   3. The child's exit status and spawn error are ASSERTED, so a probe that died before reaching its verdict
+ *      fails this spec instead of being read as agreement.
  *
- *   1. EVERY probe name is unique per clone AND per run - `CLONE_INDEX`, the pid and a monotonic counter
- *      are folded in - so no two processes can ever address the same probe database. `CLONE_INDEX` is
- *      PASSED THROUGH rather than cleared.
- *   2. NOTHING is ever dropped at database level. The probe creates exactly one collection, containing
- *      exactly one sentinel document, and removes exactly that; a database this spec did not create
- *      cannot be reached, and a database it did create is left holding nothing.
- *   3. The child's exit status and spawn error are ASSERTED, so a probe that died before reaching its
- *      verdict fails this spec instead of being read as agreement.
- *
- * Both names still have to be refused by `DISPOSABLE_DATABASE` at test/helpers/db.js, and uniqueness does
- * not weaken that: `notatest_…` does not begin with `test`, and the second name is deliberately built as
- * `test` followed immediately by letters and digits with NO `_`/`-` separator, which is exactly the shape
- * that makes a bare `startsWith("test")` check unsafe and which the anchored pattern must refuse.
+ * Both probe names must still be refused by `DISPOSABLE_DATABASE` in test/helpers/db.js, and per-run
+ * uniqueness does not weaken that: the first does not begin with `test`, and the second is deliberately built
+ * as `test` followed immediately by letters and digits with NO `_`/`-` separator — exactly the shape that
+ * makes a bare `startsWith("test")` check unsafe and that the anchored pattern must refuse.
  */
 describe('Test database fail-closed gate', function() {
   var REPO_ROOT = path.resolve(__dirname, '../../..'),
@@ -202,8 +194,8 @@ describe('Test database fail-closed gate', function() {
       })
     });
 
-    // Review finding M4. A probe that never ran - a spawn failure, a signal, a non-zero exit before its
-    // verdict - must fail this spec, not be mistaken for agreement.
+    // A probe that never ran — a spawn failure, a signal, a non-zero exit before its verdict — must fail
+    // this spec, not be mistaken for agreement.
     should.not.exist(child.error);
     should.not.exist(child.signal);
 

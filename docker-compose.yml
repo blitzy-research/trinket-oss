@@ -9,24 +9,19 @@ services:
       - .:/usr/local/node/trinket
       - node_modules:/usr/local/node/trinket/node_modules
       - public_components:/usr/local/node/trinket/public/components
-      # public/css carries the two generated stylesheets, and they are gitignored - so the bind mount
-      # above, which replaces the whole image directory with the host checkout, hides the copies the image
-      # build produced and a clean clone ends up serving no stylesheet at all. Docker initializes an EMPTY
-      # named volume from whatever the image holds at that path on first use, so declaring one here
-      # republishes the verified build output through the bind mount, exactly as node_modules and
-      # public/components are already handled. Like those two, the volume is initialized ONCE: after
-      # changing static/scss/** or the component release, recreate THIS ONE VOLUME and bring the stack up
-      # with `--build`:
+      # public/css carries the two generated stylesheets, which are gitignored - so the bind mount above,
+      # which replaces the whole image directory with the host checkout, would hide the copies the image
+      # build produced. A named volume is initialized from the image on first use, so declaring one here
+      # republishes the verified build output, exactly as node_modules and public/components are handled.
+      # Like those two it is initialized ONCE: after changing static/scss/** or the component release,
+      # recreate THIS ONE VOLUME and bring the stack up with `--build`:
       #
       #     docker compose down
       #     docker volume rm "${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}_public_css"
       #     docker compose up --build
       #
-      # Do NOT use `docker compose down -v` for it. `-v` removes EVERY volume declared below, including
-      # `mongodb_data` - the MongoDB data directory - so it would delete the whole development database to
-      # refresh two stylesheets, with no prompt and no recovery. An earlier revision of this comment
-      # offered `down -v` as the first option, and README.md and docs/setup.md repeated it; the safe,
-      # targeted form above is the only one any of the three now documents (review finding P3-3).
+      # Do NOT use `docker compose down -v` for it: `-v` removes EVERY volume declared below, including
+      # `mongodb_data`, so it would delete the whole development database to refresh two stylesheets.
       - public_css:/usr/local/node/trinket/public/css
     networks:
       - trinket
@@ -35,21 +30,15 @@ services:
       - mongodb
   redis:
     image: redis:7.4
-    # Published on the LOOPBACK interface only. `16379:6379` binds 0.0.0.0, which put an
-    # unauthenticated Redis - the application cache and the background job queues - on every
-    # interface of the host, reachable by anyone who could route to it, with write access to
-    # every cached value and every queued job (review finding SV-28).
+    # Published on the LOOPBACK interface only: an unqualified `16379:6379` binds 0.0.0.0, which puts
+    # this unauthenticated Redis - the application cache and the background job queues - on every
+    # interface of the host. `app` reaches Redis as `redis:6379` over the `trinket` bridge network
+    # below, never through the published port, so confining it costs the application nothing; the port
+    # exists only so a developer can attach `redis-cli`, and the host-side number is unchanged.
     #
-    # Redis is NOT the session store, and hardening this deployment on the assumption that it
-    # is would secure the wrong datastore: `app.js` registers the `sessions` cache against the
-    # in-repo `lib/util/catbox-mongoose.js` engine and configures Yar against that cache, so
-    # the server-side session records live in MONGODB - see the `mongodb` service below.
-    #
-    # This costs the application nothing: `app` reaches Redis as `redis:6379` over the
-    # `trinket` bridge network below, never through the published port. The published port
-    # exists purely so a developer on the host can attach `redis-cli`, and 127.0.0.1 serves
-    # that identically. The host-side port number is unchanged, so every documented
-    # `redis-cli -p 16379` invocation keeps working.
+    # Redis is NOT the session store: `app.js` registers the `sessions` cache against the in-repo
+    # `lib/util/catbox-mongoose.js` engine, so server-side session records live in the `mongodb`
+    # service below.
     ports:
       - 127.0.0.1:16379:6379
     container_name: redis
@@ -57,15 +46,12 @@ services:
       - trinket
   mongodb:
     image: mongo:6.0
-    # Loopback-only for the same reason as `redis` above, and with the same zero
-    # application impact: `app` reaches this service as `mongodb:27017` over the bridge
-    # network, not through the published port. Unbound, `17017:27017` exposed an
-    # unauthenticated MongoDB on all host interfaces (review finding SV-28) - and this is the
-    # datastore that actually matters for authentication, because it holds every user record
-    # including the bcrypt password hashes AND, through the `sessions` cache that
-    # `lib/util/catbox-mongoose.js` backs, every server-side session record. Read access here
-    # alone is an authentication bypass. The host-side port number is
-    # unchanged, so `mongosh --port 17017` still works from the host.
+    # Loopback-only for the same reason as `redis` above, and with the same zero application impact:
+    # `app` reaches this service as `mongodb:27017` over the bridge network, not through the published
+    # port. This is the datastore that matters for authentication - it holds every user record with its
+    # bcrypt hash and, through the `sessions` cache `lib/util/catbox-mongoose.js` backs, every
+    # server-side session record - so read access alone would be an authentication bypass. The
+    # host-side port number is unchanged.
     ports:
       - 127.0.0.1:17017:27017
     container_name: mongodb

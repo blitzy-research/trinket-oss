@@ -1,24 +1,18 @@
 /**
- * `lib/shared/trinket-markdown.js` — the marked-4 bridge and the HTML sanitizer (review finding M-20).
+ * `lib/shared/trinket-markdown.js` — the marked bridge and the HTML sanitizer.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * This module is the platform's XSS defence for learner- and author-authored markdown, and it had NO tests
- * at all while carrying the single riskiest dependency swap in the change: the `trinketapp/marked` git fork
- * (0.3.2) was replaced by registry `marked@4.3.0`. The load-bearing deviation of that fork was that it
- * accepted `sanitize` as a FUNCTION and called it for every inline HTML tag the lexer matched. marked 4
- * removed `sanitize` entirely, so the sanitizer is re-attached as `Renderer.prototype.html` instead - a
- * different hook reached by a different code path. Nothing verified that the whitelist still bites.
+ * This module is the platform's XSS defence for learner- and author-authored markdown, so the tests below pin
+ * that the whitelist actually bites. marked 4 has no `sanitize` option, so the sanitizer is attached as
+ * `Renderer.prototype.html` — a different hook, reached by a different code path, from the `sanitize`
+ * FUNCTION the earlier fork called for every inline HTML tag the lexer matched.
  *
- * Every expectation below is the MEASURED output of the current tree (R-6). Where an output is surprising,
- * the surprise is documented rather than smoothed over: this module is preserved, not improved.
+ * Every expectation below is the module's client-visible output. Where an output is surprising, the surprise
+ * is pinned rather than smoothed over: this module is preserved, not improved.
  *
- * A NOTE ON GLOBAL STATE
- * ----------------------
- * The factory returns a render function that reassigns FIVE `marked.Renderer.prototype` methods on every
- * invocation, and the sanitizer keeps an open-tag stack (`TAGS`) in module scope. Both are base-commit
- * behaviour. The tests below therefore never assume a clean slate between cases beyond what a completed
- * render leaves, which is exactly the guarantee production has.
+ * GLOBAL STATE. The factory returns a render function that reassigns FIVE `marked.Renderer.prototype` methods
+ * on every invocation, and the sanitizer keeps an open-tag stack (`TAGS`) in module scope. Both are existing
+ * behaviour, so the tests never assume a clean slate between cases beyond what a completed render leaves —
+ * which is exactly the guarantee production has.
  */
 
 var chai   = require('chai'),
@@ -28,9 +22,7 @@ var chai   = require('chai'),
 
 describe('trinket markdown', function() {
 
-  // -------------------------------------------------------------------------------------------
   // The marked-4 bridge
-  // -------------------------------------------------------------------------------------------
 
   describe('the marked 4 bridge', function() {
     it('requires marked as a destructured named export, not a callable module', function() {
@@ -46,8 +38,8 @@ describe('trinket markdown', function() {
 
     it('keeps every monkey-patched Renderer arity identical to the fork', function() {
       // The four patches transfer only because the arities match. A changed arity would silently drop an
-      // argument - `escaped` on code, `title` on image and link - and produce wrong markup rather than an
-      // error. Measured against marked 4.3.0.
+      // argument — `escaped` on code, `title` on image and link — and produce wrong markup rather than an
+      // error, which is why the arity is asserted below rather than assumed.
       render('warm up the prototype patches');
 
       marked.Renderer.prototype.code.length.should.eql(3);
@@ -59,8 +51,7 @@ describe('trinket markdown', function() {
     });
 
     it('substitutes an empty string for null and undefined input', function() {
-      // The `src == null` guard is base-commit code and the only reason a course with no description
-      // renders rather than throwing.
+      // The `src == null` guard is the only reason a course with no description renders rather than throwing.
       render(null).should.eql('');
       render(undefined).should.eql('');
     });
@@ -70,9 +61,7 @@ describe('trinket markdown', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
   // The sanitizer: disallowed tags
-  // -------------------------------------------------------------------------------------------
 
   describe('the HTML sanitizer', function() {
     describe('a tag that is not on the whitelist', function() {
@@ -165,9 +154,7 @@ describe('trinket markdown', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
   // The four renderer patches, through their observable output
-  // -------------------------------------------------------------------------------------------
 
   describe('the renderer patches', function() {
     it('rewrites a markdown link to open in a new window', function() {
@@ -187,8 +174,8 @@ describe('trinket markdown', function() {
     });
 
     it('routes a relative .ipynb link through nbviewer', function() {
-      // The `title="null"` is measured, not a mistake in the expectation: marked 4 hands the patch a null
-      // title and the patch interpolates it. Preserved.
+      // The `title="null"` is the real output, not a mistake in the expectation: marked hands the patch a
+      // null title and the patch interpolates it. Preserved.
       render('[nb](/u/x/notebook.ipynb)')
         .should.contain('href="http://nbviewer.org/urls/');
       render('[nb](/u/x/notebook.ipynb)').should.contain('/u/x/notebook.ipynb"');
@@ -212,9 +199,7 @@ describe('trinket markdown', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
   // MathJax protection
-  // -------------------------------------------------------------------------------------------
 
   describe('MathJax protection', function() {
     it('leaves the delimiters intact and adds no stray code tags', function() {
@@ -228,9 +213,7 @@ describe('trinket markdown', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
   // Byte parity across repeated renders
-  // -------------------------------------------------------------------------------------------
 
   describe('byte parity', function() {
     it('renders the same input identically twice, despite the module-scope tag stack', function() {

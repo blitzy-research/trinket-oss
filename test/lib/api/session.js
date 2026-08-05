@@ -4,34 +4,21 @@ var should         = require('chai').should(),
     CatboxMongoose = require('../../../lib/util/catbox-mongoose');
 
 /**
- * Review finding M7 (CWE-384 coverage) - session rotation and session invalidation.
+ * Session-id rotation on login and session invalidation on logout, asserted through the CREDENTIAL rather
+ * than through the transition's status code: each test replays the cookie the client held BEFORE the
+ * transition and requires it to be refused. A status code and a redirect target say nothing about the
+ * credential, so `request.yar.reset()` disappearing from the login handler, or the session cache deletion
+ * breaking, would otherwise leave every other suite green.
  *
- * WHY THIS SUITE EXISTS
- * --------------------
- * The login and logout suites asserted the status code and the redirect target of the transition, which
- * says nothing about the credential. `test/helpers/flow.js` kept a single cookie per user and overwrote it
- * on every response, so the cookie the browser held BEFORE the transition was discarded at the moment the
- * transition happened - and that is the only cookie whose fate proves anything. Removing
- * `request.yar.reset()` from the login handler, or breaking the session cache deletion, left the whole
- * suite green. Both are now assertions.
+ * The suite is isolated on purpose, because `test/lib/api/index.js` runs its suites serially over shared
+ * database and session state: it creates and removes its own user rather than reusing `defaults.user` —
+ * whose password `forgot_pass.js` deliberately changes — drives every request through a cookie slot no other
+ * suite touches, and restores `flow.activeUser` afterwards.
  *
- * WHY IT USES ITS OWN ACCOUNT AND ITS OWN COOKIE SLOT
- * -------------------------------------------------
- * `test/lib/api/index.js` runs its suites serially because they share database and session state, and this
- * suite must not perturb either. It therefore creates and removes its own user rather than reusing
- * `defaults.user` - whose password `forgot_pass.js` deliberately changes - and drives every request
- * through a cookie slot no other suite touches, restoring `flow.activeUser` afterwards. For the same
- * reason it is registered near the end of the sequence, after every suite that shares `defaults.user`;
- * the isolated `route-parity` suite is the one entry that follows it, and that ordering is deliberate -
- * see the append-only note at the top of `test/lib/api/index.js`.
- *
- * WHAT MAKES THESE ASSERTIONS LOAD-BEARING
- * ---------------------------------------
- * `@hapi/yar/lib/index.js:165-171` fires `this._cache.drop(this.id)` without awaiting it and immediately
- * swaps in a fresh session id, so whether a revoked cookie still works depends entirely on the cache
- * deletion landing. That dependency is only observable once the cache fake stops aliasing the session
- * object - see the boundary note in test/helpers/catbox-redis.js. Measured on this tree: with cloning in
- * place and the drop suppressed, the pre-logout cookie answers 200; with the drop working it answers 302.
+ * `@hapi/yar` fires `this._cache.drop(this.id)` WITHOUT awaiting it and immediately swaps in a fresh session
+ * id, so whether a revoked cookie still works depends entirely on that cache deletion landing — which is
+ * observable only because the cache fake clones across its serialization boundary instead of aliasing the
+ * session object; see test/helpers/catbox-redis.js.
  */
 module.exports = function() {
   describe('Session rotation and invalidation', function() {

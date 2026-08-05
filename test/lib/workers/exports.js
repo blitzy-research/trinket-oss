@@ -1,52 +1,39 @@
 /**
- * The bulk-export worker: lib/workers/exports.js (review finding M-19).
+ * The bulk-export worker: lib/workers/exports.js.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * This module carries three of the migration's largest single-file changes - aws-sdk v2 to
- * @aws-sdk/client-s3 v3, the complete removal of `q` (four `Q.defer()`s, `Q.all` and `Q.allSettled`), and
- * archiver 2 to 7, whose `finalize()` returns a promise where the old one returned `this` - and it had no
- * tests whatsoever. Nothing verified the archive's entry layout, the S3 parameters, the notification
- * emails, the temp-file cleanup or either terminal outcome.
+ * The assertions cover the archive's entry LAYOUT, the S3 parameters, the notification emails, the temp-file
+ * cleanup and both terminal outcomes.
  *
- * HOW THE MODULE IS REACHED
- * -------------------------
- * `lib/workers/exports.js` exports nothing. Its entire public surface is what it registers on the queue at
- * load: one `process` handler and the 'error', 'failed' and 'completed' listeners. It is also required by
- * nothing else in the tree - it is a standalone worker entry point - so `before` stubs
- * `lib/util/queues.js#exports` to hand it an inert stand-in queue, requires it once, and keeps the
- * handler and the listeners the module registered. Two things follow, both deliberate:
+ * HOW THE MODULE IS REACHED. `lib/workers/exports.js` exports nothing: its entire public surface is what it
+ * registers on the queue at load — one `process` handler plus the 'error', 'failed' and 'completed'
+ * listeners — and nothing else in the tree requires it, because it is a standalone worker entry point. So
+ * `before` stubs `lib/util/queues.js#exports` to hand it an inert stand-in queue, requires it once, and keeps
+ * the handler and listeners it registered. Two things follow, both deliberate:
  *
  *   1. The processor under test IS the production processor. No behaviour is re-implemented here.
- *   2. Nothing is registered on the real Bull queue. That matters beyond tidiness: the 'exports' queue
- *      lives in a Redis instance shared by every parallel clone, so registering a live processor here
- *      would make this test process a worker for other clones' jobs.
+ *   2. Nothing is registered on the real Bull queue. That matters beyond tidiness: the 'exports' queue lives
+ *      in a Redis instance shared by every parallel clone, so registering a live processor here would make
+ *      this test process a worker for other clones' jobs.
  *
- * WHAT IS STUBBED, AND WHY EACH ONE IS THE OUTERMOST SEAM
- * ------------------------------------------------------
- *   - `config/aws.js#getS3Client` - a recorder, exactly as test/lib/util/file-storage.js uses. The real
- *     `GetObjectCommand` and `PutObjectCommand` classes are still constructed by production code, so a
- *     wrong bucket, key, content type or Content-Disposition is visible.
- *   - `lib/util/mailer.js#send` - records recipient, subject, type and the RENDERED html, so the real
+ * WHAT IS STUBBED, AND WHY EACH IS THE OUTERMOST SEAM
+ *   - `config/aws.js#getS3Client` — a recorder, exactly as test/lib/util/file-storage.js uses. The real
+ *     `GetObjectCommand` and `PutObjectCommand` classes are still constructed by production code, so a wrong
+ *     bucket, key, content type or Content-Disposition is visible.
+ *   - `lib/util/mailer.js#send` — records recipient, subject, type and the RENDERED html, so the real
  *     nunjucks templates and the real `formatFileSize` still run.
- *   - `Trinket.model.find` - only where an archive has to be built. `createExportArchive` calls
- *     `.select(...).stream()`, and Query#stream was removed in mongoose 5, so on the real query it throws.
- *     That throw is a PRESERVED QUIRK (docs/PRESERVED-QUIRKS.md section 3.24) and is pinned on its own
- *     below, unstubbed; supplying a stream-capable query is what makes the archive-construction code -
- *     which the quirk otherwise renders dead - reachable and testable.
+ *   - `Trinket.model.find` — only where an archive has to be built. `createExportArchive` calls
+ *     `.select(...).stream()`, and Query#stream does not exist on a mongoose 6 query, so on the real query it
+ *     throws. That throw is a PRESERVED QUIRK (docs/PRESERVED-QUIRKS.md section 3.24) pinned on its own below,
+ *     unstubbed; supplying a stream-capable query is what makes the archive-construction code the quirk
+ *     otherwise renders dead reachable and testable.
  *
- * Everything else is real: the real Export and User models against the real test database, the real
- * archiver, the real zip bytes (read back with adm-zip), the real sha1 filename derivation and the real
- * templates.
+ * Everything else is real: the real Export and User models against the real test database, the real archiver,
+ * the real zip bytes (read back with adm-zip), the real sha1 filename derivation and the real templates.
  *
- * THE EXPORTS BUCKET
- * ------------------
- * `config.aws.buckets.exports` is ABSENT from config/default.yaml - measured. `uploadToS3` therefore
- * throws `TypeError: Cannot read properties of undefined (reading 'name')` under the shipped
- * configuration, and that measured outcome is pinned as its own test. The success-path tests inject the
- * bucket for their duration and `after` deletes the key again, restoring the shipped shape exactly.
- *
- * Every expectation below was MEASURED against the running worker first (R-6).
+ * THE EXPORTS BUCKET. `config.aws.buckets.exports` is ABSENT from config/default.yaml, so `uploadToS3` throws
+ * `TypeError: Cannot read properties of undefined (reading 'name')` under the shipped configuration, and that
+ * outcome is pinned as its own test. The success-path tests inject the bucket for their duration and `after`
+ * deletes the key again, restoring the shipped shape exactly.
  */
 
 var chai     = require('chai'),
@@ -120,11 +107,10 @@ describe('The bulk-export worker', function() {
             Body : {
               transformToByteArray : function() {
                 // Deliberately settled on a TIMER, not immediately. A real asset download takes
-                // milliseconds, and `await Promise.allSettled(assetPromises)` in addTrinketToArchive is
-                // what holds the archive open for it. An instantly-resolved download hides that: the
-                // append still lands before finalize by luck, and removing the await was measured to
-                // break nothing. With this delay the missing await loses the asset entry, so these tests
-                // actually discriminate the `Q.allSettled` conversion they exist to cover.
+                // milliseconds, and `await Promise.allSettled(assetPromises)` in addTrinketToArchive is what
+                // holds the archive open for it. An instantly-resolved download hides that: the append lands
+                // before finalize by luck even with the await removed. With this delay a missing await loses
+                // the asset entry, so these tests genuinely discriminate the settle-before-finalize contract.
                 return new Promise(function(resolve) {
                   setTimeout(function() {
                     resolve(new Uint8Array([9, 8, 7]));
@@ -320,9 +306,7 @@ describe('The bulk-export worker', function() {
     stubs = [];
   });
 
-  // ---------------------------------------------------------------------------------------------
   // What the module registers on the queue
-  // ---------------------------------------------------------------------------------------------
 
   describe('queue registration', function() {
     it('registers one processor and the error, failed and completed listeners', function() {
@@ -350,9 +334,8 @@ describe('The bulk-export worker', function() {
     it('removes a completed job', function() {
       var removed = 0;
 
-      // bull 0.7.2's remove() took a callback and returned nothing; 4.16.5 returns a PROMISE, which the
-      // listener now owns with a terminal catch (review finding F4). A stub that returns undefined would
-      // be testing the retired signature, not this one.
+      // `job.remove()` returns a PROMISE, and the listener owns it with a terminal catch — so the stub must
+      // return a promise too, or the test would be exercising a signature the queue library does not have.
       queue.listeners.completed[0]({
         remove : function() {
           removed++;
@@ -394,9 +377,7 @@ describe('The bulk-export worker', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // The 'failed' listener - fire-and-forget, three-argument, and the empty-message fallback
-  // ---------------------------------------------------------------------------------------------
 
   describe('the failed listener', function() {
     var updates = [];
@@ -436,9 +417,7 @@ describe('The bulk-export worker', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // The two failure outcomes reachable under the SHIPPED configuration
-  // ---------------------------------------------------------------------------------------------
 
   describe('failure outcomes', function() {
     it('fails on the removed Query#stream, persisting that message and emailing the user', function() {
@@ -467,19 +446,17 @@ describe('The bulk-export worker', function() {
     });
 
     it('fails on the absent exports bucket, which the shipped configuration does not define', function() {
-      // MEASURED: config/default.yaml declares userassets, snapshots, cdn, materials, useravatars,
-      // appassets and vendorassets - but no `exports` bucket - so uploadToS3 reads `.name` of undefined.
+      // config/default.yaml declares userassets, snapshots, cdn, materials, useravatars, appassets and
+      // vendorassets — but no `exports` bucket — so uploadToS3 reads `.name` of undefined.
       //
-      // PRESERVED QUIRK, and the reason this test manages process listeners. This is the ONE path where
-      // the upload fails before the archive's read stream has finished opening, and on it the base commit
-      // races its own cleanup: processBulkExport's fire-and-forget `fs.unlink(tempFile, function () {})`
-      // deletes the archive while that open is still in flight, so the open lands with ENOENT on a stream
-      // nobody is listening to and the process takes an UNCAUGHT exception. Measured on the delivered tree
-      // AND with the descriptor release removed - it surfaces either way, so it is the base commit's race
-      // and not a product of the conversion. Attaching an 'error' listener to that stream would swallow an
-      // uncaught exception the base commit produced, which R-4 forbids. It is therefore OBSERVED here
-      // rather than suppressed: Mocha's own handler is detached for the duration so the escape is an
-      // assertion rather than an aborted run, and restored unconditionally afterwards.
+      // PRESERVED QUIRK, and the reason this test manages process listeners. This is the ONE path where the
+      // upload fails before the archive's read stream has finished opening, and on it the worker races its
+      // own cleanup: processBulkExport's fire-and-forget unlink deletes the archive while that open is still
+      // in flight, so the open lands with ENOENT on a stream nobody is listening to and the process takes the
+      // failure. Attaching an 'error' listener to that stream would SWALLOW that escape, which is a
+      // prohibited behavior improvement. It is therefore OBSERVED here rather than suppressed: Mocha's own
+      // handler is detached for the duration so the escape is an assertion rather than an aborted run, and
+      // restored unconditionally afterwards.
       should.not.exist(config.aws.buckets.exports);
       streaming([trinket({ shortCode : 'nb' })]);
 
@@ -563,9 +540,7 @@ describe('The bulk-export worker', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // The success path: archive layout, S3 parameters, the record, the email and the cleanup
-  // ---------------------------------------------------------------------------------------------
 
   describe('a completed export', function() {
     var EXPORTS_BUCKET = { name : 'exp-bucket', host : 'https://exports.example.com' };
@@ -864,9 +839,7 @@ describe('The bulk-export worker', function() {
       });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // Code-file naming: the language table, its fallbacks and the folder sanitiser
-  // ---------------------------------------------------------------------------------------------
 
   describe('code file naming and folder sanitising', function() {
     beforeEach(function() {
@@ -949,7 +922,7 @@ describe('The bulk-export worker', function() {
 
           names.should.contain('python/Weird_Name_spaced_s1/main.py');
           names.should.contain('python/' + new Array(51).join('x') + '_s2/main.py');
-          // MEASURED QUIRK: the 'untitled' fallback only catches a falsy name, so a name made entirely of
+          // PRESERVED QUIRK: the 'untitled' fallback only catches a falsy name, so a name made entirely of
           // stripped characters yields an EMPTY folder segment rather than 'untitled'.
           names.should.contain('python/_s3/main.py');
         });

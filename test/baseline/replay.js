@@ -1,17 +1,17 @@
 /**
- * test/baseline/replay.js — replays the R-6 baseline against the running application and diffs.
+ * test/baseline/replay.js — replays the committed baseline against the running application and diffs.
  *
- * This is the falsification tool for the whole modernization. capture.js measured the corpus; this
- * file re-measures it against whatever the working tree currently is and reports every difference.
- * It NEVER writes: the baseline is evidence, and a replay that "fixes" the evidence proves nothing.
+ * This is the falsification tool for the whole modernization. capture.js records the corpus; this file
+ * re-issues it against whatever the working tree currently is and reports every difference. It NEVER
+ * writes: the baseline is evidence, and a replay that "fixes" the evidence proves nothing.
  *
- * BEFORE IT DIFFS ANYTHING it establishes that a diff can mean something at all (review finding P4-A).
- * Four preconditions are checked, and each failure is reported as UNABLE TO RUN (exit 2) rather than as a
- * difference, because "this run never checked" and "this build changed behavior" are different facts:
+ * BEFORE IT DIFFS ANYTHING it establishes that a diff can mean something at all. Four preconditions are
+ * checked, and each failure is reported as UNABLE TO RUN (exit 2) rather than as a difference, because
+ * "this run never checked" and "this build changed behavior" are different facts:
  *
  *   P1. STRUCTURAL. Both artifacts must parse, carry the blocks the comparison reads, and hold the row
- *       and entry counts the Specification publishes — validateCommittedArtifacts(). A truncated or
- *       half-regenerated artifact is not a baseline, and replaying against one proves nothing.
+ *       and entry counts they declare — validateCommittedArtifacts(). A truncated or half-regenerated
+ *       artifact is not a baseline, and replaying against one proves nothing.
  *   P2. REQUEST POLICY. Every header, timeout, redirect rule and throwaway identity this harness would
  *       use is compared against responses.json#requestPolicy and #metadata.throwawayUser —
  *       assertRequestPolicyConformance(). Requesting differently from the way the corpus was recorded
@@ -21,43 +21,43 @@
  *   P3. ORIGIN. capture.js#originPrecondition — the corpus is origin-specific and nothing is rebased.
  *   P4. BUILD EVIDENCE. An absent stylesheet is unable-to-run, never a silent pass.
  *
- * It then checks both halves of the R-6 parity contract:
+ * It then checks both halves of the parity contract:
  *
- *   1. THE ROUTE TABLE (TR1). The 233 registered routes are canonicalized with the exact recipe
+ *   1. THE ROUTE TABLE. The 233 registered routes are canonicalized with the exact recipe
  *      recorded in route-table.json#canonicalization — "METHOD | path | authDescriptor | preCount",
  *      uppercase method, `false` for auth:false, `mode=<mode> strategies=["s1",...]` otherwise, one
  *      ASCII space around every pipe, default Array.prototype.sort(), joined with "\n" and no
  *      trailing newline — and hashed. Both digests are checked: the sorted sha256
  *      (gates.measuredSha256) and the registration-order fingerprint
  *      (gates.registrationOrderFingerprint), the latter derived independently from config.routes,
- *      which is the array app.js:L304 hands to server.route(). Every countable gate in the artifact
- *      is recomputed from the live table as well. On top of those, documentedAnchorGate() evaluates
- *      the Technical Specification's own published anchor for this table as a MANDATORY pass/fail
- *      gate — eleven clauses, computed live, including that the frozen 32-character digest literal is
+ *      which is the array app.js hands to server.route(). Every countable gate in the artifact is
+ *      recomputed from the live table as well. On top of those, documentedAnchorGate() evaluates the
+ *      published anchor for this table as a MANDATORY pass/fail gate — eleven clauses, computed
+ *      live, including that the frozen 32-character digest literal is
  *      still stored verbatim, that the 233 canonical rows it names are unchanged, and that the sorted
- *      sha256 RECOMPUTED from those live rows equals the stored one (review finding SV-32).
+ *      sha256 RECOMPUTED from those live rows equals the stored one.
  *      The table is ALSO derived a second, independent way — through capture.js#captureRouteTable,
  *      which walks config.routes and hashes for itself — and driftGates() compares the two derivations
- *      against EACH OTHER as well as against the artifact, so "the two implementations agree" is
- *      measured on every run instead of assumed (review finding P4-A).
+ *      against EACH OTHER as well as against the artifact, so "the two derivations agree" is a
+ *      checked result on every run instead of an assumption.
  *
- *   2. THE RESPONSE CORPUS (TR2, TR3, TR4). All three sections — the 58 parameterless GETs, the 7-entry
+ *   2. THE RESPONSE CORPUS. All three sections — the 58 parameterless GETs, the 7-entry
  *      authenticated supplement and the 8-entry assignment-`next` supplement — are re-issued over real
  *      HTTP by capture.js's own helpers, under capture.js's own normalization, and compared field by
  *      field. Only the unauthenticated section carries the additive resolved reading, and it is compared
  *      too; the other two are first-hop only, by the policy the artifact records.
  *
- *   3. THE BUILD ARTIFACTS (AAP 0.7.4). The two stylesheets the corpus pins are re-measured here
- *      independently of capture.js — byte length, sha256 and the source-map count — because a replay
- *      that checks the HTTP surface while ignoring the build output has verified half the parity claim
- *      and reported all of it (review finding F4).
+ *   3. THE BUILD ARTIFACTS. The two stylesheets the corpus pins are re-checked here independently of
+ *      capture.js — byte length, sha256 and the source-map count — because a replay that checks the
+ *      HTTP surface while ignoring the build output has verified half the parity claim and reported
+ *      all of it.
  *
  *   4. THE DECLARED GATES AND THE REPORT-BACK OBLIGATIONS. Every gate the artifacts publish is
  *      re-evaluated through capture.js's own gate builders — corpusGates, cookieContractGates,
- *      buildArtifactGates — plus errorMappingGates() here, which asserts the R-5 asymmetry directly: a
- *      4xx message is client-visible and compared byte for byte, a 5xx message is scrubbed by hapi and
- *      must not be asserted. On top of the gates, reportBackFindings() names the specific prohibited
- *      changes R-4 and R-6 oblige a replay to REPORT rather than merely diff — the authenticated
+ *      buildArtifactGates — plus errorMappingGates() here, which asserts the error-message asymmetry
+ *      directly: a 4xx message is client-visible and compared byte for byte, a 5xx message is scrubbed
+ *      by hapi and must not be asserted. On top of the gates, reportBackFindings() names the specific
+ *      prohibited changes a replay must REPORT rather than merely diff — the authenticated
  *      /login and /signup 500s, the pre-existing 500 at GET /api/users/assets, the feature-flag 404
  *      set, an absolute-versus-relative Location flip, a route-count change and a stylesheet change.
  *      A finding is by construction a prohibited change, so a non-empty list fails the run.
@@ -68,7 +68,7 @@
  * replay diff pass." A real difference is an application-code defect and must be reported as one. For
  * the same reason this file injects NO configuration of its own: the app.url origin is a precondition
  * checked through capture.js#originPrecondition, and a mismatch is reported as unable-to-run rather than
- * rewritten out of the measurement (review finding F2).
+ * rewritten out of the comparison.
  *
  * USAGE
  *   node test/baseline/replay.js                        full replay; exit 0 only if nothing differs
@@ -78,7 +78,7 @@
  *   node test/baseline/replay.js --corpus-only          the response corpus only, no route table
  *   node test/baseline/replay.js --report <path>        also write a machine-readable JSON report
  *
- * EXIT CODES (review finding F11 — three outcomes, three codes, never conflated)
+ * EXIT CODES
  *   0  parity: nothing differed, and everything this run was asked to check was checked
  *   1  a real difference against the baseline — an application-code defect to report
  *   2  unable to run: bad or conflicting flags, a missing or malformed artifact, an app.url origin that
@@ -92,32 +92,24 @@ var crypto   = require('crypto'),
     nodeUtil = require('node:util'),
     capture  = require('./capture');
 
-// ---------------------------------------------------------------------------------------------
 // Route-table canonicalization — route-table.json#canonicalization, reproduced exactly
-// ---------------------------------------------------------------------------------------------
 
 function sha256(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
 /**
- * REVIEW FINDINGS M-7 and P3-1. Canonicalization AND the documented-anchor evaluator are DELEGATED to
- * test/baseline/capture.js rather than reimplemented here.
+ * Canonicalization AND the documented-anchor evaluator are DELEGATED to test/baseline/capture.js rather
+ * than reimplemented here. There is exactly ONE implementation of each, in the harness that OWNS the
+ * artifacts — which is also what lets capture.js regenerate gates.documentedAnchorGateSatisfied instead
+ * of carrying a hand-authored boolean — and these are its names in this file. Two copies of a
+ * canonicalizer, or a gate declared in one file and advertised as living in another, is how a gate rots:
+ * it ends up enforced in one file and UNEVALUATED in the other, and the artifact can no longer name a
+ * single honest evaluator.
  *
- * An earlier revision carried its own line-for-line copy of authDescriptor, canonicalRow,
- * liveServerAuthDefault and canonicalizeLiveTable, differing from capture.js's only in what `byKey`
- * holds; a later one declared the anchor gate and the published digest literal here while
- * route-table.json named capture.js as their home. Two copies of a canonicalizer, or a gate declared in
- * one file and advertised as living in another, is exactly how a gate rots: it came to be enforced in
- * one file and marked UNEVALUATED in the other, and the artifact could not name a single honest
- * evaluator. There is now exactly ONE implementation of each, in the harness that OWNS the artifacts —
- * which is also what lets capture.js regenerate gates.documentedAnchorGateSatisfied instead of carrying
- * a hand-authored boolean — and these are its names in this file.
- *
- * The delegation is safe because capture.js#canonicalizeLiveTable consults NOTHING committed - every
- * value it returns is derived from server.table() and server.auth.settings.default - so a replay still
- * cannot be contaminated by the artifact it is about to be compared against. The `committedTable`
- * argument the old canonicalizer signature accepted was never read; it is dropped.
+ * The delegation is safe because capture.js#canonicalizeLiveTable consults NOTHING committed — every
+ * value it returns is derived from server.table() and server.auth.settings.default — so a replay still
+ * cannot be contaminated by the artifact it is about to be compared against.
  *
  * The third verifier, test/lib/api/route-parity.js, shares none of this code and loads neither artifact:
  * it recomputes the same clauses, the same sorted row set and the same three fingerprints from its own
@@ -147,9 +139,7 @@ var documentedAnchorGate = capture.documentedAnchorGate;
 var DOCUMENTED_ROW_COUNT   = 233;
 var DOCUMENTED_CORPUS_SIZE = 58;
 
-// ---------------------------------------------------------------------------------------------
-// Preconditions — everything that must hold before a diff can mean anything (review finding P4-A)
-// ---------------------------------------------------------------------------------------------
+// Preconditions — everything that must hold before a diff can mean anything
 
 /**
  * A precondition failure, marked so main() maps it onto exit code 2 rather than 1. Every message built
@@ -380,9 +370,7 @@ function assertRequestPolicyConformance(committedCorpus) {
   return mismatches;
 }
 
-// ---------------------------------------------------------------------------------------------
 // Route-table replay
-// ---------------------------------------------------------------------------------------------
 
 function pushDifference(differences, section, subject, expected, actual) {
   if (capture.stableStringify(expected) === capture.stableStringify(actual)) {
@@ -401,12 +389,12 @@ function pushDifference(differences, section, subject, expected, actual) {
 /**
  * The anti-drift gates for the two independent derivations of the same live table.
  *
- * REVIEW FINDING P4-A. This file canonicalizes the table one way — canonicalizeLiveTable() plus its own
- * hashing of the sorted set and the registration order — and capture.js#captureRouteTable derives it
- * another, walking config.routes and computing routeTableDigests() for itself. Both are compared against
- * the same committed digests above; these gates compare them against EACH OTHER, so "the two derivations
- * agree" is measured on every run rather than assumed. A replay that agreed with the artifact only
- * because both derivations shared one bug would fail here.
+ * This file canonicalizes the table one way — canonicalizeLiveTable() plus its own hashing of the sorted
+ * set and the registration order — and capture.js#captureRouteTable derives it another, walking
+ * config.routes and computing routeTableDigests() for itself. Both are compared against the same
+ * committed digests above; these gates compare them against EACH OTHER, so "the two derivations agree"
+ * is a checked result on every run rather than an assumption. A replay that agreed with the artifact
+ * only because both derivations shared one bug fails here.
  *
  * @param   {Object} live     A canonicalizeLiveTable() result.
  * @param   {Object} captured A capture.captureRouteTable() result for the same server.
@@ -502,9 +490,7 @@ function replayRouteTable(server, committedTable) {
   };
 }
 
-// ---------------------------------------------------------------------------------------------
 // Response-corpus replay
-// ---------------------------------------------------------------------------------------------
 
 function replayResponses(server, committedCorpus) {
   return capture.captureCorpus(server, committedCorpus).then(function(measured) {
@@ -544,9 +530,9 @@ function replayResponses(server, committedCorpus) {
                    committedCorpus.gates.unauthenticatedEntryCount, measured.unauthenticated.length);
     pushDifference(differences, 'responses', 'gates.authenticatedEntryCount',
                    committedCorpus.gates.authenticatedEntryCount, measured.authenticated.length);
-    // The assignment `next` supplement (review finding P3-1). gates.assignmentNextLocations is the gate
-    // that finding would have tripped: the two consuming hops carry the destination itself, so a build
-    // that discards a same-origin absolute destination answers the declared success.redirect there.
+    // The assignment `next` supplement. gates.assignmentNextLocations pins the two consuming hops, which
+    // carry the destination itself, so a build that discards a same-origin absolute destination answers
+    // the declared success.redirect there and fails here.
     // Compared LITERALLY, origin included: originPrecondition() has already established that this process
     // is configured for the origin the corpus was captured under, so there is nothing to rebase.
     pushDifference(differences, 'responses', 'gates.assignmentNextEntryCount',
@@ -558,7 +544,7 @@ function replayResponses(server, committedCorpus) {
     pushDifference(differences, 'responses', 'gates.assignmentNextLocations',
                    committedCorpus.gates.assignmentNextLocations,
                    capture.assignmentNextLocationMap(measured.assignmentNext));
-    // The cache-prefix {assetType} confinement probes (review findings SEC-1 / SV-01 and SV-40). Gated in
+    // The cache-prefix {assetType} confinement probes. Gated in
     // BOTH directions by construction: the traversal rows are recorded at 404 and the legitimate row at
     // 200, so re-opening the escape and over-rejecting a real asset each report a difference here.
     pushDifference(differences, 'responses', 'gates.assetConfinementStatuses',
@@ -574,8 +560,8 @@ function replayResponses(server, committedCorpus) {
       differences : differences,
       measured    : measured,
       // Every gate the corpus declares, re-evaluated through capture.js's own builders — so the replay
-      // enforces the published contract rather than only the per-entry field comparison — plus the R-5
-      // message asymmetry, gated explicitly here (review finding P4-A).
+      // enforces the published contract rather than only the per-entry field comparison — plus the
+      // error-message asymmetry, gated explicitly here.
       gateEntries : capture.corpusGates(committedCorpus, measured, capture.liveAppUrlOrigin())
                       .concat(capture.cookieContractGates(committedCorpus, measured))
                       .concat(capture.assetConfinementGates(committedCorpus, measured))
@@ -610,10 +596,10 @@ function jsonMessagesAtStatus(entries, status) {
 }
 
 /**
- * The R-5 evidence, gated explicitly rather than left implicit in the body-shape comparison.
+ * The error-message asymmetry, gated explicitly rather than left implicit in the body-shape comparison.
  *
- * responses.json#errorMappingContract.messageComparisonRule states the measured asymmetry: a 4xx message
- * is passed through to the client and must be compared byte for byte, while a 5xx message is replaced by
+ * responses.json#errorMappingContract.messageComparisonRule records the asymmetry: a 4xx message is
+ * passed through to the client and must be compared byte for byte, while a 5xx message is replaced by
  * hapi with a fixed string, so internal error text is unobservable and must NOT be asserted. Both halves
  * are checked here against the artifact's own recorded values — the 401 message every one of the seven
  * unauthorized bodies carries (the no-session branch of the four Boom.unauthorized strings constructed in
@@ -646,9 +632,7 @@ function errorMappingGates(committedCorpus, measured) {
   return gates;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Report-back findings — the R-6 obligations, named in the language the finding has to be reported in
-// ---------------------------------------------------------------------------------------------
+// Report-back findings — named in the language the finding has to be reported in
 
 /** One finding, in the shape reportFindings() prints and the --report file records. */
 function finding(id, subject, baseline, measured, report) {
@@ -706,12 +690,10 @@ function authenticatedEntry(entries, method, requestPath) {
 }
 
 /**
- * The flagship R-6 quirk. Authenticated GET /login and GET /signup answer 500, because the base commit's
- * property form `reply.redirect('/home')` and `reply.redirect('/welcome')` raised — the synthetic reply
- * was a bare function with no `.redirect` property — and the catch-all turned the TypeError into
- * Boom.badImplementation. The converted handlers must keep raising the equivalent internal error; issuing
- * h.redirect(...) instead would silently "fix" this into a 302 on a login page, which is the prohibited
- * behavior improvement R-4 names. The corpus is never adjusted to match.
+ * The flagship quirk: authenticated GET /login and GET /signup answer 500 rather than redirecting.
+ * lib/controllers/pages.js raises the internal error deliberately; issuing h.redirect(...) instead would
+ * silently "fix" this into a 302 on a login page, which is a prohibited behavior improvement. The corpus
+ * is never adjusted to match. See docs/PRESERVED-QUIRKS.md section 1.1.
  *
  * @param   {Object} committedCorpus responses.json.
  * @param   {Object} measured        A capture.captureCorpus() result.
@@ -829,10 +811,10 @@ function featureFlagFindings(committedCorpus, measured) {
  * responders absolutize through lib/http/redirect.js, a raw `h.redirect(x)` stays relative, and the
  * onPreResponse 401 branch redirects to the bare relative '/login'.
  *
- * The measured entries are compared AS MEASURED. No origin rebasing happens here or anywhere in this
+ * Entries are compared exactly as observed. No origin rebasing happens here or anywhere in this
  * harness: originPrecondition() has already established that this process is configured for the origin
  * the corpus was captured under, so there is nothing to rebase — and rebasing would let a build that
- * emits the wrong configured origin replay clean, which is the defect that removal closed.
+ * emits the wrong configured origin replay clean.
  *
  * @param   {Object} committedCorpus responses.json.
  * @param   {Object} measured        A capture.captureCorpus() result.
@@ -981,20 +963,17 @@ function reportBackFindings(committedTable, committedCorpus, table, measured, ar
   return findings;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Build-artifact replay (AAP 0.7.4) — review finding F4
-// ---------------------------------------------------------------------------------------------
+// Build-artifact replay
 
 /**
- * Re-measures the two stylesheets the corpus pins and compares byte length, sha256 and the source-map
+ * Re-checks the two stylesheets the corpus pins and compares byte length, sha256 and the source-map
  * count against responses.json#buildArtifacts.
  *
  * This is deliberately its own comparison rather than a call into capture.js's gate builder: the build
- * output is one of the two halves of the parity claim (AAP 0.7.4 pins base.css at 265,727 bytes,
- * embed.css at 296,352 and the emitted .map count at zero), and an earlier revision of this file checked
- * neither. A file that is absent is NOT reported as a difference — the checkout was simply never built,
- * which responses.json#buildArtifacts.precondition describes — but it IS reported as unable-to-run, so a
- * replay cannot announce parity over evidence it never looked at.
+ * output is one of the two halves of the parity claim — base.css at 265,727 bytes, embed.css at 296,352
+ * and an emitted .map count of zero. A file that is absent is NOT reported as a difference — the
+ * checkout was simply never built, which responses.json#buildArtifacts.precondition describes — but it
+ * IS reported as unable-to-run, so a replay cannot announce parity over evidence it never looked at.
  *
  * @param   {Object} committedCorpus The committed responses.json.
  * @returns {Object} { differences, unevaluated, measured }
@@ -1028,12 +1007,10 @@ function replayBuildArtifacts(committedCorpus) {
   return { differences : differences, unevaluated : unevaluated, measured : measured };
 }
 
-// ---------------------------------------------------------------------------------------------
 // CLI
-// ---------------------------------------------------------------------------------------------
 
 /**
- * The command line, parsed strictly with node:util.parseArgs (review finding F12). The hand-rolled loop
+ * The command line, parsed strictly with node:util.parseArgs. The hand-rolled loop
  * this replaces had three defects that a strict parser makes impossible: an unknown flag was silently
  * ignored, so `--verbsoe` ran a different check than the operator asked for and said nothing;
  * `--json --quiet` consumed `--quiet` as the report FILENAME, writing a file called "--quiet"; and the
@@ -1071,7 +1048,7 @@ function parseArgv(argv) {
     routeTableOnly : parsed['route-table-only'],
     corpusOnly     : parsed['corpus-only'],
     // Validated with capture.js's own path guard, so a report cannot be aimed at the committed evidence,
-    // at repository source, through a symlink or over an existing file (review finding F13).
+    // at repository source, through a symlink or over an existing file.
     report         : parsed.report === undefined ? null : capture.validateOutPath(parsed.report, '--report')
   };
 }
@@ -1097,8 +1074,8 @@ function report(differences, options) {
 }
 
 /**
- * Prints the report-back obligations. Each one names WHAT to report and WHERE, because R-4 and R-6 turn
- * these particular changes into a reporting duty rather than a judgement call (review finding P4-A).
+ * Prints the report-back obligations. Each one names WHAT to report and WHERE, because these particular
+ * changes are a reporting duty rather than a judgement call.
  *
  * @param {Array} findings finding() entries.
  */
@@ -1123,7 +1100,7 @@ function reportFindings(findings) {
 /**
  * Rejects an artifact this run cannot honestly replay against, BEFORE booting anything. A missing or
  * malformed artifact, or one lacking the blocks the comparison reads, is unable-to-run (exit 2) rather
- * than a difference: there is no baseline to differ from (review finding F11).
+ * than a difference: there is no baseline to differ from.
  *
  * @param   {string} label      Which artifact, for the message.
  * @param   {string} file       Absolute path.
@@ -1165,7 +1142,7 @@ function loadRequiredArtifact(label, file, requiredKeys) {
 
 /**
  * Loads BOTH artifacts and validates them structurally, so nothing boots until a diff could mean
- * something (review finding P4-A, precondition P1).
+ * something.
  *
  * @returns {Object} `{ table, corpus }`.
  * @throws  {Error}  A precondition failure when either artifact is unusable.
@@ -1186,14 +1163,13 @@ function loadArtifacts() {
 }
 
 /**
- * Replays both halves of the R-6 baseline and the build artifacts, and resolves with the process exit
- * code rather than exiting itself, so the single process.exit lives in the guarded entry point below
- * where a synchronous throw is also caught.
+ * Replays both halves of the baseline and the build artifacts, and resolves with the process exit code
+ * rather than exiting itself, so the single process.exit lives in the guarded entry point below where a
+ * synchronous throw is also caught.
  *
- * The three outcomes are kept apart deliberately (review finding F11). The earlier revision routed every
- * condition — a missing artifact, a boot failure, a report-write failure, a genuine difference — into
- * exit 1, so a caller could not tell "this build changed behavior" from "this run never checked". A
- * difference is 1. Everything that prevented the check from happening at all is 2.
+ * The three outcomes are kept apart deliberately, so a caller can tell "this build changed behavior"
+ * from "this run never checked". A difference is 1. Everything that prevented the check from happening
+ * at all — a missing artifact, a boot failure, a report-write failure — is 2.
  */
 function main() {
   var options     = parseArgv(process.argv.slice(2)),
@@ -1210,7 +1186,7 @@ function main() {
       measured    = null,
       exitCode    = 0;
 
-  // PRECONDITION P2 (review finding P4-A). Checked before anything boots: a harness that would not
+  // PRECONDITION P2. Checked before anything boots: a harness that would not
   // request the way the corpus was recorded compares policies rather than behavior, and its "0
   // differences" would be meaningless. Both P1 (loadArtifacts, above) and P2 throw precondition failures,
   // which the guarded entry point maps onto exit 2.
@@ -1218,9 +1194,9 @@ function main() {
 
   // NO configuration of this file's own is injected: capture.js#configureRuntime owns app.start, the bind
   // address, the disposable database and the session password, and nothing else. In particular app.url is
-  // NOT overridden (review finding F2) — the corpus is origin-specific, so the origin is a precondition to
+  // NOT overridden — the corpus is origin-specific, so the origin is a precondition to
   // check, not a value to supply. Rewriting it would let a build that emits the wrong configured origin
-  // replay clean, and the literal Location is exactly what R-5 requires be proven.
+  // replay clean, and the literal Location is exactly what the redirect-parity evidence rests on.
   capture.configureRuntime();
 
   var precondition = capture.originPrecondition(committed);
@@ -1306,7 +1282,7 @@ function main() {
       return undefined;
     });
   }).then(function() {
-    // The build half of the parity claim, measured here rather than taken on trust (review finding F4).
+    // The build half of the parity claim, measured here rather than taken on trust.
     var build = replayBuildArtifacts(committed);
 
     differences       = differences.concat(build.differences);
@@ -1327,15 +1303,15 @@ function main() {
                   }).join(' ') + ' cssMapFilesEmitted=' + build.measured.cssMapFilesEmitted);
     }
 
-    // THE REPORT-BACK LAYER (review finding P4-A). Evaluated once, over everything this run measured, so
+    // THE REPORT-BACK LAYER. Evaluated once, over everything this run measured, so
     // a narrowed run reports only on the halves it actually looked at.
     findings = reportBackFindings(committedTable, committed, table, measured, build.measured);
 
     return undefined;
   }).catch(function(err) {
-    // ONE terminal handler for the whole chain, so a throw in any step still reaches the cleanup below
-    // (review finding F14). A boot or request failure is unable-to-run, not a parity difference, and a
-    // precondition failure raised mid-run is reported as the precondition it is rather than as a stack.
+    // ONE terminal handler for the whole chain, so a throw in any step still reaches the cleanup below.
+    // A boot or request failure is unable-to-run, not a parity difference, and a precondition failure
+    // raised mid-run is reported as the precondition it is rather than as a stack.
     if (isPreconditionFailure(err)) {
       console.error(err.message);
     }
@@ -1353,7 +1329,7 @@ function main() {
     reportFindings(findings);
 
     // THE DECLARED GATES, re-evaluated. Printed through capture.js's own summary so a gate reads the same
-    // whether the capture CLI or this one evaluated it (review finding P4-A).
+    // whether the capture CLI or this one evaluated it.
     console.log('replay.js: gate summary — every expectation is read from the committed artifacts and ' +
                 'every measured value is recomputed from this run:');
 
@@ -1458,17 +1434,17 @@ module.exports = {
   main                        : main
 };
 
-// AAP 0.7.5: the recursive mocha spec glob loads every .js file under test/, so requiring this module
-// must be inert. Only an explicit `node test/baseline/replay.js` replays anything.
+// The recursive mocha spec glob loads every .js file under test/, so requiring this module must be
+// inert. Only an explicit `node test/baseline/replay.js` replays anything.
 //
-// The exit lives here, in one place, and the chain is TERMINATED by a rejection handler (review finding
-// F11). Without it a synchronous throw from parseArgv or loadRequiredArtifact — an unknown flag, an
-// unsafe --report path, a missing or malformed artifact — surfaced as an unhandled rejection: a stack
-// trace, a warning, and whatever exit code Node chose, rather than the documented unable-to-run 2.
+// The exit lives here, in one place, and the chain is TERMINATED by a rejection handler. Without it a
+// synchronous throw from parseArgv or loadRequiredArtifact — an unknown flag, an unsafe --report path, a
+// missing or malformed artifact — surfaces as an unhandled rejection: a stack trace, a warning, and
+// whatever exit code Node chose, rather than the documented unable-to-run 2.
 //
-// Exiting explicitly is mandatory for the same reason .mocharc.json carries "exit": true — app.js:L348's
-// un-unref'd leak-detector interval, the module-load mongoose connection at config/db.js:L35 and the
-// eager redis client all keep the event loop alive after the server has stopped.
+// Exiting explicitly is mandatory for the same reason .mocharc.json carries "exit": true — the
+// leak-detector interval app.js never unrefs, the module-load mongoose connection in config/db.js and
+// the eager redis client all keep the event loop alive after the server has stopped.
 if (require.main === module) {
   Promise.resolve().then(main).then(function(exitCode) {
     process.exit(exitCode);

@@ -1,41 +1,32 @@
 /**
- * The REAL Mongo-backed catbox engine: lib/util/catbox-mongoose.js (review finding M-21).
+ * The REAL Mongo-backed catbox engine: lib/util/catbox-mongoose.js.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * test/helpers/catbox-redis.js replaces `isReady`, `get`, `set` and `drop` on
- * `CatboxMongoose.Engine.prototype` with an in-memory fake, for the reason that helper documents: the
- * suite never calls `server.start()`, so the engine is never started and `@hapi/yar` treats a not-ready
- * cache as fatal. That stub is installed at require time and is therefore in force for EVERY test in the
- * run, which means a test that merely constructs `new CatboxMongoose.Engine()` and calls `set`/`get`
- * exercises the FAKE. Mongo persistence, model initialization, lazy expiry and expired-document deletion
- * were consequently never executed by anything - the false green this file closes.
+ * WHY THE FAKE HAS TO BE ESCAPED. test/helpers/catbox-redis.js replaces `isReady`, `get`, `set` and `drop` on
+ * `CatboxMongoose.Engine.prototype` with an in-memory fake at require time, so that stub is in force for
+ * EVERY test in the run — meaning a test that merely constructs `new CatboxMongoose.Engine()` and calls
+ * `set`/`get` exercises the FAKE and never touches Mongo persistence, model initialization, lazy expiry or
+ * expired-document deletion.
  *
- * HOW THE FAKE IS ESCAPED
- * -----------------------
- * Sinon keeps the replaced function on the stub as `wrappedMethod`. Every engine below is built by
- * `realEngine()`, which copies those four originals onto the INSTANCE as own properties. Property lookup
- * finds the own property before the stubbed prototype method, so the real code runs - and, critically, so
- * do its internal `this.isReady()` calls, which is what makes the not-ready guard reachable. (Calling
- * `prototype.get.wrappedMethod.call(engine, ...)` alone is NOT sufficient: the real `get` asks
- * `this.isReady()`, which would still resolve to the stub returning `true`, and the guard would never
- * fire. That was measured.) This is deliberately preferred over unstubbing the prototype: it needs no
- * ordering guarantee against the helper, and it cannot leave the rest of the run without its fake.
+ * HOW. Sinon keeps the replaced function on the stub as `wrappedMethod`. Every engine below is built by
+ * `realEngine()`, which copies those four originals onto the INSTANCE as own properties: property lookup
+ * finds the own property before the stubbed prototype method, so the real code runs and — critically — so do
+ * its internal `this.isReady()` calls, which is what makes the not-ready guard reachable. Calling
+ * `prototype.get.wrappedMethod.call(engine, ...)` alone is NOT sufficient, because the real `get` asks
+ * `this.isReady()`, which would still resolve to the stub returning `true`. Copying onto the instance is also
+ * preferred over unstubbing the prototype: it needs no ordering guarantee against the helper, and it cannot
+ * leave the rest of the run without its fake.
  *
- * The first block below PROVES the escape rather than assuming it - it asserts that the prototype really
- * is stubbed, that `start`/`stop`/`validateSegmentName` really are not, and that the fake and the real
- * engine are observably different stores. Without that proof this file would be indistinguishable from
- * the very false green it exists to fix.
+ * The first block PROVES the escape rather than assuming it — that the prototype really is stubbed, that
+ * `start`/`stop`/`validateSegmentName` really are not, and that the fake and the real engine are observably
+ * different stores.
  *
- * SCOPE AND SAFETY
- * ----------------
- * Real Mongo is used. test/setup.js forces the database to `test_<CLONE_INDEX>` and test/helpers/db.js
- * refuses anything else, so nothing here can reach a working database. Every document written carries a
- * segment unique to this process, and `afterEach` removes exactly those documents by that prefix - the
- * `sessions` collection is never dropped, because it is shared with the application.
+ * SCOPE AND SAFETY. Real Mongo is used. test/setup.js forces the database to `test_<CLONE_INDEX>` and
+ * test/helpers/db.js refuses anything else, so nothing here can reach a working database. Every document
+ * written carries a segment unique to this process, and `afterEach` removes exactly those documents by that
+ * prefix — the `sessions` collection is never dropped, because it is shared with the application.
  *
- * Every expectation was MEASURED against the running engine first (R-6), including the BSON `Date`
- * round-trip, the raw document key set, the expired-read deletion and the zero-TTL quirk.
+ * What the assertions cover: the BSON `Date` round-trip, the raw document key set, the lazy read-time expiry
+ * and its deletion of the expired document, and the zero-TTL quirk.
  */
 
 var chai           = require('chai'),
@@ -98,9 +89,9 @@ describe('The real Mongo-backed session cache engine', function() {
 
   before(function() {
     // Registering the Session model makes mongoose build the collection's indexes, and on a database this
-    // suite has just dropped that build is the slowest thing in the file - measured over Mocha's 2000ms
-    // default and observed as a timeout on whichever test happened to start first. Paying for it once
-    // here, under an explicit allowance, makes every individual test below fast and order-independent.
+    // suite has just dropped that build is the slowest thing in the file — slow enough to exceed Mocha's
+    // default and surface as a timeout on whichever test happened to start first. Paying for it once here,
+    // under an explicit allowance, makes every individual test below fast and order-independent.
     this.timeout(30000);
 
     return new Promise(function(resolve, reject) {
@@ -147,9 +138,7 @@ describe('The real Mongo-backed session cache engine', function() {
     stubs.push(sinon.stub(Session, method).throws(error));
   }
 
-  // ---------------------------------------------------------------------------------------------
   // The escape from the global prototype fake - the premise every other block in this file rests on
-  // ---------------------------------------------------------------------------------------------
 
   describe('the global prototype fake it bypasses', function() {
     it('confirms test/helpers/catbox-redis.js has replaced exactly the four cache methods', function() {
@@ -197,9 +186,7 @@ describe('The real Mongo-backed session cache engine', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // Lifecycle and model initialization
-  // ---------------------------------------------------------------------------------------------
 
   describe('start, stop and isReady', function() {
     it('is constructed unconnected and not ready', function() {
@@ -255,9 +242,7 @@ describe('The real Mongo-backed session cache engine', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // The not-ready guard - unreachable through the fake, because the fake's isReady always says true
-  // ---------------------------------------------------------------------------------------------
 
   describe('the not-ready guard', function() {
     it('refuses get, set and drop before start', function() {
@@ -288,9 +273,7 @@ describe('The real Mongo-backed session cache engine', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // The two pure helpers catbox calls outside an operation
-  // ---------------------------------------------------------------------------------------------
 
   describe('validateSegmentName', function() {
     it('accepts a non-empty string by returning null', function() {
@@ -314,9 +297,7 @@ describe('The real Mongo-backed session cache engine', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // Real persistence, read-back envelope and the BSON round-trip
-  // ---------------------------------------------------------------------------------------------
 
   describe('set and get against Mongo', function() {
     beforeEach(function() {
@@ -387,9 +368,7 @@ describe('The real Mongo-backed session cache engine', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // Lazy expiry - the effective mechanism, per docs/PRESERVED-QUIRKS.md section 1.14 E
-  // ---------------------------------------------------------------------------------------------
 
   describe('expiry', function() {
     beforeEach(function() {
@@ -442,9 +421,7 @@ describe('The real Mongo-backed session cache engine', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // drop
-  // ---------------------------------------------------------------------------------------------
 
   describe('drop', function() {
     beforeEach(function() {
@@ -470,9 +447,7 @@ describe('The real Mongo-backed session cache engine', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
   // Error propagation - the `catch (err) { throw err; }` blocks must not swallow
-  // ---------------------------------------------------------------------------------------------
 
   describe('driver failures', function() {
     beforeEach(function() {
@@ -498,9 +473,7 @@ describe('The real Mongo-backed session cache engine', function() {
     });
   });
 
-  // ---------------------------------------------------------------------------------------------
-  // The declared TTL index, and the measured reason it is inert
-  // ---------------------------------------------------------------------------------------------
+  // The declared TTL index, and the reason it is inert
 
   describe('the declared TTL index', function() {
     it('exists as stored_1 with expireAfterSeconds 0 over a partial filter, yet cannot ever fire',

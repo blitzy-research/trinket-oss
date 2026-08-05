@@ -1,26 +1,21 @@
 /**
- * Material model coverage for review finding M-22.
+ * Material model coverage for the two failure channels of `copy`.
  *
- * `copy` reproduces the base commit's client-visible fate when either upstream chain rejects: the
- * request is answered with NOTHING. What it does not reproduce is the ownership defect that came with
- * that fate. At the base commit the callback was simply never invoked, the retired shim's deferred was
- * never settled, and an earlier revision of this change carried that forward literally as a promise left
- * PERMANENTLY PENDING - which under Node 22's default rejection mode is process-fatal and which retains
- * the awaiting HTTP request for the life of the connection.
+ * A SILENT OUTCOME: when either upstream chain rejects, the client is answered with NOTHING — no body and no
+ * status code. `copy` OWNS that rejection rather than leaving a promise pending: it rejects with the
+ * `silentOutcome` sentinel from lib/models/model.js, marked `silentCopyFailure` and carrying the upstream
+ * error as its `cause`. The sentinel travels up through lib/models/lesson.js#copy and
+ * lib/models/course.js#copy to the two controllers, which answer it with `h.abandon`. A permanently pending
+ * promise would be process-fatal under Node 22's default rejection mode and would retain the awaiting HTTP
+ * request for the life of the connection. See docs/PRESERVED-QUIRKS.md sections 1.15, 3.39 and 3.40.
  *
- * The delivered form OWNS the rejection instead: `copy` rejects with the `silentOutcome` sentinel from
- * lib/models/model.js, marked `silentCopyFailure` and carrying the upstream error as its `cause`. The
- * sentinel travels up through lib/models/lesson.js#copy and lib/models/course.js#copy to the two
- * controllers, which answer it with `h.abandon` - still no response, still no status code, so nothing a
- * client can observe has changed. See docs/PRESERVED-QUIRKS.md sections 1.15, 3.39 and 3.40.
+ * The two tests below therefore assert BOTH halves: the sentinel rejection, and that NOTHING escapes as an
+ * unhandled rejection. They detach Mocha's unhandled-rejection listeners while checking that second half — so
+ * a regression to an escaping rejection is reported as an assertion failure rather than as a process-level
+ * abort — and restore them unconditionally.
  *
- * The two tests below therefore assert BOTH halves: the sentinel rejection, and that NOTHING escapes as
- * an unhandled rejection. They detach Mocha's unhandled-rejection listeners while measuring that second
- * half - so that a regression to the escaping form is reported as an assertion failure rather than as a
- * process-level abort - and restore them unconditionally.
- *
- * A save failure is different, and is unchanged: the returned promise rejects with the original mongoose
- * ValidationError, unwrapped and unmarked.
+ * A SAVE ERROR is different: the returned promise rejects with the original mongoose ValidationError,
+ * unwrapped and unmarked.
  */
 
 var mongoose = require('mongoose'),

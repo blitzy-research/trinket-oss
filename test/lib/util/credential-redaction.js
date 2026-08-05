@@ -5,21 +5,21 @@ var should           = require('chai').should(),
     CourseInvitation = require('../../../lib/models/courseInvitation');
 
 /**
- * Review findings SEC-13 / M6 / SV-03 (CWE-200 / CWE-522) - centralized credential redaction.
+ * Centralized credential redaction.
  *
- * The defect these tests pin: four HTTP-200 response surfaces cloned a whole User document, so the
- * subject's bcrypt hash and the live Google OAuth bearer credential that lib/controllers/auth.js
- * persists at `profiles.google.token` - one level down inside the untyped Mixed `profiles` object
- * declared at lib/models/user.js:L18 - both reached the client. An earlier revision removed only the
- * TOP-LEVEL `password` key, which the nested token walked straight past. The point of these assertions
- * is that a nested provider token, and every other credential class a future provider integration would
- * add, is removed at EVERY depth while every non-credential key survives byte-identically.
+ * Four HTTP-200 response surfaces clone a whole User document, which reaches the client with the subject's
+ * bcrypt hash and — one level down inside the untyped Mixed `profiles` object — the live Google OAuth bearer
+ * credential `lib/controllers/auth.js` persists at `profiles.google.token`. Removing only the TOP-LEVEL
+ * `password` key would walk straight past that nested token, so what these assertions pin is that a nested
+ * provider token, and every other credential class a future provider integration adds, is removed at EVERY
+ * depth of a plain user-document clone while every non-credential key survives byte-identically.
  *
- * The wiring is asserted here too, not just the function: `lib/models/model.js#serialize`'s nested-clone
- * branch is the shared mechanism that carried a populated sub-document to the wire, and the last block
- * below drives a real model through it. The two admin surfaces bypass `serialize` entirely - they clone
- * in the handler - so they carry the scrub themselves and are asserted in test/lib/api/admin.js;
- * test/lib/api/course.js covers the API response and the server.inject consumer.
+ * The WIRING is asserted here too, not just the function: `lib/models/model.js#serialize`'s nested-clone
+ * branch is the shared mechanism that carries a populated sub-document to the wire, and the last block below
+ * drives a real model through it. The two admin surfaces bypass `serialize` entirely — they clone in the
+ * handler — so they carry the scrub themselves and are asserted in test/lib/api/admin.js;
+ * test/lib/api/course.js covers the API response and the server.inject consumer. The top-level
+ * invitation-token boundary is asserted separately, because that key is not inside a user clone.
  */
 describe('Credential redaction', function() {
   describe('nested provider credentials', function() {
@@ -130,9 +130,7 @@ describe('Credential redaction', function() {
     });
   });
 
-  // -------------------------------------------------------------------------------------------
-  // The wiring, not just the function: the shared serializer's nested-clone branch
-  // -------------------------------------------------------------------------------------------
+  // The wiring, not just the function: the shared serializer's nested-clone branch.
 
   describe('the shared serializer applies it (lib/models/model.js#serialize)', function() {
 

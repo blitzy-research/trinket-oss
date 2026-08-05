@@ -1,10 +1,11 @@
 /**
- * High-risk parameterized and write-route coverage for review finding M-25.
+ * Coverage for the high-risk parameterized and write routes: the sole PATCH route, folder CRUD, course
+ * invitations, user settings and info, and a missing-user admin path.
  *
  * Every request goes through test/helpers/flow.js, so it uses the same real-HTTP transport, referer and
- * cookie policy as the original API suites. Expectations were measured against this tree before being
- * encoded. The 500s below are deliberate R-6 pins: the affected controllers reference an undeclared
- * `Boom` identifier, and changing them to 403/404 would be a forbidden behavior improvement.
+ * cookie policy as the other API suites. The 500s asserted below are deliberate pins on preserved
+ * behavior — the affected controllers reference an undeclared `Boom` identifier — and answering 403 or 404
+ * there instead would be a prohibited behavior improvement. See docs/PRESERVED-QUIRKS.md.
  */
 
 var mongoose         = require('mongoose'),
@@ -370,8 +371,8 @@ module.exports = function() {
 
         it('preserves the measured acceptance of an email already used by a course member',
           async function() {
-          // The membership assertion above proves this address is persisted in course.users. The route
-          // nevertheless accepts it, sends the invitation and answers success; R-6 freezes that result.
+          // The route accepts an address already persisted in `course.users`, sends the invitation and
+          // answers success. That result is frozen. See docs/PRESERVED-QUIRKS.md.
           var response = await request('put',
             '/api/courses/' + course.id + '/invitations/' + invitationId + '/email', {
               email : defaults.routeCoverageOther.email

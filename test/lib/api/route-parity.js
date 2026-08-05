@@ -11,58 +11,48 @@ var chai     = require('chai'),
     app      = require('../../../app.js');
 
 /**
- * R-6 baseline route parity — SELF-CONTAINED.
+ * Baseline route parity, asserted from inside `npm test` — SELF-CONTAINED.
  *
- * The review recorded that only 16 distinct route paths were asserted against 233 registered routes, 117
- * of them under /api/. This suite closes that gap from inside `npm test`: it asserts the route table
- * against the documented anchor, and it asserts status, content type, body shape, Location and Set-Cookie
- * attributes for every one of the 58 parameterless GET routes plus the whole authenticated supplement and
- * the whole `next`-destination contract.
+ * This suite pins the route table against the documented anchor, and asserts status, content type, body
+ * shape, Location and Set-Cookie attributes for every one of the 58 parameterless GET routes plus the whole
+ * authenticated supplement and the whole `next`-destination contract.
  *
- * INDEPENDENCE (review finding M2). This file requires NEITHER test/baseline/capture.js NOR
- * test/baseline/replay.js, and loads NEITHER committed JSON artifact. Every expectation below is a literal
- * in this file, and every helper it needs — the corpus selection rule, the canonical row builder, the
- * three fingerprints, the title extractor, the Set-Cookie attribute reader — is implemented here. That is
- * the whole point: the CLI harness and this suite are two INDEPENDENT verifiers of the same measured
- * behavior, so a defect in the harness's canonicalization cannot make this suite pass, and vice versa. An
- * earlier revision imported both modules and read both artifacts, which meant it shared the very oracle it
- * was supposed to corroborate.
+ * INDEPENDENCE. This file requires NEITHER test/baseline/capture.js NOR test/baseline/replay.js, and loads
+ * NEITHER committed JSON artifact. Every expectation below is a literal in this file, and every helper it
+ * needs — the corpus selection rule, the canonical row builder, the three fingerprints, the title extractor,
+ * the Set-Cookie attribute reader — is implemented here. That is the whole point: the CLI harness and this
+ * suite are two INDEPENDENT verifiers of the same behavior, so a defect in the harness's canonicalization
+ * cannot make this suite pass, and vice versa.
  *
- * WHAT THIS SUITE PINS ABOUT THE ROUTE TABLE (review finding P3-1). Independence is only worth having if
- * the independent check is as strong as the one it corroborates, and an earlier revision's was not: it
- * substituted a row-UNIQUENESS count for the exact row set, compared only the first two and last two paths
- * of the registration order, and computed none of the three authoritative fingerprints — so a middle-order
- * permutation, or a swap that left every countable gate balanced, passed `npm test`. It now pins, from the
- * live server and from literals in this file: the exact sorted 233-row canonical set row for row
- * (CANONICAL_ROWS_SORTED), the FULL registration order derived from config.routes, and all three
- * fingerprints — sha256 and md5 of the sorted set and sha256 of the registration order
- * (ROUTE_TABLE_FINGERPRINTS) — alongside the eleven documented-anchor clauses, the last of which
- * RECOMPUTES the sorted sha256 from the live table rather than comparing two stored strings (SV-32).
+ * WHAT IT PINS ABOUT THE ROUTE TABLE. Independence is only worth having if the independent check is as
+ * strong as the one it corroborates, so nothing here is weakened into a count: from the live server and from
+ * literals in this file it pins the exact sorted 233-row canonical set row for row (CANONICAL_ROWS_SORTED),
+ * the FULL registration order derived from config.routes, and all three fingerprints — sha256 and md5 of the
+ * sorted set and sha256 of the registration order (ROUTE_TABLE_FINGERPRINTS) — alongside the eleven
+ * documented-anchor clauses, the last of which RECOMPUTES the sorted sha256 from the live table rather than
+ * comparing two stored strings. A middle-order permutation, or a swap that left every countable gate
+ * balanced, therefore fails here.
  *
- * TRANSPORT (review finding M3). Every request goes through `flow`, the suite's own harness, which issues
- * real HTTP over an ephemeral socket against the booted server's listener. `server.inject()` is never
- * used here, for the same reason the CLI harness avoids it: @hapi/shot/lib/request.js:L30 is the last
- * remaining DEP0169 source in the tree. That is a rule about this suite, not a claim about the
- * application — lib/controllers/courses.js and lib/controllers/folders.js both perform internal
- * sub-requests with request.server.inject(), base-identical at both commits.
+ * TRANSPORT. Every request goes through `flow`, the suite's own harness, which issues real HTTP over an
+ * ephemeral socket against the booted server's listener. `server.inject()` is never used here, for the same
+ * reason the CLI harness avoids it: @hapi/shot is the last remaining DEP0169 source in the tree. That is a
+ * rule about this suite, not a claim about the application — lib/controllers/courses.js and
+ * lib/controllers/folders.js both perform internal sub-requests with request.server.inject().
  *
  * ISOLATION. The unauthenticated corpus is driven through the empty cookie slot (`flow.switchUser('')`),
  * which attaches no cookie at all. The authenticated supplement is driven through a slot of this suite's
  * own, `defaults.parity`, created here and removed here, so it neither consumes nor disturbs the session
- * state the earlier eight suites share. `flow.activeUser` is restored when the suite finishes.
+ * state the earlier suites share. `flow.activeUser` is restored when the suite finishes.
  *
  * WHAT IS DELIBERATELY NOT ASSERTED. HTML body digests. This suite runs inside `npm test`, where the
- * database carries whatever the preceding suites left behind, so a leftover course or user can
- * legitimately change rendered markup without changing any behavior under test. Digests are
- * test/baseline/replay.js's job, on a clean capture. What IS asserted here is everything that is a pure
- * function of routing, configuration and templates: the status, the content type, the body kind, the exact
- * JSON bodies, the HTML <title> and structural markers, the literal Location and the Set-Cookie attribute
- * set.
+ * database carries whatever the preceding suites left behind, so a leftover course or user can legitimately
+ * change rendered markup without changing any behavior under test. Digests are test/baseline/replay.js's job,
+ * on a clean capture. What IS asserted here is everything that is a pure function of routing, configuration
+ * and templates: the status, the content type, the body kind, the exact JSON bodies, the HTML <title> and
+ * structural markers, the literal Location and the Set-Cookie attribute set.
  */
 
-// ---------------------------------------------------------------------------------------------
-// The documented route-table anchor (TR1), as literals
-// ---------------------------------------------------------------------------------------------
+// The documented route-table anchor, as literals
 
 /**
  * The Technical Specification's published 32-character digest for the 233-row route table. It is retained
@@ -104,12 +94,11 @@ var SYNTHESIZED_ROUTES     = 5;
 /**
  * The three authoritative fingerprints route-table.json publishes, as literals.
  *
- * REVIEW FINDING P3-1. An earlier revision of this suite computed NONE of them and substituted a
- * uniqueness check for the exact row set plus a first-two/last-two check for the registration order, so a
- * middle-order permutation, or a swap that kept every countable gate balanced, passed `npm test`. All
- * three are recomputed here from the live server, in this file, with node:crypto - the same recipe
+ * All three are recomputed here from the live server, in this file, with node:crypto — the same recipe
  * route-table.json#canonicalization publishes and the same one test/baseline/replay.js applies, arrived at
- * independently because this suite shares no code with the harness and loads no artifact.
+ * independently because this suite shares no code with the harness and loads no artifact. A uniqueness count
+ * or a first-two/last-two order check would not do: either would accept a middle-order permutation or a swap
+ * that kept every countable gate balanced.
  *
  * `sortedSha256` and `sortedMd5` hash the 233 canonical rows sorted with the default
  * Array.prototype.sort() and joined with "\n" and no trailing newline. `registrationOrderSha256` hashes the
@@ -137,9 +126,8 @@ var DESCRIPTOR_CODES = {
  * THE EXACT 233-ROW CANONICAL SET, in sorted order, as literals.
  *
  * This is the row set the documented digest stands for, and it is pinned here row for row rather than
- * summarized: `canonicalRowsAreUnique` - which is what this replaces - counted distinct rows and therefore
- * accepted any permutation, any renamed path and any changed auth mode as long as the total stayed 233
- * (review finding P3-1).
+ * summarized, because a distinct-row COUNT would accept any permutation, any renamed path and any changed
+ * auth mode as long as the total stayed 233.
  *
  * Each entry is `METHOD path CODE preCount`, expanded by expandCanonicalRow() into the
  * "METHOD | path | descriptor | preCount" form route-table.json#canonicalization specifies. The compact
@@ -383,9 +371,7 @@ var CANONICAL_ROWS_SORTED = [
   'PUT /api/users/{userId} R 0'
 ];
 
-// ---------------------------------------------------------------------------------------------
-// Request policy — the same policy the base-commit measurement was taken under
-// ---------------------------------------------------------------------------------------------
+// Request policy — the same policy the corpus below was recorded under
 
 var POLICY = {
   referer   : 'https://trinket.dev',
@@ -399,7 +385,7 @@ var REDIRECT_STATUSES = [301, 302, 303, 307, 308];
  * One request through the flow harness under the capture policy.
  *
  * Accept is deliberately never set: app.js:L161-L163 treats any Accept containing application/json as an
- * API request, which would move five of the seven session-required routes off their measured takeover
+ * API request, which would move five of the seven session-required routes off their recorded takeover
  * redirect and onto a raw 401. Accept-Encoding is pinned to identity so nothing is compressed. The referer
  * flow sets by default is replaced with the policy value. Redirects are never followed automatically,
  * because the Location header itself is an assertion target.
@@ -497,7 +483,7 @@ var SERVER_ERR = markers(false, true);
 var BOOM_KEYS = ['error', 'message', 'statusCode'];
 
 /**
- * THE 58-ROUTE UNAUTHENTICATED CORPUS, measured at base commit 2f8712a and encoded here directly.
+ * THE 58-ROUTE UNAUTHENTICATED CORPUS, encoded here directly as literals.
  *
  * Selection is REPRODUCIBLE rather than curated: every GET row of the live route table whose path
  * contains no `{param}` segment. `selectCorpusPaths()` below re-derives it from the running server and the
@@ -546,7 +532,7 @@ var CORPUS = [
     kind : 'json',  keys : BOOM_KEYS,              cookie : NO_COOKIE },
   { path : '/api/trinkets/search',            status : 401, type : JSON_TYPE, loc : null,
     kind : 'json',  keys : BOOM_KEYS,              cookie : NO_COOKIE },
-  // The pre-existing 500. AAP invariant I14: reproduced, never repaired.
+  // The pre-existing 500: reproduced, never repaired.
   { path : '/api/users/assets',               status : 500, type : JSON_TYPE, loc : null,
     kind : 'json',  keys : BOOM_KEYS,              cookie : NO_COOKIE },
   { path : '/api/users/resendEmailChange',    status : 401, type : JSON_TYPE, loc : null,
@@ -643,13 +629,13 @@ var DOCUMENTED_DISTRIBUTION = { '200' : 25, '401' : 7, '404' : 25, '500' : 1 };
 var FIRST_HOP_DISTRIBUTION = { '200' : 12, '302' : 16, '401' : 7, '404' : 22, '500' : 1 };
 
 /**
- * THE RESOLVED READING, measured rather than derived.
+ * THE RESOLVED READING, recorded rather than derived.
  *
  * Exactly the sixteen 302 rows above carry a Location chain, and this map records where each chain ENDS:
- * the terminal status, and the number of hops it takes to reach it. Every value was measured against the
- * running application, which is the only way to get `/change-email` and `/verify-email` right - both take
- * TWO hops, because `{origin}/account/email` is itself a redirect to a parameterless page that the corpus
- * does not contain, so no amount of walking the table above can reach their terminus.
+ * the terminal status, and the number of hops it takes to reach it. The values come from the running
+ * application, which is the only way to get `/change-email` and `/verify-email` right — both take TWO hops,
+ * because `{origin}/account/email` is itself a redirect to a parameterless page the corpus does not contain,
+ * so no amount of walking the table above reaches their terminus.
  *
  * A path absent from this map resolves to its own first-hop status in zero hops. Summing this map over the
  * corpus is what reproduces DOCUMENTED_DISTRIBUTION, and `follows every Location chain to the terminus the
@@ -675,15 +661,14 @@ var RESOLVED = {
 };
 
 /**
- * THE AUTHENTICATED SUPPLEMENT, driven LIVE (review finding M5).
+ * THE AUTHENTICATED SUPPLEMENT, driven LIVE.
  *
- * An earlier revision checked these values only inside the committed artifact while its live request loop
- * stayed unauthenticated, which proves nothing about the running application. Every entry below is issued
- * here, in this order, against a session this suite established itself.
+ * Every entry below is issued here, in this order, against a session this suite established itself —
+ * checking these values against a stored artifact alone would prove nothing about the running application.
  *
  * Entries [2] and [3] are the flagship preserved quirk: an AUTHENTICATED GET /login and GET /signup answer
- * HTTP 500 rendered as 50x.html, because lib/controllers/pages.js throws Boom.badImplementation where the
- * base commit's `reply.redirect` raised a TypeError. They must NOT become 302s.
+ * HTTP 500 rendered as 50x.html, because lib/controllers/pages.js raises the internal error deliberately.
+ * They must NOT become 302s. See docs/PRESERVED-QUIRKS.md section 1.1.
  */
 var AUTHENTICATED = [
   { label : 'POST /login with valid credentials', status : 302, type : HTML, loc : '{origin}/home',
@@ -702,11 +687,11 @@ var AUTHENTICATED = [
     kind : 'empty', cookie : COOKIE_ROUTE }
 ];
 
-/** The session cookie contract (TR4), as literals. */
+/** The session cookie contract, as literals. */
 var COOKIE_NAME  = 'session';
 var COOKIE_SEAL  = 'Fe26.2';
 
-/** The `next` destination contract (P3-1 and the preserved open redirect). */
+/** The `next` destination contract, including the preserved open redirect. */
 var ASSIGNMENT = {
   destinationPath : '/u/instructor/classes/algebra-1?assignment=7#work',
   rootRelative    : '/courses/algebra-1',
@@ -720,16 +705,14 @@ var ASSIGNMENT = {
 };
 
 /**
- * The destination shapes `lib/http/redirect.js#internalDestination` REFUSES (review finding SEC-4 /
- * SV-02, CWE-601). Every one of them was echoed straight back into a Location at the base commit, and
- * every one of them now falls through to the route's declared fallback instead.
+ * The destination shapes `lib/http/redirect.js#internalDestination` REFUSES: each one falls through to the
+ * route's declared fallback instead of reaching a Location header.
  *
- * The same-origin shapes are asserted separately and round-trip byte-for-byte, which is what keeps this
- * gated in BOTH directions: a confinement that also refused the absolute same-origin destination the
- * frozen assignment UI sends (review finding P3-1) would fail those tests. None of these shapes appears
- * anywhere in test/baseline/responses.json - every recorded Location in the whole corpus is same-host or
- * relative - so refusing them contradicts no measured baseline datum, which is precisely why R-6 does not
- * arbitrate in favour of the echo.
+ * The same-origin shapes are asserted separately and round-trip byte-for-byte, which is what keeps the
+ * confinement gated in BOTH directions — a filter that also refused the absolute same-origin destination the
+ * frozen assignment UI sends would fail those tests. None of the refused shapes appears anywhere in
+ * test/baseline/responses.json: every recorded Location in the corpus is same-host or relative, so refusing
+ * them contradicts no recorded datum. See docs/PRESERVED-QUIRKS.md section 4.4.
  */
 var REFUSED_DESTINATIONS = [
   { label : 'an off-origin absolute URL',       candidate : 'https://evil.example/steal' },
@@ -741,16 +724,14 @@ var REFUSED_DESTINATIONS = [
   { label : 'a bare relative value',            candidate : 'courses/algebra-1' }
 ];
 
-/** The roles-token envelope invariants (F7), as literals. */
+/** The roles-token envelope invariants, as literals. */
 var ROLES_TOKEN = {
   envelopeBase64Prefix : 'U2FsdGVkX1',
   magic                : 'Salted__',
   hexLength            : 32
 };
 
-// ---------------------------------------------------------------------------------------------
 // Helpers — implemented here rather than imported, so this suite stands on its own
-// ---------------------------------------------------------------------------------------------
 
 /**
  * Expands one compact `METHOD path CODE preCount` literal into the canonical row form
@@ -844,7 +825,7 @@ function tally(statuses) {
 }
 
 /**
- * The RESOLVED status of one corpus row, read off the measured RESOLVED map. Rows with no chain resolve to
+ * The RESOLVED status of one corpus row, read off the RESOLVED map above. Rows with no chain resolve to
  * their own status in zero hops.
  *
  * @param   {Object} row A row of CORPUS.
@@ -917,9 +898,7 @@ function walkChain(path, done) {
   step(path);
 }
 
-// ---------------------------------------------------------------------------------------------
 // The suite
-// ---------------------------------------------------------------------------------------------
 
 module.exports = function() {
   describe('R-6 baseline route parity', function() {
@@ -940,12 +919,9 @@ module.exports = function() {
      * THE ACCOUNT LIFECYCLE, owned by the OUTER block.
      *
      * `defaults.parity` is created once here and removed once at the end, so both inner blocks below can
-     * rely on the account existing without either of them owning it. An earlier revision created and
-     * removed it inside the authenticated block and then had the `next` block re-create it through
-     * `flow.switchUser('parity-next', callback)` - which cannot work, because the callback form of
-     * `switchUser` looks the slot name up in `defaults` and there is no `defaults['parity-next']`. Slot
-     * names that are not `defaults` keys are only ever used in the callback-free form, purely to select a
-     * cookie jar.
+     * rely on the account existing without either of them owning it. The callback form of `switchUser` looks
+     * its slot name up in `defaults`, so it works only with a real `defaults` key — a slot name such as
+     * 'parity-next' is valid only in the callback-free form, purely to select a cookie jar.
      *
      * `switchUser` with a callback creates the account on first use and logs in, which is exactly what is
      * needed; the cookie it leaves in the slot is deliberately NOT reused by the assertions below, for the
@@ -1014,9 +990,7 @@ module.exports = function() {
       }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // TR1 — the registered route table
-    // -----------------------------------------------------------------------------------------
+    // The registered route table
 
     describe('the registered route table (TR1)', function() {
       /**
@@ -1177,10 +1151,9 @@ module.exports = function() {
       });
 
       /**
-       * THE EXACT ROW SET (review finding P3-1). Not a count, not a uniqueness check: the 233 canonical
-       * rows, sorted, compared row for row against the literals at the head of this file. A renamed path,
-       * a changed method, a changed auth mode or a changed pre-handler count each fails here and names
-       * itself in the diff.
+       * THE EXACT ROW SET. Not a count and not a uniqueness check: the 233 canonical rows, sorted, compared
+       * row for row against the literals at the head of this file. A renamed path, a changed method, a changed
+       * auth mode or a changed pre-handler count each fails here and names itself in the diff.
        */
       it('registers the exact sorted 233-row canonical set, row for row', function() {
         var expected = expectedCanonicalRowsSorted();
@@ -1194,13 +1167,12 @@ module.exports = function() {
       });
 
       /**
-       * THE FULL REGISTRATION ORDER, and all three authoritative fingerprints, recomputed here from the
-       * live server with node:crypto (review finding P3-1).
+       * THE FULL REGISTRATION ORDER, and all three authoritative fingerprints, recomputed here from the live
+       * server with node:crypto.
        *
        * The head/tail assertion above proves the two synthesized pages come first and the two catch-alls
        * last; this proves every one of the 231 rows between them is still where it was. A middle-order
-       * permutation changes registrationOrderSha256 and nothing else, which is precisely the regression
-       * the earlier first-two/last-two check could not see.
+       * permutation changes registrationOrderSha256 and nothing else, so only the full fingerprint sees it.
        */
       it('reproduces all three authoritative fingerprints, including the full registration order',
         function() {
@@ -1223,12 +1195,12 @@ module.exports = function() {
       /**
        * THE DOCUMENTED ANCHOR, AS A MANDATORY GATE, computed here from literals and the live server.
        *
-       * The frozen 32-character digest is retained verbatim as clause 1 and is never replaced by a
-       * measurement; the remaining clauses are the substance it summarizes. Clause 11 is the one that
-       * DERIVES a value — the sorted sha256, recomputed from the live rows under the artifact's published
+       * The frozen 32-character digest is retained verbatim as clause 1 and is never replaced by a computed
+       * value; the remaining clauses are the substance it summarizes. Clause 11 is the one that DERIVES a
+       * value — the sorted sha256, recomputed from the live rows under the artifact's published
        * canonicalization — so this gate cannot be satisfied without a digest having been computed from the
-       * running server (review finding SV-32). Any drift lands in `failures` and fails this test, which is
-       * what makes it a gate rather than a stored boolean being read back.
+       * running server. Any drift lands in `failures` and fails this test, which is what makes it a gate
+       * rather than a stored boolean being read back.
        */
       it('enforces the documented route-table anchor as a mandatory gate', function() {
         var table    = server.table(),
@@ -1265,11 +1237,10 @@ module.exports = function() {
                live.rows.filter(function(row) {
                  return row.descriptor === 'mode=try strategies=["session"]';
                }).length);
-        // REVIEW FINDING P3-1. These two clauses are the ones that used to be weaker than the artifact
-        // advertised. `canonicalRowsAreUnique` counted DISTINCT rows, so any permutation and any renamed
-        // path passed as long as the total stayed 233; `registrationOrderContract` compared only the first
-        // two and last two paths, so a middle-order permutation passed. Both now carry their published
-        // meaning: the exact sorted row set, and the full registration order through its fingerprint.
+        // These two clauses carry their published meaning in full: the exact sorted row set, and the whole
+        // registration order through its fingerprint. A distinct-row COUNT would pass any permutation and any
+        // renamed path as long as the total stayed 233, and a first-two/last-two path check would pass any
+        // middle-order permutation.
         clause('canonicalRowsTheDigestStandsFor', expectedCanonicalRowsSorted(),
                live.canonical.slice().sort());
 
@@ -1281,16 +1252,16 @@ module.exports = function() {
                { unresolvedDeclarations : order.missing,
                  fingerprint            : sha256Rows(order.canonical) });
 
-        // REVIEW FINDING SV-32 — clause 11, the digest this gate RECOMPUTES.
+        // Clause 11 — the digest this gate RECOMPUTES.
         //
         // Clause 1 above compares the frozen 32-character literal to this suite's own copy of it, which
-        // detects an edit to either but computes nothing; the published value is 32 characters where a
-        // sha256 is 64 and carries no serialization, so it cannot be recomputed at all (ADJ-4). Clause 11
-        // is the derivation: the LIVE table's canonical rows, sorted and joined with "\n" exactly as
+        // detects an edit to either but computes nothing; the published value is 32 characters where a sha256
+        // is 64 and carries no serialization, so it cannot be recomputed at all (ADJ-4). Clause 11 is the
+        // derivation: the LIVE table's canonical rows, sorted and joined with "\n" exactly as
         // route-table.json's `canonicalization` block publishes, hashed here with this file's own
-        // sha256Rows() and compared against this file's own literal. Nothing is loaded from the artifact
-        // and no harness code is shared, so a defect in capture.js#documentedAnchorGate cannot make this
-        // pass. Both widths are checked together so a truncation cannot satisfy the long form.
+        // sha256Rows() and compared against this file's own literal. Nothing is loaded from the artifact and
+        // no harness code is shared, so a defect in capture.js#documentedAnchorGate cannot make this pass.
+        // Both widths are checked together so a truncation cannot satisfy the long form.
         clause('measuredSha256RecomputedFromLiveTable',
                { measuredSha256        : ROUTE_TABLE_FINGERPRINTS.sortedSha256,
                  measuredSha256First32 : ROUTE_TABLE_FINGERPRINTS.sortedSha256.slice(0, 32) },
@@ -1318,9 +1289,7 @@ module.exports = function() {
       });
     });
 
-    // -----------------------------------------------------------------------------------------
-    // TR2 / TR3 / TR4 — the 58-route unauthenticated corpus, live
-    // -----------------------------------------------------------------------------------------
+    // The 58-route unauthenticated corpus, live
 
     describe('the 58 parameterless GET routes (TR2, TR3, TR4)', function() {
       before(function() {
@@ -1395,22 +1364,20 @@ module.exports = function() {
       });
     });
 
-    // -----------------------------------------------------------------------------------------
-    // The authenticated supplement, driven LIVE (review finding M5)
-    // -----------------------------------------------------------------------------------------
+    // The authenticated supplement, driven LIVE
 
     describe('the authenticated supplement, live (TR2, TR3, TR4)', function() {
       /**
-       * The seven entries are issued in the ORDER the array declares, which is the order the base-commit
-       * measurement was taken in, because the order is load-bearing: the session every GET below asserts
-       * against is the one entry [0]'s POST /login hands back, and entry [6]'s GET /logout destroys it.
+       * The seven entries are issued in the ORDER the array declares, and that order is load-bearing: the
+       * session every GET below asserts against is the one entry [0]'s POST /login hands back, and entry
+       * [6]'s GET /logout destroys it.
        *
-       * Every request below is sent through a THROWAWAY slot with the cookie supplied explicitly rather
-       * than through a slot's cookie jar. That is not a stylistic choice: lib/controllers/users.js#login
-       * calls `request.yar.reset()` on success, which rotates the session id and invalidates whatever
-       * cookie the request arrived with. A slot-based flow therefore hands the four GETs a cookie that
-       * entry [0] has already killed - which is precisely how an earlier revision of this block came to
-       * assert the UNAUTHENTICATED outcomes (200 for /login, 302 for /home) while looking authenticated.
+       * Every request below is sent through a THROWAWAY slot with the cookie supplied EXPLICITLY rather than
+       * through a slot's cookie jar. That is not a stylistic choice: lib/controllers/users.js#login calls
+       * `request.yar.reset()` on success, which rotates the session id and invalidates whatever cookie the
+       * request arrived with, so a slot-based flow would hand the four GETs a cookie entry [0] has already
+       * killed — and they would then quietly assert the UNAUTHENTICATED outcomes (200 for /login, 302 for
+       * /home) while looking authenticated.
        */
       before(function(done) {
         this.timeout(30000);
@@ -1529,9 +1496,7 @@ module.exports = function() {
         });
     });
 
-    // -----------------------------------------------------------------------------------------
-    // The roles-token crypto parity contract (F7)
-    // -----------------------------------------------------------------------------------------
+    // The roles-token crypto parity contract
 
     describe('the roles-token crypto parity contract (F7)', function() {
       var payload = [{ context : 'site', roles : ['user'], permissions : ['create-python-trinket'] }];
@@ -1581,28 +1546,20 @@ module.exports = function() {
         });
     });
 
-    // -----------------------------------------------------------------------------------------
-    // The cache-prefix {assetType} confinement contract (SEC-1 / SV-01, coverage gap SV-40)
-    // -----------------------------------------------------------------------------------------
+    // The cache-prefix {assetType} confinement contract
 
     /**
      * The one route whose confinement root is user-controlled. lib/http/staticRoutes.js returns
-     * `'./public/' + request.params.assetType` as Inert's root and {assetType} arrives PERCENT-DECODED
-     * after route matching, so an unguarded value moves that root out of ./public. Measured over real
-     * HTTP against this tree immediately before the guard was restored:
-     *   GET /cache-prefix-1/..%2fconfig/local.yaml -> 200 + config/local.yaml (the Yar seal password)
-     *   GET /cache-prefix-1/..%2F..%2F(...)%2Fetc/passwd -> 200 + /etc/passwd
-     * The route is `auth mode=try` with zero pre-handlers, so both were unauthenticated, and the seal
-     * password turns the read into session forgery for any account.
+     * `'./public/' + request.params.assetType` as Inert's root, and {assetType} arrives PERCENT-DECODED after
+     * route matching, so the guard there is what holds the served root inside ./public. The route is
+     * `auth mode=try` with zero pre-handlers, so it is reachable unauthenticated.
      *
-     * Nothing under test/ asserted any of this before (review finding SV-40), so neither `npm test` nor
-     * `node test/baseline/replay.js` could detect the guard being added OR removed. The literals below
-     * are declared IN THIS FILE and no artifact is loaded, so a defect in the parity harness cannot make
-     * this suite pass; test/baseline/responses.json#assetConfinementContract carries the same probes for
-     * the replay CLI, and the two are deliberately independent.
-     *
-     * Both directions are asserted. An over-eager guard that 404s a legitimate asset URL is a parity
-     * failure exactly as loudly as a missing one, which is what the two positive controls pin.
+     * Both directions are asserted, so neither a missing guard nor an over-eager one can pass: every
+     * traversal shape must answer 404, and the two positive controls must keep answering what a legitimate
+     * asset URL answers. The literals below are declared IN THIS FILE and no artifact is loaded, so a defect
+     * in the parity harness cannot make this suite pass; test/baseline/responses.json#assetConfinementContract
+     * carries the same probes for the replay CLI, and the two are deliberately independent. See
+     * docs/PRESERVED-QUIRKS.md section 4.1.
      */
     describe('the cache-prefix asset confinement contract (SEC-1, TR5)', function() {
       var PREFIX = '/' + config.app.cachePrefix + '1';
@@ -1681,9 +1638,9 @@ module.exports = function() {
 
             try {
               response.statusCode.should.eql(404);
-              // The two markers that a file actually escaped: the seal password key from
-              // config/local.yaml and the /etc/passwd root line. Asserted on the body rather than
-              // inferred from the status, so a 404 that still carried file bytes would fail.
+              // Two markers that would only appear if a file outside ./public had been served. They are
+              // asserted on the BODY rather than inferred from the status, so a 404 that still carried file
+              // bytes would fail.
               response.text.should.not.contain('cookieOptions');
               response.text.should.not.contain('root:x:0:0');
             }
@@ -1695,9 +1652,7 @@ module.exports = function() {
       });
     });
 
-    // -----------------------------------------------------------------------------------------
-    // The `next` destination contract (P3-1 and the preserved open redirect)
-    // -----------------------------------------------------------------------------------------
+    // The `next` destination contract, including the preserved open redirect
 
     describe('the `next` destination contract (P3-1, TR2, TR4)', function() {
       var absolute    = appOrigin() + ASSIGNMENT.destinationPath,
@@ -1801,8 +1756,8 @@ module.exports = function() {
             require('path').join(__dirname, '..', '..', '..', 'public', 'partials', 'directives',
                                  'trinket-assignment.js'), 'utf8');
 
-          // If any of these three stops being true the producer has changed shape and this contract has
-          // to be re-measured rather than trusted.
+          // If any of these three stops being true the producer has changed shape, and this contract has to
+          // be re-derived from it rather than trusted.
           producer.should.contain('window.encodeURIComponent');
           producer.should.contain('?next=');
           producer.should.contain('$window.location.href');
@@ -1855,21 +1810,15 @@ module.exports = function() {
       });
 
       /**
-       * THE SEC-4 / SV-02 REFUSALS (docs/PRESERVED-QUIRKS.md section 4.4).
+       * THE REFUSED `next` DESTINATIONS. See docs/PRESERVED-QUIRKS.md section 4.4.
        *
-       * Every candidate was echoed straight back into a Location at the base commit, because `next` was
-       * persisted and read verbatim. `lib/http/redirect.js#internalDestination` now refuses each of
-       * them, so the handler takes the SAME no-destination branch an absent `next` already took and the
-       * route's declared fallback answers.
+       * `lib/http/redirect.js#internalDestination` refuses each of these shapes, so the handler takes the
+       * SAME no-destination branch an absent `next` takes and the route's declared fallback answers instead
+       * of the shape reaching a Location header.
        *
-       * A later revision deleted the filter and this block asserted the echoes instead, on the argument
-       * that an open-redirect repair is not one of R-1's four sanctioned diff categories. The final
-       * security review found the hole live and the deletion unmandated - R-1 cannot license removing a
-       * control any more than adding one, R-4 conditions preservation on a quirk clients may depend on,
-       * and R-6 breaks ambiguities of which there is none here: none of these shapes appears anywhere in
-       * test/baseline/responses.json, so `node test/baseline/replay.js` reports 0 differences either way.
-       * The refusals are asserted here rather than in the corpus precisely because they are the cases
-       * that must NOT replay.
+       * They are asserted HERE rather than in the corpus precisely because they are the cases that must NOT
+       * replay: none of these shapes appears anywhere in test/baseline/responses.json, so the replay CLI
+       * reports 0 differences whether they are refused or echoed, and only a live assertion can pin them.
        */
       describe('an off-origin destination is refused, leaving the declared fallback', function() {
         REFUSED_DESTINATIONS.forEach(function(refusal) {
@@ -1973,9 +1922,9 @@ module.exports = function() {
         it('does not persist an off-origin destination', function() {
           this.timeout(30000);
 
-          // The SEC-4 / SV-02 filter covers the OAuth entry point as well: GET /auth/google refuses to
-          // store an off-origin request.query.next at all, so whichever consumer reads the session slot
-          // next finds nothing there and answers the declared fallback.
+          // The filter covers the OAuth entry point as well: GET /auth/google refuses to store an
+          // off-origin request.query.next at all, so whichever consumer reads the session slot next finds
+          // nothing there and answers the declared fallback.
           return driveFlow('/auth/google', 'https://evil.example/steal', '/login',
                            credentials, 302)
             .then(function(response) {

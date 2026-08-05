@@ -3,23 +3,16 @@ var sinon    = require('sinon'),
     flow     = require('../../helpers/flow'),
     defaults = require('../../helpers/defaults');
 
-// SEC-13 / M6 / SV-03 SURFACE ASSERTIONS. Both admin response surfaces JSON-clone a WHOLE User document
-// in the HANDLER rather than projecting `User.publicSpec`, which flattens it before any responder runs -
-// so the shared scrub in lib/models/model.js#serialize cannot reach them and each carries
-// `Credentials.redact` itself. Before that, the administered user's bcrypt hash and - when that user has
-// linked Google - the live OAuth bearer credential at `profiles.google.token` were both part of the
-// payload. The payload SHAPE is still the base commit's; only values no client may legitimately read are
-// gone, which is why the specs below assert the surviving keys FIRST and the absent credentials second.
+// CREDENTIAL-REDACTION SURFACE ASSERTIONS. Both admin response surfaces JSON-clone a WHOLE User document
+// in the HANDLER rather than projecting `User.publicSpec`, which flattens it before any responder runs — so
+// the shared scrub in lib/models/model.js#serialize cannot reach them and each calls `Credentials.redact`
+// itself. Without it the administered user's bcrypt hash, and the live OAuth bearer credential at
+// `profiles.google.token` when that user has linked Google, are both part of the payload. The payload SHAPE
+// is unchanged; only values no client may legitimately read are removed, which is why the specs below assert
+// the surviving keys FIRST and the absent credentials second. See docs/PRESERVED-QUIRKS.md section 4.14.
 //
-// A later revision deleted the scrub and these specs asserted the disclosure instead, on the argument
-// that a credential-disclosure repair is not one of R-1's four sanctioned diff categories. The final
-// security review found it live and the deletion unmandated: R-1 cannot license removing a control any
-// more than adding one, R-4 conditions preservation on a quirk clients may depend on, and no client
-// depends on receiving another user's password hash and provider bearer token. See
-// docs/PRESERVED-QUIRKS.md section 4.14.
-//
-// The sentinels are written onto a real user and read back out of the response bytes, so the assertions
-// hold whatever the surrounding suites left in the database.
+// The sentinels are written onto a real user and read back out of the response bytes, so the assertions hold
+// whatever the surrounding suites left in the database.
 var GOOGLE_TOKEN_SENTINEL = 'ya29.M6-SENTINEL-GOOGLE-BEARER-TOKEN',
     GOOGLE_ID_SENTINEL    = 'M6-SENTINEL-GOOGLE-ID';
 
@@ -95,8 +88,7 @@ module.exports = function() {
         });
       });
 
-      // The two whole-document clones. Added coverage, not a rewrite of anything above: both surfaces
-      // were previously unasserted, so nothing recorded what they actually put on the wire.
+      // The two whole-document clones, which are the surfaces `Credentials.redact` has to cover itself.
       describe('and the user I am administering is linked to Google', function() {
         before(function(done) {
           user.profiles = { google : { id : GOOGLE_ID_SENTINEL, token : GOOGLE_TOKEN_SENTINEL } };
@@ -128,7 +120,7 @@ module.exports = function() {
                 // The non-credential half of the provider profile still renders, which is what proves
                 // the scrub is a deny-list rather than a projection.
                 response.text.should.contain(GOOGLE_ID_SENTINEL);
-                // SEC-13 / M6 / SV-03: neither credential class reaches the rendered page.
+                // Neither credential class reaches the rendered page.
                 response.text.should.not.contain(GOOGLE_TOKEN_SENTINEL);
                 response.text.should.not.contain(user.password);
                 done();
@@ -152,8 +144,8 @@ module.exports = function() {
                 response.body.should.have.property('user');
                 response.body.user.username.should.eql(user.username);
                 response.body.user.profiles.google.should.have.property('id', GOOGLE_ID_SENTINEL);
-                // SEC-13 / M6 / SV-03: the nested provider bearer token and the bcrypt hash are both
-                // removed, while every other key of the clone is byte-identical.
+                // The nested provider bearer token and the bcrypt hash are both removed, while every other
+                // key of the clone is byte-identical.
                 response.body.user.profiles.google.should.not.have.property('token');
                 response.body.user.should.not.have.property('password');
                 JSON.stringify(response.body).should.not.contain(GOOGLE_TOKEN_SENTINEL);

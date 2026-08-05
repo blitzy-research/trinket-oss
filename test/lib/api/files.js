@@ -47,12 +47,10 @@ module.exports = function() {
           });
         });
 
-        // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md. `POST /file` declares no
-        // `multipart` payload option (byte-identical at the base commit) so hapi rejects the
-        // `multipart/form-data` this helper sends before the handler runs. Verified against an isolated
-        // install of the BASE lockfile's @hapi/hapi 20.3.0 + @hapi/subtext 7.1.0: 415 there too, so the
-        // status is INHERITED. Adding `multipart : true` would be the improvement R-4 forbids and a TR2
-        // status change. `fileId` therefore stays undefined, which the download suites below assert.
+        // `POST /file` declares no `multipart` payload option, so hapi rejects the `multipart/form-data`
+        // this helper sends before the handler runs and answers 415. Adding `multipart : true` would be a
+        // prohibited behavior improvement and a status change. `fileId` therefore stays undefined, which the
+        // download suites below assert. See docs/PRESERVED-QUIRKS.md.
         it('should reject the multipart upload as an unsupported media type', function(done) {
           flow.wasOk.should.be.true;
           flow.lastResponse.statusCode.should.eql(415);
@@ -72,8 +70,7 @@ module.exports = function() {
           });
         });
 
-        // R-6 ADJUDICATION - the same inherited 415 as the gif upload above, so `ipynbId` also stays
-        // undefined. See the annotated twin above.
+        // The same 415 as the gif upload above, so `ipynbId` also stays undefined. See the twin above.
         it('should reject the multipart upload as an unsupported media type', function(done) {
           flow.wasOk.should.be.true;
           flow.lastResponse.statusCode.should.eql(415);
@@ -93,9 +90,9 @@ module.exports = function() {
         });
       });
 
-      // R-6 ADJUDICATION, MEASURED - see docs/PRESERVED-QUIRKS.md. `fileId` is never assigned because the
-      // upload answers the inherited 415 above, so the `before` hook requests
-      // `GET /api/files/undefined/download` and gets 404 with no content-disposition - at both commits.
+      // `fileId` is never assigned, because the upload answers the 415 above, so the `before` hook requests
+      // `GET /api/files/undefined/download` and gets 404 with no content-disposition. See
+      // docs/PRESERVED-QUIRKS.md.
       it('should answer 404 because the upload never produced a file', function() {
         flow.wasOk.should.be.true;
         flow.lastResponse.statusCode.should.eql(404);
@@ -111,7 +108,7 @@ module.exports = function() {
         });
       });
 
-      // R-6 ADJUDICATION - the same inherited 404 as the gif download above. See the twin above.
+      // The same 404 as the gif download above. See the twin above.
       it('should answer 404 because the upload never produced a file', function() {
         flow.wasOk.should.be.true;
         flow.lastResponse.statusCode.should.eql(404);
@@ -121,26 +118,19 @@ module.exports = function() {
     });
 
     /**
-     * THE SUCCESSFUL FILE-STORAGE PATH, RESTORED ADDITIVELY (review finding M-27).
+     * THE SUCCESSFUL FILE-STORAGE PATH.
      *
-     * The four adjudications above are correct and stay exactly as they are: `POST /file` really does
-     * answer an inherited 415 to the multipart body test/helpers/flow.js sends, and the two download
-     * suites really do request `/api/files/undefined/download`. But encoding only those outcomes cost
-     * this file its entire success coverage - the response payload contract, the persisted File document,
-     * and the two attachment downloads - which is the largest single assertion loss the review found.
-     *
-     * Everything the removed assertions reached for is restored here, and more, WITHOUT changing a line
-     * of production code:
+     * The four cases above pin what the routes answer to the requests test/helpers/flow.js sends — a 415 to a
+     * multipart body and a 404 to `/api/files/undefined/download`. This block covers the success path they
+     * cannot reach, without changing a line of production code:
      *
      *   - the upload PAYLOAD contract and the persisted DOCUMENT are proven by invoking
      *     lib/controllers/files.js#upload directly with the real File model and the real path/slug/mime
      *     derivation, stubbing only the S3 write. That is the one seam that has to be stubbed: the
      *     configured bucket is the placeholder `your-materials-bucket` and there is no S3 to write to.
      *   - the DOWNLOAD contract is proven over real HTTP against the real route, the real `file`
-     *     pre-handler and the real response contract, with a File document this block creates and only
-     *     the S3 read stubbed.
-     *
-     * Every expectation below was MEASURED first (R-6), not predicted.
+     *     pre-handler and the real response contract, with a File document this block creates and only the
+     *     S3 read stubbed.
      */
     describe('The successful file-storage path (restored additively)', function() {
       var owner       = null,
@@ -167,8 +157,8 @@ module.exports = function() {
 
           // `File#setOwner` is what satisfies the model's required `_owner`, and without a real owner
           // `file.save()` rejects - which lib/controllers/files.js SWALLOWS, so the handler would answer
-          // 200 with an id that was never persisted. Measured: File.findById then resolves null. Using a
-          // real owner is therefore what makes the persistence assertions below mean anything.
+          // 200 with an id that was never persisted, and File.findById would then resolve null. Using a real
+          // owner is what makes the persistence assertions below mean anything.
           return User.findByLogin(defaults.user.email, function(lookupErr, doc) {
             if (lookupErr) {
               return done(lookupErr);
@@ -241,18 +231,15 @@ module.exports = function() {
         return doc;
       }
 
-      // ---------------------------------------------------------------------------------------
-      // POST /file with a body hapi WILL parse - the other half of the 415 adjudication
-      // ---------------------------------------------------------------------------------------
+      // POST /file with a body hapi WILL parse
 
-      // MEASURED. The 415 above is what a multipart body gets. A body hapi does parse takes a different
-      // route entirely: `POST /file` declares `payload : { output : 'file' }` (config/routes.js:337-350),
-      // so hapi writes the raw body to a temp file and hands the handler `{ path, bytes }` - which the
-      // route's own Joi schema rejects, because `upload` is required and neither `path` nor `bytes` is
-      // allowed. The failure responder then answers HTTP 200 carrying the validation flash, because it is
-      // never given a status (the preserved no-status failure responder). Pinning this proves the
-      // validation contract of the route AND that the 415 above really is a parser-level rejection rather
-      // than the same validation failure wearing a different status.
+      // The 415 above is what a multipart body gets. A body hapi DOES parse takes a different route
+      // entirely: `POST /file` declares `payload : { output : 'file' }`, so hapi writes the raw body to a
+      // temp file and hands the handler `{ path, bytes }` — which the route's own Joi schema rejects, because
+      // `upload` is required and neither `path` nor `bytes` is allowed. The failure responder then answers
+      // HTTP 200 carrying the validation flash, because it is never given a status. Pinning this proves the
+      // route's validation contract AND that the 415 above really is a parser-level rejection rather than the
+      // same validation failure wearing a different status.
       it('answers 200 with the validation flash for a body hapi parses', function(done) {
         this.timeout(30000);
 
@@ -273,9 +260,7 @@ module.exports = function() {
         });
       });
 
-      // ---------------------------------------------------------------------------------------
       // The upload payload contract and the persisted document
-      // ---------------------------------------------------------------------------------------
 
       it('answers the full payload contract for an image upload', function() {
         this.timeout(30000);
@@ -287,8 +272,7 @@ module.exports = function() {
         return invokeUpload('image/gif', 'transparent.gif').then(function(payload) {
           should.exist(payload, 'the handler must hand the responder a payload');
 
-          // The seven keys the handler builds, in the shape POST /file answers. The removed assertions
-          // checked three of them; all seven are pinned here.
+          // The seven keys the handler builds, in the shape POST /file answers.
           Object.keys(payload).sort().should.eql(['host', 'id', 'mime', 'name', 'path', 'size', 'type']);
           payload.path.should.eql('/api/files/' + payload.id + '/transparent.gif');
           payload.type.should.eql('embed', 'an image/* upload with no explicit type derives "embed"');
@@ -299,7 +283,7 @@ module.exports = function() {
           FileUtil.uploadMaterialFile.calledOnce.should.be.true;
 
           return File.findById(payload.id).then(function(doc) {
-            // The removed assertion this replaces was `should.exist(file)` plus a mime comparison.
+            // The persisted document, so the mime the response advertises is the mime that was stored.
             should.exist(doc, 'the File document must actually be persisted');
             track(doc);
             doc.url.should.eql(STORAGE_RESULT.host + '/' + STORAGE_RESULT.path);
@@ -385,9 +369,7 @@ module.exports = function() {
         });
       });
 
-      // ---------------------------------------------------------------------------------------
       // GET /api/files/{fileId}/{fileName} over real HTTP, for a file that exists
-      // ---------------------------------------------------------------------------------------
 
       /** Creates and saves a real File document owned by the shared test user. */
       function storedFile(attributes) {
@@ -423,14 +405,14 @@ module.exports = function() {
         }).then(function(doc) {
           flow.downloadFile(doc.id, function() {
             try {
-              // The two assertions the removed test made, restored verbatim in intent.
+              // The attachment contract: the disposition header and the advertised filename.
               flow.wasOk.should.be.true;
               flow.lastResponse.statusCode.should.eql(200);
               flow.lastResponse.headers['content-disposition']
                 .should.eql('attachment; filename=transparent.gif');
               flow.lastContentType.should.contain('image/gif');
-              // And more than it made: `.bytes()` is what sets this, so it proves the size the document
-              // records is what the response advertises.
+              // `.bytes()` is what sets this, so it proves the size the document records is the size the
+              // response advertises.
               flow.lastResponse.headers['content-length'].should.eql(String(bytes.length));
               // The stored url's LAST SEGMENT is the S3 key the handler asks for, not the whole url.
               FileUtil.downloadMaterialFile.calledOnce.should.be.true;

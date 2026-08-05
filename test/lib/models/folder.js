@@ -1,9 +1,10 @@
 /**
- * Folder model coverage for review finding M-22.
+ * Folder model coverage for the two opposite timing contracts.
  *
- * deleteFolder deliberately starts permission and trinket cleanup without awaiting either one; failures
- * are logged and swallowed after the delete has already resolved. updateOwnerSlug has the opposite
- * contract and waits for every trinket save. Both timings are measured and pinned below.
+ * `deleteFolder` deliberately STARTS permission and trinket cleanup without awaiting either one, so failures
+ * are logged and swallowed after the delete has already resolved. `updateOwnerSlug` has the opposite
+ * contract and WAITS for every trinket save. Both timings, and the fate of an error on each path, are pinned
+ * below.
  */
 
 var mongoose = require('mongoose'),

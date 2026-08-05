@@ -15,16 +15,13 @@ var _        = require('underscore'),
     config   = require('../../config/app.config'),
     app      = require('../../app.js');
 
-// `app.js` exports a PROMISE, not the server - a direct consequence of its awaited plugin registration and
-// awaited start - so `app.listener` is `undefined` and the base commit's eager
-// `this.agent = server(app.listener)` produced an agent that threw
-// `TypeError: Cannot read properties of undefined (reading 'address')` on its first request. The server is
-// captured here as the promise resolves and the agent is built lazily on first use, which is the second of
-// the two shapes AAP 0.7.6 sanctions for this repair ("hoisted into a root hook or made lazy inside the
-// agent accessor"). The root-suite `before()` in test/setup.js awaits the same promise before any test runs,
-// so a request can never outrun it; laziness here is what makes that ordering sufficient rather than
-// something the harness has to enforce at require time - top-level `await` is unavailable in CommonJS, and
-// CommonJS is not optional for this tree.
+// `app.js` exports a PROMISE, not the server, so `app.listener` is `undefined` and an agent built eagerly
+// from it would throw `TypeError: Cannot read properties of undefined (reading 'address')` on its first
+// request. The server is therefore captured here as the promise resolves and the agent is built LAZILY on
+// first use. The root-suite `before()` in test/setup.js awaits the same promise before any test runs, so a
+// request can never outrun it; laziness is what makes that ordering sufficient rather than something the
+// harness has to enforce at require time, since top-level `await` is unavailable in CommonJS and CommonJS is
+// not optional for this tree.
 var resolvedServer = null;
 
 app.then(function(server) {
@@ -177,18 +174,15 @@ var methods = {
       .end(this.setLastResponse(cb));
   },
 
-  // PRESERVED VERBATIM. `config/api_routes.js:40` validates this query as `Joi.boolean().optional()`, and
-  // `yes` is not a boolean literal Joi has ever coerced: measured against BOTH the base commit's joi
-  // 17.13.3 and the target joi 18.2.3, `'yes'` is REJECTED with the byte-identical message
-  // `"outline" must be a boolean` while `'true'` is accepted and coerced to `true`. So this request never
-  // reached lib/controllers/course.js:76 at the base commit either - the route answered its validation
-  // flash instead.
+  // PRESERVED VERBATIM. `config/api_routes.js` validates this query as `Joi.boolean().optional()`, and
+  // `'yes'` is not a boolean literal Joi coerces: it is REJECTED with `"outline" must be a boolean`, so this
+  // request never reaches the controller and the route answers its validation flash instead.
   //
-  // The request is left exactly as the base commit wrote it, and its rejection is pinned as a first-class
-  // assertion in test/lib/api/course.js rather than papered over. The browser-valid form the frozen
-  // AngularJS client sends is covered separately by getCourseWithBooleanOutline below, which is also what
-  // the `When I edit an existing course` fixture hook uses - so both readings are asserted, neither
-  // replaces the other, and no test is blocked from executing. See docs/PRESERVED-QUIRKS.md section 13.7.
+  // The request is left as it stands and its rejection is pinned as a first-class assertion in
+  // test/lib/api/course.js rather than papered over. The browser-valid form the frozen AngularJS client
+  // sends is covered separately by getCourseWithBooleanOutline below, which is also what the `When I edit an
+  // existing course` fixture hook uses — so both readings are asserted, neither replaces the other, and no
+  // test is blocked from executing. See docs/PRESERVED-QUIRKS.md section 13.7.
   getCourseWithOutline : function(id, cb) {
     return this.get('/api/courses/' + id + '?outline=yes')
       .end(this.setLastResponse(cb));
@@ -197,7 +191,7 @@ var methods = {
   // The form the frozen AngularJS client actually sends: public/js/courseEditor/course.js:15,
   // public/js/courseEditor/controllers/root.js:147,
   // public/js/courseEditor/controllers/materialControl.js:91 and public/js/classPage/app.js:57 all pass
-  // `{ outline : true }`, which Angular serializes as `outline=true`. Added coverage (F-05), not a
+  // `{ outline : true }`, which Angular serializes as `outline=true`. Additional coverage, not a
   // replacement for the helper above.
   getCourseWithBooleanOutline : function(id, cb) {
     return this.get('/api/courses/' + id + '?outline=true')
@@ -331,12 +325,11 @@ var methods = {
   /**
    * Requests the embed page for a trinket, with an optional query string.
    *
-   * Review finding M9 - a false green. The test was `if (query.length)`, and every caller passes an
-   * OBJECT (`{ start : 'result' }`), whose `length` is `undefined`. The query was therefore NEVER
-   * appended: `test/lib/api/trinket.js`'s "with result showing" case issued exactly the same request as
-   * the plain embed case beside it and could not have detected the parameter being dropped, ignored or
-   * rejected. The test is now on the object's own key count, and a pre-built string is accepted too so
-   * the existing shape of the argument stays free.
+   * The presence test is on the object's own KEY COUNT, not on `query.length`: every caller passes an
+   * OBJECT such as `{ start : 'result' }`, whose `length` is `undefined`, so a length test would silently
+   * drop the query and make the "with result showing" case in test/lib/api/trinket.js issue exactly the
+   * same request as the plain embed case beside it. A pre-built string is accepted as well, so the shape
+   * of the argument stays free.
    *
    * @param {string}        trinketId The trinket id or short code.
    * @param {string}        lang      The trinket language segment.
@@ -420,19 +413,11 @@ var methods = {
    * Makes `user` the active cookie slot, logging in - and creating the account if necessary - when a
    * callback is supplied and the slot holds no cookie yet.
    *
-   * Review finding M14, four defects in the completion handler, all of which turned a broken fixture into
-   * a confusing later failure instead of a clear immediate one:
-   *
-   *   1. `done(err)` did not `return`, so execution continued;
-   *   2. `res.statusCode` was then dereferenced - and on a transport error `res` is `undefined`, so the
-   *      real error was replaced by `TypeError: Cannot read properties of undefined`;
-   *   3. `done` could be called twice or three times on one invocation, which Mocha reports as
-   *      "done() called multiple times" attributed to whichever test happened to be running;
-   *   4. `userModel.save(function(err) { ... })` DISCARDED its error and logged in regardless, so a
-   *      rejected fixture save surfaced as an unexplained failed login.
-   *
-   * Every error path now returns, the response is only read once an error has been ruled out, and the
-   * save error is propagated before the login is attempted.
+   * Three invariants in the completion handler keep a broken fixture from becoming a confusing later
+   * failure: every error path RETURNS, so `done` is called exactly once per invocation and Mocha cannot
+   * report "done() called multiple times" against whichever test is running; the response is dereferenced
+   * only once an error has been ruled out, because on a transport error it is `undefined`; and the fixture
+   * save's error is propagated before the login is attempted rather than discarded.
    *
    * @param {string}     user   A key into test/helpers/defaults.
    * @param {Function}   [done] Called with (err) once the slot is usable; omitted for a bare switch.
@@ -500,11 +485,11 @@ var methods = {
   /**
    * Returns the raw `Set-Cookie` array a user held BEFORE the most recent one replaced it.
    *
-   * Review finding M7 (CWE-384 coverage). `setLastResponse` below overwrites the single cookie slot on
-   * every response, so the cookie a session held before a security transition - a login, which rotates
-   * the session id, or a logout, which revokes it - used to be discarded the instant the transition
-   * happened. Without it, no test could replay the old cookie and require that it be refused, which is
-   * the only assertion that actually proves rotation and invalidation rather than assuming them.
+   * `setLastResponse` below overwrites the single cookie slot on every response, so without this history
+   * the cookie a session held before a security transition — a login, which rotates the session id, or a
+   * logout, which revokes it — would be discarded the instant the transition happened. Replaying the old
+   * cookie and requiring that it be refused is the only assertion that proves rotation and invalidation
+   * rather than assuming them.
    *
    * @param {string} [user] A cookie slot; defaults to the active user.
    * @returns {string[]|undefined} The previous raw header value, or undefined if there is only one.
@@ -552,9 +537,9 @@ var methods = {
 
     return function(err, res) {
       if (!err && res.headers['set-cookie']) {
-        // Review finding M7. The slot still holds only the CURRENT cookie, because every existing call
-        // site reads it that way, but each value is appended to a per-user history first so the
-        // pre-transition credential survives for `previousCookie` to replay.
+        // The slot holds only the CURRENT cookie, because every call site reads it that way, but each
+        // value is appended to a per-user history first so the pre-transition credential survives for
+        // `previousCookie` to replay.
         self.cookieHistory[self.activeUser] = self.cookieHistory[self.activeUser] || [];
         self.cookieHistory[self.activeUser].push(res.headers['set-cookie']);
 
@@ -565,12 +550,11 @@ var methods = {
       self.lastError    = err;
       self.wasOk        = err ? false : true;
       if (res && res.redirect) {
-        // A `Location` header reaches this one line in both forms - relative from app.js's onPreResponse
+        // A `Location` header reaches this one line in both forms — relative from app.js's onPreResponse
         // takeover and the controllers' own `h.redirect()`, absolute from lib/http/redirect.js's
-        // absolutization - so the base argument is required: it resolves the relative form and is ignored
-        // once the header is already absolute. Only `lastRedirect.pathname` is ever read, and for every
-        // `Location` the suite emits this form yields the pathname the base commit's legacy parser did.
-        // The measurement is in docs/PRESERVED-QUIRKS.md section 3.13.
+        // absolutization — so the base argument is required: it resolves the relative form and is ignored
+        // once the header is already absolute. Only `lastRedirect.pathname` is ever read. See
+        // docs/PRESERVED-QUIRKS.md section 3.13.
         self.lastRedirect = URL.parse(res.headers.location, config.url);
       }
 
@@ -586,8 +570,7 @@ var methods = {
  *
  * The listener is a plain http.Server that is never `listen`-ed here, because `config/test.yaml` sets
  * `app.start: false` and `app.js` honours it. supertest binds an unlistened server to an ephemeral port
- * itself, which is what keeps parallel clones from colliding - measured on this tree: `GET /about` answers
- * 200 through exactly this path.
+ * itself, which is what keeps parallel clones from colliding.
  *
  * @param {Object} flow The Flow instance to attach the agent to.
  * @returns {Object} The supertest agent.
@@ -629,10 +612,10 @@ function Flow() {
   this.agent      = null;
   this.activeUser = 'user';
   this.cookies    = {};
-  // Review finding M7 (CWE-384 coverage). `cookies` keeps only the current credential per user, which is
-  // what every existing call site expects; this keeps the full sequence so a test can prove that a login
-  // rotated the session id and that the pre-transition cookie is refused afterwards. Raw arrays are
-  // stored, unparsed, so a replay sends byte-identical bytes back.
+  // `cookies` keeps only the current credential per user, which is what every call site expects; this keeps
+  // the full sequence so a test can prove that a login rotated the session id and that the pre-transition
+  // cookie is refused afterwards. Raw arrays are stored, unparsed, so a replay sends byte-identical bytes
+  // back.
   this.cookieHistory = {};
 
   // bind all of the methods for ease of use in before/after

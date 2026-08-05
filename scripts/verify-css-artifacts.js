@@ -3,23 +3,17 @@
  * Verify the two compiled stylesheets against the committed asset contract.
  * Usage: node scripts/verify-css-artifacts.js   (runs automatically as `npm run build`'s post hook)
  *
- * WHAT IT GATES AND WHY (review finding P3-2)
- * -------------------------------------------
- * AAP 0.7.4 pins the build output byte for byte: `public/css/base.css` at 265,727 bytes,
- * `public/css/embed.css` at 296,352, and ZERO `.css.map` files despite `vite.config.mjs` requesting
- * source maps. `sass` 1.98.0 and `vite` 4.5.14 are held at exactly those versions, and
- * `static/scss/**` is frozen, precisely so the Foundation 5.5.3 fork keeps compiling to those bytes.
- * A stylesheet that changed would be a client-visible change to every page, and a new `.css.map`
- * would be a new asset URL - both of which the asset-URL contract (TR5) forbids.
+ * WHAT IT GATES AND WHY. The build output is fixed byte for byte: two stylesheets at recorded sizes
+ * and digests, and ZERO `.css.map` files despite `vite.config.mjs` requesting source maps. `sass` and
+ * `vite` are held at exact versions and `static/scss/**` is frozen precisely so the Foundation fork
+ * keeps compiling to those bytes. A changed stylesheet would be a client-visible change to every page,
+ * and a new `.css.map` would be a new asset URL.
  *
- * The Docker image build has enforced this since the container work landed; the HOST build had no
- * gate at all, so `npm run build` on a developer machine could emit different CSS and say nothing.
- * This script is that gate, and it is the ONLY implementation of it: `package.json` runs it as the
- * `postbuild` hook and the `Dockerfile` gets it through the same `npm run build`, so the image and
- * the host cannot drift apart. Two copies of a gate is how a gate rots.
+ * This is the ONLY implementation of the gate: package.json runs it as the `postbuild` hook, and the
+ * Dockerfile reaches it through the same `npm run build`, so the image and the host cannot drift apart.
  *
  * EXPECTATIONS ARE READ, NEVER RESTATED. Every value comes from
- * `test/baseline/responses.json#buildArtifacts`, which is the R-6 parity evidence the replay harness
+ * `test/baseline/responses.json#buildArtifacts`, which is the parity evidence the replay harness
  * compares against. Hard-coding the digests here would create a second source of truth that could
  * agree with a changed build while the evidence disagreed.
  *
@@ -127,9 +121,9 @@ function verify() {
     log('verified ' + relative + ': ' + bytes.length + ' bytes, sha256 ' + digest);
   });
 
-  // The source-map half of the contract. vite.config.mjs sets `sourcemap: true` and the build has
-  // always emitted none; a `.css.map` appearing is a NEW asset URL, so it is drift rather than a
-  // harmless extra. An absent public/css is already reported per artifact above.
+  // The source-map half of the contract: vite.config.mjs sets `sourcemap: true` and the build emits
+  // none, so a `.css.map` appearing is a NEW asset URL and therefore drift rather than a harmless
+  // extra. An absent public/css is already reported per artifact above.
   var maps = mapFilesUnderCss();
 
   if (maps !== null && typeof contract.cssMapFilesEmitted === 'number') {

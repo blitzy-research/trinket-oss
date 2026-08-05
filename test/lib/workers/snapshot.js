@@ -1,29 +1,19 @@
 /**
- * Snapshot removal: lib/workers/util/snapshot.js (review finding M-19).
+ * Snapshot removal: lib/workers/util/snapshot.js.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * This module is small but it sits on a destructive path - it deletes objects out of the snapshots bucket
- * when a trinket is removed (lib/models/trinket.js:317) - and it was untested. The async conversion here is
- * also unusually load bearing. At the base commit `fileUtil.removeFile` took an error-first callback and
- * this module wrapped it in `util.promisify` at module load; that wrapper was what turned a delete into
- * something awaitable, and it made two failure modes this module's problem - a callback that never fired
- * would hang snapshot removal forever, and a `this` reference inside `removeFile` would throw, because
- * promisify invokes it unbound. Both halves of that arrangement are gone: `removeFile` is promise-native
- * and the wrapper has nothing to bridge. The OBLIGATIONS it existed to satisfy are unchanged and are
- * pinned below - the delete must settle exactly once, a failure must reject rather than disappear, and the
- * function must still work with no receiver.
+ * The module is small but it sits on a DESTRUCTIVE path — it deletes objects out of the snapshots bucket
+ * when a trinket is removed — so three obligations are pinned below: the delete settles exactly once, a
+ * failure REJECTS rather than disappearing, and the function still works when called with no receiver.
+ * `fileUtil.removeFile` is promise-native, so nothing bridges a callback here and there is no way for an
+ * unfired callback to hang snapshot removal or for an unbound `this` to throw.
  *
  * WHAT IS STUBBED
- * ---------------
- *   - `config/aws.js#getS3Client` - a recorder, so the real `DeleteObjectCommand` is constructed by
+ *   - `config/aws.js#getS3Client` — a recorder, so the real `DeleteObjectCommand` is constructed by
  *     production code and its bucket and key are assertable. NOTHING is deleted from a real bucket.
- *   - `internals.isSnapshotUsed` - only where a branch has to be forced. That indirection is the module's
- *     own documented test hatch, exported under `config.isTest`, and the reason `removeFile` reads
+ *   - `internals.isSnapshotUsed` — only where a branch has to be forced. That indirection is the module's
+ *     own test hatch, exported under `config.isTest`, and the reason `removeFile` reads
  *     `internals.isSnapshotUsed` rather than calling the function directly.
- *   - `Trinket.model.countDocuments` - only in the tests that cover `isSnapshotUsed` itself.
- *
- * Every expectation below was MEASURED against the running module first (R-6).
+ *   - `Trinket.model.countDocuments` — only in the tests that cover `isSnapshotUsed` itself.
  */
 
 var chai     = require('chai'),
@@ -196,7 +186,7 @@ describe('Snapshot removal', function() {
         throw new Error('expected the rejection to reach the caller');
       }, function(err) {
         err.message.should.eql('S3 delete refused');
-        // The delete WAS attempted; the rejection is the promisified callback's error argument.
+        // The delete WAS attempted, and the rejection is the one the S3 send() promise produced.
         sent.length.should.eql(1);
       });
     });
@@ -214,19 +204,16 @@ describe('Snapshot removal', function() {
   });
 
   describe('the promise contract this module depends on', function() {
-    // The base commit promisified `fileUtil.removeFile` at LOAD, which made "the callback must fire
-    // exactly once" this module's load-bearing assumption. The async conversion removed both halves:
-    // removeFile is promise-native, and the util.promisify wrapper is gone with the callback it wrapped.
-    // What survives unchanged is the obligation the wrapper existed to satisfy - the delete must settle
-    // exactly once, and a failure must reject rather than disappear - so that is what is asserted here,
-    // against the delivered contract rather than against the retired bridge.
+    // `fileUtil.removeFile` is promise-native and nothing wraps it, so the obligations asserted here are
+    // stated against that promise directly: the delete settles exactly ONCE, and a failure rejects rather
+    // than disappearing.
 
     it('does not promisify the file utility any more, because it has nothing to bridge', function() {
       var source = fs.readFileSync(
         path.join(__dirname, '..', '..', '..', 'lib', 'workers', 'util', 'snapshot.js'), 'utf8');
 
-      // No promisify CALL survives. The identifier still appears once, in the comment that records why
-      // the wrapper was removed, which is documentation rather than a bridge.
+      // No promisify CALL exists in the module. The identifier appears only in the comment that records why
+      // no wrapper is needed, which is documentation rather than a bridge.
       source.should.not.match(/(?:util\.)?promisify\(/);
       // Returned, not fired and forgotten: that is what keeps a delete failure inside the chain.
       source.should.contain('return fileUtil.removeFile(container, file);');

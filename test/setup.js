@@ -2,67 +2,55 @@
 // because node-config resolves its whole layered configuration on the first `require('config')` in the
 // process and never re-reads it, and because `config/app.config.js` freezes a require order in which
 // `./routes` and `./api_routes` load before `./db` (`mongoose-schema-extend` conflicts with Joi otherwise).
-// Letting Mocha's default recursive glob decide costs the whole run: measured on the installed mocha
-// 11.7.6 with `collect-files`, the glob does not sort, this file lands LAST, and the process dies during
-// file loading with `AssertError: Schema can only contain plain objects` at joi/lib/compile.js:88 via
-// config/api_routes.js:39 - zero tests run.
+// Mocha's default recursive glob does not sort, so left to it this file lands LAST and the process dies
+// during file loading with `AssertError: Schema can only contain plain objects` before a single test runs.
 //
-// Three mechanisms put this file first, and `.mocharc.json` still carries exactly the four options the
-// Technical Specification enumerates (reporter, recursive, check-leaks, exit) - no fifth key:
+// Three mechanisms put this file first, and `.mocharc.json` still carries exactly four options — reporter,
+// recursive, check-leaks, exit — and no fifth key:
 //   1. `package.json`'s `test` script passes `--file ./test/setup.js`. `--file` rather than `--require`
 //      deliberately: `--file` loads the module through the ordinary spec path, so Mocha's BDD globals are
 //      already installed and the root-suite `before()` at the bottom of this file attaches, whereas
 //      `--require` runs ahead of the interface and would make that impossible.
 //   2. The same script exports NODE_ENV and NODE_CONFIG_PERSIST_ON_CHANGE on the command line, so the
 //      environment is right even for a direct `npx mocha`.
-//   3. `test/helpers/db.js`, `test/helpers/defaults.js` and `test/helpers/flow.js` - the first modules to
-//      reach `config` and `app.js` - each `require('../setup')` as their first statement, which makes the
+//   3. `test/helpers/db.js`, `test/helpers/defaults.js` and `test/helpers/flow.js` — the first modules to
+//      reach `config` and `app.js` — each `require('../setup')` as their first statement, which makes the
 //      ordering a require-cache fact rather than a filename fact. Node's module cache makes this
 //      idempotent.
-// Anything that still slipped through would be caught by the fail-closed database guard in
-// test/helpers/db.js rather than by luck.
+// Anything that still slipped through is caught by the fail-closed database guard in test/helpers/db.js
+// rather than by luck. See docs/PRESERVED-QUIRKS.md section 13.1.
 //
-// The assignments below are the base commit's first two lines and stay first. Full account in
-// docs/PRESERVED-QUIRKS.md section 13.1.
+// These two assignments stay first.
 process.env.NODE_ENV = 'test';
 process.env.NODE_CONFIG_PERSIST_ON_CHANGE = 'N';
 
 // The values below are forced through `$NODE_CONFIG` because `config/*.yaml` is frozen and because none of
-// them may be sourced from developer configuration. `config` is held at 0.4.37 and applies
-// `$NODE_CONFIG` AFTER every file layer (node_modules/config/lib/config.js:746-757, measured), so this is
-// the only layer that outranks the gitignored `config/local.yaml`.
+// them may be sourced from developer configuration. node-config applies `$NODE_CONFIG` AFTER every file
+// layer, so this is the only layer that outranks the gitignored `config/local.yaml`.
 //
-// 1. THE WHOLE MONGO CONNECTION IDENTITY - not merely the database name (review finding F-01, CWE-20 /
-//    CWE-706). `test/helpers/db.js` drops the database it is connected to, twice, and the endpoint it drops
-//    it on is whatever `config/db.js:L7-L33` assembled. That connection string is built from ELEVEN keys:
-//    `db.mongo.{user,pass,host,port,database}` and `db.mongoread.{user,pass,host,port,database,opts}` - and
-//    a non-empty `db.mongoread.host` appends a SECOND SEED to the same string (`config/db.js:L20-L30`), so
-//    it is part of the cluster identity, not a separate read-only concern.
-//
-//    An earlier revision of this file forced only `database`, which left the other ten keys to be supplied
-//    by arbitrary configuration. `config/test.yaml:8-11` does declare `host: localhost, port: 27017,
-//    database: test`, but `local.yaml` loads AFTER it and `config/local.example.yaml:42-44` - the template
-//    the setup documentation tells developers to copy - selects `host: mongodb` and `database: trinket`,
-//    which is also `config/default.yaml:365-367`'s value. So a developer following the documented flow
-//    aimed the drops at a remote host, under whatever credentials that host carried, and only the *name*
-//    was checked before the drop.
+// 1. THE WHOLE MONGO CONNECTION IDENTITY, not merely the database name. `test/helpers/db.js` drops the
+//    database it is connected to, and the endpoint it drops it on is whatever `config/db.js` assembled
+//    from ELEVEN keys: `db.mongo.{user,pass,host,port,database}` and
+//    `db.mongoread.{user,pass,host,port,database,opts}` — a non-empty `db.mongoread.host` appends a SECOND
+//    SEED to the same connection string, so it is part of the cluster identity rather than a separate
+//    read-only concern. Forcing only `database` would leave the other ten to arbitrary configuration, and
+//    `config/local.example.yaml` — the template the setup documentation tells developers to copy — selects
+//    a remote `host: mongodb` and loads AFTER `config/test.yaml`.
 //
 //    All eleven keys are therefore REPLACED, not merged, with the loopback identity `config/test.yaml`
-//    already declares: `localhost:27017/test`, no credentials, and no second seed. Anything the incoming
-//    `$NODE_CONFIG` carried under `db.mongo` or `db.mongoread` is DISCARDED - measured on config 0.4.37, a
-//    `null` in `$NODE_CONFIG` genuinely overrides a file-layer value rather than falling through, so
-//    nulling `user`/`pass`/`mongoread.host` is effective. A parallel clone still gets its own database
-//    through CLONE_INDEX below, which is the one sanctioned channel for changing this identity, and
-//    `test/helpers/db.js` independently re-validates the LIVE connection - every seed host, the absence of
-//    credentials, and the absence of an SRV/replica-set/TLS cluster - immediately before every drop.
-// 2. THE SESSION PASSWORD. `app.js:47-62` calls `process.exit(1)` when
-//    `app.plugins.session.cookieOptions.password` is shorter than 32 characters. `config/default.yaml`
-//    ships it empty and `config/test.yaml` sets no override, so on a clean checkout - where
-//    `git clean -xfd` has removed the gitignored `local.yaml` - requiring `../app.js` below killed the
-//    process before a single test ran. The literal below is a tracked, non-secret, test-only value: it
-//    seals cookies that live for the duration of one `npm test`, and it is what makes AAP goal G6
-//    ("fresh clone on Node 22: npm ci, asset build and npm test all exit 0") reproducible without any
-//    ignored file.
+//    already declares: `localhost:27017/test`, no credentials, no second seed. Anything the incoming
+//    `$NODE_CONFIG` carried under `db.mongo` or `db.mongoread` is DISCARDED, and a `null` in
+//    `$NODE_CONFIG` genuinely overrides a file-layer value rather than falling through, so nulling
+//    `user`/`pass`/`mongoread.host` is effective. CLONE_INDEX below is the one sanctioned channel for
+//    changing this identity, and `test/helpers/db.js` independently re-validates the LIVE connection —
+//    every seed host, the absence of credentials, and the absence of an SRV/replica-set/TLS cluster —
+//    immediately before every drop.
+// 2. THE SESSION PASSWORD. `app.js` calls `process.exit(1)` when
+//    `app.plugins.session.cookieOptions.password` is shorter than 32 characters, and neither
+//    `config/default.yaml` nor `config/test.yaml` supplies one, so on a clean checkout requiring
+//    `../app.js` below would kill the process before a single test ran. The literal below is a tracked,
+//    non-secret, test-only value sealing cookies that live for one `npm test`, which is what keeps a fresh
+//    clone green without any ignored file.
 var TEST_DATABASE         = 'test';
 var TEST_MONGO_HOST       = 'localhost';
 var TEST_MONGO_PORT       = 27017;
@@ -106,21 +94,19 @@ forcedConfig.db.mongoread = {
 // A parallel clone gets its own namespace so that ten checkouts sharing one mongod cannot drop each
 // other's database mid-run; `test/helpers/db.js`'s allow-list admits exactly this `test_<suffix>` shape.
 //
-// THE RAW VALUE IS VALIDATED, AND NOTHING IS NORMALISED (review finding F-03, CWE-20). An earlier revision
-// sanitised first - `String(CLONE_INDEX).replace(/[^A-Za-z0-9_-]/g, '')` - and then validated only what
-// survived, which made the mapping from CLONE_INDEX to database name NON-INJECTIVE: `a/b` and `ab` both
-// reduced to `ab` and therefore both selected `test_ab`, so two clones that had each been given a distinct
-// CLONE_INDEX would silently share one database and drop it under each other. Rejecting any value that is
-// not ALREADY a legal suffix makes the mapping the identity plus a fixed prefix, so two distinct accepted
-// values can never collide.
+// THE RAW VALUE IS VALIDATED, AND NOTHING IS NORMALISED. Sanitising first and validating only what
+// survived would make the mapping from CLONE_INDEX to database name NON-INJECTIVE — `a/b` and `ab` both
+// reduce to `ab` and would select the same `test_ab` — so two clones given distinct CLONE_INDEX values
+// could silently share one database and drop it under each other. Rejecting any value that is not ALREADY
+// a legal suffix makes the mapping the identity plus a fixed prefix, so two distinct accepted values can
+// never collide.
 //
-// The refusal happens here, at the point the value is read, rather than being left to the db helper.
-// `test/helpers/db.js:34`'s `/^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/` would also refuse a bad name, and
-// that refusal is correct and fail-closed, but it arrives much later, from a timer during that module's
-// load, and it advises the reader to "Set CLONE_INDEX" - which they did. Silently falling back to the
-// shared `test` database would be worse still: it would hand two parallel clones the same database to drop,
-// which is the exact hazard this namespace exists to prevent. So a bad value fails the bootstrap loudly and
-// by name - the same treatment the malformed `$NODE_CONFIG` below gets.
+// The refusal happens here, at the point the value is read, rather than being left to the db helper. That
+// helper's own name pattern would also refuse a bad name, correctly and fail-closed, but it arrives much
+// later, from a timer during module load, and it advises the reader to "Set CLONE_INDEX" — which they did.
+// Silently falling back to the shared `test` database would be worse still: it would hand two parallel
+// clones the same database to drop, which is the hazard this namespace exists to prevent. So a bad value
+// fails the bootstrap loudly and by name, the same treatment the malformed `$NODE_CONFIG` below gets.
 if (process.env.CLONE_INDEX) {
   var cloneSuffix       = String(process.env.CLONE_INDEX);
   var cloneDatabaseName = TEST_DATABASE + '_' + cloneSuffix;
@@ -171,24 +157,22 @@ var sinon      = require('sinon'),
     redismock  = require('redis-mock'),
     catboxmock = require('./helpers/catbox-redis');
 
-// `redis-mock` is a node_redis v3 double: measured on the installed 0.56.3, its client exposes only
-// callback-style, lower-case commands (`get(key, cb)`, `sismember(key, member, cb)`, ...) and has neither
-// `connect` nor `isOpen`, while `redis` 4.7.1 - the version this application uses - exposes
-// promise-returning camelCase commands behind an explicit `connect()`. The two call sites that create a
-// client, `lib/util/store.js:167` and `config/redis.js:38`, both `await client.connect()` and then call
-// camelCase commands, so handing them a bare redis-mock client makes every store operation reject with
-// `TypeError: redisClient.connect is not a function`. `config/redis.js:51` swallows that, but
-// `lib/util/store.js` caches the rejected promise forever, which is why POST /users answered its `fail`
-// redirect instead of creating the account. The adapter below therefore keeps redis-mock as the double -
-// it still holds all the data - and presents it through the v4 surface the application actually calls.
+// `redis-mock` is a node_redis v3 double: its client exposes only callback-style, lower-case commands
+// (`get(key, cb)`, `sismember(key, member, cb)`, ...) and has neither `connect` nor `isOpen`, while the
+// `redis` 4.x client this application uses exposes promise-returning camelCase commands behind an explicit
+// `connect()`. Both call sites that create a client — `lib/util/store.js` and `config/redis.js` — `await
+// client.connect()` and then call camelCase commands, so a bare redis-mock client makes every store
+// operation reject with `TypeError: redisClient.connect is not a function`; `config/redis.js` swallows that
+// but `lib/util/store.js` caches the rejected promise forever. The adapter below therefore keeps redis-mock
+// as the double — it still holds all the data — and presents it through the v4 surface the application
+// actually calls.
 //
-// The surface is exactly the one the application consumes and nothing more. A census of every
-// `client.<method>` and `redisClient.<method>` reference in app.js, config/ and lib/ yields fifteen
-// members: the property `isOpen` (config/redis.js:16,63 and lib/util/store.js:144), the two non-command
-// methods `connect` and `on`, and the twelve commands mapped below. `quit`, `hGet`, `hGetAll`, `hSet`,
-// `keys`, `sAdd`, `sMembers` and `sRem` have no call site anywhere in the tree and are therefore NOT
-// exposed - a double wider than the contract it stands in for hides a genuine gap rather than covering
-// one.
+// The surface is exactly the one the application consumes and nothing more: the property `isOpen`, the two
+// non-command methods `connect` and `on`, and the twelve commands mapped below, which is every
+// `client.<method>` / `redisClient.<method>` reference in app.js, config/ and lib/. `quit`, `hGet`,
+// `hGetAll`, `hSet`, `keys`, `sAdd`, `sMembers` and `sRem` have no call site anywhere in the tree and are
+// therefore NOT exposed — a double wider than the contract it stands in for hides a genuine gap rather than
+// covering one.
 var REDIS_V4_TO_MOCK_COMMAND = {
   del       : 'del',
   exists    : 'exists',
@@ -204,29 +188,26 @@ var REDIS_V4_TO_MOCK_COMMAND = {
   set       : 'set'
 };
 
-// node_redis v3 answers SISMEMBER with 0/1 while v4 answers with a boolean - `@redis/client`'s
-// SISMEMBER command binds `transformBooleanReply` - so this one reply is coerced to match the real v4
-// client. `lib/util/store.js:37`, the in-memory twin of this double, likewise answers with a boolean, and
-// the reply reaches a caller unwrapped: `lib/util/store/emailStore.js:20-22` returns it straight out of
-// `blockListLookup`, which `lib/controllers/users.js:100` reads as `isBlocked`. Every other reply shape is
+// node_redis v3 answers SISMEMBER with 0/1 while v4 answers with a boolean, so this one reply is coerced to
+// match the real v4 client. `lib/util/store.js`, the in-memory twin of this double, likewise answers with a
+// boolean, and the reply reaches a caller unwrapped: `lib/util/store/emailStore.js` returns it straight out
+// of `blockListLookup`, which `lib/controllers/users.js` reads as `isBlocked`. Every other reply shape is
 // identical between the two versions.
 var REDIS_V4_BOOLEAN_REPLIES = ['sIsMember'];
 
 // The number of arguments each mapped command cannot do without, so that a call which is short of one is
 // REJECTED rather than left unanswered. The adapter below appends its own callback as the next positional
-// argument, which is how a callback-shaped double is driven from a promise - but it also means that a short
-// call has that callback consumed AS the missing argument, so redis-mock never calls it and the promise
-// never settles. Measured on the installed 0.56.3: `get()`, `expire('k')`, `lRange('l', 0)` and
-// `sIsMember('s')` all hang forever, and inside a spec that surfaces as a 2000 ms Mocha timeout naming the
-// test rather than the call - a future call-site typo would be diagnosed as a slow test.
+// argument, which is how a callback-shaped double is driven from a promise — but it also means a short call
+// has that callback consumed AS the missing argument, so redis-mock never invokes it and the promise never
+// settles. `get()`, `expire('k')`, `lRange('l', 0)` and `sIsMember('s')` would each hang forever, and inside
+// a spec that surfaces as a Mocha timeout naming the test rather than the call, so a call-site typo would be
+// diagnosed as a slow test.
 //
-// A prompt `TypeError` is the faithful answer, not an invention: measured against the REAL redis 4.7.1
-// client on the live redis 7.4 server, `client.get()` rejects with `TypeError: Invalid argument type` and
-// `client.expire('k')` with `TypeError: Cannot read properties of undefined (reading 'toString')`, because
-// v4 fails while encoding the command and never reaches the server's own
-// `ERR wrong number of arguments` reply. The counts below are the minimums node-redis v4 declares, and
-// every call site in the tree already satisfies them - `lib/util/store.js:201-213` and the five modules
-// under `lib/util/store/` - so this guard cannot reject a call the application actually makes.
+// A prompt `TypeError` is the faithful answer rather than an invention: the real v4 client also rejects with
+// a `TypeError` on a short call, because it fails while encoding the command and never reaches the server's
+// own `ERR wrong number of arguments` reply. The counts below are the minimums node-redis v4 declares, and
+// every call site in the tree — `lib/util/store.js` and the five modules under `lib/util/store/` — already
+// satisfies them, so this guard cannot reject a call the application actually makes.
 var REDIS_V4_MINIMUM_ARGUMENTS = {
   del       : 1,
   exists    : 1,
@@ -288,22 +269,19 @@ function createRedisMockV4Client() {
 // `.callsFake`. The stub still resolves to redis-mock, now through the v4 adapter above.
 sinon.stub(redis, 'createClient').callsFake(createRedisMockV4Client);
 
-// The nine model globals `app.js:285-293` assigns, and a snapshot of what each name held BEFORE `app.js`
-// was ever required. Both live above that require on purpose, because "before" has to be a structural fact
-// here rather than a claim about microtask timing.
+// The nine model globals `app.js` assigns, and a snapshot of what each name held BEFORE `app.js` was ever
+// required. Both live above that require on purpose, because "before" has to be a structural fact here
+// rather than a claim about microtask timing.
 //
 // The snapshot exists because `typeof global[name] === 'undefined'` is not a usable test for "app.js
-// assigned this" (review finding F3). Eight of the nine names are genuinely absent from a fresh Node 22
-// global, but `File` is NOT: Node 22 defines it as a non-enumerable built-in class, so it is already a
-// function before this file runs. A drift check phrased as `typeof === 'undefined'` therefore passes for
-// `File` whether or not `app.js:289` still assigns it - and the failure that would slip through is the
-// nastiest kind, because Node's `File` is a real constructor that a spec would happily call. It has no
-// `getName`, no `schema` and no `findById`, so the first symptom would be an unrelated `TypeError` from
-// deep inside whichever model call the spec made, pointing at the model layer rather than at the missing
-// assignment. Measured on the installed node v22.23.2: pre-require, `typeof global.File === 'function'`
-// with `global.File.name === 'File'`; post-boot it is the model, and `Object.getOwnPropertyDescriptor`
-// reports `enumerable: false` in both states, which is why `Object.keys(global)` never reported it and why
-// the leak failure described further down named eight keys rather than nine.
+// assigned this". Eight of the nine names are genuinely absent from a fresh Node 22 global, but `File` is
+// NOT: Node 22 defines it as a non-enumerable built-in class, so it is already a function before this file
+// runs. A drift check phrased as `typeof === 'undefined'` therefore passes for `File` whether or not
+// `app.js` still assigns it — and Node's `File` is a real constructor a spec would happily call, with no
+// `getName`, no `schema` and no `findById`, so the first symptom would be an unrelated `TypeError` from deep
+// inside whichever model call the spec made, pointing at the model layer rather than at the missing
+// assignment. `File` is non-enumerable in both states, which is why `Object.keys(global)` never reports it
+// and why the leak failure described further down names eight keys rather than nine.
 //
 // Comparing against the captured value by IDENTITY covers both cases with one predicate: for the eight
 // absent names the captured value is `undefined`, which is exactly what the reservation below writes, so
@@ -322,36 +300,26 @@ var app = require('../app.js'),
 
 // EAGER GLOBAL-KEY RESERVATION, and the reason `check-leaks` can stay on.
 //
-// `app.js:282-290` assigns the nine model globals as bare sloppy-mode assignments - `User = require(...)`,
-// with no `var` - and it does so INSIDE its async `init()`, after `await server.register([...])` at
-// `app.js:87`. The require above therefore returns while `init()` is still suspended, so those keys come
-// into existence in a microtask continuation rather than during the require. Mocha snapshots
-// `Object.keys(global)` exactly once, when it constructs the Runner - that is, after every file has been
-// loaded - and `check-leaks` compares every later state against that one array. Whether `init()` had
-// resumed by then depended purely on how much work Mocha happened to do in between, which is a RACE:
-// measured on the installed mocha 11.7.6 by instrumenting `Runner.prototype.globals`, a full run snapshots
-// 42 keys WITH the eight enumerable model names, while
-// `mocha --file ./test/setup.js test/lib/models/plugins/paginate.js` snapshots 34 WITHOUT them. In that
-// second shape the root barrier at the bottom of this file is itself what lets `init()` resume, so eight
-// brand-new enumerable globals appear DURING a hook and the run fails with
-// `global leak(s) detected: 'User', 'Course', ...` even though every test passed - which made five of the
-// six model and plugin specs impossible to run on their own, and `npm test -- <one file>` is the ordinary
-// way to run one.
+// `app.js` assigns the nine model globals as bare sloppy-mode assignments — `User = require(...)`, with no
+// `var` — INSIDE its async `init()`, after `await server.register([...])`. The require above therefore
+// returns while `init()` is still suspended, so those keys come into existence in a microtask continuation
+// rather than during the require. Mocha snapshots `Object.keys(global)` exactly once, when it constructs the
+// Runner, and `check-leaks` compares every later state against that one array — so whether `init()` has
+// resumed by then is a RACE decided by how much work Mocha happens to do in between. A full run snapshots
+// the eight enumerable model names; a single-spec run does not, and there the root barrier at the bottom of
+// this file is itself what lets `init()` resume, so eight brand-new enumerable globals appear DURING a hook
+// and the run fails `global leak(s) detected: 'User', 'Course', ...` even though every test passed.
 //
 // Reserving the KEYS here removes the dependency on that timing: the snapshot contains them whatever the
-// file count. Only the keys are reserved - the VALUES stay `app.js`'s to assign, so this file never becomes
-// a second source of truth for what a model is - and `undefined` is written rather than a stand-in object
-// so that nothing can mistake a reserved key for a booted model. `File` is the one name the `in` test
-// skips, because Node 22 already defines it: reserving it would mean REPLACING a non-enumerable built-in
-// with `undefined`, and the key it would add to the leak snapshot is one `Object.keys(global)` never
-// reported anyway (which is why the failure above names eight keys, not nine). `app.js`'s assignment
-// overwrites it in place and it stays non-enumerable, measured. That skip is exactly why the drift check
-// at the bottom of this file compares against `PRE_BOOTSTRAP_GLOBALS` instead of testing for `undefined`.
+// file count. Only the keys are reserved — the VALUES stay `app.js`'s to assign, so this file never becomes
+// a second source of truth for what a model is — and `undefined` is written rather than a stand-in object so
+// nothing can mistake a reserved key for a booted model. `File` is the one name the `in` test skips, because
+// Node 22 already defines it: reserving it would REPLACE a non-enumerable built-in with `undefined`, and the
+// key it would add is one `Object.keys(global)` never reports anyway. That skip is why the drift check below
+// compares against `PRE_BOOTSTRAP_GLOBALS` instead of testing for `undefined`.
 //
-// Nothing is relaxed to achieve this. `.mocharc.json` keeps `check-leaks: true` and exactly the four keys
-// the Technical Specification enumerates - no `--global` allowance list, which is the alternative this
-// rejects because it needs a fifth key - and a genuinely new global still fails the run, measured with a
-// throwaway spec that assigned one.
+// Nothing is relaxed to achieve this: `check-leaks` stays on, no `--global` allowance list is added, and a
+// genuinely new global still fails the run.
 MODEL_GLOBALS.forEach(function(name) {
   if (!(name in global)) {
     global[name] = undefined;
@@ -360,54 +328,45 @@ MODEL_GLOBALS.forEach(function(name) {
 
 // THE BOOTED SERVER, PUBLISHED SYNCHRONOUSLY FOR LATE CONSUMERS.
 //
-// `app.js` exports a promise, so the only way to reach the server is a continuation - and a continuation is
-// a MICROTASK, which is a trap for any consumer that is required after the promise has already settled and
-// issues a request in the same synchronous turn: its own `app.then(...)` has not run yet, so it sees no
-// server and raises the "has not resolved yet" error even though the server has been up for seconds.
-// Measured: `await app` in a probe, then `require('./helpers/flow')` and `flow.get('/about')` in the same
-// turn threw; one `setImmediate` later the identical call answered 200. No spec does that today, but a
-// future spec that required the harness from inside a test body rather than at file scope would, and it
-// would fail with a message describing a state that is not the one it is in.
+// `app.js` exports a promise, so the only way to reach the server is a continuation — and a continuation is
+// a MICROTASK, which traps any consumer required after the promise has already settled that then issues a
+// request in the same synchronous turn: its own `app.then(...)` has not run yet, so it sees no server and
+// raises "has not resolved yet" even though the server has been up for seconds. One `setImmediate` later
+// the identical call succeeds.
 //
-// This capture is registered at bootstrap, which is the earliest point in the run and therefore before any
-// such consumer can exist, so by the time a late require happens `bootstrap.server` is already populated and
-// readable WITHOUT awaiting anything. It is published on this module's exports rather than on a global,
-// because the nine model globals are the only globals this tree is allowed to add. Registered before the
-// root barrier below `await`s the same promise, so its continuation runs first and the handle is set for
-// every hook and test that follows.
+// This capture is registered at bootstrap, before any such consumer can exist, so by the time a late require
+// happens `bootstrap.server` is already populated and readable WITHOUT awaiting anything. It is published on
+// this module's exports rather than on a global, because the nine model globals are the only globals this
+// tree is allowed to add. Registered before the root barrier below awaits the same promise, so its
+// continuation runs first and the handle is set for every hook and test that follows.
 var bootstrap = { server : null };
 
 app.then(function(server) {
   bootstrap.server = server;
 });
 
-// DEPENDENCY-SWAP ADAPTATION, centralized here rather than inside test/helpers/db.js. The reason is LOAD
-// ORDER, not immutability: this file is the bootstrap and `mocha --file ./test/setup.js` loads it ahead of
-// every spec file, so the adaptation is in place BEFORE the hook registrations that name `db.reset` and
-// `db.ensureConnection` by bare reference are evaluated - and a bare reference captures the function object
+// HOOK-ARITY AND TIMEOUT ADAPTATION, centralized here rather than inside test/helpers/db.js, because of
+// LOAD ORDER: this file is the bootstrap and `mocha --file ./test/setup.js` loads it ahead of every spec
+// file, so the adaptation is in place BEFORE the hook registrations that name `db.reset` and
+// `db.ensureConnection` by bare reference are evaluated — and a bare reference captures the function object
 // itself, so an adaptation applied any later would never reach those hooks. Doing it here also leaves
-// test/helpers/db.js - the one module in the tree that deletes a whole database - carrying no third-party
-// adaptation of its own, which is why every existing call site there behaves as the base commit wrote it.
-// (That file is NOT byte-identical to the base commit, and an earlier revision of this comment claimed the
-// adaptation lived here to keep it so; it carries the fail-closed database gate of review finding M1.)
+// test/helpers/db.js — the one module in the tree that deletes a whole database — carrying no third-party
+// adaptation of its own.
 //
-// `DB()` binds its two hook methods with `_.bindAll`, and underscore 1.13.8 - the version the
-// base commit's `^1.8.3` range also resolves to - dropped `_.bind`'s native-bind fast path: `_.bind` now
-// returns a `restArguments` wrapper whose `length` is 0, where underscore 1.8.3 delegated to
-// `Function.prototype.bind` and preserved the declared arity. Mocha decides whether a hook is
-// asynchronous from `fn.length` (mocha/lib/runnable.js), so the arity-0 wrapper is invoked with no
-// callback and both hooks throw `TypeError: done is not a function` - measured, and it silently skips the
-// whole API suite. Re-declaring the two methods with their arity intact restores every existing call
-// site exactly as the base commit wrote it: the bare-reference hooks at test/lib/api/index.js:27,29 and
-// test/lib/models/user.js:7, and the explicit `db.reset(done)` at test/lib/api/index.js:37. This runs
-// before any spec file is loaded, so the hook registrations see the adapted methods.
+// `DB()` binds its two hook methods with `_.bindAll`, and underscore's `_.bind` returns a `restArguments`
+// wrapper whose `length` is 0 rather than delegating to `Function.prototype.bind` and preserving the
+// declared arity. Mocha decides whether a hook is asynchronous from `fn.length`, so an arity-0 wrapper is
+// invoked with no callback and both hooks throw `TypeError: done is not a function`, silently skipping the
+// whole API suite. Re-declaring the two methods with their arity intact keeps every call site working: the
+// bare-reference hooks in test/lib/api/index.js and test/lib/models/user.js, and the explicit
+// `db.reset(done)`. This runs before any spec file is loaded, so the hook registrations see the adapted
+// methods.
 //
-// The wrapper also raises the hook timeout (review finding M12). `db.reset` performs a real
-// `dropDatabase()`, which on a mongod shared by several checkouts was measured to exceed Mocha's 2000 ms
-// default and abort the whole run in `test/lib/api/index.js`'s very first hook. Mocha binds `this` to the
-// hook's Context, so the limit is raised for the hook that actually needs it rather than globally in
-// `.mocharc.json` - which carries exactly the four keys the Technical Specification enumerates and gains
-// no fifth. The guard keeps this file usable outside a Mocha run, where there is no Context.
+// The wrapper also raises the hook timeout. `db.reset` performs a real `dropDatabase()`, which on a mongod
+// shared by several checkouts exceeds Mocha's 2000 ms default and would abort the whole run in
+// `test/lib/api/index.js`'s very first hook. Mocha binds `this` to the hook's Context, so the limit is
+// raised for the hook that actually needs it rather than globally in `.mocharc.json`, which keeps its four
+// keys and gains no fifth. The guard keeps this file usable outside a Mocha run, where there is no Context.
 ['ensureConnection', 'reset'].forEach(function(hook) {
   var bound = db[hook];
 
@@ -419,40 +378,34 @@ app.then(function(server) {
     return bound(done);
   };
 });
-// ROOT-SUITE BARRIER. `app.js` exports a PROMISE - a direct consequence of its awaited plugin registration
-// and awaited start - so nothing that depends on the booted server may run until it resolves. Two concrete
-// dependencies exist today:
+// ROOT-SUITE BARRIER. `app.js` exports a PROMISE, so nothing that depends on the booted server may run
+// until it resolves. Two concrete dependencies exist today:
 //   1. test/helpers/flow.js captures the server in an `app.then(...)` and builds its supertest agent from
 //      `server.listener` lazily; `agentFor` throws if the promise has not settled, so that file depends on
 //      this barrier;
 //   2. test/lib/models/trinket.js stubs `global.Interaction`, one of the nine implicit model globals
 //      assigned inside app.js's async `init()`, and Sinon 3+ refuses to stub a non-existent property.
-// `check-leaks` stays enabled rather than being relaxed, and this barrier is NOT what allows that - the
-// eager key reservation above is. An earlier revision of this comment claimed the barrier was unnecessary
-// for the snapshot because `init()` always resumed during Mocha's file loading; re-measured on mocha 11.7.6
-// by instrumenting `Runner.prototype.globals`, that holds for a full run (42 keys, model names present) and
-// FAILS for a single spec file (34 keys, model names absent), so it was a race rather than an invariant.
-// The reservation is what makes the snapshot unconditional. This hook still runs after that snapshot, and
-// it has two jobs: the barrier, and the drift check below - if `app.js` ever stops assigning one of the
-// reserved names, the reserved `undefined` would otherwise reach a spec as a bare
-// `Cannot read properties of undefined` from whichever line dereferenced it first, and in `File`'s case as
-// something even less legible, since Node's own `File` would answer in the model's place.
+// `check-leaks` stays enabled rather than being relaxed, and this barrier is NOT what allows that — the
+// eager key reservation above is, and it is what makes the leak snapshot unconditional whether the run is a
+// full suite or a single spec file. This hook runs after that snapshot and has two jobs: the barrier, and
+// the drift check below — if `app.js` ever stops assigning one of the reserved names, the reserved
+// `undefined` would otherwise reach a spec as a bare `Cannot read properties of undefined` from whichever
+// line dereferenced it first, and in `File`'s case as something even less legible, since Node's own `File`
+// would answer in the model's place.
 //
-// It is registered as a bare top-level `before()` rather than as an exported `mochaHooks` root-hook
-// plugin, because `.mocharc.json` carries exactly the four options the plan specifies - reporter,
-// recursive, check-leaks and exit - and root-hook plugins are collected ONLY from files loaded through
-// `--require`. A `before()` called at file scope registers on the ROOT suite, so it runs ahead of every
-// test in every file regardless of where this file lands in the load order. Mocha's bdd interface installs
-// the globals on its first `pre-require` event, which precedes the first spec file being required, so
-// `before` exists both when this file is loaded as a spec itself and when it is pulled in early by
-// test/helpers/db.js. The `typeof` guard covers the remaining case - being required outside a Mocha run
-// at all, which test/baseline/capture.js and the ad-hoc probes do - where there is no suite to attach to
-// and the caller awaits `app` itself.
+// It is registered as a bare top-level `before()` rather than as an exported `mochaHooks` root-hook plugin,
+// because `.mocharc.json` carries exactly its four options and root-hook plugins are collected ONLY from
+// files loaded through `--require`. A `before()` called at file scope registers on the ROOT suite, so it
+// runs ahead of every test in every file regardless of where this file lands in the load order. Mocha's bdd
+// interface installs the globals on its first `pre-require` event, which precedes the first spec file being
+// required, so `before` exists both when this file is loaded as a spec itself and when it is pulled in early
+// by test/helpers/db.js. The `typeof` guard covers the remaining case — being required outside a Mocha run
+// at all, which test/baseline/capture.js and the ad-hoc probes do — where there is no suite to attach to and
+// the caller awaits `app` itself.
 //
-// No timeout override accompanies it. Mocha's default 2000 ms is the measured baseline and is ample:
-// requiring `../app.js` above starts `init()` during Mocha's file-loading phase and, with
-// `app.start : false`, `init()` awaits no real I/O, so the barrier awaits an already-settled promise.
-// Raising the limit would only hide a stuck initialisation for a minute.
+// No timeout override accompanies it. Mocha's default 2000 ms is ample: requiring `../app.js` above starts
+// `init()` during Mocha's file-loading phase and, with `app.start : false`, `init()` awaits no real I/O, so
+// the barrier awaits an already-settled promise. Raising the limit would only hide a stuck initialisation.
 
 // THE DRIFT CHECK, and why it asks two questions rather than one.
 //
@@ -465,9 +418,9 @@ app.then(function(server) {
 //     asserts the shape the model factory publishes, not the contents of any one schema, so it does not
 //     become a second source of truth for what any individual model is.
 //
-// What it pointedly does NOT assert is `getName() === name`. Measured: `Trinket.getName()` returns
-// `'Snippet'` - the global and the mongoose model name genuinely differ for that one - so equality there
-// would be a false failure on a correct tree.
+// What it pointedly does NOT assert is `getName() === name`. `Trinket.getName()` returns `'Snippet'` — the
+// global and the mongoose model name genuinely differ for that one — so equality there would be a false
+// failure on a correct tree.
 var MODEL_SURFACE = ['getName', 'isInstance', 'extend'];
 
 function describeGlobalDrift() {
@@ -518,23 +471,22 @@ if (typeof before === 'function') {
         'somewhere else.');
     }
 
-    // THE DATABASE BARRIER (review finding M12), registered on the ROOT suite for the same reason the
-    // app barrier above is: it has to hold for every spec file, not only for the ones that happen to
-    // declare a `before(db.reset)` of their own.
+    // THE DATABASE BARRIER, registered on the ROOT suite for the same reason the app barrier above is: it
+    // has to hold for every spec file, not only for the ones that happen to declare a `before(db.reset)`
+    // of their own.
     //
-    // test/helpers/db.js opens its connection from a timer during module load and drops the database
-    // once the connection is announced, setting `_isConnected` only after that drop RESOLVES. Nothing
-    // waited for it. A spec file that touches a model in its own `before` - test/lib/models/*.js and
-    // test/lib/models/plugins/*.js all do, and `npx mocha test/lib/models/course.js` runs them without
-    // the API suite's `before(db.reset)` ahead of them - could therefore create a fixture that the
-    // initialization drop then deleted underneath it. Awaiting readiness here removes the race for
-    // every entry point, including a single-file run.
+    // test/helpers/db.js opens its connection from a timer during module load and drops the database once
+    // the connection is announced, setting `_isConnected` only after that drop RESOLVES. A spec file that
+    // touches a model in its own `before` — test/lib/models/*.js and test/lib/models/plugins/*.js all do,
+    // and running one of them directly gets no `before(db.reset)` ahead of it — could otherwise create a
+    // fixture that the initialization drop then deletes underneath it. Awaiting readiness here removes
+    // that race for every entry point, including a single-file run.
     //
     // `db.ensureConnection` is the existing poll and is used rather than a second mechanism; the
-    // arity-restoring wrapper installed above is already in place at this point, so this call reaches
-    // the same function every hook does. The generous timeout below is for the DROP, not for the
-    // connection: dropping a database that the previous run filled was measured at over Mocha's 2000 ms
-    // default on a shared mongod, and a flake there aborts the whole run in its first hook.
+    // arity-restoring wrapper installed above is already in place at this point, so this call reaches the
+    // same function every hook does. The generous timeout below is for the DROP, not for the connection:
+    // dropping a database that the previous run filled exceeds Mocha's 2000 ms default on a shared mongod,
+    // and a flake there aborts the whole run in its first hook.
     this.timeout(60000);
 
     await new Promise(function(resolve, reject) {
@@ -545,8 +497,10 @@ if (typeof before === 'function') {
   });
 }
 
-// The exports were `{}` at the base commit and stay a plain object with no behaviour, so this file remains a
-// valid no-op "spec" for Mocha's default glob and the benign require cycles with test/helpers/db.js and
-// test/helpers/catbox-redis.js - each of which requires this module for its side effects and never reads its
-// exports - are unaffected. The single property is the booted server described above.
+// The exports are a plain data object carrying one property, `server`, which the `app.then(...)` above
+// assigns once the boot promise settles — see THE BOOTED SERVER above. There is no behaviour here, so this
+// file is still a valid no-op "spec" for Mocha's default glob, and the require cycles with
+// test/helpers/db.js and test/helpers/catbox-redis.js stay benign: each requires this module for its side
+// effects and neither reads `server`. A consumer that does read it must either be loaded after the boot
+// promise has settled or await `app` itself, because the property is `null` until then.
 module.exports = bootstrap;

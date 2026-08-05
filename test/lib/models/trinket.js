@@ -22,15 +22,11 @@ describe('Trinket model', function(){
       });
 
       /**
-       * STUB ISOLATION (review finding M-16).
-       *
-       * `crypto.createHash` and `Date.now` are GLOBAL. An earlier revision restored both inside the
-       * success callback, so any failing expectation left the process with a stubbed hash function and a
-       * frozen clock - which every suite that runs afterwards inherits, including the ones that create
-       * users (bcrypt), seal session cookies (iron) and assert timestamps. A leak like that turns one
-       * failure into a cascade of unrelated ones and hides the original.
-       *
-       * They are restored in afterEach instead, unconditionally, so the failure mode is one failing test.
+       * STUB ISOLATION. `crypto.createHash` and `Date.now` are GLOBAL, so they are restored in `afterEach`
+       * UNCONDITIONALLY rather than inside a success callback. Restoring only on success would leave a failing
+       * expectation behind a stubbed hash function and a frozen clock, which every suite that runs afterwards
+       * inherits — including the ones that create users, seal session cookies and assert timestamps — turning
+       * one failure into a cascade of unrelated ones and hiding the original.
        */
       var globalStubs = [];
 
@@ -76,16 +72,11 @@ describe('Trinket model', function(){
           // production hook's callback, where nothing would catch it and the test would time out.
           try {
           trinket.hash.should.eql(hash);
-          // R-6 ADJUDICATION, review finding M4. `lib/models/trinket.js` is BYTE-IDENTICAL to the base
-          // commit (`git diff 2f8712a -- lib/models/trinket.js` is empty) and its `hashify` has always
-          // taken `.substring(0, 12)` at L120, so the base commit's `hash.substring(0, 10)` expectation
-          // was ALREADY FALSE before this migration - the suite simply never ran, because
-          // test/helpers/catbox-redis.js required the unscoped, uninstalled `catbox-redis` and `npm test`
-          // exited non-zero on its first module load. Restoring `should.eql(hash.substring(0, 10))` would
-          // require changing the shortCode length, which is a persisted, client-visible identifier that
-          // R-4 and TR6 both freeze. Both expressions are asserted instead, so the base commit's own
-          // expression is retained at its measured value and nothing is weakened. See
-          // docs/PRESERVED-QUIRKS.md section 13.7.
+          // `lib/models/trinket.js#hashify` takes `.substring(0, 12)`, so a `hash.substring(0, 10)`
+          // expectation is false against the shipped code. Making it true would mean changing the shortCode
+          // length, which is a persisted, client-visible identifier and therefore frozen. BOTH expressions
+          // are asserted instead, so the original one is retained at its true value and nothing is weakened.
+          // See docs/PRESERVED-QUIRKS.md section 13.7.
           trinket.shortCode.should.eql(hash.substring(0, 12));
           trinket.shortCode.should.not.eql(hash.substring(0, 10));
           update.calledWith(trinket.code + trinket.lang + trinket._owner + trinket._parent).should.be.true;
@@ -102,12 +93,11 @@ describe('Trinket model', function(){
     });
 
     /**
-     * The leak guard for review finding M-16, and the reason the afterEach above exists.
+     * The leak guard, and the reason the `afterEach` above exists.
      *
      * This block runs immediately after the two createHash tests, so if either of them leaves
-     * `crypto.createHash` or `Date.now` stubbed - which is what happened when the restores lived inside
-     * the success callback - both assertions here fail loudly and name the leak, instead of the damage
-     * surfacing later as an inexplicable failure in bcrypt, iron or a timestamp comparison.
+     * `crypto.createHash` or `Date.now` stubbed, both assertions here fail loudly and NAME the leak, instead
+     * of the damage surfacing later as an inexplicable failure in bcrypt, iron or a timestamp comparison.
      */
     describe('global stub isolation', function() {
       it('leaves crypto.createHash and Date.now unstubbed for every later suite', function() {
@@ -168,13 +158,10 @@ describe('Trinket model', function(){
       });
     });
 
-    // R-6 ADJUDICATION, review finding M4. `lib/models/model.js` is BYTE-IDENTICAL to the base commit
-    // (`git diff 2f8712a -- lib/models/model.js` is empty). Its `findById` calls
-    // `this.model.findOne(query)` with a SINGLE argument at L136-L141 and adapts the returned promise at
-    // L145-L149 - the "Support both callback and promise patterns" block, which is base-commit code, not
-    // migration work - unlike `findByHash` above, which does pass the callback through. The base commit's
-    // `findOne.calledWithExactly(query, cb)` expectation was therefore ALREADY FALSE; making it true would
-    // mean changing how the model factory queries, which R-4 forbids. Both expressions are asserted
+    // `lib/models/model.js#findById` calls `this.model.findOne(query)` with a SINGLE argument and adapts the
+    // returned promise itself, unlike `findByHash` above, which does pass the callback through. A
+    // `findOne.calledWithExactly(query, cb)` expectation is therefore false against the shipped code, and
+    // making it true would mean changing how the model factory queries. BOTH expressions are asserted
     // instead. See docs/PRESERVED-QUIRKS.md section 13.7.
     describe('findById', function() {
       it('should include the shortCode as a search criteria', function(done) {
@@ -210,7 +197,7 @@ describe('Trinket model', function(){
       var callScope;
 
       before(function(done) {
-        // R-6: production calls `findByIdAndUpdate(id, update, options)` and awaits the promise, and
+        // Production calls `findByIdAndUpdate(id, update, options)` and awaits the promise, and
         // `interaction.save()` takes no arguments. See docs/PRESERVED-QUIRKS.md.
         var findByIdAndUpdate = sinon.spy(function(id, update, options){
           return Promise.resolve({
@@ -245,25 +232,22 @@ describe('Trinket model', function(){
       });
 
       /**
-       * ASYNC HANDLING (review finding M-16) and MOCK CONTRACT (review finding M-23).
+       * ASYNC HANDLING and the MOCK ARITY CONTRACT.
        *
-       * Both tests below used to end in `.then(done)` with no rejection arm, which is a defect of the TEST
-       * harness rather than a behaviour of the application: a failing assertion inside the handler produced
-       * an unhandled rejection and then Mocha's 2000 ms timeout, so the report named a timeout instead of
-       * the assertion that failed, and the rejection stayed live for the rest of the run. An earlier
-       * revision argued this preserved Q's `.done(onFulfilled)` semantics; it does not preserve anything
-       * observable about the application, and "the test still fails, just as a timeout" is not a standard
-       * worth keeping. The promise is RETURNED now, so Mocha awaits it and reports the assertion.
+       * Both tests RETURN their promise rather than ending in `.then(done)` with no rejection arm, so Mocha
+       * awaits it and reports the assertion that failed. Without the rejection arm a failing assertion inside
+       * the handler becomes an unhandled rejection followed by a Mocha timeout, so the report names a timeout
+       * instead of the assertion and the rejection stays live for the rest of the run.
        *
-       * And both used `calledWithMatch`, which asserts only that the arguments it names are a SUBSET of
-       * what was passed. A fourth argument - a stray callback, an extra option - satisfied it silently,
-       * which is exactly the contract these tests exist to pin: `findAndUpdateMetrics` awaits the PROMISE
-       * that `findByIdAndUpdate(id, update, options)` returns, so a fourth callback argument would mean the
-       * production code had reverted to the callback form while the test went on passing. Every assertion
-       * below is exact-arity, and the argument COUNT is asserted separately so the intent survives even if
-       * a future sinon relaxes `calledWithExactly`.
+       * Every mock assertion below is EXACT-ARITY, never `calledWithMatch`, which asserts only that the
+       * arguments it names are a SUBSET of what was passed. A fourth argument — a stray callback, an extra
+       * option — would satisfy a subset match silently, and that is precisely the contract these tests pin:
+       * `findAndUpdateMetrics` awaits the PROMISE `findByIdAndUpdate(id, update, options)` returns, so a
+       * fourth callback argument would mean the production code had reverted to the callback form while the
+       * test went on passing. The argument COUNT is asserted separately so the intent survives even if a
+       * future sinon relaxes `calledWithExactly`.
        *
-       * Measured against the real class method: findByIdAndUpdate receives exactly 3 arguments,
+       * The arities: findByIdAndUpdate receives exactly 3 arguments,
        * `('abc123', {$inc:{'metrics.runs':1}}, {new:true, upsert:true})`; the Interaction constructor
        * receives exactly 1; and `save()` receives exactly 0.
        */

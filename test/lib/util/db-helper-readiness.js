@@ -3,24 +3,19 @@ var sinon  = require('sinon'),
     db     = require('../../helpers/db');
 
 /**
- * Review finding M12 - the readiness contract of the destructive test-database helper.
+ * The readiness contract of the destructive test-database helper.
  *
- * `test/helpers/db.js#reset` used to open with `if (!this.isConnected()) return done();`, so it reported
- * SUCCESS while the database was untouched. Two distinct failures followed. A suite whose
- * `before(db.reset)` ran before the helper's own `checkState()` had announced the connection started over
- * whatever the previous run had left behind, which is the shared-state race the API suites' own comments
- * say must not exist; and the initialization drop could still be in flight, so a reset that "succeeded"
- * could be followed by that drop deleting fixtures the first test had already created.
+ * `test/helpers/db.js#reset` must WAIT for the initialized connection state rather than returning early when
+ * the connection is not yet up, and it must PROPAGATE the original error when readiness fails. Returning
+ * early would report SUCCESS over an untouched database, which lets a suite start over whatever the previous
+ * run left behind and lets the initialization drop delete fixtures the first test has already created.
  *
- * The fix routes `reset` through the helper's existing `ensureConnection` barrier - the poll that returns
- * only once `_isConnected` is set, which `checkState()` does ONLY after the initialization drop has
- * resolved - and `test/setup.js` registers the same barrier on the ROOT suite so a single-file run
- * (`npx mocha --file ./test/setup.js test/lib/models/course.js`) cannot race it either.
+ * `reset` therefore routes through the helper's `ensureConnection` barrier — the poll that returns only once
+ * `_isConnected` is set, which `checkState()` does ONLY after the initialization drop has resolved — and
+ * `test/setup.js` registers the same barrier on the ROOT suite so a single-file run cannot race it either.
  *
- * These two tests pin that contract WITHOUT dropping anything: `ensureConnection` is stubbed to answer,
- * so the assertion is about whether `reset` consults it at all. Under the earlier implementation the
- * first test fails - `reset` never asks, drops the database and calls back with no error - which is what
- * makes this non-vacuous rather than a restatement of the code.
+ * The two tests pin that contract WITHOUT dropping anything: `ensureConnection` is stubbed to answer, so the
+ * assertion is about whether `reset` consults it at all.
  */
 describe('test-database helper readiness contract', function() {
   afterEach(function() {

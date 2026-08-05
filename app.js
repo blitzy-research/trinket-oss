@@ -1,16 +1,10 @@
 #!/usr/bin/env node
 
-// Both Q-compatibility polyfills that used to be monkey-patched onto the native promise prototype
-// here - `spread` and `fail` - are gone, completing the async conversion (AAP G3). Neither has a
-// consumer left: re-measured on this commit, `grep -rn '\.fail(' app.js config/ lib/ scripts/ test/`
-// returns ZERO promise call sites (the last 8 lived in test/lib/models/plugins/roles.js and are now
-// `.catch(`, and lib/workers/exports.js's 5 went the same way with the worker migration), and the
-// `spread` census found none at all. The `.fail(` occurrences under lib/views/ are jQuery Deferred
-// calls in browser markup, not consumers of this alias, and the declarative response contract - an
-// unrelated concern - publishes its rejection responder as `h.reject`, never as a `.fail(` call, now
-// that the shim's `request.fail` decoration is retired. Mongoose 6 returns native promises, so the
-// "Mongoose 6 compatibility" rationale the patches carried no longer holds. See
-// docs/MIGRATION-DEPENDENCY-INVENTORY.md.
+// No polyfill is added to the native promise prototype here. Nothing in app.js, config/, lib/, scripts/
+// or test/ calls `.spread(` or `.fail(` on a promise, and mongoose returns native promises, so neither
+// alias has a consumer. The `.fail(` occurrences under lib/views/ are jQuery Deferred calls in browser
+// markup, not promise calls, and the declarative response contract publishes its rejection responder as
+// `h.reject`. See docs/MIGRATION-DEPENDENCY-INVENTORY.md.
 
 // initialize the global logger
 log = require('./config/log');
@@ -112,11 +106,8 @@ const init = async () => {
   // Touch session on each request to implement sliding expiration
   server.ext('onPreHandler', (request, h) => {
     if (request.yar) {
-      // Async conversion: this decoration is SYNCHRONOUS - it writes the session and the request and
-      // returns - so it takes no callback. The base commit ended it in `if (cb) cb(null)`, an error
-      // argument that was always null, and its three call sites in lib/controllers/users.js passed a
-      // callback that could only ever run on the success path; the parameter and all three callbacks
-      // are gone together. Nothing outside those call sites reaches this function.
+      // Synchronous by contract: it writes the session and the request and returns, so callers must
+      // not await it and it takes no callback.
       request.yar._logIn = function(user) {
         // Store user id in session
         request.yar.set('userId', user._id ? user._id.toString() : user.id);

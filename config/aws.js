@@ -25,38 +25,12 @@
  * Errors carry $metadata.httpStatusCode and name rather than code / statusCode, so
  * a caller that branches on an error must still return the status it returns today.
  *
- * Presigning is delegated to @aws-sdk/s3-request-presigner - the AWS-supported
- * package for it - and no signing is implemented in this repository (review finding
- * SV-05, CWE-327). An earlier revision hand-rolled the presigned URL from the
- * client's own resolved configuration, reaching three members the shipped type
- * definitions mark `@internal`: `client.config.endpointProvider()`,
- * `client.config.signer()` and `signer.presign()`. That was measured
- * signature-identical to an independent SigV4 reference at the time, which is
- * exactly the problem: an `@internal` member carries no semver signal, so it can
- * change in a patch release with nothing to notice it. The installed client already
- * embeds `version = "3.1097.0"` while resolving as 3.1098.0, which is the shape that
- * drift takes.
- *
- * ONE OBSERVABLE CONSEQUENCE, recorded deliberately rather than hidden, and measured
- * rather than estimated. The official presigner adds TWO operation-metadata
- * parameters the hand-rolled form omitted - `x-amz-checksum-mode=ENABLED` and
- * `x-id=GetObject` - taking the query from 7 parameters to 9, and it signs them, so
- * the digest differs too. Diffing the two parameter sets for the same call gives
- * added = [x-amz-checksum-mode, x-id] and removed = [], so nothing a caller reads
- * disappeared: origin, path encoding and X-Amz-Expires are unchanged. Neither
- * aws-sdk v2 nor the hand-rolled form sent either parameter. Because both are signed
- * rather than appended, they cannot be stripped from a generated URL without
- * invalidating it, and there is no option to suppress them. The URL is not part of
- * the R-6 parity corpus - the asset feature is flag-disabled in the shipped
- * configuration and `GET /api/users/assets` is the corpus's single baseline 500 - so
- * nothing replays differently; the change is catalogued in
- * docs/PRESERVED-QUIRKS.md and in the migration dependency inventory alongside the
- * SignatureV2 -> SignatureV4 move the SDK replacement already forced.
- *
- * This is the third and last package the modernization adds to the manifest, beside
- * @aws-sdk/client-s3 and crypto-js. The Technical Specification projected two; the
- * deviation is reconciled in docs/MIGRATION-DEPENDENCY-INVENTORY.md exactly as the
- * `chokidar` and `brace-expansion` deviations already are.
+ * Presigning is delegated to @aws-sdk/s3-request-presigner, the AWS-supported package
+ * for it; no signing is implemented in this repository. The presigner emits two signed
+ * operation-metadata query parameters - x-amz-checksum-mode and x-id - that neither
+ * aws-sdk v2 nor a hand-rolled signer sent, and they cannot be stripped without
+ * invalidating the URL. Origin, path encoding and X-Amz-Expires are unchanged. See
+ * docs/PRESERVED-QUIRKS.md and docs/MIGRATION-DEPENDENCY-INVENTORY.md.
  */
 
 var awsS3      = require('@aws-sdk/client-s3')
@@ -81,9 +55,9 @@ if (config.aws.keyId && config.aws.key) {
   };
 }
 
-// The one client this process uses, reproducing v2's single process-global socket
-// pool. Held in module scope rather than created per call - see RESOURCE LIFECYCLE
-// above for the measurement that decided it.
+// The one client this process uses, reproducing v2's single process-global socket pool.
+// Held in module scope rather than created per call because each S3Client owns its own
+// pool, and a per-call client would leave one behind on every request.
 var sharedS3Client = null;
 
 function getS3Client() {
@@ -97,9 +71,8 @@ function getS3Client() {
 // Releases the shared client's sockets. Wired to the hapi server's 'stop' event in
 // app.js, which is the only shutdown signal this application has.
 //
-// The slot is cleared BEFORE destroy() so this is safe to call twice and safe to
-// call when nothing was ever built; both were measured against the installed SDK,
-// where destroy() itself is also idempotent.
+// The slot is cleared BEFORE destroy(), so this is safe to call twice and safe to call
+// when no client was ever built.
 function destroyS3Client() {
   if (!sharedS3Client) {
     return;
@@ -127,15 +100,9 @@ function destroyS3Client() {
  * network I/O, so a per-call client would exist only to carry region and credentials
  * and would leave its socket pool behind on every signed download.
  *
- * expiresIn is the ONLY option passed. X-Amz-Content-Sha256=UNSIGNED-PAYLOAD and
- * X-Amz-SignedHeaders=host - the two properties an S3 presigned GET must carry - are
- * already the presigner's defaults for this command, so nothing is configured to
- * obtain them. An earlier revision also passed `signableHeaders: new Set(['host'])`
- * and `unhoistableHeaders: new Set()`; both were measured INERT and removed. Under a
- * fixed signingDate, with and without them, the emitted URL is byte-identical -
- * same nine query parameters and the same X-Amz-Signature digest - across three key
- * shapes (a space, the five extended-encoding characters, and a plain key). Passing
- * options that change nothing would imply the defaults are unsuitable.
+ * expiresIn is the ONLY option passed: X-Amz-Content-Sha256=UNSIGNED-PAYLOAD and
+ * X-Amz-SignedHeaders=host, the two properties an S3 presigned GET must carry, are
+ * already the presigner's defaults for this command.
  *
  * @param   {Object} params    { Bucket, Key }.
  * @param   {Number} expiresIn Lifetime in seconds.

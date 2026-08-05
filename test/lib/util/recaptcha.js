@@ -1,39 +1,23 @@
 /**
- * Recaptcha verification: lib/util/recaptcha.js (review finding M-22).
+ * Recaptcha verification: lib/util/recaptcha.js.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * This module was rewritten from `request.post(..., function (err, response, body) {...})` to `fetch`,
- * which is one of the migration's dependency REPLACEMENTS (the `request` package is dead and Node 22
- * carries fetch natively), and nothing tested it. Three things about it are easy to break and impossible
- * to notice: the short-circuit resolves without touching the network, the non-200 branch resolves a key
- * no caller reads, and there is deliberately no transport-error guard.
+ * `verify(token)` takes ONE parameter and returns a promise, and all four call sites in
+ * lib/controllers/{users,trinket}.js await it. It has THREE outcomes, and all three are pinned here:
  *
- * THE CONTRACT UNDER TEST IS PROMISE-NATIVE
- * -----------------------------------------
- * `verify(token)` takes ONE parameter and returns a promise; the callback the base commit accepted is gone
- * with the `request` package that shaped it, and all four call sites in lib/controllers/{users,trinket}.js
- * `await` the result. Every expectation below is written against that shape.
- *
- * PRESERVED QUIRKS PINNED HERE
- * ----------------------------
- *   1. The non-200 branch resolves `{ status : false }` - not `{ success : false }` - while every caller
+ *   1. THE SHORT-CIRCUIT resolves `{ success : true }` without touching the network at all.
+ *   2. A NON-200 response resolves `{ status : false }` — not `{ success : false }` — while every caller
  *      reads `.success`, so a rejected verification reads as `undefined` rather than false.
- *   2. The status is read with no transport guard and the async block carries no rejection handler, so a
- *      transport failure or a malformed payload leaves the returned promise UNSETTLED FOREVER and escapes
- *      as an unhandled rejection instead of degrading into a result object. That is the promise-native
- *      form of the base commit's uncaught TypeError: the caller is still never told.
- *      docs/PRESERVED-QUIRKS.md section 1.10.
- * Both are asserted rather than fixed. R-4 forbids converging them.
+ *   3. A TRANSPORT FAILURE or a malformed payload leaves the returned promise UNSETTLED FOREVER, because the
+ *      status is read with no guard and the async block carries no rejection handler, so the failure escapes
+ *      as an unhandled rejection instead of degrading into a result object and the caller is never told.
  *
- * HOW THE SEAM IS CHOSEN
- * ----------------------
- * `global.fetch` is stubbed - the outermost possible seam - so the real URL, method and
- * `URLSearchParams` body are all constructed by production code and asserted as issued. `config.isTest`
- * and `config.app.recaptcha` are set per test and restored unconditionally in `afterEach`, because the
- * shipped configuration carries an EMPTY secretkey and therefore never reaches the network at all.
+ * Outcomes 2 and 3 are preserved quirks, asserted rather than converged. See docs/PRESERVED-QUIRKS.md
+ * section 1.10.
  *
- * Every expectation below was MEASURED against the running module first (R-6).
+ * THE SEAM. `global.fetch` is stubbed — the outermost possible seam — so the real URL, method and
+ * `URLSearchParams` body are all constructed by production code and asserted as issued. `config.isTest` and
+ * `config.app.recaptcha` are set per test and restored unconditionally in `afterEach`, because the shipped
+ * configuration carries an EMPTY secretkey and therefore never reaches the network at all.
  */
 
 var chai      = require('chai'),
@@ -121,8 +105,8 @@ describe('Recaptcha verification', function() {
 
   describe('the short-circuit paths', function() {
     it('takes ONE parameter: the token. There is no callback to pass', function() {
-      // The async conversion removed the callback outright rather than accepting both shapes, and every
-      // caller in lib/controllers/{users,trinket}.js awaits the returned promise.
+      // `verify` accepts no callback: every caller in lib/controllers/{users,trinket}.js awaits the
+      // returned promise.
       recaptcha.verify.length.should.eql(1);
     });
 
@@ -317,10 +301,10 @@ describe('Recaptcha verification', function() {
       return withEscapedRejections(function() {
         return observeSettlement(recaptcha.verify('t'), fate);
       }).then(function(escaped) {
-        // PRESERVED QUIRK - docs/PRESERVED-QUIRKS.md section 1.10. JSON.parse throws inside an async
+        // PRESERVED QUIRK — see docs/PRESERVED-QUIRKS.md section 1.10. JSON.parse throws inside an async
         // block with no rejection handler, so the promise the caller awaits NEVER settles and the process
-        // sees the failure. An awaiting caller therefore hangs exactly where the base commit's unguarded
-        // read threw an uncaught TypeError; converging the two would be a behavior change.
+        // sees the failure instead. An awaiting caller hangs; giving it a result object would be a behavior
+        // change.
         escaped.length.should.eql(1);
         escaped[0].should.be.an.instanceOf(SyntaxError);
         fate.should.eql([]);

@@ -56,7 +56,7 @@ When using the Docker workflow, Docker and Git are all you need - everything els
    cp config/local.example.yaml config/local.yaml
    ```
 
-3. 3. **Generate a session secret and replace the placeholder, before starting anything.** `config/local.example.yaml`
+3. **Generate a session secret and replace the placeholder, before starting anything.** `config/local.example.yaml`
    ships `REPLACE_ME`, which is deliberately too short: `app.js`'s startup guard requires at least 32 characters, so
    the application **refuses to boot** until you replace it. That is intentional - a secret should fail closed. An
    earlier revision shipped a 46-character placeholder that *satisfied* the guard, so copying the template verbatim
@@ -226,9 +226,11 @@ its warning first.
    ```
 
    `app.js` checks the **length** at startup and calls `process.exit(1)` when the value is missing or shorter than
-   32 characters, so the application will not run without a value - but the shipped placeholder is 46 characters
-   and therefore passes that check unchanged. Replacing it is on you, and it is not optional: the placeholder is
-   committed to this repository and is public, so any session cookie sealed with it can be forged by anyone. For a
+   32 characters, and the shipped placeholder is `REPLACE_ME` - **10 characters, so it fails that check and the
+   application refuses to boot until you replace it.** That is deliberate: a secret that is public should fail closed
+   rather than seal real cookies. An earlier revision shipped a 46-character placeholder that *satisfied* the guard,
+   which meant copying the template verbatim produced a running server whose session cookies were sealed with a
+   password published in this repository (review finding SV-36). For a
    non-Docker run also change `db.mongo.host` from `mongodb` to `localhost`, which is the host the next step starts
    MongoDB on.
 
@@ -312,8 +314,11 @@ value — so no assertion was weakened. Every one is enumerated, with the measur
 | nginx | 443 | all interfaces | HTTPS proxy (optional) |
 
 The two datastore ports are published to the loopback interface only. They previously bound every interface, which put
-an unauthenticated MongoDB holding every user record and an unauthenticated Redis holding every sealed session on the
-whole network — read access to the session store alone is an authentication bypass (review finding SV-28). The port
+both datastores on the whole network with no authentication in front of either: **MongoDB holds every user record
+*and*, because `app.js` registers the `sessions` cache against the in-repo `lib/util/catbox-mongoose.js` engine, every
+server-side session record — so read access to MongoDB alone is an authentication bypass** — while Redis exposes the
+application cache and the background job queues (review finding SV-28). Redis is **not** the session store; see
+*Optional Services* above. The port
 *numbers* are unchanged, so `mongosh --port 17017` and `redis-cli -p 16379` still work from the host exactly as before,
 and the application is unaffected either way because it reaches both services by their compose service names
 (`mongodb:27017`, `redis:6379`) over the internal bridge network rather than through the published ports.

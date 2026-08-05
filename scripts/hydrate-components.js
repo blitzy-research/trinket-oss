@@ -30,6 +30,28 @@
  * marker cannot exist - together with a re-measured fingerprint of the imported subtree. Anything
  * that does not match is REHYDRATED rather than accepted.
  *
+ * WHY THE CHECK REACHES BEYOND THE STYLESHEET IMPORTS (review finding F4)
+ * ----------------------------------------------------------------------
+ * An earlier revision gated the fast path on the imported SCSS subtree and three Foundation paths
+ * alone, which covers every byte the stylesheet build can read - and nothing else. The same
+ * gitignored tree also SERVES the browser: `lib/views/**`, `public/js/**` and `config/default.yaml`
+ * reference assets under 31 of its top-level entries, from `skulpt` and `blockly` through
+ * `glowscript`, `vexflow` and `src-min-noconflict`. Deleting any of them left the SCSS fingerprint
+ * intact, so `inspect()` returned `skip`, `npm run build` no-opped the hydration and
+ * scripts/verify-css-artifacts.js still passed - while those assets 404'd at runtime. The build was
+ * green and the client was broken, which is the worst shape a gate can fail in.
+ *
+ * Coverage is therefore two-layered, and the layers catch different damage:
+ *   - RUNTIME_ASSET_PATHS names one representative file inside every top-level entry the
+ *     application actually references, so a partially deleted or partially extracted component
+ *     directory is caught even though the directory itself still exists;
+ *   - the TOP-LEVEL LISTING FINGERPRINT records the entry names and their types, so a whole
+ *     top-level entry that was removed - or an extra one that does not belong to the pinned
+ *     archive - is caught even when it holds no representative path.
+ * Both are cheap: the first is 31 `existsSync` calls and the second is one `readdirSync`, so the
+ * verified fast path still costs well under a millisecond and still touches neither the network nor
+ * the filesystem beyond reading.
+ *
  * The step is still idempotent and still costs nothing to re-run: a verified tree exits 0 without
  * touching the network or the filesystem. A tree that is provably the pinned one but carries no
  * marker - the state the documented manual `curl` procedure and the Docker image build both leave -
@@ -77,12 +99,63 @@ var REQUIRED_PATHS = [
   path.join('foundation', 'package.json')
 ];
 
+// THE SERVED SURFACE. One representative file per top-level entry that lib/views/**, public/js/**,
+// public/partials/** or config/default.yaml actually requests over HTTP, censused from the tree
+// rather than guessed. These are NOT read by the stylesheet build - they are read by the browser
+// through the eight Inert directory routes lib/http/staticRoutes.js mounts - which is exactly why
+// the SCSS fingerprint above cannot see them going missing. One file per entry is deliberate: the
+// point is to detect a top-level entry that is present but hollow, not to re-checksum 435 MB.
+var RUNTIME_ASSET_PATHS = [
+  path.join('Mathjax-siunitx', 'siunitx.js'),
+  path.join('Processing.js', 'processing.min.js'),
+  'angular-notifyjs.js',
+  'angular-scrollfix.js',
+  'angular-slugify.js',
+  path.join('blockly', 'blockly_compressed.js'),
+  path.join('detectizr', 'dist', 'detectizr.min.js'),
+  path.join('dist', 'lodash.min.js'),
+  path.join('foundation', 'js', 'foundation.min.js'),
+  path.join('glowscript', 'css', 'ide.css'),
+  path.join('glowscript-blocks', 'blockly_uncompressed.js'),
+  path.join('janus', '0.4.2', 'janus.js'),
+  path.join('jq-console', 'jqconsole.min.js'),
+  path.join('json.sk', '__init__.js'),
+  path.join('marked', 'lib', 'marked.js'),
+  path.join('midi', 'build', 'MIDI.js'),
+  'ng-file-upload.min.js',
+  path.join('noVNC-dist', 'lib', 'rfb.js'),
+  path.join('processing.sk', 'processing-sk-min.js'),
+  path.join('pygame.sk', 'pygame.js'),
+  path.join('skulpt', 'skulpt-stdlib.js'),
+  path.join('skulpt_matplotlib', 'matplotlib', '__init__.js'),
+  path.join('skulpt_numpy', 'dist', 'numpy', '__init__.js'),
+  path.join('src-min-noconflict', 'ace.js'),
+  path.join('systemjs', 'dist', 'system.js'),
+  path.join('traqball.js', 'src', 'traqball.js'),
+  path.join('vexflow', 'vexflow-min.js'),
+  path.join('viewerjs', 'index.html'),
+  path.join('vpython-glowscript', 'lib', 'jquery', '2.1', 'jquery-ui.custom.min.js'),
+  path.join('webrtc-adapter', 'release', 'adapter.js'),
+  path.join('xml.sk', '__init__.js')
+];
+
+// THE TOP-LEVEL SHAPE. The pinned archive unpacks to exactly these 44 entries beside the marker.
+// The digest is over a sorted "<name> <dir|file|other>" manifest, one line per entry, joined with
+// "\n" - names and types only, because hashing their contents would mean hashing the whole 435 MB
+// tree on every build. Recording the TYPE as well as the name is what makes a directory replaced by
+// a same-named file a mismatch rather than a match.
+var TOP_LEVEL_ENTRIES = 44;
+var TOP_LEVEL_SHA256 = '417e60c6aced5295cad6be0ca77cc8d123a11a16066e3dffc3795eb3a090c9a8';
+
 // The atomic completion marker. It lives INSIDE the hydrated tree so that `git clean -xfd`, which
 // removes the tree, removes the claim about it in the same stroke - a marker that outlived its tree
 // would be the exact defect this replaces. `MARKER_VERSION` is bumped whenever the checks below
 // change, so a marker written by an older hydrator is treated as unverified rather than trusted.
-var MARKER_PATH = path.join(COMPONENTS_DIR, '.hydrated.json');
-var MARKER_VERSION = 1;
+// It is 2 because review finding F4 widened the checks to the served surface above; a version-1
+// marker records a tree that was never measured against RUNTIME_ASSET_PATHS or the top-level shape.
+var MARKER_NAME = '.hydrated.json';
+var MARKER_PATH = path.join(COMPONENTS_DIR, MARKER_NAME);
+var MARKER_VERSION = 2;
 
 // The archive was packed on macOS and carries an AppleDouble sidecar next to `public/components`.
 // It is inert, but it is not part of the component tree, so it is removed after extraction.
@@ -155,9 +228,56 @@ function measureImportedSubtree() {
   };
 }
 
+/**
+ * Measures the top-level shape of the component tree: how many entries it holds beside the marker,
+ * and the digest of their sorted "<name> <type>" manifest.
+ *
+ * The marker itself and any staging file left by an interrupted marker write are excluded, because
+ * they are this script's own bookkeeping rather than part of the archive - including them would make
+ * the fingerprint depend on whether the marker had been written yet.
+ *
+ * @returns {Object} `{ present, entries, sha256 }`. `present` is false when the directory is absent,
+ *   in which case `entries` is 0 and `sha256` is null.
+ */
+function measureTopLevel() {
+  if (!fs.existsSync(COMPONENTS_DIR)) {
+    return { present: false, entries: 0, sha256: null };
+  }
+
+  var lines = fs.readdirSync(COMPONENTS_DIR, { withFileTypes: true }).filter(function(entry) {
+    return entry.name !== MARKER_NAME && entry.name.indexOf(MARKER_NAME + '.staging-') !== 0;
+  }).map(function(entry) {
+    var type = entry.isDirectory() ? 'dir' : (entry.isFile() ? 'file' : 'other');
+
+    return entry.name + ' ' + type;
+  });
+
+  lines.sort();
+
+  return {
+    present: true,
+    entries: lines.length,
+    sha256: crypto.createHash('sha256').update(lines.join('\n')).digest('hex')
+  };
+}
+
 /** Every required path that is missing, as repository-relative strings. */
 function missingRequiredPaths() {
   return REQUIRED_PATHS.filter(function(relative) {
+    return !fs.existsSync(path.join(COMPONENTS_DIR, relative));
+  }).map(function(relative) {
+    return path.join('public', 'components', relative);
+  });
+}
+
+/**
+ * Every representative served asset that is missing, as repository-relative strings.
+ *
+ * Reported separately from missingRequiredPaths() so the log says which layer failed: a missing
+ * REQUIRED_PATH breaks the stylesheet build, while a missing RUNTIME_ASSET_PATH breaks the browser.
+ */
+function missingRuntimeAssets() {
+  return RUNTIME_ASSET_PATHS.filter(function(relative) {
     return !fs.existsSync(path.join(COMPONENTS_DIR, relative));
   }).map(function(relative) {
     return path.join('public', 'components', relative);
@@ -178,9 +298,10 @@ function readMarker() {
  * rename within a directory cannot be observed half-done. A marker is a claim that every check
  * passed, so a partially written one must be impossible rather than merely unlikely.
  *
- * @param {Object} subtree A measureImportedSubtree() result.
+ * @param {Object} subtree  A measureImportedSubtree() result.
+ * @param {Object} topLevel A measureTopLevel() result.
  */
-function writeMarker(subtree) {
+function writeMarker(subtree, topLevel) {
   var staged = MARKER_PATH + '.staging-' + process.pid;
 
   fs.writeFileSync(staged, JSON.stringify({
@@ -193,6 +314,12 @@ function writeMarker(subtree) {
       files: subtree.files,
       sha256: subtree.sha256
     },
+    topLevel: {
+      path: 'public/components',
+      entries: topLevel.entries,
+      sha256: topLevel.sha256
+    },
+    runtimeAssetsChecked: RUNTIME_ASSET_PATHS.length,
     hydratedAt: new Date().toISOString(),
     note: 'Written by scripts/hydrate-components.js only after the pinned archive was verified and ' +
       'the extracted tree re-measured. Delete this file to force a full re-verification.'
@@ -204,22 +331,47 @@ function writeMarker(subtree) {
 /**
  * Decides what this run has to do, and says why.
  *
- * @returns {Object} `{ action, reasons, subtree }` where action is 'skip' (verified), 'adopt' (the
- *   tree is provably the pinned one but unmarked) or 'rehydrate'.
+ * @returns {Object} `{ action, reasons, subtree, topLevel }` where action is 'skip' (verified),
+ *   'adopt' (the tree is provably the pinned one but unmarked or marked by an older hydrator) or
+ *   'rehydrate'.
  */
 function inspect() {
   var subtree = measureImportedSubtree();
+  var topLevel = measureTopLevel();
   var missing = missingRequiredPaths();
+  var missingRuntime = missingRuntimeAssets();
   var marker = readMarker();
   var reasons = [];
 
   if (!fs.existsSync(COMPONENTS_DIR)) {
-    return { action: 'rehydrate', reasons: ['public/components does not exist'], subtree: subtree };
+    return {
+      action: 'rehydrate',
+      reasons: ['public/components does not exist'],
+      subtree: subtree,
+      topLevel: topLevel
+    };
   }
 
   missing.forEach(function(relative) {
     reasons.push(relative + ' is missing, so the tree is partial');
   });
+
+  // Reported after the build-critical paths but gated identically: an asset the browser requests is
+  // as much a part of a complete tree as a partial the stylesheet imports (review finding F4).
+  missingRuntime.forEach(function(relative) {
+    reasons.push(relative + ' is missing, so a served component directory is incomplete');
+  });
+
+  if (!topLevel.present) {
+    reasons.push('public/components cannot be listed');
+  } else if (topLevel.entries !== TOP_LEVEL_ENTRIES) {
+    reasons.push('public/components holds ' + topLevel.entries + ' top-level entries, not the ' +
+      'pinned ' + TOP_LEVEL_ENTRIES);
+  } else if (topLevel.sha256 !== TOP_LEVEL_SHA256) {
+    reasons.push('the public/components top-level listing fingerprints to ' + topLevel.sha256 +
+      ', not the pinned ' + TOP_LEVEL_SHA256 + ' - an entry was removed, renamed, replaced by a ' +
+      'different type, or added');
+  }
 
   if (!subtree.present) {
     reasons.push(IMPORTED_SUBTREE_LABEL + ' does not exist');
@@ -234,14 +386,15 @@ function inspect() {
   // A tree that fails any check above is rehydrated whatever the marker says: the marker is a claim
   // about the tree, and the tree is the thing the build reads.
   if (reasons.length) {
-    return { action: 'rehydrate', reasons: reasons, subtree: subtree };
+    return { action: 'rehydrate', reasons: reasons, subtree: subtree, topLevel: topLevel };
   }
 
   if (!marker) {
     return {
       action: 'adopt',
       reasons: ['the tree matches the pinned fingerprint but carries no completion marker'],
-      subtree: subtree
+      subtree: subtree,
+      topLevel: topLevel
     };
   }
 
@@ -264,6 +417,15 @@ function inspect() {
     markerProblems.push('it does not record the fingerprint the tree currently has');
   }
 
+  if (!marker.topLevel || marker.topLevel.sha256 !== topLevel.sha256) {
+    markerProblems.push('it does not record the top-level listing the tree currently has');
+  }
+
+  if (marker.runtimeAssetsChecked !== RUNTIME_ASSET_PATHS.length) {
+    markerProblems.push('it records ' + JSON.stringify(marker.runtimeAssetsChecked) + ' checked ' +
+      'served assets, not the ' + RUNTIME_ASSET_PATHS.length + ' this hydrator verifies');
+  }
+
   if (markerProblems.length) {
     // The tree itself is correct, so re-verifying costs nothing but a marker rewrite.
     return {
@@ -271,11 +433,12 @@ function inspect() {
       reasons: markerProblems.map(function(problem) {
         return 'the completion marker is stale: ' + problem;
       }),
-      subtree: subtree
+      subtree: subtree,
+      topLevel: topLevel
     };
   }
 
-  return { action: 'skip', reasons: [], subtree: subtree };
+  return { action: 'skip', reasons: [], subtree: subtree, topLevel: topLevel };
 }
 
 async function download(url, destination) {
@@ -335,13 +498,20 @@ function extract(filePath) {
  * Fails unless the freshly unpacked tree is complete and fingerprints to the pinned value. This is
  * what makes the marker meaningful: it is written on the far side of this check and nowhere else.
  *
- * @returns {Object} The measureImportedSubtree() result the marker records.
+ * @returns {Object} `{ subtree, topLevel }` - the two measurements the marker records.
  */
 function assertUnpackedTreeIsPinned() {
   var missing = missingRequiredPaths();
 
   if (missing.length) {
     throw new Error('the archive unpacked but ' + missing.join(', ') + ' is still missing');
+  }
+
+  var missingRuntime = missingRuntimeAssets();
+
+  if (missingRuntime.length) {
+    throw new Error('the archive unpacked but ' + missingRuntime.join(', ') + ' is still missing, ' +
+      'so a served component directory is incomplete');
   }
 
   var subtree = measureImportedSubtree();
@@ -352,7 +522,15 @@ function assertUnpackedTreeIsPinned() {
       IMPORTED_SUBTREE_FILES + ' files / ' + IMPORTED_SUBTREE_SHA256);
   }
 
-  return subtree;
+  var topLevel = measureTopLevel();
+
+  if (topLevel.entries !== TOP_LEVEL_ENTRIES || topLevel.sha256 !== TOP_LEVEL_SHA256) {
+    throw new Error('the archive unpacked but public/components fingerprints to ' +
+      topLevel.entries + ' top-level entries / ' + topLevel.sha256 + ' instead of the pinned ' +
+      TOP_LEVEL_ENTRIES + ' entries / ' + TOP_LEVEL_SHA256);
+  }
+
+  return { subtree: subtree, topLevel: topLevel };
 }
 
 async function hydrate() {
@@ -361,14 +539,16 @@ async function hydrate() {
   if (state.action === 'skip') {
     log('public/components is present and verified (' + IMPORTED_SUBTREE_LABEL + ': ' +
       state.subtree.files + ' files, sha256 ' + state.subtree.sha256.slice(0, 16) +
-      '\u2026) - nothing to do');
+      '\u2026; top level: ' + state.topLevel.entries + ' entries, sha256 ' +
+      state.topLevel.sha256.slice(0, 16) + '\u2026; ' + RUNTIME_ASSET_PATHS.length +
+      ' served assets present) - nothing to do');
 
     return;
   }
 
   if (state.action === 'adopt') {
     state.reasons.forEach(function(reason) { log(reason); });
-    writeMarker(state.subtree);
+    writeMarker(state.subtree, state.topLevel);
     log('the tree matches the pinned fingerprint, so it is adopted and the completion marker is ' +
       'written - no download was needed');
 
@@ -405,7 +585,9 @@ async function hydrate() {
     }
   }
 
-  writeMarker(assertUnpackedTreeIsPinned());
+  var measured = assertUnpackedTreeIsPinned();
+
+  writeMarker(measured.subtree, measured.topLevel);
 
   log('hydrated public/components from the ' + RELEASE_TAG + ' release asset and recorded the ' +
     'completion marker');

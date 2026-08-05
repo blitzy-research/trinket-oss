@@ -408,7 +408,7 @@ this codebase calls, so each is a **manifest-only edit with zero call-site chang
 
 | Package | Original (installed) | Target | Reason | Verification and notes |
 |---|---|---|---|---|
-| `accepts` | 1.1.4 | **1.3.8** | `security` | Clears high findings in `accepts` and in `negotiator`. Verified still callable as a factory whose `.types` function returns `html` and `json`. **Bumped, never dropped**: `accepts(request).types(['html','json'])` at `lib/util/routeParser.js:L325` is what selects the HTML-versus-JSON response branch, so dropping it would change content negotiation |
+| `accepts` | 1.1.4 | **1.3.8** | `security` | Clears high findings in `accepts` and in `negotiator`. Verified still callable as a factory whose `.types` function returns `html` and `json`. **Bumped, never dropped**: `accepts(request).types(['html','json'])` — `lib/util/routeParser.js:L325` at the base commit, `L128` in the delivered tree after the shim was retired — is what selects the HTML-versus-JSON response branch, so dropping it would change content negotiation |
 | `js-yaml` | 3.0.2 | **3.15.0** | `security` | Clears two critical findings, including the `argparse` advisory. **Deliberately stays on the 3.x line**: `safeLoad` is still present, so `config/routes.js:L7` needs no edit at all. Advancing to 4.x or 5.x would force the `safeLoad` to `load` rename for **zero** additional security benefit |
 | `mime` | 1.2.11 | **1.6.0** | `security` | `lookup`, `extension` and `charsets` all verified present. **Chosen over a swap to a differently named package precisely because it touches zero call sites — R-1 was the recorded tie-breaker.** See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.3 |
 | `lodash` | 4.17.23 | **4.18.1** | `security` | The advisory targets `_.template`, which is unreachable here — only `_.extend`, `_.find` and `lodash.escape` are used — but the bump costs nothing and closes the finding |
@@ -504,6 +504,8 @@ as the breaking position while the major is 0, so both were probed to the same s
 **The `diff` bump in full.**
 
 `applyPatch` verified, for the course content patching at `2f8712a:lib/controllers/course.js:L440` — now `L568` — and it still answers the boolean `false` on failure, so the strict `=== false` conflict test beside it is unchanged. **This is the one bump that required a payload adapter.** The *producer* of the patch text is a separate jsdiff copy that is deliberately not upgraded: `config/default.yaml` pins the browser copy at **1.0.8** and `public/js/courseEditor/controllers/materialControl.js:L321` is its sole `createPatch` caller. Both versions were installed side by side and replayed against the shapes this application actually produces. For every hunk header carrying **at least one old line** the output is **byte-identical**; they diverge on exactly one shape — the first edit against an **empty** material, for which 1.0.8 emits the non-canonical zero-old-lines header `@@ -1,0 +1,N @@`. 1.0.8 spliced those added lines in **before** line 1, while 9.0.0 follows GNU patch and inserts them **after** line 1, which prepended a blank line to the first save of every new page and dropped its trailing newline. `lib/controllers/course.js:L567` therefore rewrites that one leading header to its canonical `@@ -0,0 ` form — `^`-anchored, so no other hunk is touched — which was measured to be a **no-op under 1.0.8's own semantics** while restoring byte-identical output under 9.0.0. Persisted course content is unchanged (TR6). See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.17
+
+One consumer of this package requires nothing from it, and that is **not** grounds for removing either. `lib/controllers/courses.js:L2` declares `var diff = require('diff')` with **zero** `diff.` references anywhere in that file — but the base commit declares the same unused require at `2f8712a:lib/controllers/courses.js:L3`, so it is pre-existing rather than migration debris, and deleting it is dead-code cleanup that R-1 excludes "even when obviously beneficial" (review finding **F12**). The package itself stays declared and pinned regardless, because `lib/controllers/course.js` is a real consumer. Adjudicated in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.45
 
 **The `joi` bump in full, because a validator major is the highest-risk change in the whole migration.** A stricter
 or laxer validator changes which requests are accepted with no error surfacing anywhere, so parity was measured rather
@@ -650,7 +652,7 @@ The Redis double used by `test/setup.js`, and the one bump in this table that **
 
 **The `sinon` bump in full.**
 
-**Three removed APIs, and all three were exercised by this suite.** Measured against the installed 22.1.0: (1) the three-argument form throws `TypeError: stub(obj, 'meth', fn) has been removed, see documentation` — **6** base-commit sites, censused over code lines only at `2f8712a`: `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8`, `test/lib/models/trinket.js:L34, L39, L155`; (2) `spy.reset` is **`undefined`** where `spy.resetHistory` is a function — **6** further base-commit sites, all on `sinon.spy(...)` doubles: `test/lib/models/plugins/paginate.js:L29-L32` and `test/lib/models/trinket.js:L167, L168`; (3) stubbing an absent property throws `TypeError: Cannot stub non-existent property`, which is what makes the catbox target correction in Rubric 3 load-bearing rather than cosmetic. **Delivered state, re-measured over the 45 tracked test `.js` files, code lines only: 0 three-argument `sinon.stub` calls and 0 `.reset()` calls remain** — 30 `.callsFake(` sites in 11 files and 7 `.resetHistory(` sites in 3 files stand in their place — and the suite runs **exit 0 with zero failures**. The replacement counts exceed the twelve obliged conversions because suites written after the conversion (`test/lib/api/files.js`, `test/lib/api/write-routes.js`, `test/lib/util/db-helper-readiness.js`, `test/lib/util/file-storage.js`, `test/lib/util/recaptcha.js`, `test/lib/workers/exports.js`, `test/lib/workers/snapshot.js`) use the modern forms natively rather than converting anything. All four figures are volatile by nature — every new double moves them — so they are stated with the commands that reproduce them rather than as fixed facts: the file count is `git ls-files | grep -cE '^test/.*\.js$'`, and the four call-site counts are a `grep` for `.callsFake(`, `.resetHistory(`, the three-argument `sinon.stub(obj, 'm', fn)` form and `.reset()` over that same file list, discounting comment lines. The remaining textual match for each removed form is a comment recording the conversion. Full adjudication: [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 13.3
+**Three removed APIs, and all three were exercised by this suite.** Measured against the installed 22.1.0: (1) the three-argument form throws `TypeError: stub(obj, 'meth', fn) has been removed, see documentation` — **6** base-commit sites, censused over code lines only at `2f8712a`: `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8`, `test/lib/models/trinket.js:L34, L39, L155`; (2) `spy.reset` is **`undefined`** where `spy.resetHistory` is a function — **6** further base-commit sites, all on `sinon.spy(...)` doubles: `test/lib/models/plugins/paginate.js:L29-L32` and `test/lib/models/trinket.js:L167, L168`; (3) stubbing an absent property throws `TypeError: Cannot stub non-existent property`, which is what makes the catbox target correction in Rubric 3 load-bearing rather than cosmetic. **Delivered state, re-measured over the 48 tracked test `.js` files, code lines only: 0 three-argument `sinon.stub` calls and 0 `.reset()` calls remain** — 30 `.callsFake(` sites in 11 files and 7 `.resetHistory(` sites in 3 files stand in their place — and the suite runs **exit 0 with zero failures**. The replacement counts exceed the twelve obliged conversions because suites written after the conversion (`test/lib/api/files.js`, `test/lib/api/write-routes.js`, `test/lib/util/db-helper-readiness.js`, `test/lib/util/file-storage.js`, `test/lib/util/recaptcha.js`, `test/lib/workers/exports.js`, `test/lib/workers/snapshot.js`) use the modern forms natively rather than converting anything. All four figures are volatile by nature — every new double moves them — so they are stated with the commands that reproduce them rather than as fixed facts: the file count is `git ls-files | grep -cE '^test/.*\.js$'`, and the four call-site counts are a `grep` for `.callsFake(`, `.resetHistory(`, the three-argument `sinon.stub(obj, 'm', fn)` form and `.reset()` over that same file list, discounting comment lines. The remaining textual match for each removed form is a comment recording the conversion. Full adjudication: [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 13.3
 
 **The test-tree call-site edits these bumps oblige are all applied.** The dependency decisions above are committed —
 `package.json` and `package-lock.json` carry them, and every version in the table is the resolved version in the
@@ -659,7 +661,7 @@ accurate when it was written and is not accurate now. Measured against the deliv
 
 | Obliged by | Edit | Measured state |
 |---|---|---|
-| `sinon` 22.1.0 | six `sinon.stub(obj, 'm', fn)` → `.callsFake(fn)` conversions, plus six `.reset()` → `.resetHistory()` | **12 of 12 done.** A re-census over code lines finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls, against **30** executable `.callsFake(` sites and **7** `.resetHistory(` sites across the 45 tracked test files — more than the twelve obliged, because later suites use the modern forms natively |
+| `sinon` 22.1.0 | six `sinon.stub(obj, 'm', fn)` → `.callsFake(fn)` conversions, plus six `.reset()` → `.resetHistory()` | **12 of 12 done.** A re-census over code lines finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls, against **30** executable `.callsFake(` sites and **7** `.resetHistory(` sites across the 48 tracked test files — more than the twelve obliged, because later suites use the modern forms natively |
 | `supertest` 7.2.2 | resolve the promise `app.js` exports before binding `server.listener` | **done.** `test/helpers/flow.js` captures `resolvedServer` through its own `app.then(…)` continuation, `agentFor()` binds `resolvedServer.listener` lazily on first use, and `test/setup.js` awaits `app` in a bare top-level `before()` registered on the root suite |
 | the unscoped `catbox-redis` removal | repoint `test/helpers/catbox-redis.js` at the in-repo engine | **done.** The unscoped require is gone; the helper stubs the **four** `CatboxMongoose.Engine.prototype` methods the suite reaches — `isReady`, `get`, `set`, `drop` — and leaves `start`, `stop`, `validateSegmentName` and `_generateKey` real |
 | `mocha` 11.7.6 | `.mocharc.json` replacing `test/mocha.opts` | **done.** The four-key file is committed — `reporter`, `recursive`, `check-leaks` and `exit`, with no `spec` and no `require` — and `test/mocha.opts` is deleted. Load order, which the deleted `mocha.opts` fixed implicitly, is supplied by `--file ./test/setup.js` in the `test` script instead |
@@ -968,7 +970,7 @@ digest `452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8` and th
 `test/baseline/route-table.json` and `test/baseline/responses.json`, and both artifacts have been replayed against the
 delivered tree: `node test/baseline/replay.js` exits 0 reporting **zero differences** over the 233-row route table, the
 58 unauthenticated, 7 authenticated and 8 assignment-`next` corpus entries, with the documented route-table anchor
-enforced as all ten clauses of `gates.documentedAnchorGate`. The measured status of every gate is tabulated once, with
+enforced as all **eleven** clauses of `gates.documentedAnchorGate`. The measured status of every gate is tabulated once, with
 the command that produced it, in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 0.
 
 That digest is recorded as
@@ -977,7 +979,7 @@ one-line recipe its `canonicalization.reproduce` field states, so a reader can c
 recomputable canonical SHA-256, registration-order SHA-256 and MD5 fingerprints are subordinate regression evidence;
 the AAP's documented 32-character digest `cd2a7e38a39bd84902ac1a0d69f50e2a` is **not** this value, is retained verbatim
 under `gates.documentedDigest`, and is not claimed to have been recomputed — the string is not recomputable by any
-verifier, so the anchor is enforced over the 233-row table it names, by the ten-clause `gates.documentedAnchorGate`
+verifier, so the anchor is enforced over the 233-row table it names, by the **eleven**-clause `gates.documentedAnchorGate`
 that one shared evaluator recomputes live — `capture.js#documentedAnchorGate`, declared in the harness that owns
 the artifact and re-exported unchanged by `replay.js` — and that the capture CLI (one PASS/FAIL entry per clause),
 the replay CLI (one difference per unsatisfied clause) and `test/lib/api/route-parity.js` (the same clauses plus
@@ -1231,7 +1233,8 @@ modernization introduced or advanced**, each queried at its exact committed vers
 Two of the four findings are examined in the subsections around this one. The `uuid` finding is worth stating here
 because its unreachability is now **measured rather than asserted**: advisory GHSA-w5hq-g745-h8pq concerns a missing
 buffer bounds check in `v3`/`v5`/`v6` *when a `buf` argument is supplied*, and `bull` calls `uuid` at exactly three
-sites — `bull/lib/queue.js:120`, `bull/lib/queue.js:1412` and `bull/lib/timer-manager.js:74` — every one of them
+sites — `node_modules/bull/lib/queue.js:120`, `node_modules/bull/lib/queue.js:1412` and
+`node_modules/bull/lib/timer-manager.js:74` — every one of them
 `uuid.v4()` with **no arguments at all**. The vulnerable path is doubly out of reach: wrong function, and no `buf`.
 
 **And npm's own offered remediation is a strict regression, which is why the finding is accepted rather than fixed.**
@@ -1456,7 +1459,8 @@ Two things in this repository look like dependency problems and are not. Both ar
 
 ### `gleak` is neither declared nor vendored
 
-`app.js:L29-L36` contains a guarded optional `require` of `gleak` with a working no-op fallback. The package appears
+`app.js:L28-L33` — `L29-L36` at the base commit — contains a guarded optional `require` of `gleak` with a working
+no-op fallback. The package appears
 **zero times in `package.json`** and **zero times in `package-lock.json`** — verified against both the base commit
 and the committed manifest — and `node_modules/gleak` does not exist. The `catch` branch therefore always fires, the
 detector always returns an empty list, and the machinery is permanently inert.

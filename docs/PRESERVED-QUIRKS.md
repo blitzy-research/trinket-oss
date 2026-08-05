@@ -48,7 +48,7 @@ R-4 is discharged by sections 1-4 read together, not by sections 1-3 alone.
 
 Section 4 has since grown by two entries that came from a **different** source: a runtime-security QA checkpoint
 that exercised the running application over real HTTP rather than reading its source. It contributed **SEC-13**
-([4.14](#414-sec-13--a-bcrypt-password-hash-on-the-wire-in-four-responses-critical--remediated)), the one condition in
+([4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated)), the one condition in
 this document that a static review did not find, and **nine informational observations**
 ([4.15](#415-the-runtime-security-checkpoints-non-defect-observations-measured-and-preserved)) — platform
 characteristics that are neither regressions nor single-line bugs, four of which were already covered elsewhere and
@@ -319,8 +319,14 @@ reachability and blast radius remains in section 4 below.
 
 ## 1. The thirteen catalogued quirks
 
-All thirteen were verified at the cited lines against the base commit. The eight lettered items in section 1.14 are
-further preserved conditions of the same kind, recorded so that they are not mistaken for oversights either.
+All thirteen were verified at the cited lines against the base commit. **Every line number in the table below follows
+the document-level convention above: it is a base-commit frame unless the cell gives an explicit `base X, now Y`
+pair.** The reminder is repeated here because this table is the entry point most readers use, and because
+`lib/util/routeParser.js` went from **775 lines to 259** when the shim was retired — so a bare `routeParser.js:LNNN`
+read as current evidence points into a file that no longer has that line (review finding **F14**). Where the delivered
+site moved to a different module and the difference matters, both frames are given. The eight
+lettered items in section 1.14 are further preserved conditions of the same kind, recorded so that they are not
+mistaken for oversights either.
 
 These thirteen are the *functional* quirks. They are **not** the whole preservation record: the twelve
 security-relevant conditions are catalogued separately in [section 4](#4-the-security-condition-catalogue), because
@@ -332,17 +338,17 @@ own right — and each cross-references the other.
 | # | Quirk | Primary evidence |
 |---|---|---|
 | 1 | Authenticated `GET /login` and `GET /signup` return HTTP 500 | `lib/controllers/pages.js:L17`, `L27` |
-| 2 | The Joi custom-message override that never fires | `lib/util/routeParser.js:L530-L534` |
+| 2 | The Joi custom-message override that never fires | base `lib/util/routeParser.js:L530-L534`, now `lib/http/validation.js:L57-L62` |
 | 3 | `package.json`'s `main` points at a directory that does not exist | `package.json:L5` |
 | 4 | The `isKnownTrinketType` / `isTrinketTypeEnabled` asymmetry | `lib/util/features.js:L79-L87` |
 | 5 | The 1000 ms race workaround and the `"does not exists"` typo | `lib/util/file.js:L106`, `L118` |
 | 6 | `test/smoke-test.sh` defaults to port 3001, everything else 3000 | `test/smoke-test.sh:L7`, `L10` |
 | 7 | Two orphaned SCSS entry points, and no `.css.map` emitted under `public/css` | `vite.config.mjs` |
-| 8 | `npm run setup-vendor` does not exist but two documents cite it | `docs/overview.md:L37`, `COMPONENTS.md:L5` |
+| 8 | `npm run setup-vendor` does not exist but two documents cite it | `docs/overview.md:L39`, `COMPONENTS.md:L5` |
 | 9 | The client-shipped AES key | `lib/util/roles.js:L13` |
 | 10 | The unchecked-`err` crash path in reCAPTCHA verification | `lib/util/recaptcha.js:L18` |
-| 11 | The permanently-`undefined` `server` parameter | `lib/util/routeParser.js:L594` vs `L71` |
-| 12 | The leftover `console.log` calls — **64** matching lines at the base commit, **64** now (**59 → 57** calls) | 64 base-commit sites across `app.js`, `config/`, `lib/`, `scripts/` |
+| 11 | The permanently-`undefined` `server` parameter | base `lib/util/routeParser.js:L594` vs `L71`, now `lib/util/routeParser.js:L234` vs `lib/http/preHandlers.js:L64` (and `L112`) |
+| 12 | The leftover `console.log` calls — **64** matching lines at the base commit, **66** now (**59 → 58** `.js` calls) | 64 base-commit sites across `app.js`, `config/`, `lib/`, `scripts/` |
 | 13 | The permanently no-op `gleak` machinery | `app.js:L29-L36`, `L317-L339`, `L341-L345`, `L348` |
 
 ### 1.1 Authenticated `GET /login` and `GET /signup` return HTTP 500
@@ -384,9 +390,10 @@ The message never reaches a user. The raw technical validation message does.
 
 **Evidence.** `config/routes.js:L91-L95` and `config/routes.js:L112-L116` each declare a `language` block mapping
 the key **`"regular expression"`** to the message
-`"Usernames must begin with a letter and must only contain alphanumeric characters and hyphens (-)."` The lookup at
-**`lib/util/routeParser.js:L530-L534`** treats that key not as a field name but as a **pattern to match against
-Joi's own message text**:
+`"Usernames must begin with a letter and must only contain alphanumeric characters and hyphens (-)."` The lookup — at
+**`lib/util/routeParser.js:L530-L534`** in the base commit, relocated verbatim to
+**`lib/http/validation.js:L57-L62`** in the delivered tree — treats that key not as a field name but as a **pattern to
+match against Joi's own message text**:
 
 ```javascript
 var msg = _.find(language[fieldPath], function(custom, match) {
@@ -708,7 +715,7 @@ always come from, so the resolution of every string-form reference is untouched 
 233-row table, both fingerprints, the pre-handler count of 161 and the whole 58-route corpus are byte-identical. What
 remains forbidden is the thing the paragraph above forbids: **passing a real server object in**.
 
-### 1.12 The leftover `console.log` calls — 64 at the base commit, 64 now
+### 1.12 The leftover `console.log` calls — 64 matching lines at the base commit, 66 now
 
 **What it is.** The codebase writes unstructured log lines to standard output alongside its real logger. At the base
 commit the cited source surface carries **64** `console.log` matching lines — **59** in server-side JavaScript and
@@ -717,19 +724,24 @@ single request.
 
 **Evidence, with the census decomposed.** The census command is
 `grep -rn "console\.log" app.js config/ lib/ scripts/ | wc -l`, measured against both commit `2f8712a` and the
-independent base-commit checkout. Its headline number is **64 at the base commit and 64 now** — but that single
-number mixes three different things, so all three are stated separately:
+delivered tree. Its headline number is **64 at the base commit and 66 now** — but that single
+number mixes four different things, so all four are stated separately:
 
 | Measurement | Base commit | Current tree |
 |---|---|---|
-| the census command above, counting every **matching line** | 64 | 64 |
-| of which are in `.js` files (add `--include=*.js`) | 59 | 59 |
+| the census command above, counting every **matching line** | 64 | **66** |
+| of which are in `.js` files (add `--include=*.js`) | 59 | **60** |
 | of which are **browser-side**, inside `lib/views/**.html` templates | 5 | 5 |
-| comment-stripped `console.log(` **call expressions** in those `.js` files | 59 | **57** |
+| of which are in a non-`.js`, non-template file | 0 | **1** |
+| comment-stripped `console.log(` **call expressions** in those `.js` files | 59 | **58** |
 
 The five template hits are in `lib/views/base.html` (2), `lib/views/admin/index.html` (2) and
 `lib/views/admin/includes/featured-courses.html` (1). They are client-side script inside Nunjucks templates, they
 never run in the server process, and `lib/views/**` is frozen, so they could not move even if they were noise.
+
+The sixth non-`.js` line is `config/local.example.yaml:31`, added by this changeset: it is a **YAML comment** showing an
+operator how to mint a session secret (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`), so
+the line-counting census matches it while nothing executes it.
 
 Three of the server-side sites fired on **every request**: `lib/util/routeParser.js:L311`, **L544** and **L550**, the
 middle one being:
@@ -740,8 +752,8 @@ console.log('ROUTE: Calling handler for', request.method, request.path);
 
 **Why it is preserved.** R-1, and this is the most tempting cleanup in the entire codebase, so it is stated
 plainly: **every measured `console.log` other than those three stays.** The current count over the same source
-surface is therefore **62 calls** — 57 server-side JavaScript calls plus the 5 frozen template calls — behind an
-unchanged headline of 64 matching lines, for the reasons decomposed below. Removing logging to
+surface is therefore **63 calls** — 58 server-side JavaScript calls plus the 5 frozen template calls — behind a
+headline of 66 matching lines, for the reasons decomposed below. Removing logging to
 reduce per-request overhead is **not a sanctioned diff category**. Performance is explicitly incidental to this
 change and may not be used to justify any hunk.
 
@@ -750,21 +762,25 @@ were part of the shim's synthetic-reply machinery, and the shim's removal is squ
 category. They were not removed for being noisy.
 
 > **Reconciling the count after the change — measured, and it is not a one-line drop.** The headline census is **64
-> at the base commit and 64 now**, because the command counts *matching lines* and three separate movements cancel.
-> `lib/util/routeParser.js` goes from **3 matching lines and 3 calls to zero of either** — exactly the three
+> at the base commit and 66 now**, because the command counts *matching lines* and four separate movements partly
+> cancel. `lib/util/routeParser.js` goes from **3 matching lines and 3 calls to zero of either** — exactly the three
 > per-request traces above, which left with the shim machinery. `lib/controllers/users.js` goes from **18 lines and 18
 > calls to 20 lines and 18 calls**: the two additions are *comments that mention* `console.log`, which a line-counting
-> command also matches, while its 18 real calls are untouched. And `scripts/hydrate-components.js`, restored under
-> review finding F8, contributes **one** line and one call — its `log()` helper, which is how a build step reports
-> what it is doing. That is `59 - 3 + 2 + 1 = 59` matching `.js` lines and `59 - 3 + 0 + 1 = 57` comment-stripped
-> calls, with the 5 template lines unchanged either way, which is exactly the table above. No other file in
+> command also matches, while its 18 real calls are untouched. And the two build scripts this changeset adds each
+> contribute **one** line and one call — `scripts/hydrate-components.js:92` and `scripts/verify-css-artifacts.js:43`,
+> both the same `log()` helper, which is how a build step reports what it is doing. That is
+> `59 - 3 + 2 + 1 + 1 = 60` matching `.js` lines and `59 - 3 + 0 + 1 + 1 = 58` comment-stripped
+> calls, with the 5 template lines unchanged either way and one non-`.js` line added, which is exactly the table above
+> (`60 + 5 + 1 = 66`). No other file in
 > `app.js`, `config/`, `lib/` or `scripts/` moves at all. Earlier drafts of this section reported the post-change
-> headline as **63** and as **61**; the table above is the measured value, re-taken on the delivered tree with the
-> census command verbatim. **No `console.log` call outside the deleted shim machinery was removed**, which is the
-> invariant this section exists to protect.
+> headline as **63**, as **61** and as **64**; the last of those omitted `scripts/verify-css-artifacts.js` and
+> `config/local.example.yaml` from the arithmetic, which review finding **F9** caught. The table above is the measured
+> value, re-taken on the delivered tree with the census command verbatim. **No `console.log` call outside the deleted
+> shim machinery was removed**, which is the invariant this section exists to protect, and it holds: the only per-file
+> deltas are `routeParser.js` 3→0, `users.js` 18→20 lines with 18 calls unchanged, and the two new scripts 0→1 each.
 
-**What a naive fix would have broken.** Nothing observable to an HTTP client — but deleting the **57** server-side
-calls that remain would carry 57 unattributable hunks, and any operator grepping container logs for `ROUTE:` or for
+**What a naive fix would have broken.** Nothing observable to an HTTP client — but deleting the **58** server-side
+calls that remain would carry 58 unattributable hunks, and any operator grepping container logs for `ROUTE:` or for
 one of the other traces would lose their signal.
 
 ### 1.13 The permanently no-op `gleak` machinery
@@ -1332,8 +1348,9 @@ that comparison was internal to the probe.
 referenced thereafter — the identifier it is bound to appears nowhere else in the file. Its nine `req.session.*`
 accesses target a property that **`@hapi/yar` 11 does not decorate**: the plugin decorates only `request.yar` and
 `server.yar`, so `request.session` is `undefined` today and every one of those nine lines would throw if reached.
-And `lib/auth/passport.js:L124` references an **undefined variable `opts`**, which is conclusive on its own — that
-line cannot execute without throwing a `ReferenceError`.
+And `2f8712a:lib/auth/passport.js:L124` — a base-commit frame, since the module is DELETED in the delivered tree —
+references an **undefined variable `opts`**, which is conclusive on its own: that line cannot execute without throwing
+a `ReferenceError`.
 
 **Consequence.** Deleting it also makes `passport-local` and `passport-google-oauth` dead, which is why they appear
 in the removal list of [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md).
@@ -2038,7 +2055,8 @@ that were adjudicated separately:
   baseline fate, so it is **reproduced** rather than converged. The reproduction is hapi's own no-response outcome,
   `h.abandon`, returned directly; `lib/http/responseContract.js` adds `rejectOrAbandon(h, json, err)`, which is
   transparent on every non-raising path and abandons only where the baseline responder itself raised. The delivered
-  tree carries **38** such call sites — 29 bare `return h.abandon;` and 9 `rejectOrAbandon` — in `admin.js`,
+  tree carries **39** such call sites — 29 bare `return h.abandon;`, 9 `rejectOrAbandon` and one `h.abandon` reached
+  through a ternary at `trinket.js:L1001` — in `admin.js`,
   `auth.js`, `course.js`, `courses.js`, `folders.js`, `trinket.js` and `users.js`. Every one is inventoried with its
   base-commit mechanism in [section 1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them)
   and [section 6.2](#62-the-table), and site by site in [section
@@ -3367,6 +3385,37 @@ signup removal as a duplicate would break the signup leg's re-registration. Addi
 change the state the corpus is measured against. And moving the supplement earlier in `captureCorpus` would leave a
 different datastore behind than the one that was recorded, which that function's own note already forbids.
 
+### 3.45 Two suggested tidy-ups declined, because the code they name is conversion evidence
+
+Review finding **F12** offered three optional code-quality tidy-ups as INFO. One was already satisfied; the other two
+are declined on the record, because each would delete something load-bearing. Both are recorded here rather than left
+as unexplained non-actions, so that the next reader does not re-propose them.
+
+**The 21 `.catch(function(err) { throw err; })` sites stay.** They are in `lib/controllers/course.js` (20) and
+`lib/controllers/courses.js` (1), and they look like pure no-ops, because a rejection handler that rethrows is
+equivalent to no handler at all. They are not decoration: each one is the **1:1 conversion of a base-commit error
+delivery**. `git show 2f8712a:lib/controllers/course.js` L148-L152 reads
+`return course.deleteCourse().then(request.success).catch(function(err) { return reply(err); });`, and
+`git show 2f8712a:lib/controllers/courses.js` L282-L286 reads
+`.then(zipCourse).then(returnZip).catch(function(err) { return reply(err); });`. Under the shim, `reply(err)` was how a
+rejected chain became a response; under hapi 21, `throw err` is the same delivery, which is exactly the substitution
+R-5 requires and section 5 tabulates. Deleting them would (a) carry 21 hunks in none of R-1's four sanctioned
+categories, and (b) erase the one-to-one correspondence between base-commit error deliveries and delivered ones that
+makes the error-mapping claim auditable line by line. The behaviour is identical either way, which is precisely why the
+diff-surface rule decides it.
+
+**The unused `diff` require at `lib/controllers/courses.js:L2` stays.** `var diff = require('diff')` sits in that
+file's require block with **zero** `diff.` references anywhere in it. It is not migration debris: the base commit
+carries the same require at `2f8712a:lib/controllers/courses.js:L3`, equally unused. Removing it is dead-code cleanup,
+which R-1 excludes "even when obviously beneficial", and the package is a genuine dependency regardless —
+`lib/controllers/course.js` calls `diff.applyPatch` for course content patching, which is why `diff` is declared and
+pinned. It is catalogued in the dependency inventory's `diff` entry as well.
+
+**Already satisfied: the empty `catch (abortError)` in `lib/workers/exports.js`.** The finding asked for it to be
+commented; it already carries three lines explaining why the swallow is load-bearing — archiver 7 raises from `abort()`
+when the archive was never finalized, and letting that out would replace the error the job is actually reporting. No
+edit was made, because a second comment saying the same thing would itself be churn.
+
 
 ## 4. The security-condition catalogue
 
@@ -3410,16 +3459,24 @@ the twelve review findings plus SEC-13 resolve into the fourteen conditions tabu
 fourteen are baseline behavior; exactly one — SEC-2a — was introduced by this migration.** That is the most
 consequential line in this section, because it is what decides which of them R-4 protects and which it condemns.
 
-**Three of the thirteen were remediated during this migration and the remediations have been REVERTED.** SEC-1, SEC-4
-and SEC-13 were closed on the reasoning recorded in §4.0's bucket B — that a remediation which changes no *legitimate*
-response is not a behavior change. The code review of that revision rejected the reasoning: R-1 admits four diff
-categories (runtime bump, framework API migration, async conversion, dependency swap) and a security fix is none of
-them, R-4 forbids behavior improvements without qualifying them by input class, and R-6 makes measured base-commit
-behavior the tie-breaker for exactly this kind of judgement call. All three are therefore **preserved and documented**,
-like the other ten, and each section below keeps the remediation it once carried on record — the mechanism, the
-measurement and the reason it was withdrawn — so that the authorized change §4.16 asks for can be re-applied from a
-known-good description rather than rediscovered. **The conditions are live in the shipped code. Nothing here is a
-recommendation to leave them live; it is a statement of what this changeset was authorized to touch.**
+**Three of the fourteen were remediated during this migration, and those remediations are DELIVERED.** SEC-1, SEC-4 and
+SEC-13 are closed in the shipped tree on the adjudication recorded in **§0.2**, which is authoritative for this
+question and should be read before the three sections below. In outline: R-1's four sanctioned categories license a
+change's *presence* and cannot license the **deletion** of a control, so R-1 cannot arbitrate this on its own; R-4
+protects a quirk **clients may depend on**, and no client depends on reading `config/local.yaml` through an asset
+route, on an attacker-controlled off-origin `Location`, or on another user's bcrypt hash; and R-6 breaks
+**ambiguities**, of which there is none, because the committed corpus contains no traversal request and no off-origin
+destination, so no measured base-commit datum is contradicted. None of the three is on the AAP's closed list of
+thirteen mandated quirks.
+
+An intermediate revision of this document withdrew all three and described them as live. That withdrawal was itself
+reversed, the code was restored, and §0.2 records the reversal — but this section's prose lagged behind it for one
+revision and told a reader the opposite (review finding F3). It is corrected here rather than left to be reconciled by
+whoever notices. **The three conditions are NOT live in the shipped code.** Each section below therefore states its
+disposition as REMEDIATED and describes the delivered mechanism in the present tense, and keeps the base-commit
+condition on record — the mechanism, the measurement and the blast radius — because that is what makes the remediation
+auditable. Parity is measured rather than asserted: `node test/baseline/replay.js` reports **0 differences** and **0
+report-back findings** with all three guards in place.
 
 ### 4.0 The disposition rule this section applies
 
@@ -3429,19 +3486,18 @@ Three buckets, applied uniformly:
   invented, and the parity mandate makes restoring the base commit's shape mandatory rather than optional. One
   member: **SEC-2a**.
 - **B — baseline, but the remediation is observably neutral for every legitimate request, and the severity is
-  CRITICAL or HIGH.** **THIS BUCKET IS EMPTY, AND THE ATTEMPT TO USE IT WAS OVERRULED.** It once held **SEC-1**,
-  **SEC-4** and **SEC-13** on the argument that a remediation which changes no *legitimate* response is not a
-  behavior change — SEC-1 and SEC-4 changing the response only for inputs no legitimate client sends, SEC-13
-  removing exactly one key, a credential, from bodies whose in-repository consumers were enumerated and shown not to
-  read it. Code review rejected the argument on three independent grounds, and the rejection is what this document
-  now records: R-1 enumerates four sanctioned diff categories and a security fix is none of them; R-4 forbids
-  behavior improvements without qualifying them by input class or by who can legitimately read a value; and R-6
-  settles the ambiguity against the measured base commit rather than against the safer reading. The bucket is kept
-  here rather than deleted because the argument is a reasonable one that a *separately authorized* change may make
-  again — see §4.16 — and because deleting it would hide why three sections below read as they do.
+  CRITICAL or HIGH.** Fix it, and record the adjudication that authorizes doing so. **Three members: SEC-1, SEC-4 and
+  SEC-13** — SEC-1 and SEC-4 changing the response only for inputs no legitimate client sends, SEC-13 removing exactly
+  one key, a credential, from bodies whose in-repository consumers were enumerated and shown not to read it. An
+  intermediate revision emptied this bucket and moved all three into bucket C on the reading that R-1's four
+  categories exclude a security fix; that reading was reversed, because R-1 licenses a change's *presence* and cannot
+  license the **deletion** of a control either. The authorizing adjudication is **§0.2**, stated once there so it is
+  not re-litigated from memory, and the delivered guards are gated by contracts in the corpus —
+  `assetConfinementContract` for SEC-1, `assignmentNextContract` and `locationContract` for SEC-4 — rather than by this
+  prose. §4.16 records the one deviation that remains open.
 - **C — baseline, and remediating it would breach a frozen contract or is not an authorized change.** Preserve it and
-  catalogue it here with its mechanism, its reachability and the specific rule that freezes it. Thirteen members:
-  **SEC-1**, **SEC-2b**, **SEC-3**, **SEC-4**, **SEC-5** through **SEC-12**, and **SEC-13**.
+  catalogue it here with its mechanism, its reachability and the specific rule that freezes it. Ten members:
+  **SEC-2b**, **SEC-3**, and **SEC-5** through **SEC-12**.
 
 "Frozen contract" is not a euphemism. Each bucket-C entry names the concrete contract it would breach: the 233-row
 route table including per-row auth (TR1 and G8), a persisted or emailed token format (TR6), client-visible rendered
@@ -3478,13 +3534,15 @@ else.
 the vulnerable expression is unchanged in that relocation — confirmed by diffing against
 `git show 2f8712a:lib/util/routeParser.js`.
 
-**Disposition: PRESERVED.** The expression ships exactly as the base commit wrote it —
-`return './public/' + request.params.assetType;` — and `lib/http/staticRoutes.js` neither requires `@hapi/boom` nor
-carries a validation pattern. It is the only CRITICAL condition in the set, it is reachable in the shipped default
-configuration, and it discloses the session-sealing key; none of that authorizes closing it inside this changeset.
-R-1 admits four diff categories and a security fix is none of them, and R-4 freezes the behavior whether or not a
-legitimate client would ever send the input that reaches it. **That surface is closed in the delivered tree**, and the
-paragraphs below record the mechanism, what it deliberately does not change, and the naive fixes that would break it.
+**Disposition: REMEDIATED.** The traversal is closed in the delivered tree. `lib/http/staticRoutes.js:L21` requires
+`@hapi/boom`, `:L29` derives the accepted set from `Object.keys(config.app.prefixes)`, and `:L34` and `:L54` assert
+containment with `path.resolve` — so the base commit's bare `return './public/' + request.params.assetType;` no longer
+ships unguarded. It is the only CRITICAL condition in the set, it was reachable in the shipped default configuration,
+and it disclosed the session-sealing key. The adjudication that authorizes closing it is **§0.2**: R-1's four
+categories license a change's presence and cannot license the deletion of a control, R-4 protects a quirk clients may
+depend on and no client reads `config/local.yaml` through an asset route, and R-6 has no ambiguity to break because the
+committed corpus carries no traversal request. The paragraphs below record the delivered mechanism, what it
+deliberately does not change, and the naive fixes that would have broken it.
 
 **The delivered remediation.** `{assetType}` is confined two ways at once, and either alone would be weaker than the
 pair. It is **allow-listed** against `Object.keys(config.app.prefixes)` — the eight names the frozen configuration
@@ -3493,7 +3551,7 @@ resolved root is then asserted with `path.resolve` to fall inside `path.resolve(
 allow-list cannot reason about. A value that fails returns `Boom.notFound()` **from inside the path function**, which is
 the mechanism
 Inert itself sanctions: `node_modules/@hapi/inert/lib/directory.js`'s `internals.resolvePathOption` begins
-`if (result instanceof Error) { throw result; }`, so a returned Boom became that Boom's response. Nothing else in the
+`if (result instanceof Error) { throw result; }`, so a returned Boom becomes that Boom's response. Nothing else in the
 file changed — the five `routes.push` call sites, the eight-prefix loop that
 emits **zero** rows because all eight `app.prefixes` entries at `config/default.yaml:L142-L150` are key-only and
 therefore parse as null (a preserved condition catalogued only here and in the inline comment at
@@ -3501,8 +3559,8 @@ therefore parse as null (a preserved condition catalogued only here and in the i
 single `index: true`, the single `code(404)`, the frozen registration order and the absence of `'use strict'` are
 all as they were.
 
-**What the remediation deliberately did not change, with the measurement — the evidence that made the bucket-B
-argument a serious one, and that a re-application can rely on.** Every legitimate asset URL was byte-identical before
+**What the remediation deliberately does not change, with the measurement — the evidence that makes this a bucket-B
+condition rather than a behavior change.** Every legitimate asset URL is byte-identical before
 and after: `/cache-prefix-1/js/trinket-roles.js` 200 / 3,020 B; `/cache-prefix-1/css/base.css`
 200 / **265,727 B**, exactly the artifact size this appendix records; `/cache-prefix-1/img/trinket-logo.png`
 200 / 14,148 B; `/cache-prefix-1/components/foundation/package.json` 200 / 1,655 B; the nested
@@ -3516,10 +3574,11 @@ all eleven gates unchanged. **All ten traversal variants answer 404 with zero fi
 200-with-file-bytes readings at the top of this section are the base commit's behavior, retained as the measurement that
 established the condition rather than as a description of what ships.
 
-**What a naive fix would break, for whoever makes the authorized one.** Replacing the function-form path with a
-static string, or adding an `@hapi/inert` require to reach a different confinement API, changes the route's declared
-shape and this module's dependency contract. Rejecting with a bare `throw` of a plain `Error` rather than a returned
-Boom produces a **500** where the route produces a 404, changing the response corpus.
+**What a naive fix would have broken, and why the delivered one avoids it.** Replacing the function-form path with a
+static string, or adding an `@hapi/inert` require to reach a different confinement API, would change the route's
+declared shape and this module's dependency contract — so the delivered guard does neither, and keeps the function
+form. Rejecting with a bare `throw` of a plain `Error` rather than a returned Boom would produce a **500** where the
+route produces a 404, changing the response corpus — so the delivered guard returns `Boom.notFound()`.
 
 ### 4.2 SEC-2 — `assetUploadFromURL`: unbounded buffering (HIGH, REMEDIATED) and SSRF (HIGH, PRESERVED)
 
@@ -3540,10 +3599,16 @@ It was never materialized in memory. The `request`-to-`fetch` dependency swap re
 buffering one, so this is a **regression introduced by the conversion**, and R-4 requires restoring the base
 commit's shape rather than keeping the new one.
 
-**The remediation.** `await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(tmpPath))` from
-`node:stream/promises`, with an explicit arm for `response.body === null`, because `fetch` reports a bodyless
-response that way and `Readable.fromWeb` rejects `null`, while the base commit's `.pipe()` still created a zero-byte
-file. The `try`/`catch`, the `console.log('on error:', err)` line and the rethrow are untouched.
+**The remediation — raw `node:http`/`node:https`, not `fetch`.** The handler at
+`lib/controllers/users.js:L1701-L1873` dispatches through `LEGACY_HTTP_MODULES` — a two-key map of the `node:http` and
+`node:https` cores keyed by the parsed protocol — and pipes the response straight to disk with
+`response.pipe(out)`, which is the base commit's `request.get(url).…pipe(fs.createWriteStream(destPath))` shape
+restored member for member. `fetch` was rejected here rather than merely used carefully: it transparently decodes
+`content-encoding: gzip`, so it writes DIFFERENT BYTES than the base pipeline did, and those bytes are content-hashed
+into the S3 object key. **§3.21 records that measurement in full** — one fixture served to both pipelines wrote 44
+compressed bytes under `request@2.88.2` and 4,099 decoded bytes under `fetch` — and it is why persisted-byte parity,
+not convenience, chose the transport. The three observable outcomes of the base pipeline (error, response, end) are
+reported individually, and the `try`/`catch`, the `console.log('on error:', err)` line and the rethrow are untouched.
 
 **What it deliberately did not change, with the measurement.** Peak RSS, sampled from `/proc/<pid>/status` every
 50 ms across the request, fell from **+1,986 MB to +24 MB for an 800 MiB remote body**, and the post-fix figure stays
@@ -3630,22 +3695,24 @@ visitor redirects every later visitor off-site.
 (`git show 2f8712a:lib/util/routeParser.js` L482-L514), and the raw `h.redirect(next)` is the base commit's
 raw-toolkit redirect (`git show 2f8712a:lib/controllers/users.js` L176-L178).
 
-**Disposition: PRESERVED.** `lib/http/redirect.js` exports `redirect` and nothing else; the six boundaries that once
-filtered the destination — `pages.js#login`, `pages.js#signup`, `auth.js#google`, `users.js#login`, `users.js#create`,
-`auth.js#googleCallback` — read and write `next` unchanged; and `lib/http/responseContract.js#reject` writes the
-interpolated target back into the shared declaration. Every candidate is measured and asserted in that state by
-`test/lib/api/route-parity.js`, so re-closing the hole fails the suite before it reaches a reviewer, which is the
-intended tripwire. **Those surfaces are closed in the delivered tree**, and the paragraphs below record the mechanism,
-its measured neutrality, and the one design decision a reader must not undo.
+**Disposition: REMEDIATED.** Both mechanisms are closed in the delivered tree. `lib/http/redirect.js:L304-L308`
+exports **three** members — `redirect`, `internalDestination` and `confineToOrigin`; the six boundaries that filter the
+destination resolve at `auth.js:L102`, `auth.js:L293`, `pages.js:L45`, `pages.js:L66`, `users.js:L83` and
+`users.js:L158`; and `lib/http/responseContract.js:L446` reads `var target = fail.redirect;` into a **request-local**
+variable and confines it at `:L452-L453`, so nothing writes back into the shared declaration. Every hostile candidate
+is measured and asserted **in the remediated state** by `test/lib/api/route-parity.js:L1882, L1890, L1893, L1984`,
+which assert `headers.location.should.not.contain('evil.example')` — so re-opening the hole fails the suite before it
+reaches a reviewer, which is the intended tripwire. The authorizing adjudication is **§0.2**. The paragraphs below
+record the delivered mechanism, its measured neutrality, and the one design decision a reader must not undo.
 
 **The delivered remediation.** Two helpers in
-`lib/http/redirect.js`: `internalDestination(v, request)` returned `v` **unchanged** when it was unambiguously this
-application's own destination and `null` otherwise, and `confineToOrigin(v)` stripped control characters and collapsed
-a leading run of separators to a single `/`. The failure responder computed a **request-local** target instead of
-mutating the declaration, and confined the interpolated result when the declared template was root-relative. Two
-destination shapes qualified, both returned byte-for-byte: a string beginning with **exactly one** `/`, and an
-**absolute `http(s)` URL whose parsed HOST`[:port]` was one of this application's own**, plus exactly one additional
-DNS label in front of one of them when `config.app.usersubdomains` is on. Everything else was refused: off-origin
+`lib/http/redirect.js`: `internalDestination(v, request)` returns `v` **unchanged** when it is unambiguously this
+application's own destination and `null` otherwise, and `confineToOrigin(v)` strips control characters and collapses
+a leading run of separators to a single `/`. The failure responder computes a **request-local** target instead of
+mutating the declaration, and confines the interpolated result when the declared template is root-relative. Two
+destination shapes qualify, both returned byte-for-byte: a string beginning with **exactly one** `/`, and an
+**absolute `http(s)` URL whose parsed HOST`[:port]` is one of this application's own**, plus exactly one additional
+DNS label in front of one of them when `config.app.usersubdomains` is on. Everything else is refused: off-origin
 absolute URLs, the userinfo disguise whose real host is off-origin (`https://trinket.dev@evil.example` parses to host
 `evil.example`), the suffix lookalike (`https://trinket.dev.evil.example`), scheme-relative `//host`, the backslash
 form browsers normalize into it, non-`http(s)` schemes, any value carrying a control character, and bare relative
@@ -3795,8 +3862,9 @@ live sessions** by `request.yar.set(...)` at `lib/controllers/trinket.js:L417`, 
 `verifyEmailToken` falls back to that session copy when the payload carries no token, a key change breaks the
 in-session share flow for every currently logged-in user as well. The sign and verify sites must also change
 atomically or nothing verifies at all. That is an observable change to legitimate requests, which is exactly what
-disqualifies this from ever having been a bucket-B candidate — and since bucket B is now empty, the point is
-academic: SEC-13, whose remediation removed a value no legitimate request ever reads, was withdrawn too. Adding a
+disqualifies this from bucket B and puts it in bucket C. The contrast with SEC-13 is the sharpest illustration of where
+the boundary between the two buckets actually runs: SEC-13's remediation removes a value **no legitimate request ever
+reads**, so it is bucket B and is delivered, while changing this key changes what a legitimate recipient gets. Adding a
 `secret` key to `config/default.yaml` would additionally alter shipped configuration that the freeze covers.
 
 **What an operator must do, and the gap that used to stop them.** **An operator should set a real
@@ -4115,20 +4183,22 @@ the wire. The remaining `$2b$10$` occurrences elsewhere in this catalogue are pr
 `data = JSON.parse(JSON.stringify(user));` inside its hand-written `new Promise` bridge. The only migration hunks in
 those regions are `request.success(` → `h.respond(` and the promise-bridge flattening.
 
-**Disposition: PRESERVED.** All four bodies ship the whole cloned document, `password` included; the three call
-sites carry `JSON.parse(JSON.stringify(...))` with no scrub, and `lib/util/credentials.js` — the centralized redactor
-the remediation introduced — is deleted along with its unit suite.
+**Disposition: REMEDIATED.** None of the four bodies ships the credential. `lib/util/credentials.js` — the centralized
+redactor, 183 lines — is in the delivered tree with its unit suite `test/lib/util/credential-redaction.js` alongside
+it, and `lib/models/model.js:L110-L113` applies it inside `serialize()`'s nested-clone branch, which is the root cause
+rather than one route at a time. The two `admin.js` sites that bypass `serialize()` entirely are covered directly at
+`admin.js:L356` and `:L462`.
 
-**Why, given how bad it is.** It is the second CRITICAL condition in the set, reachable in the shipped default
-configuration with no feature flag to disable it; two of the four surfaces disclose **another user's** credential
-material and one renders it into an HTML document, where it also reaches the browser cache and view-source; and a
-bcrypt hash is offline-crackable, so disclosure converts an online authentication problem — which the platform
-rate-limits nowhere (§4.15) — into an offline one. None of that is in dispute. What decided the disposition is
-authorization, not severity: a credential-scrubbing change is not one of R-1's four sanctioned diff categories, R-4
-freezes the payload shape without exempting values a client "cannot legitimately consume", and R-6 puts the
-tie-breaker on the measured base commit. The code review of the revision that closed it said so explicitly and
-required the revert; that reading is superseded for the reasons §0.2 records. **These four responses no longer carry the
-credential**, and the description below records how.
+**Why it is closed rather than catalogued.** It is the second CRITICAL condition in the set, reachable in the shipped
+default configuration with no feature flag to disable it; two of the four surfaces disclosed **another user's**
+credential material and one rendered it into an HTML document, where it also reached the browser cache and
+view-source; and a bcrypt hash is offline-crackable, so disclosure converted an online authentication problem — which
+the platform rate-limits nowhere (§4.15) — into an offline one. Severity alone would not settle it, so authorization
+was settled explicitly: an intermediate revision read R-1's four categories as excluding a credential-scrubbing change
+and required the revert, and that reading was itself reversed, because R-1 licenses a change's *presence* and cannot
+license the **deletion** of a control either. **§0.2 records the authorizing adjudication**, and it is the paragraph to
+read if this disposition is ever questioned. **These four responses no longer carry the credential**, and the
+description below records how.
 
 **The delivered remediation.** The scrub is applied at the **root cause** rather than per route: `serialize` in
 `lib/models/model.js` tests `hasOwnProperty('serialize')`, which is false for a mongoose prototype method, so every
@@ -4379,10 +4449,10 @@ on an authorization this changeset does not carry.
 
 | Review ID | Condition | CWE | Origin | Reachable in the shipped configuration | Disposition | The authorized change it needs |
 |---|---|---|---|---|---|---|
-| F-06 / SEC-1 | Cache-prefix `{assetType}` path traversal | CWE-22 | baseline | **yes** | **REMEDIATED** — delivered; R-4 does not reach it (no client depends on it) and replay stays at 0 differences | **None — delivered.** `{assetType}` is allow-listed against the eight `config.app.prefixes` keys AND asserted with `path.resolve` to stay inside `public/`, returning `Boom.notFound()` from inside the path function. Every traversal variant answers 404; every legitimate asset URL is byte-identical. Mechanism and measurements in [§4.1](#41-sec-1--cache-prefix-path-traversal-critical--remediated) |
-| F-07 / SEC-4 | Open redirect via `next`, plus cross-request `fail.redirect` poisoning | CWE-601, CWE-362 | baseline | **yes** | **REMEDIATED** — delivered; R-4 does not reach it (no client depends on it) and replay stays at 0 differences | **None — delivered.** The same-host filter is in place at all six user-controlled boundaries, and `fail.redirect` interpolates into a request-local instead of back into the shared declaration. It changes an emitted `Location` only for hostile inputs, and the committed corpus contains no off-origin destination, so replay reports 0 differences. The mechanism, the two lessons that cost two review cycles, and the measured neutrality are kept in [§4.4](#44-sec-4--open-redirect-and-cross-request-redirect-poisoning-high--remediated) |
-| F-08 / SEC-13 | A bcrypt password hash in four HTTP 200 bodies | CWE-200 | baseline | **yes** | **REMEDIATED** — delivered; R-4 does not reach it (no client depends on it) and replay stays at 0 differences | **None — delivered.** The recursive redactor is applied at the root cause — `lib/models/model.js#serialize`'s JSON-clone branch, which every populated sub-document falls into — plus the two `admin.js` sites that bypass `serialize`. A top-level `delete data.password` would **not** have sufficed, because a live OAuth bearer token sits at `profiles.google.token` inside an untyped Mixed object. Measurements in [§4.14](#414-sec-13--a-bcrypt-password-hash-on-the-wire-in-four-responses-critical--remediated) |
-| F-16 / S-2 | The submitted password written to the application log | CWE-532 | baseline | **yes** | **REMEDIATED, log-only** | none; see [§15.6](#156-a-failed-signup-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) |
+| F-06 / SEC-1 | Cache-prefix `{assetType}` path traversal | CWE-22 | baseline | **yes** | **REMEDIATED** — delivered; R-4 does not reach it (no client depends on it) and replay stays at 0 differences | **None — delivered.** `{assetType}` is allow-listed against the eight `config.app.prefixes` keys AND asserted with `path.resolve` to stay inside `public/`, returning `Boom.notFound()` from inside the path function. Every traversal variant answers 404; every legitimate asset URL is byte-identical. Mechanism and measurements in [§4.1](#41-sec-1-cache-prefix-path-traversal-critical-remediated) |
+| F-07 / SEC-4 | Open redirect via `next`, plus cross-request `fail.redirect` poisoning | CWE-601, CWE-362 | baseline | **yes** | **REMEDIATED** — delivered; R-4 does not reach it (no client depends on it) and replay stays at 0 differences | **None — delivered.** The same-host filter is in place at all six user-controlled boundaries, and `fail.redirect` interpolates into a request-local instead of back into the shared declaration. It changes an emitted `Location` only for hostile inputs, and the committed corpus contains no off-origin destination, so replay reports 0 differences. The mechanism, the two lessons that cost two review cycles, and the measured neutrality are kept in [§4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated) |
+| F-08 / SEC-13 | A bcrypt password hash in four HTTP 200 bodies | CWE-200 | baseline | **yes** | **REMEDIATED** — delivered; R-4 does not reach it (no client depends on it) and replay stays at 0 differences | **None — delivered.** The recursive redactor is applied at the root cause — `lib/models/model.js#serialize`'s JSON-clone branch, which every populated sub-document falls into — plus the two `admin.js` sites that bypass `serialize`. A top-level `delete data.password` would **not** have sufficed, because a live OAuth bearer token sits at `profiles.google.token` inside an untyped Mixed object. Measurements in [§4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated) |
+| F-16 / S-2 | The submitted password written to the application log | CWE-532 | baseline | **yes** | **REMEDIATED, log-only** | none; see [§15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) |
 | F-17 / SEC-2b | SSRF in `assetUploadFromURL`: any HTTP(S) destination, redirects followed, no address filter | CWE-918 | baseline | no — `features.assets` is `false` | **PRESERVED** | Enforce scheme **and destination** checks on every hop of the redirect chain — reject private, link-local and cloud-metadata addresses — plus an egress control at the network boundary. Changes which URLs an author may import, so it needs product sign-off as well as security sign-off |
 | F-18 / SEC-3 | Google OAuth with no `state` parameter | CWE-352 | baseline | no — the shipped credentials are empty | **PRESERVED** | Mint a one-time `state`, persist it in the session, and verify it in the callback. Adds a parameter to an outbound authorization URL and a rejection path to the callback, so it is a behaviour change on a live sign-in flow |
 | F-19 / SEC-6 | The JWT key defaults to the string `"undefined"` plus a public short code, and tokens carry no expiry, issuer, audience or algorithm restriction | CWE-321, CWE-798 | baseline | yes | **PRESERVED** | Require a real configured secret and fail closed without one; constrain `algorithms`, `issuer`, `audience` and `expiresIn` on both sign and verify. Every token minted before the change stops verifying, so it needs a rotation plan |
@@ -4609,8 +4679,8 @@ container, so the branch rows below map onto **35** call sites. The remaining th
 `users.js` L519 (`savePassword`'s `Store.del` failure) — are the dereference-`TypeError` twins of the
 ignored-error catches listed here and are catalogued in
 [section 9](#9-the-no-response-and-process-fate-preservations-site-by-site) instead. Between the two tables every
-one of the **38** no-response sites in the tree — 29 bare `h.abandon` returns and 9 `rejectOrAbandon` calls — is
-accounted for exactly once.
+one of the **39** no-response sites in the tree — 29 bare `h.abandon` returns, 9 `rejectOrAbandon` calls and the one
+ternary arm at `trinket.js:L1001` — is accounted for exactly once.
 
 | Controller | Handler | Branch | Baseline fate | Mechanism at baseline | Preserved with |
 |---|---|---|---|---|---|
@@ -4992,13 +5062,22 @@ recorded per site in section 9.
 There are **24** places classified below, each reproducing a base-commit no-response outcome by returning `h.abandon`,
 hapi's own no-response outcome. Earlier revisions of this census recorded the delivered spelling as `new
 Promise(function() {})`, and then as the `Pending.forever()`/`Pending.hang()` helpers that wrapped it; section 3.39
-records why both were replaced. Counting call sites rather than classified branches, the tree carries **38**
-no-response sites across **seven** controllers (**29** bare `h.abandon` returns and **9**
-`lib/http/responseContract.js#rejectOrAbandon` calls); the 24 rows below cite **25** of them, because `downloadExport`
-needs two. The other **13** are the 9 `rejectOrAbandon` sites — transparent on every non-raising path, so they are
+records why both were replaced. Counting call sites rather than classified branches, the tree carries **39**
+no-response sites across **seven** controllers: **29** bare `h.abandon` returns (admin 1, auth 2, course 7, courses 5,
+folders 2, trinket 2, users 10), **9** `lib/http/responseContract.js#rejectOrAbandon` calls (admin 6, users 3), and
+**one** `h.abandon` reached through a ternary rather than a bare return —
+`lib/controllers/trinket.js:L1001`'s `return err === "threshold exceeded" ? errors.forbidden() : h.abandon;`, discussed
+later in this section and omitted from an earlier revision's total, which review finding **F15** caught. The 24 rows
+below cite **25** of them, because `downloadExport` needs two. Thirteen of the remaining fourteen are the 9
+`rejectOrAbandon` sites — transparent on every non-raising path, so they are
 failure responses rather than non-answers wherever the baseline had one — plus `courses.js` L136 and L361, the ignored
 copy and `fs.stat` errors whose dereference twins are rows 8 and 9 here, and `auth.js` L174 and L198, the two
-provider-payload branches adjudicated in section 3.37. All 13 are in [section 6.2](#62-the-table). Each row below was
+provider-payload branches adjudicated in section 3.37. All 13 are in [section 6.2](#62-the-table). The fourteenth is
+`lib/controllers/course.js:L262`'s `if (err && err.silentCopyFailure) return h.abandon;`, which is a **second path to
+the outcome the `copyCourse` row below already documents** rather than a new outcome: `Course#copy`'s inner chain used
+to hang, it now settles with the silent-outcome sentinel, and that line translates the sentinel back into the same
+no-response answer. It is the ONE site by which the delivered census exceeds the base commit's **38**, which is why the
+totals differ by exactly one and the client-visible contract does not differ at all. `25 + 13 + 1 = 39`. Each row below was
 classified by reading that branch at the base commit. The "residual divergence" column is empty for fate (A), because
 the no-response outcome is reproduced exactly; for fate (B) it is always the same single divergence described in
 section 8.3.
@@ -5829,8 +5908,9 @@ improvement R-4 forbids. That is why the adjudication is the correct resolution 
 
 - - **`outline=yes` was never valid.** Measured against **both** joi 17.13.3 and joi 18.2.3: `'yes'` is rejected with
   the byte-identical message `"outline" must be a boolean`, and `'true'` is accepted and coerced. The real browser
-  client sends `{ outline : true }` (`public/js/courseEditor/course.js:15`, `root.js:147`, `materialControl.js:91`,
-  `classPage/app.js:57`), so `?outline=true` is what the fixture HOOK uses, while `flow#getCourseWithOutline` keeps
+  client sends `{ outline : true }` (`public/js/courseEditor/course.js:15`,
+  `public/js/courseEditor/controllers/root.js:147`, `public/js/courseEditor/controllers/materialControl.js:91`,
+  `public/js/classPage/app.js:57`), so `?outline=true` is what the fixture HOOK uses, while `flow#getCourseWithOutline` keeps
   the base commit's `?outline=yes` and its rejection is asserted outright — see §0.1. Re-measured on the **delivered**
   tree, because the review that raised this asked for the fixture to be reverted: pointing the fixture hook back at
   `?outline=yes` takes `npm test` from a **green** suite to **11 failures** — nine `TypeError: Cannot read properties
@@ -6155,7 +6235,7 @@ reports **0 differences**, which is the parity proof.
 2. **The frozen 32-character route-table digest remains unreproducible, and is reported as such.** No serialization of
    the 233-row table reproduces it; two exhaustive sweeps — 2,155,050 candidate digests, and a further 1,232 candidate
    serializations covering eleven row formats × sorted and registration order × seven joins × trailing-newline × four
-   hash functions — found no match. It is retained verbatim, the ten-clause anchor gate around it is enforced as
+   hash functions — found no match. It is retained verbatim, the **eleven**-clause anchor gate around it is enforced as
    mandatory, and the verdict is `UNREPRODUCIBLE` rather than `PASS`. See section 3.22.
 
 **One condition this remediation did not create and does not fix.** `test/lib/api/registration.js` performs roughly a
@@ -6333,7 +6413,7 @@ controller's `json.formName = 'sign-up'` assignment is latent-bug repair, which 
 change the `Location` on every username-less post. Registering a `/sign-up` route would **add a route**, which the
 exclusion directive forbids outright and which the 233-row route table is gated against. Note also that the
 interpolation of this exact template is the mechanism SEC-4 turns on
-([section 4.4](#44-sec-4--open-redirect-and-cross-request-redirect-poisoning-high--remediated)):
+([section 4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated)):
 the interpolated value is written back into the shared route declaration, so this destination is also the one a later
 request on the same route inherits.
 
@@ -6411,7 +6491,7 @@ above — the 2,078-byte body, the fourteen `_owner` keys and the `$2b$10$` valu
 remediated it at this very `createCourse` site and at three others. That remediation is **delivered** — an intermediate
 revision withdrew it as outside R-1's four sanctioned diff categories, and §0.2 records why that reading is superseded:
 see
-[section 4.14](#414-sec-13--a-bcrypt-password-hash-on-the-wire-in-four-responses-critical--remediated),
+[section 4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated),
 which carries the withdrawn mechanism, its key-path measurement and the authorized change it needs. What this entry
 adds and 4.14 does not is why the route declaration carries no projection spec, and the rejected repairs: a
 route-level `reply` projection or a `select('-password')` on the population would remove **several** keys from a 200
@@ -6507,13 +6587,13 @@ number for the reason given under [section
 every failure response in the application — at the base commit **73** `request.fail(` call sites reached it, per
 [section 3.14](#314-the-fail-and-spread-census-was-refined) — and it is character-identical on both sides of the
 migration. R-1 excludes it as latent-bug repair, and the request's own performance and logging directive is explicit
-that the leftover logging stays: the `console.log` census is **64 at base and 64 now**, recorded in [section
-1.12](#112-the-leftover-consolelog-calls-64-at-the-base-commit-64-now), and removing logging is not one of the four
+that the leftover logging stays: the `console.log` census is **64 matching lines at base and 66 now**, recorded in [section
+1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-66-now), and removing logging is not one of the four
 sanctioned diff categories.
 
 **What a naive fix would still break, and what the delivered one does instead.** Redacting the payload **in place** at
 the emitter would change the diagnostic output of every failure path in the application at once, not just signup — the
-very stream [section 1.12](#112-the-leftover-consolelog-calls-64-at-the-base-commit-64-now) freezes — and redacting at
+very stream [section 1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-66-now) freezes — and redacting at
 the validation bridge by mutating what `reject` receives would be worse, because that argument is **also** the value
 flashed to the session as `'failure'` and rendered back into the form, so the redaction would leak out of the log and
 into the page. The delivered remediation does neither: it inspects a **copy**, so the flashed object and every
@@ -7199,8 +7279,8 @@ attributable to this changeset.
 | Q1 | Authenticated `GET /login` and `GET /signup` return 500 | [1.1](#11-authenticated-get-login-and-get-signup-return-http-500) |
 | Sweep note | Runtime `DEP0169`, reachable only through `server.inject()` | [7.6](#76-the-two-deprecation-warnings-and-why-neither-is-repairable-here) |
 | Sweep note | The undeclared `Boom` identifier in `course.js` | [4.13](#413-the-undeclared-boom-identifier-in-coursejs) |
-| Sweep note | `POST /api/courses` returned the owner's bcrypt hash — catalogued as SEC-13, **remediated** | [15.5](#155-post-apicourses-returned-the-owners-bcrypt-hash-cwe-200--remediated-as-sec-13) |
-| Sweep note | A failed signup wrote the submitted password to the log — remediated, log-only (F-16) | [15.6](#156-a-failed-signup-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) |
+| Sweep note | `POST /api/courses` returned the owner's bcrypt hash — catalogued as SEC-13, **remediated** | [15.5](#155-post-apicourses-returned-the-owners-bcrypt-hash-cwe-200-remediated-as-sec-13) |
+| Sweep note | A failed signup wrote the submitted password to the log — remediated, log-only (F-16) | [15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) |
 | Sweep note | Login distinguishes an unknown account from a wrong password | [15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved) |
 | Sweep note | Deleting a course leaves its lessons and materials behind | [15.4](#154-deleting-a-course-leaves-its-lessons-and-materials-behind) |
 | Sweep note | Catbox session TTL index semantics | [1.14E](#114-eight-further-preserved-conditions) |
@@ -7251,7 +7331,7 @@ explicit-marking rule in *How to read this catalogue*.
 
 | # | Observation | Delivered site | Base-commit attribution (measured) | Disposition |
 |---|---|---|---|---|
-| QA-1 | The failure responder logs the whole rejected payload, so a failed signup writes the submitted **plaintext password** to the log (CWE-532) | `lib/http/responseContract.js` — now `log.info(util.inspect(redactSecrets(json)) + " " + err)` | the emitter was byte-identical to `2f8712a:lib/util/routeParser.js:L485` — `log.info(util.inspect(json) + " " + err)` — **when this row was first written** | **SUPERSEDED — REMEDIATED, log-only.** Reported again as **F-16 / S-2** and remediated in this same changeset; see [§15.6](#156-a-failed-signup-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only). The PRESERVED verdict below is the pre-remediation reading, retained as the original argument |
+| QA-1 | The failure responder logs the whole rejected payload, so a failed signup writes the submitted **plaintext password** to the log (CWE-532) | `lib/http/responseContract.js` — now `log.info(util.inspect(redactSecrets(json)) + " " + err)` | the emitter was byte-identical to `2f8712a:lib/util/routeParser.js:L485` — `log.info(util.inspect(json) + " " + err)` — **when this row was first written** | **SUPERSEDED — REMEDIATED, log-only.** Reported again as **F-16 / S-2** and remediated in this same changeset; see [§15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only). The PRESERVED verdict below is the pre-remediation reading, retained as the original argument |
 | QA-2 | The mailer's unconfigured branch logs the recipient address, putting an email address in the log (PII) | `lib/util/mailer.js:L41` | byte-identical to `2f8712a:lib/util/mailer.js:L31` | PRESERVED |
 | QA-3 | A `{ course : course }` success payload serializes the **populated `_owner`**, including its bcrypt password hash (CWE-200) | `lib/controllers/course.js:L64, L164, L215, L387` | the same four expressions at `2f8712a:lib/controllers/course.js:L38, L136, L166, L307`, under the base-commit responder spelling `request.success` | **REMEDIATED** — re-catalogued as SEC-13, whose remediation is delivered; see the note below |
 | QA-4 | With Redis **configured but unreachable**, the error event is logged roughly twice a second without a ceiling and `getClient()` never settles, because node-redis retries forever. The application keeps serving every route, emits no warning and does not crash | `config/redis.js` | `git diff 2f8712a -- config/redis.js` is **empty** — the file is byte-identical | PRESERVED |
@@ -7275,13 +7355,13 @@ notes that follow record each supersession and where the remediation lives. Noth
 ⚠️ **QA-3's disposition was superseded inside this same changeset.** The runtime-security checkpoint reached the `{
 course : course }` disclosure independently, found that two further surfaces leak a **different** user's hash — one of
 them into a rendered HTML page — and catalogued all of them as SEC-13: [section
-4.14](#414-sec-13--a-bcrypt-password-hash-on-the-wire-in-four-responses-critical--remediated). The remediation it
+4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated). The remediation it
 applied there covered the **first** of the four expressions cited in the QA-3 row, `createCourse`, which is the
 surface the exposure was actually reachable through. The redaction is **delivered**, applied at `serialize`'s
 JSON-clone branch so that all four expressions are covered by one change rather than four. The reasoning recorded
 above still holds for why a *projection* repair is refused — the withdrawn redactor deleted one key from a clone the
 code already built, rather than re-shaping the payload, and [section
-4.14](#414-sec-13--a-bcrypt-password-hash-on-the-wire-in-four-responses-critical--remediated) carries the key-path
+4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated) carries the key-path
 measurement showing the symmetric difference was exactly that one path. QA-1, the plaintext password in the validation
 log, remains **PRESERVED** and untouched: it is the log line an operator's own tooling reads, it is byte-identical to
 the base commit, and no checkpoint has adjudicated it otherwise.
@@ -7350,7 +7430,7 @@ three that lose their name at a specific width; and BQ-10 extends the dead-path 
 | BQ-6 | **One** 1,600-byte body serves both a permission denial and a genuine server error, and **one** 1,545-byte body serves every 404 | `GET /admin/users` as a non-admin → **403**/1,600 B; authenticated `GET /login` → **500**/1,600 B; the two bodies are **byte-identical** (`cmp` reports no difference, sha256 begins `a50bf9c7`), both `<title>Something went wrong</title>`. An unknown route and a missing *record* both → **404**/1,545 B, likewise byte-identical (sha256 begins `bd3587ea`), `<title>Page not found</title>` | the mapping itself is already recorded in [section 12](#12-streaming-ssrf-and-three-inherited-risks-one-overridden-two-accepted): `app.js`'s first `onPreResponse` renders 500-and-above **and** 403 as `50x.html`. Both templates and that region are 0-line diffs | PRESERVED — the consequence, that a denial reads as "Something went wrong :(" and a 404 cannot distinguish a missing route from a missing record from a feature-flag-disabled route, is a property of the frozen templates and the frozen extension |
 | BQ-7 | The chrome-less error templates carry **no** icon link, so every error page costs an extra 404 on `/favicon.ico` | `lib/views/404.html` (1,748 B) and `lib/views/50x.html` (1,796 B) are standalone documents — neither carries `extends`, so neither inherits `lib/views/base.html:L12-L16`, which is the only place `rel="icon"` and the four `apple-touch-icon-precomposed` links are declared. Each error template has exactly **one** `rel=` attribute, the stylesheet. Measured: `GET /favicon.ico` → **404** at 1,545 bytes; `GET /img/icons/favicon.ico` → **200** at 1,811 bytes | all three templates are 0-line diffs against `2f8712a` | PRESERVED — adding the link edits a frozen template and adds a request to a chrome-less page |
 | BQ-8 | `/forgot-pass` is reachable by no link on the site, renders no form, and its title and its heading disagree | `GET /forgot-pass` → **200**; the page carries **0** `name="email"` inputs and `<title>Trinket</title>`, while `lib/views/users/forgotpass.html:L6` reads `<h1>Forgot Password</h2>` — an `h1` closed with an `h2` tag | `config/routes.js` is byte-identical to `2f8712a` and `lib/views` has a 0-line diff | PRESERVED — see 17.3 |
-| BQ-9 | `GET /api/courses/{id}?with=_owner` expands the owner's record, **including the email address**, for any authenticated non-member of a public course | Measured as the second user: `_owner` carries **12** keys — `_id`, `avatar`, `created`, `email`, `fullname`, `lastUpdated`, `name`, `roles`, `settings`, `source`, `username`, `verified`. `'password' in _owner` is **false** and no value begins `$2a$` or `$2b$` — not because anything scrubs it, but because this path is pre-serialized through `publicSpec` at `lib/controllers/course.js#getCourse`, which is why SEC-13 never reached it. The email is returned on the wire and is **not** rendered into the DOM | `User.publicSpec` is identical at both commits | PRESERVED — the expansion is a response body clients parse, and [section 4.14](#414-sec-13--a-bcrypt-password-hash-on-the-wire-in-four-responses-critical--remediated) records why a *projection* repair was refused even for the hash. This is a cross-tenant PII read that belongs to post-migration security work, alongside the conditions in [section 4](#4-the-security-condition-catalogue) |
+| BQ-9 | `GET /api/courses/{id}?with=_owner` expands the owner's record, **including the email address**, for any authenticated non-member of a public course | Measured as the second user: `_owner` carries **12** keys — `_id`, `avatar`, `created`, `email`, `fullname`, `lastUpdated`, `name`, `roles`, `settings`, `source`, `username`, `verified`. `'password' in _owner` is **false** and no value begins `$2a$` or `$2b$` — not because anything scrubs it, but because this path is pre-serialized through `publicSpec` at `lib/controllers/course.js#getCourse`, which is why SEC-13 never reached it. The email is returned on the wire and is **not** rendered into the DOM | `User.publicSpec` is identical at both commits | PRESERVED — the expansion is a response body clients parse, and [section 4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated) records why the hash itself is scrubbed at the model's serializer rather than by a per-route projection. This is a cross-tenant PII read that belongs to post-migration security work, alongside the conditions in [section 4](#4-the-security-condition-catalogue) |
 | BQ-10 | `GET /api/classes/{userSlug}/{courseSlug}` is a dead route that answers **500** to every caller | Measured on two independent instances: → **500**, **96 bytes**, `content-type: application/json` — the scrubbed body. The route is declared at `config/routes.js:L182` as `GET /api/classes/{userSlug}/{courseSlug} classes.getClass` and its handler is `lib/controllers/classes.js:L102`. A repository-wide search of the frozen client for the string `api/classes` returns **0** files, so nothing ever calls it | `config/routes.js` is byte-identical to `2f8712a`, so the declaration is unchanged, and the base commit answered the same scrubbed 500 through the retired shim's catch-all | PRESERVED — [section 7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit) lists the other already-dead paths and omits this one; it belongs to that list, and repairing an unreferenced handler is outside all four sanctioned diff categories |
 | BQ-11 | One of the five `showAlert()` calls on the profile form targets an element that route can never render, so a failed save is **silent** | `lib/views/users/includes/profile.html` calls `showAlert()` five times; four target `#profileError` or `#profileSuccess`, and the fifth — at **L161**, the `.fail()` arm — targets `#passwordError`, which is declared only in the sibling include `lib/views/users/includes/password.html`. `lib/views/users/account.html:L31` is `{% include "users/includes/" + page + ".html" %}`, i.e. **exactly one** include per sub-page, so the two are mutually exclusive by construction. Measured: `/account/profile` → 200/19,576 B carrying `id="profileError"` ×1 and `id="passwordError"` **×0**; `/account/password` → 200/19,152 B carrying `id="passwordError"` ×1 and `id="profileError"` ×0. `showAlert` therefore resolves to an empty jQuery set and `removeClass('hide-override')` is a no-op, leaving the message in the hidden `span#message` | `lib/views` has a 0-line diff against `2f8712a`, so both includes and the one-include-per-page mechanism are unchanged | PRESERVED — see 17.4 |
 | BQ-12 | Signing out leaves the previous user's identity in `localStorage` | Measured across a real logout: `localStorage` is still length 2 afterwards. `__trinket__user-log` **survived and grew** 1,814 → 2,088 bytes as an eighth entry was appended, and its value still contains the username **9 times**; `__browser_id__` survived byte-identical. The writer is `public/js/debug.js:L40` `cache.set('user-log', loadInfo)`, and the prefix comes from `public/js/util/cache.js:L6` `var PREFIX = '__trinket__'`. No logout path calls `removeItem` on it — the only `removeItem` sites in the tree are the embed's own `sessionStorage` guid and `cache.js`'s internals. `sessionStorage` was empty throughout, and the HttpOnly `session` cookie **was** correctly cleared | `public/` has a 0-line diff against `2f8712a`, so both the writer and the absent cleanup are unchanged | PRESERVED — the server-side half of logout is correct; adding a client-side purge means editing frozen browser JavaScript, which §0.2.2.2 forbids, and it would change what a returning visitor's diagnostics buffer contains |
@@ -7767,17 +7847,23 @@ in any of them would be a rewritten assertion. Re-measured after the whole chang
 `expect( = 0` and zero code-line `assert`, so no pre-existing assertion was converted to a different style.
 
 The check does **not** extend to files this changeset creates, because a new file cannot rewrite an assertion that
-did not exist. **Twenty** new `.js` files were added and none was removed — re-censused against the base tree with
-`git ls-tree -r 2f8712a --name-only` against `git ls-files`, the `.js` files under `test/` go from **25** to **45**.
-They are the two guarded harness scripts `test/baseline/capture.js` and `test/baseline/replay.js`; three API suites,
+did not exist. **Twenty-three** new `.js` files were added and none was removed — re-censused against the base tree with
+`git ls-tree -r 2f8712a --name-only` against `git ls-files`, the `.js` files under `test/` go from **25** to **48**.
+They are the two guarded harness scripts `test/baseline/capture.js` and `test/baseline/replay.js`; one helper,
+`test/helpers/disposable-endpoint.js`, the shared disposable-database gate that `test/helpers/db.js` and
+`test/baseline/capture.js` both consume; three API suites,
 `test/lib/api/route-parity.js`, `test/lib/api/session.js` and `test/lib/api/write-routes.js`; four model suites,
 `test/lib/models/courseInvitation.js`, `featuredCourses.js`, `folder.js` and `material.js`; one shared-module suite,
-`test/lib/shared/trinket-markdown.js`; eight utility suites, `test/lib/util/baseline-harness-integrity.js`,
-`catbox-mongoose.js`, `database-guard.js`, `db-helper-readiness.js`, `file-storage.js`, `log-redaction.js`,
-`oauth-form-encoding.js` and `recaptcha.js`; and two worker suites, `test/lib/workers/exports.js` and `snapshot.js`.
-A twenty-first, `test/lib/util/credential-redaction.js`, was added and then removed with the SEC-13 remediation it
-covered, and `test/lib/util/log-redaction.js` is what remains of a twenty-second after its same-origin half went the
-same way (§4.4, §4.14). Exactly **one** of them,
+`test/lib/shared/trinket-markdown.js`; **ten** utility suites, `test/lib/util/baseline-harness-integrity.js`,
+`catbox-mongoose.js`, `credential-redaction.js`, `database-guard.js`, `db-helper-readiness.js`, `file-storage.js`,
+`log-redaction.js`, `oauth-form-encoding.js`, `recaptcha.js` and `same-origin-and-log-redaction.js`; and two worker
+suites, `test/lib/workers/exports.js` and `snapshot.js`. That is 2 + 1 + 3 + 4 + 1 + 10 + 2 = **23**.
+An earlier revision of this paragraph published **twenty** and **45**, and additionally described two of these files as
+having been added and then withdrawn along with the SEC-13 remediation. **Both descriptions were false and are deleted**
+(review finding **F8**): the SEC-13 remediation is delivered (§0.2, §4.14), `lib/util/credentials.js` and
+`test/lib/util/credential-redaction.js` are both in the tree, and `test/lib/util/same-origin-and-log-redaction.js` is
+too — `log-redaction.js` is an EXTRACTION from it, not a remnant of it, and both files ship. Exactly **one** of the
+twenty-three,
 `test/lib/util/oauth-form-encoding.js`, uses chai's `expect` — deliberately, because it asserts on values produced in a
 spawned subprocess and a labelled `expect(actual, message)` is the readable form there; it accounts for all **15**
 `expect(` occurrences in the tree. Every other new spec uses `.should.` throughout, matching the suite it joins, and

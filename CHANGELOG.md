@@ -161,7 +161,7 @@ are final rather than provisional:**
 | `npm run build` | exit 0; `public/css/base.css` 265,727 bytes and `public/css/embed.css` 296,352 bytes, both byte-identical to the recorded baseline; no `.css.map` |
 | `npm test` | exit 0 with zero failures, `--check-leaks` active, process terminates on its own |
 | `node --pending-deprecation` boot | zero process warnings |
-| `node test/baseline/replay.js` | exit 0, **zero differences**; 58 unauthenticated, 7 authenticated and 8 assignment-`next` entries replayed; the documented route-table anchor enforced as all ten clauses of `gates.documentedAnchorGate` |
+| `node test/baseline/replay.js` | exit 0, **zero differences**; 58 unauthenticated, 7 authenticated and 8 assignment-`next` entries replayed; the documented route-table anchor enforced as all **eleven** clauses of `gates.documentedAnchorGate` |
 | `npm audit --omit=dev` | 0 critical, 0 high, 3 accepted moderate |
 
 The single source of truth for every measured figure is

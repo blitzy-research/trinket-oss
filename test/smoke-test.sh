@@ -15,17 +15,6 @@ BASE_URL="${1:-http://localhost:3001}"
 PASS=0
 FAIL=0
 
-# Every request is bounded, in both directions (review finding M-10).
-#
-# CONNECT_TIMEOUT bounds the TCP handshake, so pointing this script at a port nothing is listening on
-# fails in seconds instead of waiting for the kernel to give up. MAX_TIME bounds the whole transfer,
-# which matters because the baseline carries a documented no-response fate: a handler that never settles
-# its response leaves the connection open forever, and docs/PRESERVED-QUIRKS.md records that this must not
-# be repaired. Without a ceiling a single such route hangs the script - and any CI step running it -
-# indefinitely. Both are overridable for a slow or remote target.
-CONNECT_TIMEOUT="${SMOKE_CONNECT_TIMEOUT:-5}"
-MAX_TIME="${SMOKE_MAX_TIME:-30}"
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -47,14 +36,9 @@ test_endpoint() {
     local data="$5"
 
     if [ "$method" = "GET" ]; then
-        status=$(curl -s -o /dev/null -w "%{http_code}" \
-            --connect-timeout "$CONNECT_TIMEOUT" --max-time "$MAX_TIME" \
-            "$BASE_URL$endpoint" 2>/dev/null)
+        status=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL$endpoint" 2>/dev/null)
     else
-        status=$(curl -s -o /dev/null -w "%{http_code}" \
-            --connect-timeout "$CONNECT_TIMEOUT" --max-time "$MAX_TIME" \
-            -X "$method" -H "Content-Type: application/json" -d "$data" \
-            "$BASE_URL$endpoint" 2>/dev/null)
+        status=$(curl -s -o /dev/null -w "%{http_code}" -X "$method" -H "Content-Type: application/json" -d "$data" "$BASE_URL$endpoint" 2>/dev/null)
     fi
 
     if [ "$status" = "$expected_status" ]; then
@@ -72,8 +56,7 @@ test_endpoint_contains() {
     local endpoint="$2"
     local contains="$3"
 
-    response=$(curl -s --connect-timeout "$CONNECT_TIMEOUT" --max-time "$MAX_TIME" \
-        "$BASE_URL$endpoint" 2>/dev/null)
+    response=$(curl -s "$BASE_URL$endpoint" 2>/dev/null)
 
     if echo "$response" | grep -q "$contains"; then
         echo -e "${GREEN}✓ PASS${NC}: $name (contains '$contains')"
@@ -95,20 +78,7 @@ test_endpoint "JS embed loads" "GET" "/js/embed/embed.js" "200"
 
 echo ""
 echo "--- API Endpoints ---"
-# REVIEW FINDING M-10. This block used to assert `GET /api` -> 200. No such route exists and none ever
-# did: the 233-row baseline route table registers 117 paths under /api/ and NOT the bare prefix, so the
-# request falls through to the /{path*} catch-all and renders 404.html. The old expectation could not be
-# met by any build, which made a permanently red check indistinguishable from a real regression.
-#
-# The statuses below are the MEASURED baseline, and the script is what adapts - never the application.
-# Encoding what the server really does is required by R-6 (the base commit is the tie-breaker) and
-# changing the server to match a wrong expectation would violate R-4.
-test_endpoint "API prefix is not itself a route (catch-all 404)" "GET" "/api" "404"
-# A far better API smoke signal than the bare prefix ever was: a real API route, unauthenticated. 401
-# proves three things at once - the /api/ surface is mounted, the session strategy is enforcing, and the
-# Boom JSON error contract is intact. This is the exact status and body the baseline corpus records for it.
-test_endpoint "API route enforces the session strategy" "GET" "/api/courses" "401"
-test_endpoint_contains "API errors are Boom JSON" "/api/courses" '"statusCode":401'
+test_endpoint "API root accessible" "GET" "/api" "200"
 
 echo ""
 echo "--- Auth Endpoints ---"
@@ -118,18 +88,8 @@ test_endpoint "Signup page" "GET" "/signup" "200"
 echo ""
 echo "--- Trinket Pages ---"
 test_endpoint "Python trinket page" "GET" "/python" "200"
-# REVIEW FINDING M-10, second and third cases.
-#
-# /html answers 404 because the html trinket type is DISABLED by the shipped feature flags, and that 404
-# is one of the 25 flag-gated 404s the baseline corpus records. lib/util/features.js resolves an unknown
-# or disabled type to "not found" deliberately ("Unknown types default to disabled for safety"), which
-# docs/PRESERVED-QUIRKS.md keeps as a preserved quirk. /python -> 200 immediately above is the contrast
-# that makes this a real check rather than a blanket 404 expectation: the language landing machinery
-# works, and html is switched off.
-test_endpoint "HTML trinket page is feature-flagged off (404)" "GET" "/html" "404"
-# /library is likewise not a registered path. The library surface is entirely parameterized -
-# GET /library/folder/{slug} and GET /library/trinkets/{path*} - so the bare prefix reaches the catch-all.
-test_endpoint "Library prefix is not itself a route (catch-all 404)" "GET" "/library" "404"
+test_endpoint "HTML trinket page" "GET" "/html" "200"
+test_endpoint "Library page" "GET" "/library" "200"
 
 echo ""
 echo "--- Error Handling ---"

@@ -91,14 +91,18 @@
  *   7. WRITING IS THE DEFAULT PURPOSE AND IS STILL HARD TO DO BY ACCIDENT. A plain run captures and
  *      writes both artifacts, because that is what a capture harness is for; --dry-run measures and
  *      diffs and writes absolutely nothing. A writing run refuses unless HEAD is the base commit
- *      recorded in metadata.baseCommit AND no tracked file is modified, so post-migration or
- *      half-finished values cannot become the baseline. There is no --force: re-baselining is
- *      --adopt-base-commit, which says what it does.
+ *      recorded in metadata.baseCommit AND no tracked file is modified AND no gitignored configuration
+ *      layer such as config/local.yaml is present (review finding F10 — the porcelain read is
+ *      --ignored=matching precisely so that one can be seen), so post-migration values, half-finished
+ *      values and one operator's private configuration cannot become the baseline. There is no --force:
+ *      re-baselining is --adopt-base-commit, which says what it does, and which lifts the commit
+ *      condition alone.
  *
  * USAGE
  *   node test/baseline/capture.js                  capture at the recorded base commit and rewrite
  *                                                  BOTH artifacts atomically; refuses (exit 2) off
- *                                                  the base commit or with a modified tracked tree
+ *                                                  the base commit, with a modified tracked tree, or
+ *                                                  with a gitignored config/local.* layer present
  *   node test/baseline/capture.js --write          the same run, said explicitly
  *   node test/baseline/capture.js --dry-run        measure, diff and gate only — writes nothing
  *   node test/baseline/capture.js --dry-run --routes-only
@@ -3228,16 +3232,74 @@ function currentHeadCommit() {
 }
 
 /**
+ * Configuration layers that are gitignored, outrank `config/default.yaml` and `config/test.yaml`, and
+ * are NOT force-owned by configureRuntime().
+ *
+ * configureRuntime() installs NODE_CONFIG, which node-config ranks above every file layer
+ * (`node_modules/config/lib/config.js:L746-L757`), so the five keys it owns — `app.start`,
+ * `app.hostname`, `app.port`, the session cookie password and `db.mongo.database` — cannot be moved by
+ * a file. Everything else can: `features.*`, `app.usersubdomains`, `app.prefixes`, and the mail and
+ * recaptcha blocks all sit in the file layers, and any one of them changes what the corpus measures.
+ * `config/runtime.json` is here for the same reason — node-config writes and reads it as a layer
+ * (`node_modules/config/lib/config.js:L111`).
+ */
+var UNSANCTIONED_CONFIG_LAYERS = /^config\/(local(-[^/]+)?\.(ya?ml|json|js)|runtime\.json)$/;
+
+/**
+ * Whether a configuration layer actually declares anything, so an inert file is not reported as one.
+ *
+ * `config/runtime.json` in particular is node-config's own bookkeeping and is routinely present as
+ * exactly `{}` — node-config creates it and this harness sets NODE_CONFIG_PERSIST_ON_CHANGE=N so it
+ * stays that way. An empty layer cannot move a single key, so refusing on it would be a false positive
+ * that blocks a legitimate capture. A file that cannot be read is treated as declaring something,
+ * because "I could not tell" must fail closed here rather than open.
+ *
+ * The test is deliberately syntactic and cheap: strip JSON/YAML comment lines and whitespace, and treat
+ * the empty string, `{}`, `null` and a document marker as declaring nothing. Anything else counts.
+ *
+ * @param   {String}  relativePath A repository-relative path.
+ * @returns {Boolean} true when the layer would contribute at least one key.
+ */
+function declaresConfiguration(relativePath) {
+  var contents;
+
+  try {
+    contents = fs.readFileSync(path.join(repositoryRoot(), relativePath), 'utf8');
+  }
+  catch (err) {
+    return true;
+  }
+
+  var stripped = contents.split('\n').filter(function(line) {
+    return line.trim() !== '' && line.trim().indexOf('#') !== 0 && line.trim().indexOf('//') !== 0;
+  }).join('').replace(/\s+/g, '');
+
+  return stripped !== '' && stripped !== '{}' && stripped !== 'null' && stripped !== '---';
+}
+
+/**
  * The state of the tree that is about to be measured, read from git rather than assumed.
  *
- * The distinction between the two lists is deliberate. A MODIFIED tracked file means the source being
- * measured is not the commit it claims to be, which disqualifies the run from writing baseline evidence.
- * UNTRACKED paths do not: a base-commit capture is performed in a checkout of that commit with this
- * harness copied in beside it (the harness does not exist at the base commit) and with node_modules
- * installed from the base lockfile, so untracked paths are expected — they are RECORDED in the artifact
- * instead of silently tolerated, which is what makes the provenance auditable (review findings F3, F8).
+ * The distinction between the three lists is deliberate, and each is acted on differently.
  *
- * @returns {Object|null} { head, trackedModifications, untracked } or null when there is no git metadata.
+ *   - MODIFIED tracked files mean the source being measured is not the commit it claims to be, which
+ *     disqualifies the run from writing baseline evidence. assertWritable() REFUSES.
+ *   - UNTRACKED paths do not disqualify it: a base-commit capture is performed in a checkout of that
+ *     commit with this harness copied in beside it (the harness does not exist at the base commit) and
+ *     with node_modules installed from the base lockfile, so untracked paths are expected. They are
+ *     RECORDED in the artifact instead of silently tolerated, which is what makes the provenance
+ *     auditable (review findings F3, F8).
+ *   - IGNORED paths are read too, and that is review finding F10. `git status --porcelain` alone cannot
+ *     see them, so a gitignored `config/local.yaml` — a layer that outranks `config/default.yaml` for
+ *     every key configureRuntime() does not force — appeared in NEITHER list and was invisible to both
+ *     the refusal logic and the provenance. `--ignored` makes it visible. The whole ignored set is far
+ *     too broad to record (it includes node_modules and the 435 MB component tree), so only the
+ *     configuration layers matching UNSANCTIONED_CONFIG_LAYERS that declaresConfiguration() finds
+ *     non-empty are kept: those are the ones that change what is measured, and assertWritable()
+ *     REFUSES on them.
+ *
+ * @returns {Object|null} { head, trackedModifications, untracked, configLayers } or null when there is
+ *   no git metadata.
  */
 function gitState() {
   var head = currentHeadCommit(),
@@ -3248,7 +3310,9 @@ function gitState() {
   }
 
   try {
-    porcelain = childProcess.execFileSync('git', ['status', '--porcelain'], {
+    // --ignored=matching lists ignored FILES individually rather than collapsing them into their
+    // ignored parent directory, which is what makes `config/local.yaml` appear at all.
+    porcelain = childProcess.execFileSync('git', ['status', '--porcelain', '--ignored=matching'], {
       cwd      : repositoryRoot(),
       encoding : 'utf8'
     });
@@ -3257,20 +3321,37 @@ function gitState() {
     return null;
   }
 
-  var lines    = porcelain.split('\n').filter(function(line) { return line.trim() !== ''; }),
-      tracked  = [],
-      untracked = [];
+  var lines        = porcelain.split('\n').filter(function(line) { return line.trim() !== ''; }),
+      tracked      = [],
+      untracked    = [],
+      configLayers = [];
 
   lines.forEach(function(line) {
+    if (line.indexOf('!! ') === 0) {
+      var ignoredPath = line.slice(3);
+
+      if (UNSANCTIONED_CONFIG_LAYERS.test(ignoredPath) && declaresConfiguration(ignoredPath)) {
+        configLayers.push(ignoredPath);
+      }
+
+      return;
+    }
+
     if (line.indexOf('?? ') === 0) {
       untracked.push(line.slice(3));
+
+      return;
     }
-    else {
-      tracked.push(line);
-    }
+
+    tracked.push(line);
   });
 
-  return { head : head, trackedModifications : tracked, untracked : untracked };
+  return {
+    head                 : head,
+    trackedModifications : tracked,
+    untracked            : untracked,
+    configLayers         : configLayers
+  };
 }
 
 /**
@@ -3313,12 +3394,20 @@ function installedDependencyVersions(names) {
 /**
  * Decides whether this run may replace the committed evidence, and says exactly why not when it may not.
  *
- * Two conditions, both from review finding F8, and neither with an escape hatch:
+ * Three conditions, the first two from review finding F8 and the third from review finding F10, and
+ * none of them with an escape hatch:
  *   - the SOURCE being measured must be the commit the artifacts are the baseline for. Anything else
  *     writes post-migration or half-finished values over the only thing that makes the migration
  *     falsifiable. --adopt-base-commit lifts this one, deliberately and on the record, because
  *     establishing a new baseline is a real operation that should not require a wildcard --force.
  *   - no tracked file may be modified. A dirty tree at the right commit is not that commit.
+ *   - no unsanctioned CONFIGURATION LAYER may be present. A gitignored `config/local.yaml` outranks
+ *     `config/default.yaml` and `config/test.yaml` for every key configureRuntime() does not force, so
+ *     a corpus captured with one in place measures that operator's configuration rather than the
+ *     repository's. --adopt-base-commit does NOT lift this one: adopting a new HEAD is a decision about
+ *     WHICH commit is the baseline, not a licence to measure it under an undeclared configuration.
+ *     The sanctioned way to vary the runtime is NODE_CONFIG, which configureRuntime() merges and
+ *     effectiveNodeConfig() records into the artifact for anyone to audit.
  *
  * @param   {Object} committed The committed responses.json.
  * @param   {Object} options   The parsed CLI options.
@@ -3360,6 +3449,23 @@ function assertWritable(committed, options) {
                  '` or a detached clone, with this harness copied in and node_modules installed from ' +
                  'that commit\'s lockfile. Pass --adopt-base-commit only if you genuinely intend to ' +
                  'replace the baseline with this HEAD.'
+    };
+  }
+
+  if (state.configLayers.length) {
+    return {
+      allowed  : false,
+      state    : state,
+      adopting : false,
+      reason   : state.configLayers.length + ' gitignored configuration layer(s) are present (' +
+                 state.configLayers.join(', ') + '). node-config ranks them above config/default.yaml ' +
+                 'and config/test.yaml for every key configureRuntime() does not force, so a corpus ' +
+                 'captured with one in place records that layer\'s features, prefixes, subdomains and ' +
+                 'mail settings rather than the repository\'s — and the baseline for ' + recorded +
+                 ' would stop being reproducible from a clean checkout. Move it aside for the capture ' +
+                 'and express any intended variation through NODE_CONFIG, which is merged by ' +
+                 'configureRuntime() and recorded in metadata.nodeConfigOverride. There is no flag ' +
+                 'that lifts this.'
     };
   }
 
@@ -3981,7 +4087,11 @@ function main() {
           captureCommit      : writable.state.head,
           gitState           : {
             trackedModifications : writable.state.trackedModifications.length,
-            untracked            : writable.state.untracked
+            untracked            : writable.state.untracked,
+            // Always [] in a written artifact, because assertWritable() refuses otherwise (review
+            // finding F10). It is recorded rather than omitted so the artifact states the absence as a
+            // measured fact instead of leaving a reader to infer it from a rule.
+            configLayers         : writable.state.configLayers
           },
           gitStatusClean     : writable.state.trackedModifications.length === 0,
           database           : FORCED_DATABASE,
@@ -4004,7 +4114,8 @@ function main() {
     console.log('capture.js: provenance recorded — node ' + provenance.node + ', npm ' + provenance.npm +
                 ', commit ' + provenance.captureCommit + ', database ' + provenance.database +
                 ', tracked modifications ' + provenance.gitState.trackedModifications +
-                ', untracked paths ' + provenance.gitState.untracked.length);
+                ', untracked paths ' + provenance.gitState.untracked.length +
+                ', gitignored configuration layers ' + provenance.gitState.configLayers.length);
     console.log('capture.js: recomputed route-table gates rowCount, methods, apiPaths, ' +
                 'withPreHandlers, authRequiredSession, authFalse, authTryInherited and the four ' +
                 'digests, plus every row. NOT recomputed (hand-derived, verify by hand if the surface ' +

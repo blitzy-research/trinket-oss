@@ -28,20 +28,33 @@ on both the input and the result. The release tag is pinned and the archive byte
 are checked against **both** a recorded length and a recorded SHA-256 before
 anything is unpacked, so a re-cut release, a proxy error page or a truncated
 download fails loudly instead of quietly producing different stylesheets. The
-extracted tree is then checked too: it must carry the three paths the build reads
-by name, and the 42 files under `public/components/foundation/scss` - the only
-subtree either stylesheet imports - must fingerprint to a recorded value. Only
-past both checks does the script write its completion marker,
+extracted tree is then checked too, on **four** counts: it must carry the three
+paths the build reads by name; the 42 files under
+`public/components/foundation/scss` - the only subtree either stylesheet imports -
+must fingerprint to a recorded value; **one representative file inside each of the
+31 top-level entries the application serves over HTTP must be present**; and the
+**top-level listing itself** - 44 entries with their names and types - must
+fingerprint to a recorded value. The last two exist because the SCSS fingerprint
+covers every byte the *build* reads and nothing the *browser* reads: deleting
+`skulpt`, `blockly` or `glowscript` left that fingerprint intact, so the build
+stayed green and the CSS gate still passed while those assets 404'd at runtime.
+Only past all four checks does the script write its completion marker,
 `public/components/.hydrated.json`, and it writes it by rename so a half-written
-marker cannot exist.
+marker cannot exist. The marker records both fingerprints and the number of served
+assets verified, and it carries a `markerVersion` so a marker written by an older
+hydrator - which measured less - is treated as unverified rather than trusted.
 
-It is still **idempotent**: a tree whose marker and fingerprint both hold exits 0
+It is still **idempotent**: a tree whose marker and both fingerprints hold exits 0
 without touching the network or the filesystem, so re-running the build costs
-nothing. What changed is what "already present" means. An earlier revision probed
+nothing - the two added layers are 31 existence checks and one directory listing,
+which together cost well under a millisecond. What changed is what "already
+present" means. An earlier revision probed
 for a single `foundation.scss` and returned successfully whenever that one file
 existed, so an interrupted extraction, a locally edited partial or a tree from a
 different release all passed forever and could change the compiled stylesheets
-silently. Each of those now **re-hydrates** from the verified asset instead. The
+silently. Each of those now **re-hydrates** from the verified asset instead, as
+does a tree that is missing a served component directory's contents or a whole
+top-level entry. The
 script also removes the AppleDouble sidecar described below, and it removes an
 existing tree only *after* the replacement archive has been verified, so a failed
 download can never leave the checkout with neither. Set
@@ -118,12 +131,14 @@ one contract rather than a strict version and a lax one.
 archive has been verified, unpacked and the result re-measured. A tree unpacked
 by the commands above carries no marker, so the next `npm run build` re-measures
 the 42 files under `public/components/foundation/scss` - the only subtree either
-stylesheet imports - and, finding the pinned fingerprint, writes the marker and
-moves on without touching the network. What it will **not** do is accept a tree
-that fails that measurement: a half-extracted archive, a locally edited partial
-or a tree from a different release is re-hydrated from the verified asset
-instead. Delete the marker to force a full re-verification; `git clean -xfd`
-removes it along with the tree it describes.
+stylesheet imports - along with the 31 served representative assets and the
+44-entry top-level listing, and, finding all of them at their pinned values,
+writes the marker and moves on without touching the network. What it will **not**
+do is accept a tree that fails any of those measurements: a half-extracted
+archive, a locally edited partial, a tree from a different release, a component
+directory whose contents were removed, or a missing top-level entry is
+re-hydrated from the verified asset instead. Delete the marker to force a full
+re-verification; `git clean -xfd` removes it along with the tree it describes.
 
 That archive is a hard prerequisite for the stylesheet build. With the tree
 absent, `npm run build:css` fails with `Can't find stylesheet to import.`,

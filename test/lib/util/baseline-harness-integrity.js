@@ -855,27 +855,41 @@ describe('the R-6 baseline harness', function() {
     it('refuses to write when HEAD is not the recorded base commit, with adoption the only lift',
       function() {
         // Behavioral, not a source contract: this tree is above the recorded baseline, so the refusal is
-        // observable. Which of the two refusals fires depends on whether the tree is also dirty, and both
-        // are correct evidence - a dirty tree at the right commit is not that commit either. What must
-        // never happen is a write allowed away from the recorded baseline without adoption.
+        // observable. WHICH refusal fires depends on the tree, and all three are correct evidence - a
+        // dirty tree at the right commit is not that commit either, and a tree carrying a gitignored
+        // configuration layer is not the repository's configuration (review finding F10). What must never
+        // happen is a write allowed away from the recorded baseline without adoption.
+        //
+        // The three classes are enumerated rather than matched loosely, so a FOURTH refusal appearing
+        // without being recorded here fails this test instead of passing unnoticed.
+        var refusalClasses = [
+              'tracked file',                        // a modified tracked file
+              committedCorpus.metadata.baseCommit,   // HEAD is not the recorded base commit
+              'configuration layer'                  // a gitignored config/local.* layer is present
+            ],
+            matches = function(reason) {
+              return refusalClasses.some(function(marker) {
+                return reason.indexOf(marker) !== -1;
+              });
+            };
+
         var refused = capture.assertWritable(committedCorpus, { adoptBaseCommit : false });
 
         refused.allowed.should.eql(false);
         refused.adopting.should.eql(false);
         refused.reason.should.be.a('string');
+        matches(refused.reason).should.eql(true);
 
-        if (refused.reason.indexOf('tracked file') === -1) {
-          refused.reason.should.contain(committedCorpus.metadata.baseCommit);
-        }
-
-        // The ONLY thing that lifts it is --adopt-base-commit, and when it does the verdict says so. A
-        // dirty tree still refuses first, which is why both arms are asserted rather than one.
+        // The ONLY thing --adopt-base-commit lifts is the commit condition, and when it does the verdict
+        // says so. A dirty tree or a configuration layer still refuses, which is why both arms are
+        // asserted rather than one.
         var adopting = capture.assertWritable(committedCorpus, { adoptBaseCommit : true });
 
         if (adopting.allowed) {
           adopting.adopting.should.eql(true);
         } else {
-          adopting.reason.should.contain('tracked file');
+          matches(adopting.reason).should.eql(true);
+          adopting.reason.should.not.contain('Pass --adopt-base-commit');
         }
       });
 

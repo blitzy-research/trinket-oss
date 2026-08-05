@@ -77,21 +77,15 @@ RUN npm ci
 #
 # The verification is not decoration. `sass` and `vite` are held at their exact versions precisely so this
 # fork keeps compiling to these bytes, and the two digests are an asset-contract gate: they are read from
-# `test/baseline/responses.json`'s `buildArtifacts` block rather than restated here, so the image and the
+# `test/baseline/responses.json`'s `buildArtifacts` block rather than restated anywhere, so the image and the
 # parity evidence cannot drift apart. A mismatch fails the build instead of shipping different CSS.
-RUN npm run build \
-    && node -e "var fs = require('fs'), crypto = require('crypto'); \
-        var expected = require('./test/baseline/responses.json').buildArtifacts, drift = 0; \
-        ['public/css/base.css', 'public/css/embed.css'].forEach(function (name) { \
-          var want = expected[name], bytes = fs.readFileSync(name); \
-          var got = crypto.createHash('sha256').update(bytes).digest('hex'); \
-          if (bytes.length !== want.bytes || got !== want.sha256) { \
-            drift++; \
-            console.error('asset drift: ' + name + ' is ' + bytes.length + ' bytes sha256 ' + got + \
-              ', expected ' + want.bytes + ' bytes sha256 ' + want.sha256); \
-          } else { console.log('verified ' + name + ': ' + bytes.length + ' bytes, sha256 ' + got); } \
-        }); \
-        if (drift) { process.exit(1); }"
+#
+# The gate itself is `scripts/verify-css-artifacts.js`, which `package.json` runs as `npm run build`'s
+# `postbuild` hook — so the single command below both builds and verifies. It used to be an inline
+# `node -e` here and nowhere else, which meant the HOST build had no gate at all and the image carried the
+# only copy; one implementation, reached identically from both, is what stops the two drifting apart
+# (review finding P3-2). The hook also gates the `.css.map` count, which the inline copy did not.
+RUN npm run build
 
 ARG COMMIT_ID
 ARG NODE_ENV

@@ -20,7 +20,14 @@
       "packageManager": "npm@10.9.9",
       "engineRange": ">=10.0.0 <11.0.0",
       "baseInstall": "npm 10.9.9 npm ci added 642 packages from the base lockfile; package-lock.json retained sha256 48e2ad220e307166a4a170d0c671a7a57adb14df950d9a1861931dbb36089d8d and all 520 tracked files remained byte-identical to 2f8712a.",
-      "baseCaptureVerification": "The base tree reproduced all 233 route rows, all 58 unauthenticated entries, all 7 authenticated entries and all 14 assignment-next entries with 0 differences; capture.js reported 71 PASS, 0 FAIL and 0 UNEVALUATED after the byte-identical CSS artifacts were supplied.",
+      "reproducedCounts": {
+        "routeRows": 233,
+        "unauthenticated": 58,
+        "authenticated": 7,
+        "assignmentNext": 8
+      },
+      "reproducedCountsOwner": "REVIEW FINDING P4-C. These four counts are written by test/baseline/capture.js#recordReproducedCounts from the run's own measurement and are gated against it on every run -- routeRows by capture.js#routeTableGates and the three section sizes by capture.js#corpusGates. They used to be stated inline in baseCaptureVerification below, where one of them (\"14 assignment-next entries\") had drifted away from the 8 that the assignmentNext array, gates.assignmentNextEntryCount, assignmentNextCapture and both tools all record. A prose sentence cannot be recomputed, so the numbers live here and the sentence points at them.",
+      "baseCaptureVerification": "The base tree reproduced every route row and every corpus entry named in reproducedCounts above with 0 differences, and capture.js reported 0 FAIL and 0 UNEVALUATED -- every gate it evaluated PASSed -- once the byte-identical CSS artifacts were supplied. The absolute PASS tally is deliberately not restated: the gate SET grows whenever a new contract is gated (it grew when the ten documented-anchor clauses became individual entries), so a frozen total would be stale by construction while 0 FAIL and 0 UNEVALUATED stay meaningful.",
       "migratedInstall": "npm 10.9.9 npm ci added 426 packages from the committed lockfile; package-lock.json retained sha256 d3d866dfbd767f4e71b3e765cec46815545d1f6f36bea30958407a49c825cda5.",
       "migratedValidation": "npm test reported 547 passing and test/baseline/replay.js reported 0 differences under the npm 10.9.9 install."
     },

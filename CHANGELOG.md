@@ -180,8 +180,10 @@ this tree should read that section and take the separately authorized change it 
   untouched, so every byte on the wire is the base commit's. It is covered by `test/lib/util/log-redaction.js`. See
   `docs/PRESERVED-QUIRKS.md` section 15.6.
 
-**A dependency migration that changed a wire format.** This is the fourth accepted wire exception. `aws-sdk` v2 signed
-presigned download URLs with SignatureV2;
+**A dependency migration that changed a wire format.** This is the **one** accepted wire exception declared at the top
+of this section, and the only one in this release. An earlier revision called it "the fourth", which was accurate while
+the three security remediations above were still in place and each carried a wire change of its own; all three are
+reversed, so the count is one. `aws-sdk` v2 signed presigned download URLs with SignatureV2;
 `@aws-sdk/client-s3` has no SigV2 path, so those URLs are now SigV4. v2 could not be kept: requiring it emits a real
 process warning, which the zero-warning boot gate forbids. Origin, path and expiry are unchanged; the query
 parameters are not.

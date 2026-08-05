@@ -381,8 +381,17 @@ app.then(function(server) {
   bootstrap.server = server;
 });
 
-// DEPENDENCY-SWAP ADAPTATION, hosted here so that test/helpers/db.js stays byte-identical to the base
-// commit. `DB()` binds its two hook methods with `_.bindAll`, and underscore 1.13.8 - the version the
+// DEPENDENCY-SWAP ADAPTATION, centralized here rather than inside test/helpers/db.js. The reason is LOAD
+// ORDER, not immutability: this file is the bootstrap and `mocha --file ./test/setup.js` loads it ahead of
+// every spec file, so the adaptation is in place BEFORE the hook registrations that name `db.reset` and
+// `db.ensureConnection` by bare reference are evaluated - and a bare reference captures the function object
+// itself, so an adaptation applied any later would never reach those hooks. Doing it here also leaves
+// test/helpers/db.js - the one module in the tree that deletes a whole database - carrying no third-party
+// adaptation of its own, which is why every existing call site there behaves as the base commit wrote it.
+// (That file is NOT byte-identical to the base commit, and an earlier revision of this comment claimed the
+// adaptation lived here to keep it so; it carries the fail-closed database gate of review finding M1.)
+//
+// `DB()` binds its two hook methods with `_.bindAll`, and underscore 1.13.8 - the version the
 // base commit's `^1.8.3` range also resolves to - dropped `_.bind`'s native-bind fast path: `_.bind` now
 // returns a `restArguments` wrapper whose `length` is 0, where underscore 1.8.3 delegated to
 // `Function.prototype.bind` and preserved the declared arity. Mocha decides whether a hook is

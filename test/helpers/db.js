@@ -2,10 +2,13 @@
 // for its own preconditions rather than trusting the order Mocha happened to load files in. Requiring
 // the bootstrap first is what guarantees `NODE_ENV=test` (and, for a parallel clone, the CLONE_INDEX
 // database namespace) is in place before `../../config/db` below resolves node-config and opens the
-// connection. Measured on mocha 11.7.6: `collect-files` does not sort, this helper is loaded FOURTH of
-// the 32 files under test/ and test/setup.js is loaded LAST, so without this line the connection would
-// be opened against whatever environment the shell happened to carry - which for a developer running
-// `npx mocha` in a working checkout is the DEVELOPMENT database.
+// connection. Measured on mocha 11.7.6 by calling its own `mocha/lib/cli/collect-files` with this
+// project's options: `collect-files` does not sort, this helper is collected FOURTH of the 45 `.js` files
+// under test/ and test/setup.js is collected LAST (45th), so without this line the connection would be
+// opened against whatever environment the shell happened to carry - which for a developer running
+// `npx mocha` in a working checkout is the DEVELOPMENT database. The two ordinals are what the argument
+// rests on and both are re-verified above; the total is `git ls-files | grep -cE '^test/.*\.js$'` and
+// moves with every suite added.
 //
 // The cycle this creates is benign and deliberate: test/setup.js also requires this file, so when this
 // file is entered first, setup.js's own `db` binding resolves to the partially initialized module

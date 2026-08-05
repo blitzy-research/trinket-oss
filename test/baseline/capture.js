@@ -8,10 +8,23 @@
  * It boots the application exactly the way they were produced, re-measures BOTH halves of the R-6
  * parity contract — the 233-row hapi route table (TR1) and the 58 + 7 + 8 entry response corpus (TR2,
  * TR3, TR4) — reports every difference, evaluates every gate the artifacts publish, and can regenerate
- * them. It is also the shared implementation library for test/baseline/replay.js and
- * test/lib/api/route-parity.js, which require() it — the `require.main === module` guard below means
- * requiring this file boots nothing and captures nothing, so a fifth file under test/baseline/ is not
- * needed.
+ * them. It is also the shared implementation library for test/baseline/replay.js, which require()s it —
+ * the `require.main === module` guard below means requiring this file boots nothing and captures
+ * nothing, so a fifth file under test/baseline/ is not needed. test/lib/api/route-parity.js
+ * deliberately does NOT require it: that suite is an independent verifier carrying its own literals.
+ *
+ * OWNERSHIP, published once and truthfully (review finding P3-1). Because this file owns the artifacts,
+ * it also owns the things the artifacts declare about themselves:
+ *   - `DOCUMENTED_DIGEST` and `documentedAnchorGate()` are declared HERE and nowhere else in
+ *     test/baseline/. replay.js re-exports both rather than keeping a second copy, because two copies
+ *     of a gate is how a gate rots: an earlier revision enforced the anchor in replay.js while this
+ *     file reported it UNEVALUATED, and route-table.json could not then name a single honest evaluator.
+ *   - `routeTableGates()` turns all ten clauses AND the verdict into pass/fail entries of this CLI's
+ *     gate summary, so a --dry-run exits non-zero on drift and a write is refused.
+ *   - `mergeMeasuredRouteTable()` REGENERATES `gates.documentedAnchorGateSatisfied` from this run's own
+ *     evaluation, and `recordReproducedCounts()` regenerates the provenance block's section sizes, so
+ *     neither is a hand-authored value that can rot (review findings P3-1 and P4-C). Everything the
+ *     merge does NOT recompute is reported by name as hand-derived on every write.
  *
  * HARD CONSTRAINTS, all of them from AAP 0.7.5 and from the artifact's own metadata.captureNotes.
  * Every one of these is a correctness requirement, not a preference:
@@ -117,6 +130,23 @@ var ARTIFACT_PATH    = path.join(__dirname, 'responses.json'),
     ROUTE_TABLE_PATH = path.join(__dirname, 'route-table.json');
 
 /**
+ * The literal the Technical Specification publishes for the baseline route table (AAP 0.1.1.3 goal G8,
+ * 0.1.2.3 invariant TR1, 0.7.5).
+ *
+ * It lives HERE, in the harness that owns route-table.json, and it is the ONLY copy in the tree:
+ * test/baseline/replay.js re-exports it rather than declaring a second one, and
+ * test/lib/api/route-parity.js carries its own independent literal because that suite deliberately
+ * loads neither this module nor the artifact. Clause 1 of documentedAnchorGate() compares this constant
+ * against the artifact's stored gates.documentedDigest, so an edit that quietly substituted one of the
+ * artifact's own measurements for the published anchor FAILS the gate instead of passing unnoticed.
+ *
+ * Review finding P3-1: the artifact published capture.js as the evaluator's home while the function
+ * actually lived in replay.js, and the stored verdict beside it was hand-authored. Both halves are
+ * closed by hosting the evaluator, the literal and the regeneration of the verdict in this file.
+ */
+var DOCUMENTED_DIGEST = 'cd2a7e38a39bd84902ac1a0d69f50e2a';
+
+/**
  * The request policy, mirroring responses.json#requestPolicy. Every value here is load-bearing:
  *  - no Accept header, because app.js:L161-L163 turns any accept containing application/json into an
  *    API request, which would make all twelve session-required parameterless GETs answer 401 instead
@@ -157,7 +187,11 @@ var RESOLUTION = {
   maxHops      : 10,
   sections     : ['unauthenticated'],
   sendsCookies : false,
-  runsAfter    : 'the unauthenticated, authenticated and assignmentNext sections are all recorded'
+  // Spelled to match responses.json#requestPolicy.resolutionReading.runsAfter BYTE FOR BYTE, because
+  // test/baseline/replay.js#requestPolicyMismatches compares the two and refuses to replay when they
+  // disagree. One policy, one spelling: an artifact and a harness that describe the ordering rule
+  // differently are two policies, and a diff taken under the wrong one compares policies not behavior.
+  runsAfter    : 'the unauthenticated, authenticated and assignmentNext sections are ALL recorded'
 };
 
 var RESOLUTION_STATUSES = [301, 302, 303, 307, 308];
@@ -1803,9 +1837,120 @@ function routeTableDigests(canonical, registrationOrderCanonicalRows) {
 }
 
 /**
+ * The registration order as canonical strings, plus any declaration that resolved to no live row.
+ *
+ * Thin by design: registrationOrderRows() does the work, and this shape is what both the anchor gate's
+ * registrationOrderContract clause and replay.js's fingerprint comparison consume.
+ *
+ * @param   {Object} live A canonicalizeLiveTable() result (needs `byKey`).
+ * @returns {Object} `{ canonical : String[], missing : String[] }`.
+ */
+function registrationOrderCanonical(live) {
+  var order = registrationOrderRows(live);
+
+  return {
+    canonical : order.rows.map(function(row) { return row.canonical; }),
+    missing   : order.missing
+  };
+}
+
+/**
+ * Evaluate the documented route-table anchor as a MANDATORY pass/fail gate, computed from the LIVE
+ * server on every run rather than read out of a stored flag.
+ *
+ * THIS IS THE SINGLE IMPLEMENTATION. It lives in the harness that owns route-table.json, which is what
+ * lets that artifact name one honest evaluator and what lets mergeMeasuredRouteTable() REGENERATE
+ * gates.documentedAnchorGateSatisfied instead of carrying a hand-authored boolean (review finding
+ * P3-1). test/baseline/replay.js re-exports this function; test/lib/api/route-parity.js recomputes the
+ * same ten clauses from its own in-file literals, sharing no code and loading no artifact, so a defect
+ * here cannot make that suite pass.
+ *
+ * Ten clauses, all of them the Specification's own published values for this table, plus the table
+ * itself: the frozen digest literal is still stored verbatim; the row count; the method distribution;
+ * the /api/ path count; the pre-handler count; the three auth buckets; the 233 canonical rows the
+ * digest stands for, compared as a sorted multiset against the base-commit capture; and the
+ * registration-order contract, whose fingerprint is re-derived from config.routes. Any drift in any of
+ * them lands in `failures` and makes `satisfied` false, so a regression FAILS this gate instead of
+ * being recorded as expected.
+ *
+ * Why the gate is the table and not a recomputed digest string: the Specification publishes its value
+ * as 32 hexadecimal characters labelled sha256, where a SHA-256 is 64, and publishes no serialization
+ * for it — no field set, no separator, no sort collation, no trailing-newline convention — so no
+ * verifier can recompute the string itself from any input (route-table.json#adjudications ADJ-4 records
+ * the exhaustive search). What the literal names is a specific 233-row table, and THAT is pinned here
+ * exactly, clause by clause. Reverse-engineering a serialization to force a string match is forbidden
+ * by ADJ-4 and would prove nothing about the table.
+ *
+ * @param   {Object} live           A canonicalizeLiveTable() result, or a captureRouteTable() result —
+ *                                 both carry `gates`, `canonical` and `byKey`.
+ * @param   {Object} committedTable The committed route-table.json artifact.
+ * @returns {Object} `{ documentedDigest, clauses, failures, satisfied }`.
+ */
+function documentedAnchorGate(live, committedTable) {
+  var gates    = committedTable.gates,
+      order    = registrationOrderCanonical(live),
+      clauses  = [],
+      failures = [];
+
+  function clause(name, documented, measured) {
+    var satisfied = stableStringify(documented) === stableStringify(measured);
+
+    clauses.push({ name : name, documented : documented, measured : measured, satisfied : satisfied });
+
+    if (!satisfied) {
+      failures.push(name);
+    }
+  }
+
+  clause('documentedDigestRetainedVerbatim', DOCUMENTED_DIGEST, gates.documentedDigest);
+  clause('rowCount', gates.rowCount, live.gates.rowCount);
+  clause('methods', gates.methods, live.gates.methods);
+  clause('apiPaths', gates.apiPaths, live.gates.apiPaths);
+  clause('withPreHandlers', gates.withPreHandlers, live.gates.withPreHandlers);
+  clause('authRequiredSession', gates.authRequiredSession, live.gates.authRequiredSession);
+  clause('authFalse', gates.authFalse, live.gates.authFalse);
+  clause('authTryInherited', gates.authTryInherited, live.gates.authTryInherited);
+  clause('canonicalRowsTheDigestStandsFor',
+         committedTable.rows.map(function(row) { return row.canonical; }).slice().sort(),
+         live.canonical.slice().sort());
+  clause('registrationOrderContract',
+         { unresolvedDeclarations : [], fingerprint : gates.registrationOrderFingerprint },
+         { unresolvedDeclarations : order.missing, fingerprint : sha256(order.canonical.join('\n')) });
+
+  return {
+    documentedDigest : DOCUMENTED_DIGEST,
+    clauses          : clauses,
+    failures         : failures,
+    satisfied        : failures.length === 0
+  };
+}
+
+/**
+ * Whether every COUNTABLE documented anchor was reproduced — that is, every clause of the anchor gate
+ * except `documentedDigestRetainedVerbatim`, which is a statement about the artifact's storage rather
+ * than about the table.
+ *
+ * This is what route-table.json#gates.documentedAnchorsExceptDigestAllReproduced asserts, and it is
+ * computed here so that mergeMeasuredRouteTable() can regenerate the flag instead of copying a stored
+ * boolean forward over a measurement that no longer justifies it (review finding P3-1).
+ *
+ * @param   {Object} verdict A documentedAnchorGate() result.
+ * @returns {Boolean} true when every clause other than the retention clause is satisfied.
+ */
+function countableAnchorsReproduced(verdict) {
+  return verdict.clauses.every(function(clause) {
+    return clause.name === 'documentedDigestRetainedVerbatim' || clause.satisfied;
+  });
+}
+
+/**
  * Measures the whole route table. Synchronous by nature — the table is already in memory once the
  * server has started, and no HTTP is involved — so this runs before the corpus walk and its result is
  * available even under --routes-only.
+ *
+ * `byKey` and `canonical` are carried through so the anchor gate can be evaluated from this result
+ * directly, which is what makes routeTableGates() able to gate all ten clauses. Neither field is ever
+ * written to the artifact: mergeMeasuredRouteTable() copies only the keys it names.
  */
 function captureRouteTable(server) {
   var startedAt = new Date().toISOString(),
@@ -1822,6 +1967,8 @@ function captureRouteTable(server) {
     digests              : routeTableDigests(live.canonical, order.rows),
     rows                 : order.rows,
     routerOrderCanonical : live.canonical,
+    canonical            : live.canonical,
+    byKey                : live.byKey,
     missingDeclarations  : order.missing
   };
 }
@@ -1904,7 +2051,8 @@ function mergeMeasuredRouteTable(committedTable, measured) {
   var merged        = JSON.parse(JSON.stringify(committedTable)),
       recomputed    = ['rowCount', 'methods', 'apiPaths', 'withPreHandlers', 'authRequiredSession',
                        'authFalse', 'authTryInherited', 'measuredSha256', 'measuredSha256First32',
-                       'measuredMd5', 'registrationOrderFingerprint'],
+                       'measuredMd5', 'registrationOrderFingerprint', 'documentedAnchorGateSatisfied',
+                       'documentedAnchorsExceptDigestAllReproduced'],
       notRecomputed = [];
 
   merged.metadata.capturedAt = measured.capturedAt;
@@ -1929,6 +2077,16 @@ function mergeMeasuredRouteTable(committedTable, measured) {
 
   merged.rows = measured.rows;
 
+  // REVIEW FINDING P3-1. Both verdicts are REGENERATED from this run's own evaluation of the anchor rather
+  // than carried across as hand-authored booleans. `merged` already holds the recomputed rows, gates and
+  // digests, so the clause set is evaluated against the merged artifact — which is the artifact that is
+  // about to be written — and a write whose table no longer satisfies the anchor therefore stores `false`
+  // and fails routeTableGates() rather than shipping a stale `true`.
+  var mergedVerdict = documentedAnchorGate(measured, merged);
+
+  merged.gates.documentedAnchorGateSatisfied = mergedVerdict.satisfied;
+  merged.gates.documentedAnchorsExceptDigestAllReproduced = countableAnchorsReproduced(mergedVerdict);
+
   Object.keys(merged.gates).forEach(function(key) {
     if (recomputed.indexOf(key) === -1) {
       notRecomputed.push(key);
@@ -1936,6 +2094,49 @@ function mergeMeasuredRouteTable(committedTable, measured) {
   });
 
   return { artifact : merged, notRecomputed : notRecomputed };
+}
+
+/**
+ * The four section sizes a run reproduced, as a MEASUREMENT.
+ *
+ * REVIEW FINDING P4-C. Both artifacts carried a hand-authored provenance sentence that named those sizes
+ * inline, and one of the numbers in it ("14 assignment-next entries") disagreed with the array, the gate,
+ * the metadata and both tools, all of which say 8. A prose sentence cannot be recomputed, so the numbers
+ * moved out of the prose and into this block, which the generator writes on every capture and which the
+ * gates below compare against the live measurement. The sentence now points here instead of restating
+ * them, so the same drift cannot recur.
+ *
+ * @param   {Object} routeTable A captureRouteTable() result.
+ * @param   {Object} [measured] A captureCorpus() result; absent under --routes-only.
+ * @returns {Object} `{ routeRows, unauthenticated, authenticated, assignmentNext }`.
+ */
+function reproducedCounts(routeTable, measured) {
+  return {
+    routeRows       : routeTable.gates.rowCount,
+    unauthenticated : ((measured && measured.unauthenticated) || []).length,
+    authenticated   : ((measured && measured.authenticated) || []).length,
+    assignmentNext  : ((measured && measured.assignmentNext) || []).length
+  };
+}
+
+/**
+ * Writes reproducedCounts() into an artifact's shared provenance block. Both artifacts carry the same
+ * block, and both are written by the same run, so both receive the same measured counts.
+ *
+ * @param   {Object} artifact The merged artifact about to be written.
+ * @param   {Object} counts   A reproducedCounts() result.
+ * @returns {Boolean} true when the block existed and was updated.
+ */
+function recordReproducedCounts(artifact, counts) {
+  var block = artifact.metadata && artifact.metadata.toolchainReverification;
+
+  if (!block) {
+    return false;
+  }
+
+  block.reproducedCounts = counts;
+
+  return true;
 }
 
 // There is deliberately no single-artifact writer here. The route table is the parity DENOMINATOR and the
@@ -2537,19 +2738,59 @@ function routeTableGates(committedTable, measured) {
              measured.digests.registrationOrderFingerprint)
       ];
 
+  // THE DOCUMENTED ANCHOR, CLAUSE BY CLAUSE (review finding P3-1). Every clause documentedAnchorGate()
+  // evaluates becomes its own PASS/FAIL entry here, plus the verdict itself, so this CLI enforces the
+  // gate the artifact calls mandatory rather than merely printing that some other file does: a --dry-run
+  // exits non-zero on any failure and main() REFUSES to write over a failed gate. Naming each clause
+  // separately is deliberate — a summary boolean tells an operator that something drifted, and this
+  // tells them which anchor.
+  var anchor = documentedAnchorGate(measured, committedTable);
+
+  anchor.clauses.forEach(function(clause) {
+    gates.push(gate('route-table documentedAnchorGate clause ' + clause.name,
+                    clause.documented, clause.measured));
+  });
+
+  gates.push(gate('route-table documentedAnchorGate unsatisfied clauses', [], anchor.failures));
+  // The clause NAMES the artifact publishes, in order, against the evaluator's own. This is what stops the
+  // published clause list drifting away from the clauses actually evaluated — an artifact that advertised a
+  // clause the evaluator no longer has would otherwise read as enforced. Only the leading name token of
+  // each published clause string is read; the descriptive text after it is hand-authored documentation.
+  gates.push(gate('route-table gates.documentedAnchorGate.clauses (names, in order)',
+                  (((committedTable.gates.documentedAnchorGate || {}).clauses) || [])
+                    .map(function(text) { return String(text).split(' ')[0]; }),
+                  anchor.clauses.map(function(clause) { return clause.name; })));
+  // The countable anchors — every clause except the digest-retention one — as the artifact's own flag
+  // claims them. mergeMeasuredRouteTable() regenerates the flag from this same computation.
+  gates.push(gate('route-table gates.documentedAnchorsExceptDigestAllReproduced',
+                  committedTable.gates.documentedAnchorsExceptDigestAllReproduced,
+                  countableAnchorsReproduced(anchor)));
+  // REVIEW FINDING P4-C. The provenance block's own count of reproduced route rows, gated against this
+  // run rather than left as prose.
+  gates.push(gate('route-table metadata.toolchainReverification.reproducedCounts.routeRows',
+                  (((committedTable.metadata || {}).toolchainReverification || {})
+                    .reproducedCounts || {}).routeRows,
+                  measured.gates.rowCount));
+  // The artifact's own stored verdict is ANDed with the freshly measured one, so neither a stale `true`
+  // in the file nor a passing computation on its own can carry the gate. mergeMeasuredRouteTable()
+  // regenerates the stored value from this same evaluator, which is what stops it being hand-authored.
+  gates.push(gate('route-table gates.documentedAnchorGateSatisfied', true,
+                  committedTable.gates.documentedAnchorGateSatisfied === true && anchor.satisfied));
+
   // The Technical Specification's published digest is 32 hexadecimal characters labelled sha256, where a
   // SHA-256 is 64, and it is published with no serialization — so no verifier can recompute the STRING
   // from any input. The gate is therefore reported as UNREPRODUCIBLE and NOT as a pass, which is the
   // honest report: the anchor the literal names is enforced instead over the 233-row table itself, by
-  // replay.js#documentedAnchorGate, whose ten clauses are recomputed live and are mandatory PASS/FAIL.
-  // The verdict is admissible only because the artifact declares it (gates.documentedDigestReproduced),
-  // and the one thing that must never happen is a run that manufactures agreement with the string.
+  // the ten clauses above, which are recomputed live and are mandatory PASS/FAIL. The verdict is
+  // admissible only because the artifact declares it (gates.documentedDigestReproduced), and the one
+  // thing that must never happen is a run that manufactures agreement with the string.
   gates.push(unreproducibleGate('route-table gates.documentedDigest (' +
                                 committedTable.gates.documentedDigest + ')',
                                 'the Specification publishes 32 hex characters labelled sha256 with no ' +
                                 'serialization; route-table.json#adjudications records the exhaustive ' +
                                 'sweep that found no input producing it. The anchor is enforced over ' +
-                                'the 233-row table by replay.js#documentedAnchorGate instead.',
+                                'the 233-row table by capture.js#documentedAnchorGate instead, whose ' +
+                                'ten clauses are gated individually above.',
                                 committedTable.gates.documentedDigestReproduced));
 
   return gates;
@@ -2600,6 +2841,22 @@ function corpusGates(committedCorpus, measured, origin) {
          pathsWithStatus(unauthenticated, 401).length),
     gate('corpus authRequiredApiUnauthorizedPaths', published.authRequiredApiUnauthorizedPaths,
          pathsWithStatus(unauthenticated, 401)),
+    // REVIEW FINDING P4-C. The provenance block's own count of reproduced corpus entries, gated against
+    // this run. The route-row half is gated in routeTableGates().
+    gate('corpus metadata.toolchainReverification.reproducedCounts (sections)',
+         {
+           unauthenticated : (((committedCorpus.metadata || {}).toolchainReverification || {})
+                               .reproducedCounts || {}).unauthenticated,
+           authenticated   : (((committedCorpus.metadata || {}).toolchainReverification || {})
+                               .reproducedCounts || {}).authenticated,
+           assignmentNext  : (((committedCorpus.metadata || {}).toolchainReverification || {})
+                               .reproducedCounts || {}).assignmentNext
+         },
+         {
+           unauthenticated : unauthenticated.length,
+           authenticated   : authenticated.length,
+           assignmentNext  : (measured.assignmentNext || []).length
+         }),
     gate('corpus serverErrorEntryCount (1x500)', published.serverErrorEntryCount, serverErrors.length),
     gate('corpus singleServerErrorRoute', published.singleServerErrorRoute,
          serverErrors.length === 1 ? serverErrors[0].method + ' ' + serverErrors[0].path : null),
@@ -3508,7 +3765,13 @@ function main() {
           adopting           : writable.adopting
         },
         table  = mergeMeasuredRouteTable(committedTable, routeTable),
-        corpus = mergeMeasuredIntoCommitted(committed, measured, buildArtifacts, provenance);
+        corpus = mergeMeasuredIntoCommitted(committed, measured, buildArtifacts, provenance),
+        counts = reproducedCounts(routeTable, measured);
+
+    // REVIEW FINDING P4-C. The reproduced section sizes are written into BOTH artifacts from this run's
+    // own measurement, so the provenance block states a measured fact rather than a transcribed one.
+    recordReproducedCounts(table.artifact, counts);
+    recordReproducedCounts(corpus.artifact, counts);
 
     // Both artifacts or neither (review finding F7).
     writeArtifactPair(table.artifact, corpus.artifact);
@@ -3622,10 +3885,16 @@ module.exports = {
   canonicalRow             : canonicalRow,
   canonicalizeLiveTable    : canonicalizeLiveTable,
   registrationOrderRows    : registrationOrderRows,
+  registrationOrderCanonical : registrationOrderCanonical,
   routeTableDigests        : routeTableDigests,
+  DOCUMENTED_DIGEST        : DOCUMENTED_DIGEST,
+  documentedAnchorGate     : documentedAnchorGate,
+  countableAnchorsReproduced : countableAnchorsReproduced,
   captureRouteTable        : captureRouteTable,
   compareRouteTable        : compareRouteTable,
   mergeMeasuredRouteTable  : mergeMeasuredRouteTable,
+  reproducedCounts         : reproducedCounts,
+  recordReproducedCounts   : recordReproducedCounts,
   pushDifference           : pushDifference,
   BUILD_ARTIFACT_FILES     : BUILD_ARTIFACT_FILES,
   mapFilesUnder            : mapFilesUnder,

@@ -14,8 +14,13 @@ Trinket lets students and educators write and run code directly in the browser, 
 
 ## Prerequisites
 
-- Docker and Docker Compose v2 (the `docker compose` subcommand; the standalone `docker-compose` v1 binary is
-  end-of-life and is not used anywhere in this repository)
+- Docker and Docker Compose v2. **Every command in this README and in [docs/setup.md](docs/setup.md) uses the
+  `docker compose` subcommand**, because the standalone `docker-compose` v1 binary is end-of-life. That is a statement
+  about this workflow, not about the whole repository: `GETTING_STARTED.md`, `CONTRIBUTING.md` and
+  `test/smoke-test.sh`'s comments still spell it `docker-compose`, and `serverside/README.md` documents its own
+  separate stack the same way. Those files are outside the scope of the Node 22 modernization that rewrote this one,
+  so they are left as they are rather than edited in passing; on a v2-only host, read `docker-compose x` there as
+  `docker compose x`.
 - Node.js 22 LTS and **npm 10** (for local development without Docker). `package.json` `engines` declares
   `node >=22.12.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and its `packageManager` field names the exact release the
   lockfile and the container image are built with, `npm@10.9.9`. Node 22.23.2 ships npm 10.9.8, so a stock Node 22 LTS
@@ -80,11 +85,22 @@ Trinket lets students and educators write and run code directly in the browser, 
    Compose publishes `public/css` through a named volume, because the `.:/usr/local/node/trinket` bind
    mount would otherwise hide the copies the image built - the same arrangement `node_modules` and
    `public/components` already use. Like those two, the volume is initialized once, so after changing
-   `static/scss/**` or the component release, recreate it to publish the new output:
+   `static/scss/**` or the component release, recreate **that one volume** to publish the new output:
 
    ```bash
-   docker compose down -v && docker compose up --build
+   docker compose down                                                  # keeps every volume
+   docker volume rm "${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}_public_css"
+   docker compose up --build
    ```
+
+   > ⚠️ **Do not reach for `docker compose down -v` here.** `-v` removes **every** volume this project
+   > declares, and that includes `mongodb_data` - the MongoDB data directory. It would silently delete
+   > your entire development database (users, courses, trinkets, sessions) to refresh two stylesheets,
+   > with no prompt and no recovery. Only `public_css` needs recreating, so name only `public_css`.
+   > Compose prefixes volume names with the project name, which defaults to the directory name; the
+   > command above derives it, and `docker volume ls` confirms it. If you do intend a full reset, back
+   > the database up first with `docker compose exec mongodb mongodump --archive=/tmp/dump` and copy it
+   > out with `docker compose cp mongodb:/tmp/dump ./dump`.
 
 5. Visit http://localhost:3000 in your browser.
 

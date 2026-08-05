@@ -4,9 +4,13 @@ This guide walks through the prerequisites, configuration, and commands needed t
 
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose **v2** - every command below uses the
-  `docker compose` subcommand. The standalone Compose v1 `docker-compose` binary is end-of-life and is not used
-  anywhere in this repository.
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose **v2** - every command **in this guide and in
+  the [README](https://github.com/trinketapp/trinket-oss#readme)** uses the `docker compose` subcommand, because the
+  standalone Compose v1 `docker-compose` binary is end-of-life. The claim is scoped to those two documents on
+  purpose: `GETTING_STARTED.md`, `CONTRIBUTING.md`, the comments in `test/smoke-test.sh` and `serverside/README.md`
+  still use the v1 spelling, and they sit outside the scope of the modernization that rewrote this guide, so they
+  were left alone rather than edited in passing. On a v2-only host, read `docker-compose x` in those files as
+  `docker compose x`.
 - Git
 - Node.js 22 LTS and **npm 10** (only required for local development without Docker). `package.json` `engines`
   declares `node >=22.12.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and its `packageManager` field names the exact
@@ -92,11 +96,23 @@ When using the Docker workflow, Docker and Git are all you need - everything els
    `public/css` is published through a named volume, because the `.:/usr/local/node/trinket` bind mount
    would otherwise hide the copies the image built; `node_modules` and `public/components` are handled the
    same way. All three are initialized once from the image, so after changing `static/scss/**` or the
-   component release, recreate them to publish the new output:
+   component release, recreate **the one volume that carries the output** to publish it:
 
    ```bash
-   docker compose down -v && docker compose up --build
+   docker compose down                                                  # keeps every volume
+   docker volume rm "${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}_public_css"
+   docker compose up --build
    ```
+
+   > ⚠️ **`docker compose down -v` is not the command for this, and using it destroys data.** `-v`
+   > removes **every** volume the project declares, and `docker-compose.yml` declares `mongodb_data` -
+   > the MongoDB data directory - alongside `public_css`, `public_components`, `node_modules` and
+   > `shared-cache`. Using it to refresh two stylesheets deletes the whole development database (users,
+   > courses, trinkets, sessions) with no prompt and no recovery. Name only `public_css`. Compose
+   > prefixes volume names with the project name, which defaults to the directory name; the command
+   > above derives it and `docker volume ls` confirms it. If a full reset *is* what you want, take a
+   > backup first with `docker compose exec mongodb mongodump --archive=/tmp/dump` and copy it out with
+   > `docker compose cp mongodb:/tmp/dump ./dump`.
 
 5. Open **http://localhost:3000** in your browser.
 

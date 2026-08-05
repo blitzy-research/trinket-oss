@@ -73,6 +73,7 @@
     "watch:css": "vite build --watch",
     "prebuild": "node scripts/hydrate-components.js",
     "build": "npm run build:css",
+    "postbuild": "node scripts/verify-css-artifacts.js",
     "make-admin": "node scripts/make-admin.js"
   },
   "repository": {

@@ -31,12 +31,16 @@
  *     identities, COLLECTS failures in CLEANUP_ERRORS instead of raising, and lets main() turn a
  *     non-empty `cleanupErrors()` into exit 2. There is no generic `runWithCleanup(work, steps)` wrapper;
  *     the aggregation is the contract, and it is what is asserted below.
- *   - The documented anchor gate lives in ONE place, `replay.js#documentedAnchorGate`, together with the
- *     `DOCUMENTED_DIGEST` literal. capture.js owns the artifact but does NOT re-implement the gate: it
- *     reports the digest through `unreproducibleGate()`, whose verdict is admissible only while the
- *     artifact declares `gates.documentedDigestReproduced === 'none'`, and whose reason names replay's
- *     gate as the thing that actually checks the 233-row table. The canonicalizer IS shared - replay
- *     re-exports capture's - so there is exactly one implementation of each half.
+ *   - The documented anchor gate lives in ONE place, `capture.js#documentedAnchorGate`, together with the
+ *     `DOCUMENTED_DIGEST` literal, and `replay.js` RE-EXPORTS both rather than declaring a second copy.
+ *     The evaluator sits in the harness that OWNS route-table.json for two reasons, and review finding
+ *     P3-1 is both of them: that artifact publishes capture.js as the evaluator's home, and the stored
+ *     verdict `gates.documentedAnchorGateSatisfied` can only be REGENERATED rather than hand-authored by
+ *     the file that writes the artifact. capture.js therefore both evaluates the gate — turning all ten
+ *     clauses and the verdict into entries of its own gate summary, so a --dry-run exits non-zero and a
+ *     write is refused — and still reports the digest STRING through `unreproducibleGate()`, whose verdict
+ *     is admissible only while the artifact declares `gates.documentedDigestReproduced === 'none'`. The
+ *     canonicalizer is shared the same way, so there is exactly one implementation of every half.
  *   - The write path is gated by `capture.assertWritable()`. There is no forcing flag at all: an
  *     unknown-option parse error is what a stale `--force` now earns, and the only sanctioned lift is
  *     `--adopt-base-commit`, which renames the baseline on the record.
@@ -252,14 +256,17 @@ describe('the R-6 baseline harness', function() {
       };
     }
 
-    it('is ONE implementation: the gate lives in replay.js and capture.js does not copy it', function() {
+    it('is ONE implementation: the gate lives in capture.js and replay.js re-exports it', function() {
       // Two copies of a gate is how a gate rots - it was enforced in one file and marked UNEVALUATED in
-      // the other. route-table.json can only name a single honest evaluator if there is a single one.
-      replay.documentedAnchorGate.should.be.a('function');
-      replay.DOCUMENTED_DIGEST.should.be.a('string');
-      should.not.exist(capture.documentedAnchorGate);
-      should.not.exist(capture.DOCUMENTED_DIGEST);
-      captureSource.should.not.contain('function documentedAnchorGate');
+      // the other. route-table.json can only name a single honest evaluator if there is a single one, and
+      // it names capture.js: the harness that owns the artifact is the only one that can REGENERATE the
+      // stored verdict beside the gate rather than carry a hand-authored boolean (review finding P3-1).
+      capture.documentedAnchorGate.should.be.a('function');
+      capture.DOCUMENTED_DIGEST.should.be.a('string');
+      replay.documentedAnchorGate.should.equal(capture.documentedAnchorGate);
+      replay.DOCUMENTED_DIGEST.should.equal(capture.DOCUMENTED_DIGEST);
+      replaySource.should.not.contain('function documentedAnchorGate');
+      (captureSource.match(/function documentedAnchorGate/g) || []).length.should.eql(1);
     });
 
     it('shares ONE canonicalizer between the two files rather than re-deriving it', function() {
@@ -272,9 +279,13 @@ describe('the R-6 baseline harness', function() {
     });
 
     it('holds the published literal verbatim, in the verifier rather than in the artifact', function() {
-      replay.DOCUMENTED_DIGEST.should.eql('cd2a7e38a39bd84902ac1a0d69f50e2a');
-      committedTable.gates.documentedDigest.should.eql(replay.DOCUMENTED_DIGEST);
-      replaySource.should.contain("var DOCUMENTED_DIGEST = 'cd2a7e38a39bd84902ac1a0d69f50e2a';");
+      capture.DOCUMENTED_DIGEST.should.eql('cd2a7e38a39bd84902ac1a0d69f50e2a');
+      committedTable.gates.documentedDigest.should.eql(capture.DOCUMENTED_DIGEST);
+      captureSource.should.contain("var DOCUMENTED_DIGEST = 'cd2a7e38a39bd84902ac1a0d69f50e2a';");
+      // Declared once. replay.js binds the same value through capture's exports, so an edit to the
+      // artifact cannot be matched by a quiet edit to a second copy of the literal.
+      replaySource.should.not.contain("var DOCUMENTED_DIGEST = 'cd2a7e38a39bd84902ac1a0d69f50e2a';");
+      replaySource.should.contain('var DOCUMENTED_DIGEST    = capture.DOCUMENTED_DIGEST;');
     });
 
     it('evaluates exactly the ten clauses route-table.json publishes, in that order', function() {
@@ -354,8 +365,60 @@ describe('the R-6 baseline harness', function() {
       // that does check the 233 rows.
       captureSource.should.not.contain("unevaluatedGate('route-table gates.documentedDigest");
       captureSource.should.contain("gates.push(unreproducibleGate('route-table gates.documentedDigest (' +");
-      captureSource.should.contain('replay.js#documentedAnchorGate');
+      captureSource.should.contain('capture.js#documentedAnchorGate');
       committedTable.gates.documentedDigestReproduced.should.eql('none');
+    });
+
+    it('gates all ten clauses AND the verdict inside the capture CLI, not only inside the replay',
+      function() {
+        // REVIEW FINDING P3-1. route-table.json claims capture.js#routeTableGates turns every clause and
+        // the verdict into pass/fail entries; these are the lines that make the claim true. main() sets
+        // exit 1 on any FAIL and REFUSES to write over one, so a drifted clause cannot become a baseline.
+        captureSource.should.contain('var anchor = documentedAnchorGate(measured, committedTable);');
+        captureSource.should.contain("gate('route-table documentedAnchorGate clause ' + clause.name,");
+        captureSource.should.contain("gate('route-table documentedAnchorGate unsatisfied clauses', [], " +
+                                     'anchor.failures)');
+        captureSource.should.contain("gate('route-table gates.documentedAnchorGateSatisfied', true,");
+        captureSource.should.contain('committedTable.gates.documentedAnchorGateSatisfied === true && ' +
+                                     'anchor.satisfied)');
+      });
+
+    it('REGENERATES the stored verdicts on write instead of carrying hand-authored booleans', function() {
+      // The other half of P3-1: the artifact published two verdict flags that no code recomputed. Both are
+      // now in mergeMeasuredRouteTable's `recomputed` list and both are derived from this run's own
+      // evaluation of the MERGED artifact - the one about to be written - rather than copied forward.
+      captureSource.should.contain("'registrationOrderFingerprint', 'documentedAnchorGateSatisfied',");
+      captureSource.should.contain("'documentedAnchorsExceptDigestAllReproduced']");
+      captureSource.should.contain('var mergedVerdict = documentedAnchorGate(measured, merged);');
+      captureSource.should.contain('merged.gates.documentedAnchorGateSatisfied = mergedVerdict.satisfied;');
+      captureSource.should.contain('merged.gates.documentedAnchorsExceptDigestAllReproduced = ' +
+                                   'countableAnchorsReproduced(mergedVerdict);');
+      capture.mergeMeasuredRouteTable.should.be.a('function');
+
+      // countableAnchorsReproduced() ignores the retention clause and bites on every other one.
+      var verdict = { clauses : [{ name : 'documentedDigestRetainedVerbatim', satisfied : false },
+                                 { name : 'rowCount', satisfied : true }] };
+
+      capture.countableAnchorsReproduced(verdict).should.eql(true);
+      verdict.clauses[1].satisfied = false;
+      capture.countableAnchorsReproduced(verdict).should.eql(false);
+    });
+
+    it('regenerates the provenance section counts rather than restating them in prose', function() {
+      // REVIEW FINDING P4-C. Both artifacts carried a sentence naming the reproduced counts inline, and
+      // one of the numbers in it had drifted. The numbers are a measurement now, written by the generator
+      // and gated against the live run.
+      var counts = committedTable.metadata.toolchainReverification.reproducedCounts;
+
+      counts.routeRows.should.eql(committedTable.gates.rowCount);
+      counts.unauthenticated.should.eql(committedCorpus.gates.unauthenticatedEntryCount);
+      counts.authenticated.should.eql(committedCorpus.gates.authenticatedEntryCount);
+      counts.assignmentNext.should.eql(committedCorpus.gates.assignmentNextEntryCount);
+      // The two artifacts carry the same block, written by the same run.
+      committedCorpus.metadata.toolchainReverification.reproducedCounts.should.eql(counts);
+      capture.recordReproducedCounts.should.be.a('function');
+      captureSource.should.contain('recordReproducedCounts(table.artifact, counts);');
+      captureSource.should.contain('recordReproducedCounts(corpus.artifact, counts);');
     });
 
     it('admits the UNREPRODUCIBLE verdict only while the artifact declares it', function() {

@@ -105,7 +105,10 @@ module.exports = function() {
             // Dependency swap: the deprecated legacy url-module parser becomes the non-throwing static
             // WHATWG one. MEASURED here: this Location is ABSOLUTE, so the base is ignored and the
             // pathname is byte-identical to the legacy reading. `config.url` is still passed - the form
-            // test/helpers/flow.js:525 uses - because the static form answers null for a RELATIVE header.
+            // test/helpers/flow.js#setLastResponse uses - because the static form answers null for a
+            // RELATIVE header. The reference is by symbol rather than by line number because line
+            // locators into that file have drifted before; see the URL.parse census in
+            // docs/MIGRATION-DEPENDENCY-INVENTORY.md.
             var expectedPath = '/u/' + defaults.user.username + '/classes/' + sampleCourse.slug;
 
             URL.parse(response.headers.location, config.url)

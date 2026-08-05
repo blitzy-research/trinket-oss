@@ -1,18 +1,22 @@
-// The ELEVEN entries below are APPEND-ONLY and must never be reordered. Serial order is a correctness
+// The TWELVE entries below are APPEND-ONLY and must never be reordered. Serial order is a correctness
 // requirement, not a style choice: database state is shared across the suites and reset only at the
 // outer boundaries of this describe block (`before(db.reset)` and the `after` below), so `login` depends
 // on the accounts `registration` created, `course`/`profile`/`logout` depend on the session `login`
 // established, and so on. AAP 0.7.6 records the same constraint.
 //
-// 'session' is appended after the original nine (review finding M7). It proves session-id rotation on
-// login and session invalidation on logout by replaying pre-transition cookies, which means it needs to
-// log in and out repeatedly. It therefore creates and removes its own account rather than reusing
-// `defaults.user` - whose password forgot_pass.js deliberately changes - drives every request through a
-// cookie slot no other suite touches, and restores `flow.activeUser` when it finishes.
+// 'write-routes' is the tenth entry, appended after the original nine. It owns two isolated accounts and
+// exercises the sole PATCH route, folder CRUD, course invitations, user settings/info and a missing-user
+// admin path over flow-backed real HTTP. It runs before session so the transition suite can still prove
+// rotation from a clean slot.
 //
-// 'write-routes' is also append-only. It owns two isolated accounts and exercises the sole PATCH route,
-// folder CRUD, course invitations, user settings/info and a missing-user admin path over flow-backed real
-// HTTP. It runs before session so the transition suite can still prove rotation from a clean slot.
+// 'session' is the eleventh entry (review finding M7): it runs after write-routes and BEFORE the isolated
+// final route-parity suite, not last. It proves session-id rotation on login and session invalidation on
+// logout by replaying pre-transition cookies, which means it needs to log in and out repeatedly. It
+// therefore creates and removes its own account rather than reusing `defaults.user` - whose password
+// forgot_pass.js deliberately changes - drives every request through a cookie slot no other suite touches,
+// and restores `flow.activeUser` when it finishes. Those three isolation properties are what make its
+// position independent of what follows it, which is why route-parity could be appended after it without
+// perturbing it and without reordering anything.
 //
 // 'route-parity' is appended LAST, exactly once (review finding M1). The binding checkpoint requires it,
 // and the requirement is well founded: it is the only suite that asserts against measured R-6 baseline

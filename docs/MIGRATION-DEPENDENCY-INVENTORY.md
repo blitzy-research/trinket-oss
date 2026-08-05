@@ -605,7 +605,7 @@ The Redis double used by `test/setup.js`, and the one bump in this table that **
 
 **The `sinon` bump in full.**
 
-**Three removed APIs, and all three were exercised by this suite.** Measured against the installed 22.1.0: (1) the three-argument form throws `TypeError: stub(obj, 'meth', fn) has been removed, see documentation` — **6** base-commit sites, censused over code lines only at `2f8712a`: `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8`, `test/lib/models/trinket.js:L34, L39, L155`; (2) `spy.reset` is **`undefined`** where `spy.resetHistory` is a function — **6** further base-commit sites, all on `sinon.spy(...)` doubles: `test/lib/models/plugins/paginate.js:L29-L32` and `test/lib/models/trinket.js:L167, L168`; (3) stubbing an absent property throws `TypeError: Cannot stub non-existent property`, which is what makes the catbox target correction in Rubric 3 load-bearing rather than cosmetic. **Delivered state, re-measured over the 33 current test files, code lines only: 0 three-argument `sinon.stub` calls and 0 `.reset()` calls remain** — 13 `.callsFake(` and 6 `.resetHistory()` calls stand in their place — and the suite runs **exit 0 with zero failures**. The remaining textual match for each removed form is a comment recording the conversion. Full adjudication: [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 13.3
+**Three removed APIs, and all three were exercised by this suite.** Measured against the installed 22.1.0: (1) the three-argument form throws `TypeError: stub(obj, 'meth', fn) has been removed, see documentation` — **6** base-commit sites, censused over code lines only at `2f8712a`: `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8`, `test/lib/models/trinket.js:L34, L39, L155`; (2) `spy.reset` is **`undefined`** where `spy.resetHistory` is a function — **6** further base-commit sites, all on `sinon.spy(...)` doubles: `test/lib/models/plugins/paginate.js:L29-L32` and `test/lib/models/trinket.js:L167, L168`; (3) stubbing an absent property throws `TypeError: Cannot stub non-existent property`, which is what makes the catbox target correction in Rubric 3 load-bearing rather than cosmetic. **Delivered state, re-measured over the 45 tracked test `.js` files, code lines only: 0 three-argument `sinon.stub` calls and 0 `.reset()` calls remain** — 30 `.callsFake(` sites in 11 files and 7 `.resetHistory(` sites in 3 files stand in their place — and the suite runs **exit 0 with zero failures**. The replacement counts exceed the twelve obliged conversions because suites written after the conversion (`test/lib/api/files.js`, `test/lib/api/write-routes.js`, `test/lib/util/db-helper-readiness.js`, `test/lib/util/file-storage.js`, `test/lib/util/recaptcha.js`, `test/lib/workers/exports.js`, `test/lib/workers/snapshot.js`) use the modern forms natively rather than converting anything. All four figures are volatile by nature — every new double moves them — so they are stated with the commands that reproduce them rather than as fixed facts: the file count is `git ls-files | grep -cE '^test/.*\.js$'`, and the four call-site counts are a `grep` for `.callsFake(`, `.resetHistory(`, the three-argument `sinon.stub(obj, 'm', fn)` form and `.reset()` over that same file list, discounting comment lines. The remaining textual match for each removed form is a comment recording the conversion. Full adjudication: [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 13.3
 
 **The test-tree call-site edits these bumps oblige are all applied.** The dependency decisions above are committed —
 `package.json` and `package-lock.json` carry them, and every version in the table is the resolved version in the
@@ -614,7 +614,7 @@ accurate when it was written and is not accurate now. Measured against the deliv
 
 | Obliged by | Edit | Measured state |
 |---|---|---|
-| `sinon` 22.1.0 | six `sinon.stub(obj, 'm', fn)` → `.callsFake(fn)` conversions, plus six `.reset()` → `.resetHistory()` | **12 of 12 done.** A re-census over code lines finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls, against **13** executable `.callsFake(` sites and **6** `.resetHistory(` sites |
+| `sinon` 22.1.0 | six `sinon.stub(obj, 'm', fn)` → `.callsFake(fn)` conversions, plus six `.reset()` → `.resetHistory()` | **12 of 12 done.** A re-census over code lines finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()` calls, against **30** executable `.callsFake(` sites and **7** `.resetHistory(` sites across the 45 tracked test files — more than the twelve obliged, because later suites use the modern forms natively |
 | `supertest` 7.2.2 | resolve the promise `app.js` exports before binding `server.listener` | **done.** `test/helpers/flow.js` captures `resolvedServer` through its own `app.then(…)` continuation, `agentFor()` binds `resolvedServer.listener` lazily on first use, and `test/setup.js` awaits `app` in a bare top-level `before()` registered on the root suite |
 | the unscoped `catbox-redis` removal | repoint `test/helpers/catbox-redis.js` at the in-repo engine | **done.** The unscoped require is gone; the helper stubs the **four** `CatboxMongoose.Engine.prototype` methods the suite reaches — `isReady`, `get`, `set`, `drop` — and leaves `start`, `stop`, `validateSegmentName` and `_generateKey` real |
 | `mocha` 11.7.6 | `.mocharc.json` replacing `test/mocha.opts` | **done.** The four-key file is committed — `reporter`, `recursive`, `check-leaks` and `exit`, with no `spec` and no `require` — and `test/mocha.opts` is deleted. Load order, which the deleted `mocha.opts` fixed implicitly, is supplied by `--file ./test/setup.js` in the `test` script instead |
@@ -911,8 +911,11 @@ recomputable canonical SHA-256, registration-order SHA-256 and MD5 fingerprints 
 the AAP's documented 32-character digest `cd2a7e38a39bd84902ac1a0d69f50e2a` is **not** this value, is retained verbatim
 under `gates.documentedDigest`, and is not claimed to have been recomputed — the string is not recomputable by any
 verifier, so the anchor is enforced over the 233-row table it names, by the ten-clause `gates.documentedAnchorGate`
-that one shared evaluator recomputes live — `capture.js#documentedAnchorGate`, adapted by `replay.js` — and that
-the capture CLI, the replay CLI and `test/lib/api/route-parity.js` each enforce on every run. The deletion proof is
+that one shared evaluator recomputes live — `capture.js#documentedAnchorGate`, declared in the harness that owns
+the artifact and re-exported unchanged by `replay.js` — and that the capture CLI (one PASS/FAIL entry per clause),
+the replay CLI (one difference per unsatisfied clause) and `test/lib/api/route-parity.js` (the same clauses plus
+the exact sorted 233-row set and all three fingerprints, recomputed from its own literals) each enforce on every
+run. The deletion proof is
 in [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.6, and the digest adjudication itself in section 3.22.
 
 One correction belongs with that proof, because this document previously published the wrong digest for it. The value
@@ -1182,12 +1185,32 @@ The node floor is **22.12.0 rather than 22.0.0**, and the extra precision is loa
 the **non-throwing static `URL.parse()`**, which AAP §0.1.1.4 (implicit requirement I5) selects as the correct Node 22
 replacement for the deprecated `url.parse()` precisely because it returns `null` instead of throwing. Node's release
 notes record that static method as added in **22.1.0**; it is a function on this checkout's v22.23.2 and `undefined`
-on a 22.0.x runtime, where **every** site that replaced a `url.parse()` call would raise a `TypeError` at first use —
-`lib/controllers/users.js:L875`, `L1778`, `L1812` and `L1848`, `lib/controllers/trinket.js:L36`,
-`lib/workers/exports.js:L46`, `lib/http/redirect.js:L97` and `L238`, plus the harness sites at
-`test/helpers/flow.js:L528`, `test/lib/api/registration.js:L107`, `test/baseline/capture.js:L959`, `L972`, `L1994`
-and `L1995`, and `test/lib/api/route-parity.js:L100`. `test/baseline/replay.js` no longer has a site of its own: the
-one it carried belonged to the origin-rewriting helper that the harness remediation removed, recorded in
+on a 22.0.x runtime, where **every** site that replaced a `url.parse()` call would raise a `TypeError` at first use.
+
+The census below is regenerated from the delivered tree, and it names the **enclosing symbol** rather than a line
+number on purpose: an earlier revision of this paragraph carried fourteen line locators of which the majority had
+already drifted, two pointed at `lib/http/redirect.js` — a 69-line file with no `URL.parse` site at all — and one
+pointed at `test/lib/api/route-parity.js`, which likewise has none. A symbol name cannot drift the same way, and the
+whole census is reproducible at any commit with `git ls-files '*.js' | xargs grep -n 'URL\.parse('` (19 hits: the 14
+call sites below plus 5 prose mentions inside comments).
+
+| Layer | Enclosing symbol | What it parses |
+|---|---|---|
+| production | `lib/controllers/users.js#assetUploadFromURL` | the submitted `request.payload.url`; its missing `protocol` is the preserved rejection quirk |
+| production | `lib/controllers/users.js#downloadRemoteAsset` | the remote asset URL, once before the fetch |
+| production | `lib/controllers/users.js#downloadRemoteAsset` → inner `attempt` | the redirect target, **twice**: the absolute form, then the `Location`-relative form |
+| production | `lib/controllers/trinket.js#assetPathname` | an asset URL, for its `pathname` |
+| production | `lib/workers/exports.js#assetPathBasename` | an asset URL, for its last path segment |
+| harness | `test/helpers/flow.js#setLastResponse` | every response's `Location`, resolved against `config.url` |
+| harness | `test/lib/api/registration.js`, the course-copy redirect assertion | one **absolute** `Location`, where the base is therefore ignored |
+| harness | `test/baseline/capture.js#classifyHopTarget` | a hop `Location`, and the candidate origin it is compared against |
+| harness | `test/baseline/capture.js#sameOrigin` | both sides of an origin comparison |
+| harness | `test/baseline/replay.js#locationKind` | a `Location`, **twice**, to classify it absolute / relative-reference / unparseable |
+
+That is **14 call sites across 7 files** — 6 in production code, 8 in the harness. `test/baseline/replay.js` carries
+two of its own again: the remediation that restored its verification layer reinstated `locationKind`. What that file
+still does **not** have is an origin-**rewriting** helper; `rebaseOrigin` was deleted and stays deleted, asserted by
+`test/lib/util/baseline-harness-integrity.js` and recorded in
 [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 14.4. A floor of `>=22.0.0` would therefore admit a
 runtime on which the application does not work — the opposite of what **AAP G1** asks the `engines` block to
 guarantee. `22.12.0` sits well above 22.1.0 and is also the release from which `require(esm)` is unflagged —

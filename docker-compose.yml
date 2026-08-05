@@ -15,8 +15,18 @@ services:
       # named volume from whatever the image holds at that path on first use, so declaring one here
       # republishes the verified build output through the bind mount, exactly as node_modules and
       # public/components are already handled. Like those two, the volume is initialized ONCE: after
-      # changing static/scss/** or the component release, recreate it - `docker compose down -v` or
-      # `docker volume rm trinket-oss_public_css` - and bring the stack up with `--build`.
+      # changing static/scss/** or the component release, recreate THIS ONE VOLUME and bring the stack up
+      # with `--build`:
+      #
+      #     docker compose down
+      #     docker volume rm "${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}_public_css"
+      #     docker compose up --build
+      #
+      # Do NOT use `docker compose down -v` for it. `-v` removes EVERY volume declared below, including
+      # `mongodb_data` - the MongoDB data directory - so it would delete the whole development database to
+      # refresh two stylesheets, with no prompt and no recovery. An earlier revision of this comment
+      # offered `down -v` as the first option, and README.md and docs/setup.md repeated it; the safe,
+      # targeted form above is the only one any of the three now documents (review finding P3-3).
       - public_css:/usr/local/node/trinket/public/css
     networks:
       - trinket

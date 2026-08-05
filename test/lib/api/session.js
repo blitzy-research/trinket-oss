@@ -20,8 +20,10 @@ var should         = require('chai').should(),
  * `test/lib/api/index.js` runs its suites serially because they share database and session state, and this
  * suite must not perturb either. It therefore creates and removes its own user rather than reusing
  * `defaults.user` - whose password `forgot_pass.js` deliberately changes - and drives every request
- * through a cookie slot no other suite touches, restoring `flow.activeUser` afterwards. It is registered
- * last in the sequence for the same reason.
+ * through a cookie slot no other suite touches, restoring `flow.activeUser` afterwards. For the same
+ * reason it is registered near the end of the sequence, after every suite that shares `defaults.user`;
+ * the isolated `route-parity` suite is the one entry that follows it, and that ordering is deliberate -
+ * see the append-only note at the top of `test/lib/api/index.js`.
  *
  * WHAT MAKES THESE ASSERTIONS LOAD-BEARING
  * ---------------------------------------

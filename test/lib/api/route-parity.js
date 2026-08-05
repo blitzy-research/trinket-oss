@@ -1,5 +1,6 @@
 var chai     = require('chai'),
     should   = chai.should(),
+    crypto   = require('crypto'),
     CryptoJS = require('crypto-js'),
     config   = require('config'),
     roles    = require('../../../lib/util/roles'),
@@ -18,11 +19,22 @@ var chai     = require('chai'),
  *
  * INDEPENDENCE (review finding M2). This file requires NEITHER test/baseline/capture.js NOR
  * test/baseline/replay.js, and loads NEITHER committed JSON artifact. Every expectation below is a literal
- * in this file, and every helper it needs — the corpus selection rule, the title extractor, the
- * Set-Cookie attribute reader — is implemented here. That is the whole point: the CLI harness and this
- * suite are two INDEPENDENT verifiers of the same measured behavior, so a defect in the harness's
- * canonicalization cannot make this suite pass, and vice versa. An earlier revision imported both modules
- * and read both artifacts, which meant it shared the very oracle it was supposed to corroborate.
+ * in this file, and every helper it needs — the corpus selection rule, the canonical row builder, the
+ * three fingerprints, the title extractor, the Set-Cookie attribute reader — is implemented here. That is
+ * the whole point: the CLI harness and this suite are two INDEPENDENT verifiers of the same measured
+ * behavior, so a defect in the harness's canonicalization cannot make this suite pass, and vice versa. An
+ * earlier revision imported both modules and read both artifacts, which meant it shared the very oracle it
+ * was supposed to corroborate.
+ *
+ * WHAT THIS SUITE PINS ABOUT THE ROUTE TABLE (review finding P3-1). Independence is only worth having if
+ * the independent check is as strong as the one it corroborates, and an earlier revision's was not: it
+ * substituted a row-UNIQUENESS count for the exact row set, compared only the first two and last two paths
+ * of the registration order, and computed none of the three authoritative fingerprints — so a middle-order
+ * permutation, or a swap that left every countable gate balanced, passed `npm test`. It now pins, from the
+ * live server and from literals in this file: the exact sorted 233-row canonical set row for row
+ * (CANONICAL_ROWS_SORTED), the FULL registration order derived from config.routes, and all three
+ * fingerprints — sha256 and md5 of the sorted set and sha256 of the registration order
+ * (ROUTE_TABLE_FINGERPRINTS) — alongside the ten documented-anchor clauses.
  *
  * TRANSPORT (review finding M3). Every request goes through `flow`, the suite's own harness, which issues
  * real HTTP over an ephemeral socket against the booted server's listener. `server.inject()` is never
@@ -85,6 +97,288 @@ var SERVER_AUTH_DEFAULT = { mode : 'try', strategies : ['session'] };
 /** Declared entries plus routes the parser synthesizes. */
 var DECLARED_ROUTE_ENTRIES = 228;
 var SYNTHESIZED_ROUTES     = 5;
+
+/**
+ * The three authoritative fingerprints route-table.json publishes, as literals.
+ *
+ * REVIEW FINDING P3-1. An earlier revision of this suite computed NONE of them and substituted a
+ * uniqueness check for the exact row set plus a first-two/last-two check for the registration order, so a
+ * middle-order permutation, or a swap that kept every countable gate balanced, passed `npm test`. All
+ * three are recomputed here from the live server, in this file, with node:crypto - the same recipe
+ * route-table.json#canonicalization publishes and the same one test/baseline/replay.js applies, arrived at
+ * independently because this suite shares no code with the harness and loads no artifact.
+ *
+ * `sortedSha256` and `sortedMd5` hash the 233 canonical rows sorted with the default
+ * Array.prototype.sort() and joined with "\n" and no trailing newline. `registrationOrderSha256` hashes the
+ * same rows in REGISTRATION order - the order of `config.routes`, which is the array app.js hands to
+ * server.route() - because server.table() returns router order instead.
+ */
+var ROUTE_TABLE_FINGERPRINTS = {
+  sortedSha256            : '452116ce74301c61c92efb36fe8ead987b6a9e81d83a28af335c8d08fa1d64a8',
+  sortedMd5               : 'dfc1e295156ecdbbee4a073b231b9326',
+  registrationOrderSha256 : '6a65d18273c731aa070cf905625a9dfe4789caf066dde0c5beb14c6dd8131898'
+};
+
+/**
+ * The auth descriptor each single-letter code below stands for. Three codes cover all 233 rows because the
+ * table has exactly three auth shapes: 105 rows requiring the session strategy, 126 inheriting the server
+ * default, and the 2 rows that disable authentication outright.
+ */
+var DESCRIPTOR_CODES = {
+  R : 'mode=required strategies=["session"]',
+  T : 'mode=try strategies=["session"]',
+  F : 'false'
+};
+
+/**
+ * THE EXACT 233-ROW CANONICAL SET, in sorted order, as literals.
+ *
+ * This is the row set the documented digest stands for, and it is pinned here row for row rather than
+ * summarized: `canonicalRowsAreUnique` - which is what this replaces - counted distinct rows and therefore
+ * accepted any permutation, any renamed path and any changed auth mode as long as the total stayed 233
+ * (review finding P3-1).
+ *
+ * Each entry is `METHOD path CODE preCount`, expanded by expandCanonicalRow() into the
+ * "METHOD | path | descriptor | preCount" form route-table.json#canonicalization specifies. The compact
+ * encoding exists only so that every row fits the repository's 120-column limit; nothing is abbreviated
+ * away, and the expansion is asserted to reproduce its own sorted order so the literal cannot be
+ * re-ordered without failing.
+ */
+var CANONICAL_ROWS_SORTED = [
+  'DELETE /api/admin/featured-course/{courseId} R 1',
+  'DELETE /api/courses/{courseId} R 1',
+  'DELETE /api/courses/{courseId}/invitations/{invitationId} R 1',
+  'DELETE /api/courses/{courseId}/lessons/{lessonId} R 3',
+  'DELETE /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId} R 5',
+  'DELETE /api/courses/{courseId}/users/{userId} R 1',
+  'DELETE /api/drafts/{trinketId} R 1',
+  'DELETE /api/folders/{folderId} R 1',
+  'DELETE /api/trinkets/{lang}/list/{shortCode} T 2',
+  'DELETE /api/trinkets/{trinketId} R 2',
+  'DELETE /api/trinkets/{trinketId}/folder R 2',
+  'DELETE /api/users R 0',
+  'DELETE /api/users/assets/{fileId} R 1',
+  'GET / T 0',
+  'GET /.well-known/{path*} T 0',
+  'GET /R T 2',
+  'GET /R/ T 2',
+  'GET /R/{shortCode} T 3',
+  'GET /R/{shortCode}/ T 1',
+  'GET /R/{shortCode}/{path*} T 1',
+  'GET /about T 0',
+  'GET /account R 0',
+  'GET /account-deleted T 0',
+  'GET /account/{accountPage} R 0',
+  'GET /activate-account T 0',
+  'GET /admin R 1',
+  'GET /admin/{adminPage*} R 1',
+  'GET /api/classes/{userSlug}/{courseSlug} T 3',
+  'GET /api/courses R 0',
+  'GET /api/courses/{courseId} T 2',
+  'GET /api/courses/{courseId}/accessCode R 1',
+  'GET /api/courses/{courseId}/dashboard R 1',
+  'GET /api/courses/{courseId}/invitations R 1',
+  'GET /api/courses/{courseId}/lessons/{lessonId} T 3',
+  'GET /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId} T 5',
+  'GET /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/dashboard R 1',
+  'GET /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/submissions R 1',
+  'GET /api/courses/{courseId}/users R 1',
+  'GET /api/courses/{courseId}/users/{userId}/materials/{materialId}/submissions R 0',
+  'GET /api/courses/{courseId}/users/{userId}/submissions R 2',
+  'GET /api/exports R 0',
+  'GET /api/exports/{exportId} R 0',
+  'GET /api/exports/{exportId}/download R 0',
+  'GET /api/featured-courses R 0',
+  'GET /api/files/{fileId}/{fileName} T 1',
+  'GET /api/folders R 0',
+  'GET /api/folders/{folderId}/trinkets R 1',
+  'GET /api/submissions/{materialId} R 0',
+  'GET /api/trinkets R 0',
+  'GET /api/trinkets/active T 2',
+  'GET /api/trinkets/popular T 2',
+  'GET /api/trinkets/search R 0',
+  'GET /api/trinkets/{lang}/list T 1',
+  'GET /api/trinkets/{trinketId} T 1',
+  'GET /api/trinkets/{trinketId}/interactions T 1',
+  'GET /api/users/assets T 0',
+  'GET /api/users/resendEmailChange R 0',
+  'GET /api/users/{userId}/avatar T 1',
+  'GET /api/users/{userId}/info T 1',
+  'GET /assignment-embed-feedback/{lang}/{trinketId} R 3',
+  'GET /assignment-embed-viewonly/{lang}/{trinketId} T 3',
+  'GET /assignment-embed/{lang}/{trinketId} R 3',
+  'GET /auth/google F 0',
+  'GET /auth/google/callback F 0',
+  'GET /blocks T 2',
+  'GET /blocks/ T 2',
+  'GET /blocks/{shortCode} T 3',
+  'GET /blocks/{shortCode}/ T 1',
+  'GET /blocks/{shortCode}/{path*} T 1',
+  'GET /cache-prefix-{timestamp}/{assetType}/{path*} T 0',
+  'GET /change-email T 0',
+  'GET /console T 2',
+  'GET /console/ T 2',
+  'GET /console/{shortCode} T 3',
+  'GET /console/{shortCode}/ T 1',
+  'GET /console/{shortCode}/{path*} T 1',
+  'GET /courses/accept/{token} T 1',
+  'GET /courses/join/{accessCode} T 1',
+  'GET /courses/new R 1',
+  'GET /docs/colors T 0',
+  'GET /embed/beta/{type} T 1',
+  'GET /embed/blocks-iframe T 0',
+  'GET /embed/glowscript-blocks-iframe T 0',
+  'GET /embed/{lang} T 3',
+  'GET /embed/{lang}/{trinketId} T 3',
+  'GET /forgot-pass T 0',
+  'GET /glowscript T 2',
+  'GET /glowscript-blocks T 2',
+  'GET /glowscript-blocks/ T 2',
+  'GET /glowscript-blocks/{shortCode} T 3',
+  'GET /glowscript-blocks/{shortCode}/ T 1',
+  'GET /glowscript-blocks/{shortCode}/{path*} T 1',
+  'GET /glowscript/ T 2',
+  'GET /glowscript/{shortCode} T 3',
+  'GET /glowscript/{shortCode}/ T 1',
+  'GET /glowscript/{shortCode}/{path*} T 1',
+  'GET /help T 0',
+  'GET /home R 0',
+  'GET /html T 2',
+  'GET /html/ T 2',
+  'GET /html/{shortCode} T 3',
+  'GET /html/{shortCode}/ T 1',
+  'GET /html/{shortCode}/{path*} T 1',
+  'GET /java T 2',
+  'GET /java/ T 2',
+  'GET /java/{shortCode} T 3',
+  'GET /java/{shortCode}/ T 1',
+  'GET /java/{shortCode}/{path*} T 1',
+  'GET /library/folder/{slug} R 0',
+  'GET /library/trinkets/{path*} T 1',
+  'GET /login T 0',
+  'GET /logout T 0',
+  'GET /music T 2',
+  'GET /music/ T 2',
+  'GET /music/{shortCode} T 3',
+  'GET /music/{shortCode}/ T 1',
+  'GET /music/{shortCode}/{path*} T 1',
+  'GET /pygame T 2',
+  'GET /pygame/ T 2',
+  'GET /pygame/{shortCode} T 3',
+  'GET /pygame/{shortCode}/ T 1',
+  'GET /pygame/{shortCode}/{path*} T 1',
+  'GET /python T 2',
+  'GET /python/ T 2',
+  'GET /python/{shortCode} T 3',
+  'GET /python/{shortCode}/ T 1',
+  'GET /python/{shortCode}/{path*} T 1',
+  'GET /python3 T 2',
+  'GET /python3/ T 2',
+  'GET /python3/{shortCode} T 3',
+  'GET /python3/{shortCode}/ T 1',
+  'GET /python3/{shortCode}/{path*} T 1',
+  'GET /r T 0',
+  'GET /r/{shortCode} T 0',
+  'GET /reset-pass T 0',
+  'GET /signup T 0',
+  'GET /skulpt T 0',
+  'GET /skulpt/{hash} T 0',
+  'GET /tools/{version}/jekyll/embed/{lang} T 2',
+  'GET /u/{username}/classes T 2',
+  'GET /u/{username}/classes/{courseSlug} T 3',
+  'GET /verify-email T 0',
+  'GET /vpython T 0',
+  'GET /vpython/{shortCode} T 0',
+  'GET /webvpython T 0',
+  'GET /webvpython/{shortCode} T 0',
+  'GET /welcome R 0',
+  'GET /{path*} T 0',
+  'GET /{userSlug}/courses/{courseSlug} T 3',
+  'GET /{userSlug}/courses/{courseSlug}/download.zip R 3',
+  'PATCH /api/courses/{courseId} R 1',
+  'POST /activate-account T 0',
+  'POST /admin/upload R 1',
+  'POST /api/admin/featured-course R 1',
+  'POST /api/admin/featured-course/move R 1',
+  'POST /api/admin/user/{userId} R 1',
+  'POST /api/admin/user/{userId}/grant R 1',
+  'POST /api/comments/{trinketId} R 1',
+  'POST /api/courses R 0',
+  'POST /api/courses/join R 0',
+  'POST /api/courses/{courseId}/accessCode R 1',
+  'POST /api/courses/{courseId}/copy R 1',
+  'POST /api/courses/{courseId}/invitations R 1',
+  'POST /api/courses/{courseId}/lessons R 1',
+  'POST /api/courses/{courseId}/lessons/{lessonId}/materials R 3',
+  'POST /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/acceptSubmission R 2',
+  'POST /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/feedback R 1',
+  'POST /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/startAssignment R 0',
+  'POST /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/submissions R 0',
+  'POST /api/courses/{courseId}/roles R 1',
+  'POST /api/courses/{courseId}/userLookup R 1',
+  'POST /api/courses/{courseId}/users R 1',
+  'POST /api/courses/{courseId}/views R 1',
+  'POST /api/exports R 0',
+  'POST /api/feedback-comments/{trinketId} R 1',
+  'POST /api/files/{fileId}/thumbnail T 1',
+  'POST /api/folders R 0',
+  'POST /api/interest T 0',
+  'POST /api/ohnoes T 0',
+  'POST /api/submission-opt/{trinketId} R 1',
+  'POST /api/submissions/{trinketId} R 1',
+  'POST /api/trinkets T 0',
+  'POST /api/trinkets/clientmetric T 0',
+  'POST /api/trinkets/codeerror T 1',
+  'POST /api/trinkets/download T 0',
+  'POST /api/trinkets/{shortCode}/list T 2',
+  'POST /api/trinkets/{trinketId}/autosave R 1',
+  'POST /api/trinkets/{trinketId}/draft R 0',
+  'POST /api/trinkets/{trinketId}/email T 2',
+  'POST /api/trinkets/{trinketId}/folder R 2',
+  'POST /api/trinkets/{trinketId}/forks T 1',
+  'POST /api/trinkets/{trinketId}/grant R 3',
+  'POST /api/trinkets/{trinketId}/snapshot T 1',
+  'POST /api/users T 1',
+  'POST /api/users/assetFromURL R 0',
+  'POST /api/users/assets R 0',
+  'POST /api/users/assets/restore R 1',
+  'POST /api/users/assets/{fileId} R 1',
+  'POST /api/users/email R 1',
+  'POST /api/users/login T 2',
+  'POST /api/users/password R 0',
+  'POST /api/users/settings R 0',
+  'POST /api/users/settings/indentation R 0',
+  'POST /api/users/settings/lineWrapping R 0',
+  'POST /api/users/verify-email R 0',
+  'POST /courses R 1',
+  'POST /file R 0',
+  'POST /file/avatar R 0',
+  'POST /login T 1',
+  'POST /python T 0',
+  'POST /save-pass T 0',
+  'POST /send-pass-reset T 1',
+  'POST /users T 1',
+  'POST /{userSlug}/courses/{courseSlug}/copy R 3',
+  'PUT /api/courses/{courseId}/invitations/{invitationId}/email R 2',
+  'PUT /api/courses/{courseId}/invitations/{invitationId}/resend R 2',
+  'PUT /api/courses/{courseId}/lessons/{lessonId}/draft R 3',
+  'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/assignment R 5',
+  'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/draft R 5',
+  'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move R 5',
+  'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/name R 5',
+  'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/patchContent R 5',
+  'PUT /api/courses/{courseId}/lessons/{lessonId}/move R 2',
+  'PUT /api/courses/{courseId}/lessons/{lessonId}/name R 3',
+  'PUT /api/courses/{courseId}/metadata R 1',
+  'PUT /api/folders/{folderId}/name R 2',
+  'PUT /api/trinkets/{trinketId}/code R 2',
+  'PUT /api/trinkets/{trinketId}/description R 2',
+  'PUT /api/trinkets/{trinketId}/metrics T 0',
+  'PUT /api/trinkets/{trinketId}/name R 2',
+  'PUT /api/trinkets/{trinketId}/published R 2',
+  'PUT /api/trinkets/{trinketId}/slug R 2',
+  'PUT /api/users/{userId} R 0'
+];
 
 // ---------------------------------------------------------------------------------------------
 // Request policy — the same policy the base-commit measurement was taken under
@@ -450,6 +744,35 @@ var ROLES_TOKEN = {
 // Helpers — implemented here rather than imported, so this suite stands on its own
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Expands one compact `METHOD path CODE preCount` literal into the canonical row form
+ * route-table.json#canonicalization specifies: uppercase method, one ASCII space around every pipe,
+ * `false` for auth:false and `mode=<mode> strategies=[...]` otherwise, then the pre-handler count.
+ *
+ * @param   {string} compact One entry of CANONICAL_ROWS_SORTED.
+ * @returns {string} `"METHOD | path | descriptor | preCount"`.
+ */
+function expandCanonicalRow(compact) {
+  var parts = String(compact).split(' ');
+
+  return [parts[0], parts[1], DESCRIPTOR_CODES[parts[2]], parts[3]].join(' | ');
+}
+
+/** The 233 pinned rows, expanded. Computed once per call so no test can mutate another's expectation. */
+function expectedCanonicalRowsSorted() {
+  return CANONICAL_ROWS_SORTED.map(expandCanonicalRow);
+}
+
+/** sha256 of a canonical row list joined with "\n" and no trailing newline. */
+function sha256Rows(rows) {
+  return crypto.createHash('sha256').update(rows.join('\n'), 'utf8').digest('hex');
+}
+
+/** md5 of the same serialization, which route-table.json publishes beside the sha256. */
+function md5Rows(rows) {
+  return crypto.createHash('md5').update(rows.join('\n'), 'utf8').digest('hex');
+}
+
 /** The app.url origin this process is configured for; absolute Locations carry it. */
 function appOrigin() {
   return config.url;
@@ -701,6 +1024,7 @@ module.exports = function() {
       function liveTable() {
         var fallback = server.auth.settings.default || {},
             rows     = [],
+            byKey    = {},
             raw      = { 'undefined' : 0, 'object' : 0, 'false' : 0 };
 
         server.table().forEach(function(row) {
@@ -711,14 +1035,19 @@ module.exports = function() {
                 : 'mode=' + ((auth && auth.mode) || fallback.mode) +
                   ' strategies=' + JSON.stringify(strategies || fallback.strategies);
 
-          rows.push({
+          var entry = {
             method     : String(row.method).toUpperCase(),
             path       : row.path,
             descriptor : descriptor,
             preCount   : (row.settings.pre || []).length,
             canonical  : [String(row.method).toUpperCase(), row.path, descriptor,
                           String((row.settings.pre || []).length)].join(' | ')
-          });
+          };
+
+          rows.push(entry);
+          // Keyed by "METHOD path" so the registration order can be recovered from config.routes below:
+          // server.table() answers in ROUTER order, which is not the order the routes were registered in.
+          byKey[entry.method + ' ' + entry.path] = entry;
         });
 
         // The RAW shape of each declaration's own auth setting, read from the parsed route table rather
@@ -735,10 +1064,44 @@ module.exports = function() {
 
         return {
           rows          : rows,
+          byKey         : byKey,
           raw           : raw,
           serverDefault : { mode : fallback.mode, strategies : (fallback.strategies || []).slice() },
           canonical     : rows.map(function(row) { return row.canonical; })
         };
+      }
+
+      /**
+       * The FULL registration order, derived from `config.routes` — the array app.js passes to
+       * server.route() — mapped onto the live canonical row for each declaration's (METHOD, path) key.
+       *
+       * A declaration that resolves to no live row is reported through `missing` rather than skipped,
+       * because it would mean the router and the declaration list disagree, which is exactly the drift
+       * this gate exists to catch.
+       *
+       * @returns {Object} `{ canonical : String[], missing : String[] }`.
+       */
+      function registrationOrderCanonical() {
+        var live    = liveTable(),
+            ordered = [],
+            missing = [];
+
+        config.routes.forEach(function(route) {
+          [].concat(route.method).forEach(function(method) {
+            var key = String(method).toUpperCase() + ' ' + route.path,
+                row = live.byKey[key];
+
+            if (!row) {
+              missing.push(key);
+
+              return;
+            }
+
+            ordered.push(row.canonical);
+          });
+        });
+
+        return { canonical : ordered, missing : missing };
       }
 
       it('registers exactly the row count the documented anchor names', function() {
@@ -806,6 +1169,50 @@ module.exports = function() {
       });
 
       /**
+       * THE EXACT ROW SET (review finding P3-1). Not a count, not a uniqueness check: the 233 canonical
+       * rows, sorted, compared row for row against the literals at the head of this file. A renamed path,
+       * a changed method, a changed auth mode or a changed pre-handler count each fails here and names
+       * itself in the diff.
+       */
+      it('registers the exact sorted 233-row canonical set, row for row', function() {
+        var expected = expectedCanonicalRowsSorted();
+
+        // The literal block is asserted to BE its own sorted order, so it cannot be re-ordered by hand
+        // into agreement with a re-ordered table.
+        expected.should.eql(expected.slice().sort());
+        expected.length.should.eql(DOCUMENTED_ANCHOR.rowCount);
+
+        liveTable().canonical.slice().sort().should.eql(expected);
+      });
+
+      /**
+       * THE FULL REGISTRATION ORDER, and all three authoritative fingerprints, recomputed here from the
+       * live server with node:crypto (review finding P3-1).
+       *
+       * The head/tail assertion above proves the two synthesized pages come first and the two catch-alls
+       * last; this proves every one of the 231 rows between them is still where it was. A middle-order
+       * permutation changes registrationOrderSha256 and nothing else, which is precisely the regression
+       * the earlier first-two/last-two check could not see.
+       */
+      it('reproduces all three authoritative fingerprints, including the full registration order',
+        function() {
+          var sorted = liveTable().canonical.slice().sort(),
+              order  = registrationOrderCanonical();
+
+          order.missing.should.eql([]);
+          order.canonical.length.should.eql(DOCUMENTED_ANCHOR.rowCount);
+
+          sha256Rows(sorted).should.eql(ROUTE_TABLE_FINGERPRINTS.sortedSha256);
+          md5Rows(sorted).should.eql(ROUTE_TABLE_FINGERPRINTS.sortedMd5);
+          sha256Rows(order.canonical).should.eql(ROUTE_TABLE_FINGERPRINTS.registrationOrderSha256);
+
+          // The published 32-character documented digest is NOT one of these and is never confused with
+          // them: the first 32 characters of the sorted sha256 are recorded separately in the artifact and
+          // are deliberately different from the Specification's literal (ADJ-4).
+          ROUTE_TABLE_FINGERPRINTS.sortedSha256.slice(0, 32).should.not.eql(DOCUMENTED_DIGEST);
+        });
+
+      /**
        * THE DOCUMENTED ANCHOR, AS A MANDATORY GATE, computed here from literals and the live server.
        *
        * The frozen 32-character digest is retained verbatim as clause 1 and is never replaced by a
@@ -847,19 +1254,38 @@ module.exports = function() {
                live.rows.filter(function(row) {
                  return row.descriptor === 'mode=try strategies=["session"]';
                }).length);
-        clause('canonicalRowsAreUnique', DOCUMENTED_ANCHOR.rowCount,
-               Object.keys(live.canonical.reduce(function(seen, row) {
-                 seen[row] = true;
-                 return seen;
-               }, {})).length);
+        // REVIEW FINDING P3-1. These two clauses are the ones that used to be weaker than the artifact
+        // advertised. `canonicalRowsAreUnique` counted DISTINCT rows, so any permutation and any renamed
+        // path passed as long as the total stayed 233; `registrationOrderContract` compared only the first
+        // two and last two paths, so a middle-order permutation passed. Both now carry their published
+        // meaning: the exact sorted row set, and the full registration order through its fingerprint.
+        clause('canonicalRowsTheDigestStandsFor', expectedCanonicalRowsSorted(),
+               live.canonical.slice().sort());
+
+        var order = registrationOrderCanonical();
+
         clause('registrationOrderContract',
-               REGISTRATION_ORDER_HEAD.concat(REGISTRATION_ORDER_TAIL),
-               config.routes.map(function(route) { return route.path; }).slice(0, 2)
-                 .concat(config.routes.map(function(route) { return route.path; }).slice(-2)));
+               { unresolvedDeclarations : [],
+                 fingerprint            : ROUTE_TABLE_FINGERPRINTS.registrationOrderSha256 },
+               { unresolvedDeclarations : order.missing,
+                 fingerprint            : sha256Rows(order.canonical) });
 
         failures.should.eql([]);
         clauses.length.should.eql(10);
         clauses[0].name.should.eql('documentedDigestRetainedVerbatim');
+        // The ten clause NAMES this suite evaluates are the ten route-table.json publishes, in that order.
+        clauses.map(function(entry) { return entry.name; }).should.eql([
+          'documentedDigestRetainedVerbatim',
+          'rowCount',
+          'methods',
+          'apiPaths',
+          'withPreHandlers',
+          'authRequiredSession',
+          'authFalse',
+          'authTryInherited',
+          'canonicalRowsTheDigestStandsFor',
+          'registrationOrderContract'
+        ]);
       });
     });
 

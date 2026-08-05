@@ -23,15 +23,30 @@ to compile against.
 **`npm run build` does this for you.** `package.json` declares a `prebuild`
 script - `node scripts/hydrate-components.js` - which npm runs automatically
 before `build`, so `git clean -xfd && npm ci && npm run build && npm test`
-succeeds unattended on a fresh clone. That script is deliberately conservative:
-the release tag is pinned, and the bytes are checked against **both** a recorded
-length and a recorded SHA-256 digest before anything is unpacked, so a re-cut
-release, a proxy error page or a truncated download fails loudly instead of
-quietly producing different stylesheets. It is **idempotent** - when the tree is
-already present it exits 0 without touching the network or the filesystem, so
-re-running the build costs nothing - and it removes the AppleDouble sidecar
-described below. Set `TRINKET_COMPONENTS_TARBALL` to a local copy of the archive
-to hydrate **without network access**; both checks still apply to it.
+succeeds unattended on a fresh clone. That script is deliberately conservative,
+on both the input and the result. The release tag is pinned and the archive bytes
+are checked against **both** a recorded length and a recorded SHA-256 before
+anything is unpacked, so a re-cut release, a proxy error page or a truncated
+download fails loudly instead of quietly producing different stylesheets. The
+extracted tree is then checked too: it must carry the three paths the build reads
+by name, and the 42 files under `public/components/foundation/scss` - the only
+subtree either stylesheet imports - must fingerprint to a recorded value. Only
+past both checks does the script write its completion marker,
+`public/components/.hydrated.json`, and it writes it by rename so a half-written
+marker cannot exist.
+
+It is still **idempotent**: a tree whose marker and fingerprint both hold exits 0
+without touching the network or the filesystem, so re-running the build costs
+nothing. What changed is what "already present" means. An earlier revision probed
+for a single `foundation.scss` and returned successfully whenever that one file
+existed, so an interrupted extraction, a locally edited partial or a tree from a
+different release all passed forever and could change the compiled stylesheets
+silently. Each of those now **re-hydrates** from the verified asset instead. The
+script also removes the AppleDouble sidecar described below, and it removes an
+existing tree only *after* the replacement archive has been verified, so a failed
+download can never leave the checkout with neither. Set
+`TRINKET_COMPONENTS_TARBALL` to a local copy of the archive to hydrate **without
+network access**; every check still applies to it.
 
 The manual fetch below is the exact equivalent, kept because it is what the
 Docker build performs, because it is what to reach for when you want to inspect
@@ -54,14 +69,12 @@ invoke Vite directly and assume the tree is already there.
 > in the setup guide; use it rather than reaching for the clean here.
 
 Run it from the repository root. It fetches **the same release asset** the Docker build fetches, from the same URL,
-but it is deliberately stricter than the Docker build in three respects, all of them in this procedure and none of
-them in the image: this procedure passes `--fail` and `--show-error` so an HTTP error page cannot be saved under the
-archive's name, it verifies the SHA-256 digest below before unpacking, and it removes the AppleDouble sidecar
-afterwards. `Dockerfile:L60-L63` does none of the three — it runs `curl -L --silent`, extracts immediately, and leaves
-the sidecar in the image, and the comment above it says so. That gap is stated rather than closed: the container's
-component fetch is preserved
-byte-for-byte by this modernization's scope, so adding verification to it is not a change this changeset is authorized
-to make. Verify locally, and treat the image's copy as unverified:
+and it performs **the same three checks the image build performs** — the two are deliberately equivalent now, and this
+paragraph says so because an earlier revision of it described a gap that no longer exists. `Dockerfile` runs
+`curl --fail --show-error --location --silent` so an HTTP error page cannot be saved under the archive's name, pipes
+the recorded digest through `sha256sum --check` **before** extracting anything, and removes both the archive and the
+AppleDouble sidecar afterwards — exactly what the commands below do by hand (review finding P3-4). Treat neither copy
+as unverified; verify locally when you want to inspect the archive before it lands in your tree:
 
 ```bash
 curl --fail --show-error --location --silent -o ./public-components.tgz \
@@ -95,7 +108,22 @@ error body into the output file, `--show-error` keeps the reason visible despite
 `--silent`, and `--location` follows the redirect GitHub serves for release
 assets. The digest is of the `v1.1.0` asset - 166,464,007 bytes - and does not
 change; on a mismatch, delete the file and download it again instead of
-extracting it.
+extracting it. The `Dockerfile` uses the same four flags and checks the same
+digest before it extracts, so the image and this procedure are two spellings of
+one contract rather than a strict version and a lax one.
+
+**A manual fetch leaves a tree the hydrator will adopt, not re-download.**
+`scripts/hydrate-components.js` records its work in a completion marker,
+`public/components/.hydrated.json`, which it writes atomically and only after the
+archive has been verified, unpacked and the result re-measured. A tree unpacked
+by the commands above carries no marker, so the next `npm run build` re-measures
+the 42 files under `public/components/foundation/scss` - the only subtree either
+stylesheet imports - and, finding the pinned fingerprint, writes the marker and
+moves on without touching the network. What it will **not** do is accept a tree
+that fails that measurement: a half-extracted archive, a locally edited partial
+or a tree from a different release is re-hydrated from the verified asset
+instead. Delete the marker to force a full re-verification; `git clean -xfd`
+removes it along with the tree it describes.
 
 That archive is a hard prerequisite for the stylesheet build. With the tree
 absent, `npm run build:css` fails with `Can't find stylesheet to import.`,
@@ -108,6 +136,19 @@ build.
 Once the archive is unpacked, a successful build emits exactly two artifacts:
 `public/css/base.css` (265,727 bytes) and `public/css/embed.css`
 (296,352 bytes). No `.css.map` files are emitted alongside them.
+
+Those three facts are a **gate**, not a note. `package.json` declares a
+`postbuild` script - `node scripts/verify-css-artifacts.js` - which npm runs
+automatically after `build`, and it fails the build unless both stylesheets match
+the byte counts and SHA-256 digests recorded in
+`test/baseline/responses.json#buildArtifacts` and unless `public/css` still holds
+zero `.map` files. The expectations are read from that artifact rather than
+restated in the script, because it is the same evidence
+`test/baseline/replay.js` compares against, and the `Dockerfile` reaches the gate
+through the very same `npm run build` - so the image and a host build cannot
+disagree about what correct output is. `sass` and `vite` are held at exact
+versions and `static/scss/**` is frozen precisely so this gate keeps passing; a
+failure is a client-visible asset change to report, not a digest to update.
 
 ### Foundation and the frozen stylesheet layer
 

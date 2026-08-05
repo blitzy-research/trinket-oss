@@ -226,7 +226,7 @@ Every figure here was re-measured on the delivered tree with the command shown, 
 | Production audit | `npm audit --omit=dev` | **0 critical, 0 high, 3 moderate** — exactly the plan's projected set | ✅ |
 | Deprecation | `node --pending-deprecation app.js` with a `process.on('warning')` collector and a 3-second soak | zero process warnings | ✅ |
 | R-6 response/route replay | `node test/baseline/replay.js` | **0 differences**; unauthenticated 58, authenticated 7, assignment-`next` 8 | ✅ |
-| R-6 documented route-table anchor | `test/baseline/route-table.json#gates.documentedAnchorGate`, recomputed live by ONE shared evaluator — `capture.js#documentedAnchorGate`, adapted for replay by `replay.js#documentedAnchorGate` — and enforced by all three owners: the capture CLI's gate tally, the replay CLI's diff, and `test/lib/api/route-parity.js` | all **10** clauses satisfied — the frozen 32-character literal is retained verbatim and the 233-row table it names is byte-identical, clause by clause; the literal itself is not recomputable by any verifier (32 characters, labelled sha256, no serialization published — see §3.22) | ✅ **enforced as a mandatory gate** |
+| R-6 documented route-table anchor | `test/baseline/route-table.json#gates.documentedAnchorGate`, recomputed live by ONE shared evaluator — `capture.js#documentedAnchorGate`, declared in the harness that owns the artifact and **re-exported** unchanged by `test/baseline/replay.js` — and enforced by all three owners: the capture CLI's per-clause gate entries, the replay CLI's diff, and `test/lib/api/route-parity.js`, which recomputes the same clauses plus the exact sorted 233-row set and all three fingerprints from literals of its own | all **10** clauses satisfied — the frozen 32-character literal is retained verbatim and the 233-row table it names is byte-identical, clause by clause; the literal itself is not recomputable by any verifier (32 characters, labelled sha256, no serialization published — see §3.22) | ✅ **enforced as a mandatory gate** |
 | Test suite | `npm test` | exit **0**, **zero failures**, `--check-leaks` active, process terminates on its own | ✅ |
 
 ### 0.1 The suite is green, and how the four contradicted oracles got there without being weakened
@@ -1213,16 +1213,24 @@ that answered it over-corrected: it published `gates.documentedDigestGateSatisfi
 `gates.documentedDigestReproduced: "none"` and had `test/lib/api/route-parity.js` **assert those two values**, so the
 suite passed *by* recording noncompliance and would have failed if the gate were ever met. A later review rejected
 that as a weakened assertion, and both flags are gone. In their place, `gates.documentedAnchorGate` names **ten
-clauses** that `test/baseline/replay.js#documentedAnchorGate` recomputes from the **live** hapi route table on every
+clauses** that `test/baseline/capture.js#documentedAnchorGate` — the single evaluator, re-exported by
+`test/baseline/replay.js` — recomputes from the **live** hapi route table on every capture and every
 replay, and that `test/lib/api/route-parity.js` asserts on every `npm test` against literals of its own: clause 1 is
 that the published 32-character literal is still stored verbatim — compared against the same constant hard-coded in
 the verifier, so substituting a measurement for it *fails* rather than passing quietly — and the other nine are the
 row count, the method distribution, the `/api/` count, the pre-handler count, the three auth buckets, the 233
 canonical rows as a sorted multiset against the base-commit capture, and the registration-order contract. The two
-verifiers divide clause 1 the only way they can: the artifact-storage half is `replay.js`'s, because it is a
-statement about the artifact, while the suite carries the same 32-character literal in its own source and holds the
-other nine clauses against the live table — which is what keeps it independent of the file it corroborates (review
-finding F-API-1). Every clause holds today, and any drift in any of them fails both the replay CLI and the test
+verifiers divide clause 1 the only way they can: the artifact-storage half belongs to the harness, because it is a
+statement about the artifact the harness writes, while the suite carries the same 32-character literal in its own
+source and holds the other nine clauses against the live table — which is what keeps it independent of the file it
+corroborates (review finding F-API-1). Review finding **P3-1** closed the last gap in that division: the suite's
+own versions of the final two clauses were weaker than the artifact advertised — a row-*uniqueness* count in
+place of the exact row set, and a first-two/last-two path check in place of the registration order — so a
+middle-order permutation, or a swap that left every countable gate balanced, passed `npm test`. Both now carry
+their published meaning, and the suite additionally recomputes `gates.measuredSha256`, `gates.measuredMd5` and
+`gates.registrationOrderFingerprint` with `node:crypto` from the live table. Verified by mutation: a middle-order
+swap leaves the sorted set and its sha256 byte-identical and changes only the registration-order fingerprint,
+which the suite now fails on. Every clause holds today, and any drift in any of them fails both the replay CLI and the test
 suite. Verified by mutation: nine synthetic
 regressions — a route added, a route removed, an auth mode changed, a pre-handler count changed, the method
 distribution, the `/api/` count, an auth bucket, the digest literal overwritten with a measurement, and the digest
@@ -1237,16 +1245,20 @@ clean
 gate tally is also what lifts that CLI's `--write` refusal, a tampered anchor could both pass
 `node test/baseline/capture.js` and survive a `--write`; and the merge that `--write` performs kept
 `documentedAnchorGateSatisfied`, `documentedAnchorsExceptDigestAllReproduced` and the published clause prose in its
-*untouched* set, so a stored `true` was copied forward over a measurement that no longer justified it. All three are
-now re-derived from the merged artifact's own recomputed gates, the clause prose is regenerated from the evaluator so
-hand-edited counts cannot survive, and the capture CLI contributes one PASS/FAIL entry per clause plus two closing
-gates — that the stored verdict agrees with what was just measured, and that the clause names published in the
-artifact match the evaluator's clauses in order. Measured on the delivered tree: a clean artifact yields 0 FAIL and
+*untouched* set, so a stored `true` was copied forward over a measurement that no longer justified it. `documentedAnchorGateSatisfied` and
+`documentedAnchorsExceptDigestAllReproduced` are now both re-derived on the merge from the evaluator's verdict over
+the merged artifact's own recomputed gates, and the capture CLI contributes one PASS/FAIL entry per clause plus
+three closing gates — that the stored verdict agrees with what was just measured, that the countable-anchors flag
+does too, and that the clause NAMES published in the artifact match the evaluator's clauses **in order**. The
+descriptive text after each published clause name is hand-authored documentation and is deliberately not read by
+any gate: only the leading name token is compared, so a stale count in that prose is a documentation defect rather
+than a silently enforced contract. Measured on the delivered tree: a clean artifact yields 0 FAIL and
 **0 UNEVALUATED** where there was previously 1 UNEVALUATED, and eight tampers each fail — the literal overwritten
 with the measured sha256, the literal truncated to its first 32 characters, the stored verdict flipped, a published
 clause dropped, a published clause renamed, `rowCount` edited to 232, a route removed from the live table, and a
-declaration left unresolved by the router. On the merge side, a stale `true` is rewritten to `false` and
-`rowCount -- 233` is regenerated as `rowCount -- 232` rather than preserved.
+declaration left unresolved by the router. On the merge side, a stale `true` in either verdict flag is
+rewritten to `false` rather than copied forward, and a published clause name the evaluator no longer has fails the
+clause-name gate rather than reading as enforced.
 
 What the gate does **not** do is recompute the published string, and that is arithmetic rather than concession: 32
 hexadecimal characters where a sha256 is 64, with no serialization published, means no input exists from which any
@@ -5381,12 +5393,41 @@ test tree can state for itself. It was removed.
    `parseInt` is a prefix parser, so `BASELINE_PORT` must be digits-only and in range 1–65535, and `CLONE_INDEX`
    must be digits-only to be usable as a port offset, or each is rejected by name rather than coerced onto a port
    two clones would then race for.
-3. **The drops fail closed.** `test/helpers/db.js` holds a `TEST_DATABASE = 'test'` literal and an
-   `assertTestDatabase(operation)` guard that throws unless `mongoose.connection.name` is exactly that, and it runs
-   before **both** `dropDatabase()` calls — the one in `reset()` and the one in `checkState()`'s initializing branch.
-   The literal is deliberately **not** read from `config`, because a guard that reads the same value it is checking
-   would agree with a mis-resolved configuration instead of catching it; nor from `test/setup.js`, which returns `{}`
-   on the load path where that module is entered first. It matches frozen `config/test.yaml:L11` by construction.
+3. **The drops fail closed, on the whole connection identity rather than on a name.** `test/helpers/db.js` holds
+   `assertDisposableDatabase(operation)`, which runs immediately before **both** `dropDatabase()` calls — the one in
+   `reset()` and the one in `checkState()`'s initializing branch — and throws unless **all three** of the following
+   hold. Any single one of them is insufficient. An earlier revision of this entry described a name-only guard — a
+   `TEST_DATABASE = 'test'` literal and an `assertTestDatabase(operation)` that compared `connection.name` against it —
+   which is not what the delivered tree contains; the three halves below are:
+
+   - **The process is running as a test.** `process.env.NODE_ENV === 'test'`. Necessary but nowhere near sufficient:
+     `$NODE_CONFIG` can repoint the database without touching `NODE_ENV`, which a read-only probe confirmed.
+   - **The resolved database name is disposable, and both readings of it agree.** `mongoose.connection.name` and
+     `connection.db.databaseName` must be present and equal — a mismatch is refused outright rather than resolved in
+     favour of either — and the name must match `DISPOSABLE_DATABASE`, which is
+     `/^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/`. That admits exactly `test`, the name frozen `config/test.yaml:L11`
+     declares, plus the `test_<suffix>` and `test-<suffix>` per-clone namespaces part 2 derives from `CLONE_INDEX`.
+     `trinket`, `trinket_test`, `production` and `test.backup` all fail closed.
+   - **The live endpoint is a credential-free loopback mongod.** The name alone cannot be enough, because a
+     production deployment may legitimately own a database called `test`. So `nonDisposableIdentityReasons()` reads
+     the endpoints from **two** sources that must both agree with `DISPOSABLE_HOSTS` —
+     `['localhost', '127.0.0.1', '::1', '[::1]']`, the last two because a connection string may carry either the bare
+     or the bracketed form — namely mongoose's own `connection.host`/`port` record **and** the driver's authoritative
+     `options.hosts` seed list, which is what exposes the second seed `config/db.js:L20-L30` appends whenever
+     `db.mongoread.host` is set. It additionally refuses a connection that carries credentials (checked on the
+     driver's resolved `options.credentials` and on mongoose's `connection.user`/`pass`), or that resolves an
+     `srvHost`, or that targets a `replicaSet`, or that negotiates `tls` — each of those describes a provisioned
+     cluster rather than a throwaway local mongod, and none is reachable through the identity `test/setup.js` forces.
+     An unrecognised seed shape, or a client that exposes no options at all, is likewise a refusal rather than an
+     assumed loopback.
+
+   Every refusal is one `Error` whose message begins `db helper refused to <operation>` and then names the specific
+   reason — the environment it actually found, the two disagreeing database names, the non-disposable name with the
+   remedy, or the list of identity reasons plus the allow-list it was measured against. Neither the pattern nor the
+   host list is read from `config`, because a guard that reads the same value it is checking would agree with a
+   mis-resolved configuration instead of catching it; nor from `test/setup.js`, which returns `{}` on the load path
+   where that module is entered first. The gate is pinned executably by `test/lib/util/database-guard.js`, which
+   drives it in a spawned subprocess so a real refusal can be observed without risking this checkout's databases.
 
 4. **The runner is told to load the bootstrap first as well.** `package.json`'s test script is
    `mocha --file ./test/setup.js`. `--file` rather than `--require` deliberately: `--file` loads the module through
@@ -5557,8 +5598,11 @@ Both censuses were taken against the base commit rather than estimated. The thre
 sites — `test/setup.js:L18`, `test/helpers/catbox-redis.js:L6`, `test/helpers/queue.js:L8` and
 `test/lib/models/trinket.js:L34`, `L39` and `L155` — and `.reset()` appears at **6** sites, four in
 `test/lib/models/plugins/paginate.js` and two in `test/lib/models/trinket.js`. All twelve are converted; a
-re-census over the 33 current test files finds **zero** three-argument `sinon.stub` calls and **zero** `.reset()`
-calls in test code, against **13** `.callsFake(` sites and **6** `.resetHistory()` sites.
+re-census over the **45** tracked test `.js` files finds **zero** three-argument `sinon.stub` calls and **zero**
+`.reset()` calls in test code, against **30** `.callsFake(` sites in 11 files and **7** `.resetHistory(` sites in 3
+files. The replacement counts run ahead of the twelve conversions because suites added after them use the modern forms
+from the start; the figures are therefore reproducible rather than fixed — `git ls-files | grep -cE '^test/.*\.js$'`
+for the file count, and a `grep` for each form over that file list, discounting comment lines, for the other four.
 
 ### 13.4 The `redis-mock` double was the real registration blocker
 
@@ -6335,8 +6379,11 @@ info: [Object: null prototype] {
 ```
 
 A second, narrower channel logs the identifier on **every** login attempt: `lib/controllers/users.js` carries **13**
-`console.log('LOGIN: …')` statements — **13 at the base commit as well** — of which two carry an address, `L157`
-(`request.payload.email`) and `L189` (`found.user.email`). Neither of those two logs the password.
+`console.log('LOGIN: …')` statements — **13 at the base commit as well** — of which two carry an address:
+`'LOGIN: Starting login for'` (which logs `request.payload.email`) and `'LOGIN: findByLogin callback'` (which logs
+`found.user.email`). Neither of those two logs the password. Both are named by their log prefix rather than by a line
+number for the reason given under [section 15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved);
+`grep -n "console.log('LOGIN:" lib/controllers/users.js` reproduces all 13 at any commit.
 
 **Why it was preserved, and the half of that reasoning that still holds.** The emitter is a single line shared by every failure response in the application — at the
 base commit **73** `request.fail(` call sites reached it, per
@@ -6365,12 +6412,21 @@ unknown-account message additionally echoes the submitted identifier back verbat
 commit (base used `request.fail({ message : … })`, the delivered tree uses `h.reject({ message : … })` — the same
 declarative failure responder under its migrated name):
 
-| Condition | Message | Line |
+| Condition | Message | Where in `lib/controllers/users.js#login` |
 |---|---|---|
-| No account matches the identifier | `'Unknown user ' + requested` | `L197` |
-| Account carries the `disabled` role | `'Account Disabled'` | `L201` |
-| Account exists with no password set | `'A password was not found for this account.'` | `L205` |
-| Password does not match | `'Invalid password'` | `L227` |
+| No account matches the identifier | `'Unknown user ' + requested` | the `if (!user)` branch |
+| Account carries the `disabled` role | `'Account Disabled'` | the `if (user.hasRole && user.hasRole("disabled"))` branch |
+| Account exists with no password set | `'A password was not found for this account.'` | the `if (!user.password \|\| user.password.length === 0)` branch |
+| Password does not match | `'Invalid password'` | the `if (!isMatch)` branch after `await user.comparePassword(password)` |
+
+The locators above name the **branch guard** rather than a line number on purpose: an earlier revision of this section
+cited four line numbers that the async conversion had already moved, and a guard expression cannot drift the same way.
+Re-derive the exact lines at any commit with
+`grep -n "Unknown user \|Account Disabled\|A password was not found\|Invalid password" lib/controllers/users.js`
+(four hits, in that order — `L170`, `L174`, `L178`, `L200` in the delivered tree). The four strings are also pinned
+executably, so a rename or a reworded message fails the suite rather than only contradicting this document: see
+`LOGIN_MESSAGES` in `test/lib/api/login.js`, asserted on both surfaces by
+`describe('The login API contract (POST /api/users/login)')`.
 
 Measured on the delivered tree, on both branches of the content negotiation:
 
@@ -7587,19 +7643,26 @@ in any of them would be a rewritten assertion. Re-measured after the whole chang
 `expect( = 0` and zero code-line `assert`, so no pre-existing assertion was converted to a different style.
 
 The check does **not** extend to files this changeset creates, because a new file cannot rewrite an assertion that
-did not exist. **Seven** new `.js` files were added — re-censused against the base tree, the `.js` files under `test/`
-go from **25** to **32**. They are `test/lib/api/route-parity.js`, `test/lib/api/session.js`,
-`test/lib/util/database-guard.js`, `test/lib/util/log-redaction.js`, `test/lib/util/oauth-form-encoding.js`, and the
-two guarded harness scripts `test/baseline/capture.js` and `test/baseline/replay.js`. An eighth,
-`test/lib/util/credential-redaction.js`, was added and then removed with the SEC-13 remediation it covered, and
-`test/lib/util/log-redaction.js` is what remains of a ninth after its same-origin half went the same way (§4.4,
-§4.14). Exactly **one** of them,
+did not exist. **Twenty** new `.js` files were added and none was removed — re-censused against the base tree with
+`git ls-tree -r 2f8712a --name-only` against `git ls-files`, the `.js` files under `test/` go from **25** to **45**.
+They are the two guarded harness scripts `test/baseline/capture.js` and `test/baseline/replay.js`; three API suites,
+`test/lib/api/route-parity.js`, `test/lib/api/session.js` and `test/lib/api/write-routes.js`; four model suites,
+`test/lib/models/courseInvitation.js`, `featuredCourses.js`, `folder.js` and `material.js`; one shared-module suite,
+`test/lib/shared/trinket-markdown.js`; eight utility suites, `test/lib/util/baseline-harness-integrity.js`,
+`catbox-mongoose.js`, `database-guard.js`, `db-helper-readiness.js`, `file-storage.js`, `log-redaction.js`,
+`oauth-form-encoding.js` and `recaptcha.js`; and two worker suites, `test/lib/workers/exports.js` and `snapshot.js`.
+A twenty-first, `test/lib/util/credential-redaction.js`, was added and then removed with the SEC-13 remediation it
+covered, and `test/lib/util/log-redaction.js` is what remains of a twenty-second after its same-origin half went the
+same way (§4.4, §4.14). Exactly **one** of them,
 `test/lib/util/oauth-form-encoding.js`, uses chai's `expect` — deliberately, because it asserts on values produced in a
 spawned subprocess and a labelled `expect(actual, message)` is the readable form there; it accounts for all **15**
 `expect(` occurrences in the tree. Every other new spec uses `.should.` throughout, matching the suite it joins, and
-the two harness scripts assert nothing at all because they are guarded with `require.main === module`. An earlier revision of this
-paragraph said **six** files and omitted `test/lib/util/oauth-form-encoding.js`, which was added later with the OAuth
-form-encoding repair recorded in section 3.37; the count is corrected here rather than quietly adjusted. **Suite state
+the two harness scripts assert nothing at all because they are guarded with `require.main === module`. Two earlier
+revisions of this paragraph said **six** and then **seven** files, and both undercounted for the same reason: each was
+written mid-changeset and more suites landed afterwards — the six omitted `test/lib/util/oauth-form-encoding.js`, added
+with the OAuth form-encoding repair of section 3.37, and the seven omitted the thirteen model, shared-module, utility
+and worker suites listed above. The count is corrected here rather than quietly adjusted, and it is now stated with the
+two commands that derive it so a later addition contradicts the command rather than only the prose. **Suite state
 after the changeset: `npm test` exits 0 with zero failures** — see *Run totals are deliberately not published* in
 [How to read this catalogue](#how-to-read-this-catalogue).
 

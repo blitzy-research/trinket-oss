@@ -79,6 +79,30 @@ RUN npm ci
 # count.
 RUN npm run build
 
+# Drop the development half of the tree, AFTER the build and BEFORE the runtime COPY below.
+#
+# `npm ci` above installs from the lockfile in full, because the build needs it to: `vite`, `sass` and
+# `esbuild` compile the stylesheets and `scripts/verify-css-artifacts.js` gates them. None of it is needed
+# to RUN. `ARG/ENV NODE_ENV` is declared only in the runtime stage, so nothing here omits development
+# dependencies on its own, and the single `COPY --from=builder` below takes whatever this stage leaves —
+# which meant the shipped image carried the whole development tree, `vite` among it. That mattered for a
+# reason beyond size: with `NODE_ENV=production` baked in, npm omits development dependencies by DEFAULT,
+# so `npm audit` run inside the shipped container reported clean while `vite`'s two HIGH advisories
+# (GHSA-c27g-q93r-2cwf, GHSA-fx2h-pf6j-xcff) were physically installed there. Neither is reachable as
+# deployed — both are Windows-only and dev-server-scoped, the CMD is `pm2-docker start app.js`, and
+# `launch-editor` is not in the tree at all — but an artifact whose own audit understates its contents is
+# not something to ship. Pruning makes the default audit honest and removes the components outright.
+#
+# This step is deliberately VERSION-NEUTRAL: it pins nothing and changes no resolved version, so AAP I8
+# (`sass` 1.98.0 and `vite` 4.5.14 held for the Foundation 5.5.3 Sass build) and the byte-exact CSS artifact
+# contract are untouched — the two stylesheets were already built and digest-verified by the line above and
+# are carried forward as files. `--omit=dev` is used rather than `--production`, which npm 10 deprecates.
+#
+# `test/` itself stays in the image. `scripts/verify-css-artifacts.js` reads the expected digests from
+# `test/baseline/responses.json`, so the tree is a build input; it carries no secret and removing it would
+# break the gate above rather than harden anything.
+RUN npm prune --omit=dev
+
 # Runtime stage. Same pinned Node patch release as the builder, on the `-slim` variant.
 #
 # `-slim` is the point of the split: the full `bookworm` tag carries python3, gcc, g++, make, cc and curl

@@ -46,12 +46,29 @@ withdrawn. **[Section 4](#4-the-security-condition-catalogue) is the missing hal
 for each whether it was preserved or remediated, and records the reachability measurement and the governing rule.
 R-4 is discharged by sections 1-4 read together, not by sections 1-3 alone.
 
-Section 4 has since grown by **two further conditions** that came from sources a static review cannot reach, so it now
-runs SEC-1 … SEC-14. The later of the two, **SEC-14**
-([4.17](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved)), is a **stored
-cross-site scripting** in the library-search typeahead: the single most severe condition in this document, found by a
-frontend UX and interaction checkpoint typing into a search box, and missed by both earlier XSS sweeps because neither
-exercised that surface. A reader who takes only one thing from section 4 should take that one.
+Section 4 has since grown by **three further conditions** that came from sources a static review cannot reach, so it now
+runs SEC-1 … SEC-15, plus two indexing entries at 4.19 and 4.20. **The two most severe conditions in this document are
+both stored cross-site scripting, and both are preserved.** They are the thing to take from section 4 if a reader takes
+only one:
+
+- **SEC-14** ([4.17](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved)) — in
+  the library-search typeahead, found by a frontend UX and interaction checkpoint typing into a search box, and missed by
+  both earlier XSS sweeps because neither exercised that surface. It fires in **any** user's browser, on typing alone.
+- **SEC-15** ([4.18](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved)) —
+  in the admin user-detail JSON dump, found by the final runtime-security assessment. Authored by any ordinary user and
+  executed in an **administrator's** session, at HTML-parse time, with no interaction, on the page that also grants roles
+  and assumes identities. Its sink was named once elsewhere in this document but **only as a PII surface**, never as an
+  XSS sink; 4.18 exists because R-4 was not discharged for it, and that omission is the reason the final checkpoint
+  reported it at all.
+
+Both share one mechanism worth naming here rather than burying: they are surfaces that **bypass Nunjucks autoescaping**
+— `| safe` in one, `bind-html-unsafe` in the other. Every surface that relies on autoescaping has held under four
+independent sweeps. The autoescape-bypass inventory, not the payload list, is the thing to audit.
+
+Section 4 closes with a crosswalk,
+[4.23](#423-crosswalk-to-the-final-runtime-security-assessments-findings), that answers **every** finding of the final
+runtime-security assessment — the pass that reported SEC-15 — by identifier: three were fixed in the container build,
+five are preserved and documented, and the `R-4 ⚠️ PARTIAL` row that pass recorded is settled there.
 
 The earlier of the two came from a runtime-security QA checkpoint
 that exercised the running application over real HTTP rather than reading its source. It contributed **SEC-13**
@@ -115,7 +132,7 @@ base-commit anchors every parity claim is checked against:
 
 | Section | Covers |
 |---|---|
-| 4 | the security-condition catalogue, SEC-1 … SEC-14, with reachability and disposition per condition — **SEC-14 (4.17) is the stored XSS, the most severe entry in this document** |
+| 4 | the security-condition catalogue, SEC-1 … SEC-15, with reachability and disposition per condition — **the two stored XSS entries, SEC-14 (4.17) and SEC-15 (4.18), are the most severe in this document**; 4.19 to 4.22 carry four further conditions that arrived without an `SEC-nn` identifier, and 4.23 crosswalks every finding of the final runtime-security assessment to its answer |
 | 5 | the crosswalk from the private quirk labels used inside four source files to the entries above |
 | 6 | the no-response / convergence decision table: every branch converted to an abandoned response, and why |
 | 7 | the mechanisms measured during the conversion — the error map, the responders, the censuses |
@@ -3666,11 +3683,16 @@ split came out as follows.
 | SEC-11 | `Math.random()` six-character course access codes (~34.7 bits) | CWE-330 | baseline | yes — **anonymously** | PRESERVED |
 | SEC-12 | No JSZip decompression limits | CWE-409 | baseline | yes | PRESERVED |
 | SEC-13 | bcrypt password hash on the wire in four responses | CWE-200, CWE-522 | baseline | **yes** | **REMEDIATED** — scrubbed, replay-neutral |
+| SEC-14 | Stored XSS in the library-search typeahead (`bind-html-unsafe`) | CWE-79, CWE-116 | baseline | **yes** — any account, on typing alone | PRESERVED — frozen `public/partials/**` |
+| SEC-15 | Stored XSS in the admin user-detail JSON dump (`\| safe`) | CWE-79, CWE-116 | baseline | **yes** — authored by any account, fires in an **admin's** session | PRESERVED — frozen `lib/views/**` |
 
 SEC-2 is the only finding that splits, because it contains one baseline condition and one migration regression, so
-the twelve review findings plus SEC-13 resolve into the fourteen conditions tabulated above. **Thirteen of those
-fourteen are baseline behavior; exactly one — SEC-2a — was introduced by this migration.** That is the most
-consequential line in this section, because it is what decides which of them R-4 protects and which it condemns.
+the twelve review findings plus SEC-13 resolve into fourteen conditions, and **SEC-14 and SEC-15 bring the table to
+sixteen**. Those last two arrived from a frontend-interaction checkpoint and from the final runtime-security assessment
+respectively — neither reachable by a source read — and both are tabulated above so that no condition in this section
+has to be discovered by scrolling. **Fifteen of the sixteen are baseline behavior; exactly one — SEC-2a — was
+introduced by this migration.** That is the most consequential line in this section, because it is what decides which
+of them R-4 protects and which it condemns.
 
 **Three of the fourteen were remediated during this migration, and those remediations are DELIVERED.** SEC-1, SEC-4 and
 SEC-13 are closed in the shipped tree on the adjudication recorded in **§0.2**, which is authoritative for this
@@ -3709,8 +3731,20 @@ Three buckets, applied uniformly:
   `assetConfinementContract` for SEC-1, `assignmentNextContract` and `locationContract` for SEC-4 — rather than by this
   prose. §4.16 records the one deviation that remains open.
 - **C — baseline, and remediating it would breach a frozen contract or is not an authorized change.** Preserve it and
-  catalogue it here with its mechanism, its reachability and the specific rule that freezes it. Ten members:
-  **SEC-2b**, **SEC-3**, and **SEC-5** through **SEC-12**.
+  catalogue it here with its mechanism, its reachability and the specific rule that freezes it. Twelve members:
+  **SEC-2b**, **SEC-3**, **SEC-5** through **SEC-12**, and the two stored-XSS conditions **SEC-14** and **SEC-15**.
+  The last two are worth calling out against bucket B, because both are CRITICAL and bucket B's threshold is
+  "CRITICAL or HIGH": neither can reach bucket B, because bucket B additionally requires that the remediation be
+  observably neutral, and the only place either can be fixed is a **frozen template** — `public/partials/**` for
+  SEC-14, `lib/views/**` for SEC-15 — whose rendered output is client-visible by definition. Sections
+  [4.19](#419-a-failed-validation-answers-http-200-and-echoes-the-whole-submitted-payload-including-the-plaintext-password)
+  and [4.20](#420-the-archive-filename-sanitizer-lets-cr-and-lf-through-because-its-own-character-class-admits-them)
+  are bucket C as well, as are
+  [4.21](#421-the-logoutas-impersonation-escape-hatch-is-unreachable-at-adminlogoutas1) and
+  [4.22](#422-deleting-a-user-leaves-its-folders-behind-with-a-dangling-owner-reference). Those four carry no `SEC-nn`
+  identifier: two of them index conditions first measured elsewhere in this catalogue into this section, and two are
+  conditions whose security relevance is contextual — an authorization state that fails to clear, and content that
+  outlives its owner — rather than a vulnerability in their own right.
 
 "Frozen contract" is not a euphemism. Each bucket-C entry names the concrete contract it would breach: the 233-row
 route table including per-row auth (TR1 and G8), a persisted or emailed token format (TR6), client-visible rendered
@@ -4363,6 +4397,15 @@ That is the mechanism. Four surfaces actually reached it:
 | `POST /api/admin/user/{userId}/grant` | `lib/controllers/admin.js#grantRole` answered `user : JSON.parse(JSON.stringify(user))` — a whole-document clone that never consults `publicSpec` at all | **another user's**, disclosed to an admin caller |
 | `GET /admin/users?q=<login>` | `lib/controllers/admin.js#userSearch` flattens the document with the same round-trip **before** the responder runs, so `ObjectUtils.serialize`'s own prototype-safe test finds a plain object and has nothing left to project. `lib/views/admin/includes/users.html` then dumps the object wholesale through `{{ data \| json("pretty") \| safe }}` | **another user's**, rendered into an HTML page |
 
+**That last row's `| safe` is also a stored-XSS sink, and it is NOT closed by this remediation.** Removing `password`
+from the object stops the credential reaching the page; it does nothing about the escaping, because there is none — the
+`json` filter is a bare `JSON.stringify` and `| safe` disables autoescaping, so any user's display `name` still reaches
+an administrator's HTML as live markup. For one revision this document named the sink **only here**, as the PII surface
+above, which meant section 4 carried no XSS entry for it at all. It is catalogued as **SEC-15** at
+[4.18](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved), with the
+reachability chain and the browser-measured execution. The two conditions are independent: this one is remediated, that
+one is preserved, and they share only the template that renders them.
+
 The last two do not depend on `model.js` at all — they bypass `publicSpec` directly — which is why fixing the
 `hasOwnProperty` test alone would not have closed them.
 
@@ -4440,7 +4483,10 @@ form the array branch already uses would switch **every** populated sub-document
 from a whole-document clone to a `publicSpec` projection — an un-baselined payload-shape change across the entire
 HTTP surface, in a file the plan holds because it is the `Model.extend` carrier. The three-site, one-key remediation
 has a blast radius of exactly four response bodies. `lib/views/admin/includes/users.html` was likewise not touched:
-templates are frozen, so the credential is removed at its source instead.
+templates are frozen, so the credential is removed at its source instead. That frozen-template constraint is also
+exactly why the XSS sink in the same file stays open — SEC-15 at
+[4.18](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved) — because unlike a
+credential, an escaping defect has no source to remove it at.
 
 **Measured legitimate-traffic neutrality of the delivered remediation.**
 The recursive **key-path set** of each
@@ -4560,10 +4606,23 @@ are `server` and `x-powered-by`, so there is no framework fingerprint.
 **Why it is preserved.** Adding any of the three missing headers changes every response's header set, and the
 response corpus that anchors R-6 compares headers. Reordering the two extensions to give error pages the full header
 set would change the observable headers of the 404 and 50x paths — including the preserved authenticated-`/login`
-500, whose exact response is itself a catalogued quirk. Both are behavior changes. The practical consequence is worth
-stating plainly: with no CSP, the cross-site-scripting result the checkpoint measured — zero executions across
-sixteen stored payloads in a real browser — rests entirely on Nunjucks autoescaping and the markdown sanitizer, with
-no second layer behind them. That makes 4.10 and the sanitizer bridge in 3.35 load-bearing rather than incidental.
+500, whose exact response is itself a catalogued quirk. Both are behavior changes.
+
+**The practical consequence, corrected twice since this entry was written.** This entry originally recorded the
+checkpoint's cross-site-scripting result as *zero executions across sixteen stored payloads in a real browser*, and
+concluded that with no CSP the application rests entirely on Nunjucks autoescaping and the markdown sanitizer. The
+second half of that is still exactly right — which is what makes 4.10 and the sanitizer bridge in 3.35 load-bearing
+rather than incidental. **The first half is not.** Two later checkpoints each found one execution, on surfaces that
+sweep never covered: [SEC-14](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved)
+in the library-search typeahead and
+[SEC-15](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved) in the admin
+user-detail JSON dump. Both were measured firing in a real browser, and both were measured firing **with zero CSP
+violations recorded — because there is no policy to violate**, confirmed independently of the header enumeration above
+by `document.querySelectorAll('meta[http-equiv]').length === 0` on both pages. So the absence documented here is not a
+theoretical gap: it is the missing second layer behind two live executions, and a `Content-Security-Policy` forbidding
+inline script would blunt SEC-14, SEC-15 and 4.10 together. It stays absent for the reason given above — it changes
+every response's header set, and a policy strict enough to matter must forbid the inline scripts this application uses
+pervasively.
 
 #### 4.15.4 One route enables CORS and reflects any origin — but grants no credentials
 
@@ -4678,6 +4737,10 @@ on an authorization this changeset does not carry.
 | F-25 / SEC-11 | Six-character course access codes from `Math.random()`, with an anonymous validity oracle | CWE-330 | baseline | yes | **PRESERVED** | Cryptographic, longer codes plus throttling on the anonymous check, with a rotation plan for codes already handed out. Existing codes are shared with learners, so changing the alphabet or length is user-visible |
 | F-26 / SEC-12 | No JSZip entry-count, uncompressed-size or compression-ratio limits | CWE-409, CWE-400 | baseline | yes | **PRESERVED** | Expansion caps and decompression moved off the main event loop. Rejects archives that import successfully today |
 | F-27 | `highlight.js` held at 9.18.5 under a moderate ReDoS advisory | — | baseline | yes | **PRESERVED / accepted** | Either an authorized markup change (10.4.1 alters emitted classes for 6 of 15 sampled languages, `r` among them) or an input constraint that would leave some code blocks unhighlighted. Both are client-visible; the measurement is in [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) *The three accepted moderate findings* |
+| SEC-14 | Stored XSS in the library-search typeahead — `bind-html-unsafe` assigns a trinket name through `innerHTML` | CWE-79, CWE-116 | baseline | **yes** — any account, on typing alone | **PRESERVED** | Escape at the sink: replace `bind-html-unsafe` with a binding that HTML-escapes the model value and re-applies the match highlight from already-escaped text, or make `typeaheadHighlight` escape before it wraps. One edit to a frozen `public/partials/**` template. Mechanism and browser-measured execution in [§4.17](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved) |
+| SEC-15 | Stored XSS in the admin user-detail JSON dump — `{{ data \| json("pretty") \| safe }}` writes any user's display name into an admin's HTML as markup | CWE-79, CWE-116 | baseline | **yes** — authored by any account, fires in an **admin's** session at parse time with no interaction | **PRESERVED** | Remove `\| safe` from `lib/views/admin/includes/users.html:L104` and review `L145`. The correct behavior is already demonstrated by the Profile tab in the same template, so the change is provably local — but it edits a frozen `lib/views/**` template and changes what that pane renders. Mechanism and browser-measured execution in [§4.18](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved) |
+| — | A failed validation answers 200 and echoes the submitted payload, plaintext password included | CWE-200 | baseline | **yes**, every validated route | **PRESERVED** | Return a 4xx and re-render forms from a payload copy with secret-bearing fields removed, reusing `lib/http/responseContract.js#isSecretField`. A status-code and payload-shape change under TR2. [§4.19](#419-a-failed-validation-answers-http-200-and-echoes-the-whole-submitted-payload-including-the-plaintext-password) |
+| — | The archive filename sanitizer's `\s` class admits CR and LF | CWE-113 | baseline | **yes, unauthenticated** — but **not exploitable**: Node's own header validation rejects the character | **PRESERVED** | Exclude control characters explicitly and emit `Content-Disposition` with RFC 6266 encoding. Changes a client-visible downloaded filename. [§4.20](#420-the-archive-filename-sanitizer-lets-cr-and-lf-through-because-its-own-character-class-admits-them) |
 | F-10 | AWS presigned download URLs moved from SignatureV2 to SigV4 with the SDK migration | — | migration-driven | yes | **DEVIATION, reported open** | Either an authorized acceptance of the SigV4 shape or a re-implementation of SigV2 query signing on top of the v3 client. `aws-sdk` v2 defaulted `signatureVersion` to `'s3'`; v3 has no SigV2 path at all, and v2 could not stay because requiring it emits a real process warning that the zero-warning gate forbids. Recorded in [§12.4](#12-streaming-ssrf-and-three-inherited-risks-one-overridden-two-accepted) and in the inventory |
 
 #### 4.16.1 The final security gate's findings (SV-nn), and why each remaining one is deferred
@@ -4825,10 +4888,23 @@ excludes a frontend rewrite and lists `public/partials/**` (54 files) among the 
 outright, and §0.9.4 places "client-visible page behavior" under the preservation directives. `git diff 2f8712a..HEAD --
 public/ lib/views/ static/` reports **zero changed files**, and this file's sha256 is
 `b4baa350af92296c7e0a020fb4a266dbf4519a6199d321be3eab8e8ca3018e93` at **both** commits. Beyond the frozen-surface rule,
-R-1 excludes latent-bug repair from its four sanctioned diff categories, and §4.16's precedent is directly on point:
-three security remediations attempted during this changeset — SEC-1, SEC-4 and SEC-13, one of them also CRITICAL — were
-**reverted on review** for exactly that reason. Fixing this one while those three stay open would be inconsistent as well
-as out of scope.
+R-1 excludes latent-bug repair from its four sanctioned diff categories.
+
+**One earlier revision of this paragraph had the precedent backwards, and the correction matters.** It said that three
+security remediations attempted during this changeset — SEC-1, SEC-4 and SEC-13 — were *reverted on review*, and cited
+that as the reason to leave this one open. **That is not the delivered state.** All three are **REMEDIATED and present in
+the shipped tree**, on the adjudication recorded in [§0.2](#02-open-rule-conflicts-stated-as-open) and tabulated as
+delivered in
+[§4.16](#416-crosswalk-to-the-cumulative-reviews-security-findings-and-the-authorized-change-each-preserved-condition-still-needs);
+the withdrawal that sentence described was itself reversed and the guards restored, which `node
+test/baseline/replay.js` confirms at **0 differences**. The distinction is the one §4.0 draws: those three are **bucket
+B** — baseline, but with a remediation measurably neutral for every legitimate request, and none of them requiring an
+edit to a frozen file. This condition cannot reach bucket B, because the only place to fix it is a frozen template whose
+rendered output is client-visible by definition. So what preserves it is the frozen surface plus R-1 and R-4 — **not** a
+precedent of reverted security fixes. The genuine precedent is
+[SEC-15](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved), the other
+CRITICAL stored XSS in this catalogue, preserved on identical reasoning for a template in the equally frozen
+`lib/views/**`; fixing either while the other stays open would be inconsistent as well as unauthorized.
 
 **What a naive fix would have broken.** Each of the three obvious repairs has a concrete cost:
 
@@ -4845,11 +4921,525 @@ as out of scope.
 HTML-escapes the model value and re-applies the match highlight from already-escaped text — or keep
 `bind-html-unsafe` and make `typeaheadHighlight` escape before it wraps. Either is a small edit to one frozen template
 and needs the same behaviour-change authorization §4.16 asks for on SEC-1, SEC-4 and SEC-13; it belongs in that same
-separately authorized hardening effort, and it should be **first** in it, because this is the one condition in section 4
-that executes attacker-controlled JavaScript in a victim's authenticated origin. Two properties raise its priority above
-the other preserved conditions: it is **stored**, so it persists for every viewer, and it fires on **typing alone** —
-no click, no navigation and no confirmation. With no CSP anywhere on the application (§4.15.3), there is no second layer
-behind the escaping that is missing here.
+separately authorized hardening effort, and it belongs at the **front** of it, because it is one of only **two**
+conditions in section 4 that execute attacker-controlled JavaScript in a victim's authenticated origin — the other being
+[SEC-15](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved), found later and
+by a different checkpoint. An earlier revision of this sentence called it the *one* such condition; that was true when
+written and is not now. Two properties raise its priority above the other preserved conditions: it is **stored**, so it
+persists for every viewer, and it fires on **typing alone** — no click, no navigation and no confirmation. With no CSP
+anywhere on the application (§4.15.3), there is no second layer behind the escaping that is missing here. The two divide
+by victim rather than by severity: this one reaches **any** user who searches, SEC-15 reaches an **administrator** on the
+page that grants roles and assumes identities, so neither subsumes the other and both need closing.
+
+### 4.18 SEC-15 — stored cross-site scripting in the admin user-detail JSON dump (CRITICAL) — PRESERVED
+
+**Provenance, and why this entry arrived last.** SEC-1 through SEC-12 came from a static security review, SEC-13 from a
+runtime-security checkpoint and SEC-14 from a frontend interaction checkpoint. **SEC-15 came from the final
+runtime-security assessment**, which reported it as the one blocker in an otherwise passing checkpoint — and reported it
+precisely because R-4 was **not** discharged for it. The sink is named once elsewhere in this document, at
+[§4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated), but **only as a
+credential and PII surface**: nothing in this section identified it as a cross-site-scripting sink, so an implementer
+reading section 4 had no way to learn it existed. That gap is what this entry closes. The condition itself is
+unchanged, unremediated and byte-identical to the base commit.
+
+- **Origin:** **baseline.** `lib/views/admin/includes/users.html` hashes to sha256
+  `399627c27b21d7c4ec17969f59c739f344a2f4227f5e25a8d2274379746abe41` at **both** `2f8712a` and HEAD, and
+  `git diff 2f8712a..HEAD -- lib/views/ public/ static/` reports **zero changed files**. The `json` filter in
+  `lib/util/nunjucks.js` is likewise unchanged.
+- **Reachable in the shipped default configuration:** **yes**, and the *author* of the payload needs no privilege beyond
+  an ordinary account. The *victim* must be an administrator, and the payload fires on the page that also carries
+  role-modification controls and the impersonation link.
+- **Disposition:** **PRESERVED.** No remediation was attempted, and none was reverted. Bucket C of
+  [§4.0](#40-the-disposition-rule-this-section-applies).
+- **CWE:** CWE-79 (stored / persistent cross-site scripting), reached through CWE-116 (improper output encoding).
+
+**What it is.** One tab of the admin user-detail page dumps the whole user document as pretty-printed JSON through a
+filter chain that ends in `| safe`. `| safe` switches Nunjucks autoescaping **off** for that expression, and the `json`
+filter never escapes anything, so any user's own display name is written into the administrator's HTML as **markup**. A
+name containing `</pre><script>…</script>` therefore closes the `<pre>` early and runs as script in the admin origin.
+
+**The two lines that are the whole defect.** `lib/views/admin/includes/users.html:L104`:
+
+```html
+<pre>{{ data | json("pretty") | safe }}</pre>
+```
+
+and the filter it calls, `lib/util/nunjucks.js:L23-L29`:
+
+```javascript
+env.addFilter('json', function(str, opt) {
+  if (opt === 'pretty') {
+    return JSON.stringify(str, null, 2);
+  } else {
+    return JSON.stringify(str);
+  }
+});
+```
+
+`JSON.stringify` escapes for **JavaScript string** syntax, not for HTML: it leaves `<`, `>` and `&` untouched. Neither
+half is wrong on its own — a bare `JSON.stringify` is the correct thing for a `json` filter, and `| safe` is correct for
+the developer-controlled asset URLs it serves elsewhere in the same view tree. The defect is only their **composition**
+over user-controlled data.
+
+**Evidence — the chain, measured at every stage over real HTTP and in a real browser.**
+
+1. **Storage accepts markup unchanged.** `PUT /api/users/{userId}` is declared at `config/routes.js:L102-L120`, and its
+   whole constraint on the field is `name : Joi.string().min(1).max(140)` at `L108` — a length range and nothing else,
+   no pattern and no sanitiser. Measured as an
+   **ordinary** user with site roles `["user"]`, against that user's own id: a `PUT` carrying
+   `{"username":"qafixuser","name":"</pre><script>window.__adminXssFix=1</script>QAFIXMARKER"}` answered **HTTP 200**
+   with `{"success":true,…}`, and MongoDB then held that exact string in `users.name`.
+2. **The admin read path returns it raw.** `GET /admin/users?q=qafixuser` (`config/routes.js:L221`,
+   `lib/controllers/admin.js#index` → `userSearch`) answered **HTTP 200, 24,088 bytes**. The body contains the literal
+   `<script>window.__adminXssFix=1</script>` **exactly once** — raw — and the HTML-escaped form
+   `&lt;/pre&gt;&lt;script&gt;…` **exactly once**. Those are the two render paths in one document, which is what isolates
+   the defect to the single `| safe` expression.
+3. **It becomes a real element, not text.** In the browser the injected node is `document.scripts[10]` of 45, with
+   `outerHTML` exactly `<script>window.__adminXssFix=1</script>`, `hasAttribute('src') === false`, and
+   `parentElement` = **`LI#json.content`** — a *sibling* of the `<pre>`, i.e. the container was escaped. `li#json`'s
+   `childNodes` are `["#text", "PRE", "SCRIPT", "#text"]` with `children.length === 2`; the `PRE` is the `SCRIPT`'s
+   immediate `previousElementSibling` with nothing between them; and the trailing 129-character `#text` node carries the
+   JSON remainder — `QAFIXMARKER", "avatar": …, "coursesOwned": 0 }` — as bare text **outside** the `<pre>`, whose own
+   text ends exactly at `"name": "`.
+4. **It executes, with no interaction at all.** `window.__adminXssFix` evaluated to **`1`** (`typeof "number"`,
+   `=== 1` true, `hasOwnProperty` true) on first load **and again after a cache-ignoring hard reload**
+   (`performance.getEntriesByType('navigation')[0].type === "reload"`, `transferSize` 6474 proving a real network fetch
+   rather than a cache hit). **On both loads `li#json.classList.contains('active')` was `false` and the JSON tab had
+   never been clicked** — so execution happens at **HTML-parse time**, and merely *searching for or viewing* the
+   attacker's record is sufficient. The vulnerable pane is the one nobody looks at.
+5. **The execution is attributable, by control.** On `/home`, in the **same authenticated session**,
+   `typeof window.__adminXssFix` is `"undefined"`, `hasOwnProperty` is `false`, and the script search returns index
+   `-1`. So the value can only have come from the injected element on the admin page, not from the session or the app
+   shell.
+6. **It is visually near-invisible.** The grey monospace `<pre>` (`font-family: monospace`, `white-space: pre`,
+   background `rgb(250, 250, 250)`, border `1px solid rgb(239, 239, 239)`) ends at y = 1390, and the JSON remainder
+   renders **18 px below it, outside the box**, on transparent background in `Merriweather, Times, Georgia, serif` with
+   `white-space: normal`, collapsing six JSON lines onto one and rendering typographic curly quotes where the box above
+   shows straight ASCII ones. The `<script>` itself has a 0×0 box. An operator would read that as a rendering glitch.
+7. **Nothing warns.** Across the whole browser session: **0 JavaScript errors**, **0 unhandled rejections**, **0 CSP
+   violations**, **0 network requests with status ≥ 400**, and **0** console calls from page scripts on the admin page.
+   The payload issues no request of its own. The only console output was two benign `/login` autocomplete advisories.
+
+**Aggravating factors, measured rather than assumed.**
+
+- **There is no CSP to stop it.** `document.querySelectorAll('meta[http-equiv]').length` is **0** — the list of
+  `http-equiv` values is empty — and a same-origin `fetch('/admin/users?q=qafixuser')` enumerated ten response headers
+  with `content-security-policy`, `content-security-policy-report-only`, `strict-transport-security`,
+  `x-content-type-options`, `referrer-policy`, `permissions-policy` and `x-frame-options` **all absent**. That absence
+  is genuine wire absence, not a Headers-API artifact: the control `fetch('/')` on the same page **does** enumerate
+  `x-frame-options: deny`. `x-frame-options` is gated to the five pathnames the `config/default.yaml:L353-L358`
+  allow-list names and `app.js:L146` tests against `request.url.pathname`, and `/admin/users` is not one of them, so
+  this page never receives that header either — see
+  [§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else)
+  and [22.2.1](#2221-x-frame-options-is-applied-to-exactly-the-paths-configuration-names-three-of-which-exist).
+- **The page it fires on is the privilege-modification page.** The same document carries the `Change Roles` control
+  (`users.html:L101`) and, forty lines above the sink, a `Login as <user>` impersonation link to
+  `/admin/users?loginAs=<id>` (`users.html:L66`). Both are same-origin GET or form surfaces callable by the executing
+  script,
+  and impersonation is a **GET-triggered state change with no CSRF token** — §4.16.1's SV-27 row, and
+  [4.21](#421-the-logoutas-impersonation-escape-hatch-is-unreachable-at-adminlogoutas1) for the impersonation lifecycle
+  itself, whose exit path silently does not work on the shorter of its two URLs. So in-session escalation is available to
+  the payload rather than merely conceivable.
+- **A second attacker-controlled field on the same page gives an outbound channel.** `avatar` is rendered as an `<img>`
+  `src`, so a payload author also controls a request the admin's browser will make.
+
+**One correction this entry makes to two earlier readings.** §4.15.3 recorded *"zero executions across sixteen stored
+payloads in a real browser"* and [section 17](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved)
+recorded *"no XSS payload of the ten submitted executed"*. §4.17 already corrected both for the library-search
+typeahead. **They need correcting a second time, for this sink.** Both statements remain true of the surfaces those
+sweeps covered; neither sweep opened the admin JSON tab, and this is the second surface where a payload does execute.
+The pattern is now established and worth stating once: every execution found in this application has been on a surface
+that bypasses Nunjucks autoescaping — `| safe` here, `bind-html-unsafe` in SEC-14 — and every surface that relies on
+autoescaping has held. The autoescape-bypass inventory, not the payload list, is the thing to audit.
+
+**The sibling sink at `users.html:L145`.** `{{ data.roles | json | safe }}` inside `<script type="text/json"
+id="rolesData">` is the same defective chain on the same page. It is **inert by data shape rather than by defense**: it
+serialises `data.roles`, whose members are admin-set enum-shaped role and context strings, so no ordinary user controls
+a character of it. It is recorded here because the *chain* is identical — anything that ever routes user-controlled text
+into `data.roles` makes it live, and any fix applied to L104 belongs at L145 too.
+
+**Why it is preserved.** The sink is a **frozen template**. §0.2.2.2 freezes `lib/views/**.html` — all 79 of them — in
+the same sentence that freezes the grammar file, and states that only the view-engine wiring at `app.js:L140-L149` is in
+scope; §0.9.4 places "client-visible page behavior" under the preservation directives; and §0.9.5 forbids behavior
+improvements outright. R-4 is then directly on point, because this is inherited rather than introduced: *"A 2013-era
+quirk that clients may depend on is preserved and documented, not fixed."* R-1 independently excludes it, since
+latent-bug repair is not one of its four sanctioned diff categories. And the precedent is immediately adjacent:
+**SEC-14 is also a CRITICAL stored XSS and is also preserved**, on exactly this reasoning, for a template in the equally
+frozen `public/partials/**`. Remediating one CRITICAL XSS in a frozen template while the other stays open would be
+inconsistent as well as unauthorized.
+
+Two things this reasoning is **not**. It is not a claim that the condition is safe — it is an open, exploitable defect
+that runs attacker-controlled JavaScript in an administrator's authenticated origin. And it is not the reasoning that
+governed SEC-1, SEC-4 and SEC-13, which **are** remediated in the delivered tree: those three sit in bucket B because
+each was measurably neutral for every legitimate request, and none of them required editing a frozen template. This one
+cannot reach bucket B, because the only place to fix it is a file the plan freezes by name.
+
+**What a naive fix would have broken.** Each obvious repair has a concrete cost, which is why the disposition is a
+decision rather than an omission.
+
+- **Dropping `| safe` at L104** is the one-token fix, and it is the right eventual answer — but it edits a frozen
+  template, and it changes what that pane renders: the JSON would arrive HTML-escaped, so an administrator reading a
+  document that legitimately contains `<`, `>` or `&` (a course description, a display name, an avatar URL with an
+  entity) would see `&lt;` and `&amp;` in the dump instead of the characters. The pane is a debugging view of raw
+  storage, so that is a real content change to it, not a cosmetic one.
+- **Escaping inside the `json` filter** looks tidier and is worse: the filter is shared, and
+  [§4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated)'s and §4.15's surfaces
+  plus the embed pages at `lib/views/embed/base.html:L80-L84` route through `json` inside `<script>` blocks where
+  HTML-escaping the output would corrupt the JavaScript those blocks parse. Those pages are protected by
+  `escapeJSON`/`lodash.escape` instead (`lib/util/nunjucks.js:L59-L85`), a measured-safe arrangement that a change here
+  would disturb.
+- **Escaping server-side, on write or on read**, changes a **persisted** field and a response body — TR6 and TR2
+  respectively — and would make every existing name containing `<` or `&` display differently on the six surfaces that
+  render it correctly today, converting one broken surface into six changed ones. The same argument that decided SEC-14.
+- **Adding a `Content-Security-Policy`** would blunt this sink, SEC-14 and SEC-10 at once with a single header, and it
+  is the highest-leverage change available — but it adds a header to every response, which §4.15.3 records as a behavior
+  change the R-6 corpus compares, and a policy strict enough to matter must forbid inline script, which this
+  application uses pervasively (45 scripts on this page alone, 9 of them inline, including the `<script>` blocks the
+  embed pages depend on). It is a hardening project, not an edit.
+
+**The authorized change it needs.** Remove `| safe` from `users.html:L104`, and review `L145` with it. The correct
+behavior is already demonstrated **by the same template**: the Profile tab renders the identical stored value through
+`{{ data.name }}` with autoescaping on, and it was measured inert in the same page load — `innerHTML`
+`&lt;/pre&gt;&lt;script&gt;window.__adminXssFix=1&lt;/script&gt;QAFIXMARKER`, a single `#text` child, **0** element
+children, **0** `<script>` and **0** `<pre>` nodes. So the change is provably local: it touches an internal admin page
+and none of the 233-route wire contract, the CSS artifacts, or any measured status code or payload shape. It needs the
+same behavior-change authorization §4.16 asks for on the preserved conditions there, and within that effort it belongs
+**alongside SEC-14 at the front of the queue**: SEC-14 fires in any user's browser, this one fires in an
+administrator's, on the page that can grant roles and assume identities, and both do so with no CSP behind them.
+
+
+### 4.19 A failed validation answers HTTP 200 and echoes the whole submitted payload, including the plaintext password
+
+**Why this entry exists.** Both halves of this condition were already documented — the **persistence** half as `DB-18`
+in [section 18](#18-runtime-qa-observations-on-the-database-surface-attributed-and-preserved) and the **no-4xx** half as
+`VQ-6` in [section 22](#22-runtime-qa-observations-on-the-frontend-ux-interaction-and-data-state-surface), with the
+log-versus-wire contrast measured in
+[§15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only).
+None of the three is in **section 4**, so a reader auditing the security catalogue for information-exposure surfaces did
+not find it. This entry is the index, not a new finding: it states the condition in section 4's shape and points at the
+three places that carry the detail.
+
+- **Origin:** **baseline.** `git show 2f8712a:lib/util/routeParser.js` carries the identical
+  `return request.fail(request.payload, …)` channel that `lib/http/validation.js:L81` reproduces.
+- **Reachable in the shipped default configuration:** **yes**, on every route with a `validate` block.
+- **Disposition:** **PRESERVED.** Bucket C.
+- **CWE:** CWE-200 (exposure of sensitive information to an unauthorized actor), in the narrow sense described below.
+
+**What it is.** When Joi rejects a payload, the failure responder is handed `request.payload` **whole** and answers
+**HTTP 200** with it, alongside a `flash.validation` map of the field messages. If the rejected payload carried a
+password, the password comes back in the response body.
+
+**Evidence.** Measured over real HTTP:
+
+```
+POST /api/users   {"email":"not-an-email","password":"EchoProbePw-9911"}
+→ HTTP 200, 121 bytes
+  {"email":"not-an-email","password":"EchoProbePw-9911",
+   "flash":{"validation":{"email":"\"email\" must be a valid email"}}}
+```
+
+The mechanism is one line, `lib/http/validation.js:L81`, and the comment above it records the constraint rather than
+leaving it to be inferred: `request.payload` is handed over whole because that is the frozen behavior, and the second
+argument — the log copy — is pre-scrubbed so the credential does not reach the log. That scrub is the `F-16` remediation
+in §4.16 and §15.6; the wire was deliberately left alone.
+
+**The scope of the exposure, stated precisely, because it decides the severity.** This is a **self-reflection to the
+same requester over the same connection**: the response goes to whoever submitted the payload, and it contains only
+what that party just sent. It is not a cross-user disclosure and not a stored one. The response also carries
+`cache-control: private, … no-cache, no-store, must-revalidate, proxy-revalidate`, so no shared cache retains it. What
+makes it worth cataloguing anyway is the *combination* with `DB-18`: the same failed submission also persists the
+plaintext into `sessions.value._flash.failure.password` and `_flash.payload.password` server-side, where — because
+`sessions.stored` is a Number rather than a Date — the `stored_1` index can never act as a TTL index and the records
+accumulate indefinitely.
+
+**Why it is preserved.** TR2 freezes status codes and payload shapes in those words, and the plan's §0.9.4 preservation
+directive freezes validation outcomes: input accepted or rejected at baseline is accepted or rejected identically
+after. Returning a 400, or omitting the password from the echo, changes both the status and the body of every
+validation rejection in the application — and `VQ-6` records the architectural consequence that **there is not a single
+400 or 422 anywhere in this application**, so the 200-with-flash *is* the contract, not an accident at one route.
+
+**What a naive fix would have broken.** Two candidates, both excluded:
+
+- **Answering 400/422 on validation failure** breaks the 233-row corpus's measured statuses and every client that reads
+  the flash out of a 200 body — which is all of them, since the templates re-render the form from `flash.payload`
+  (`lib/views/signup.html:L21`, `lib/views/login.html:L26` read `flash.payload.email`).
+- **Scrubbing `password` out of the echoed payload** looks free, and is not: the form re-render reads the flashed
+  payload back, so the scrub would have to be asymmetric between the wire and the flash to avoid changing what the
+  signup and login forms display. That is a behavior change on the login flow, which §0.9.4 freezes by name.
+
+**The authorized change it needs.** Return a 4xx on validation failure and re-render forms from a payload copy with
+secret-bearing fields removed — the same field predicate the log scrub already uses,
+`lib/http/responseContract.js#isSecretField`. It is a status-code and payload-shape change, so it needs the same
+authorization §4.16 asks for on the other preserved conditions.
+
+### 4.20 The archive filename sanitizer lets CR and LF through, because its own character class admits them
+
+**Provenance.** Found by the final runtime-security assessment's header-injection probe, which is the one class of input
+the existing archive entries — [§4.7](#47-sec-7-unsanitized-archive-entry-names-in-generated-downloads-medium-preserved)
+and [§4.8](#48-sec-8-predictable-tmp-archive-names-toctou-no-cleanup-medium-preserved) — do not cover, because they
+concern names *inside* the archive rather than the name in the response header.
+
+- **Origin:** **baseline.**
+- **Reachable in the shipped default configuration:** **yes, unauthenticated**, on the same route as SEC-7.
+- **Disposition:** **PRESERVED**, and **not exploitable** — see the measurement below. Bucket C.
+- **CWE:** CWE-113 (improper neutralization of CRLF sequences in HTTP headers), unreachable in practice.
+
+**What it is.** `lib/controllers/trinket.js:L1446` sanitizes the caller-supplied archive filename with a negated
+character class:
+
+```javascript
+var safeFilename = filename.replace(/[^a-zA-Z0-9_\-\s]/g, '').substring(0, 100) || 'trinket-download';
+```
+
+and `L1548` interpolates the result straight into a response header:
+
+```javascript
+.header('Content-Disposition', 'attachment; filename="' + safeFilename + '.zip"');
+```
+
+The class keeps `\s`, and **`\s` matches CR and LF**. So the two characters that would split a header are the two the
+sanitizer does not remove. Verified in-process: `"ok\rInjected: yes"` sanitizes to `"ok\rInjected yes"` — the `:` is
+stripped, the CR survives.
+
+**Why it is nevertheless not exploitable, measured rather than argued.** All three CR/LF classes were driven at
+`POST /api/trinkets/download` — bare CR, bare LF and CRLF — and each answered:
+
+- **HTTP 500** with the fixed 96-byte scrubbed body
+  `{"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}`,
+- **exactly one `HTTP/` status line** in the response, and
+- **zero injected headers** — no `Injected:` header appeared in any of the three.
+
+The application log shows why: `TypeError [ERR_INVALID_CHAR]: Invalid character in header content
+["content-disposition"]`. **Node's own header validation rejects the character** before anything reaches the socket, and
+`lib/http/errorMap.js#toResponse` maps the raised `TypeError` to the scrubbed 500 that
+[section 10](#10-the-undeclared-boom-scrubbed-500s-61-call-sites-that-never-returned-the-status-they-name) describes. So
+this is a **real sanitizer gap with no reachable consequence** on this runtime: the defense that stops it is the
+platform's, not the application's, which is exactly why it is worth recording — a future change that builds the header
+by a route Node does not validate would make it live.
+
+**Why it is preserved.** Tightening the class to exclude CR and LF changes the emitted `Content-Disposition` for any
+filename containing whitespace — today a name with a space keeps the space, and the response is a **client-visible
+downloaded file name**, which §0.9.4 places under the preservation directives and which §4.7 already refuses to change
+for the same reason on the entry names inside the same archives. It would also convert three requests that answer 500
+today into requests that answer 200 with a downloadable archive, changing measured statuses under TR2. R-1
+independently excludes it as latent-bug repair.
+
+**What a naive fix would have broken.** Replacing `\s` with a literal space in the class is the minimal repair and is
+still a behavior change on two axes at once: tabs in filenames would start being stripped rather than kept, and the
+three CR/LF requests would move from 500 to 200. Percent-encoding the header value per RFC 6266 changes the filename
+every client sees, for every download, not only for hostile input.
+
+**The authorized change it needs.** Exclude control characters explicitly — `/[^a-zA-Z0-9_\-. ]/g`, or keep the class
+and strip `[\r\n]` afterwards — and emit the header with RFC 6266 encoding. Both alter a client-visible filename, so
+both need the authorization §4.16 asks for.
+
+
+### 4.21 The `logoutAs` impersonation escape hatch is unreachable at `/admin?logoutAs=1`
+
+**Provenance.** Found by the final runtime-security assessment while exercising the admin impersonation lifecycle. It is
+a **functional** quirk with a security consequence rather than a vulnerability of its own, and it is catalogued in
+section 4 rather than section 1 because the state it fails to clear is an authorization state.
+
+- **Origin:** **baseline.** `git diff 2f8712a..HEAD -- lib/controllers/admin.js` shows the branch order unchanged, and
+  `config/routes.js`'s two admin route declarations are likewise unchanged.
+- **Reachable in the shipped default configuration:** **yes**, but only by an administrator, and only as a failure to
+  *exit* impersonation rather than a way to enter it.
+- **Disposition:** **PRESERVED.** Bucket C.
+- **CWE:** none of its own. See the CSRF note below for the property that makes it worth recording.
+
+**What it is.** An administrator who has assumed another user's identity can clear that state with
+`GET /admin/users?logoutAs=1`, and the admin UI's own link does exactly that (`admin/includes/userSearchForm.html:L4`
+renders `/admin/users?logoutAs={{ user.id }}`). The **shorter** form a reader would reasonably try,
+`GET /admin?logoutAs=1`, answers a redirect and **does nothing** — impersonation survives it.
+
+**The mechanism, and why it is easy to misread.** There are **two** route declarations, not one:
+`GET /admin admin.index` at `config/routes.js:L207-L219` and `GET /admin/{adminPage*} admin.index` at
+`config/routes.js:L220-L232`. `/admin?logoutAs=1` matches the **first**, where `request.params.adminPage` is
+`undefined`, and `lib/controllers/admin.js#index` opens with:
+
+```javascript
+if (!request.params.adminPage) {
+  return h.redirect('/admin/users');
+}
+else if (request.query.logoutAs) {
+  request.yar.clear('loginAs');
+  return h.redirect('/admin/users');
+}
+```
+
+The two branches are mutually exclusive and the `adminPage` test comes first, so on the `/admin` route the `logoutAs`
+branch is **unreachable by construction** — not conditionally, not intermittently. Both branches emit the same
+`302 → /admin/users`, which is why the failure is invisible from the response alone: the caller sees exactly the
+redirect it expected. Only the session state differs. The entry branch is the mirror image and works, because it is
+guarded on the page name it needs: `else if (request.params.adminPage === 'users' && request.query.loginAs)` at
+`lib/controllers/admin.js:L44`.
+
+**Evidence — measured over real HTTP with MongoDB assertions at every step.**
+
+| # | Request | Status and `Location` | `sessions.value.loginAs` afterwards | `/home` renders the impersonated username |
+|---|---|---|---|---|
+| 0 | — | — | absent | no (0 occurrences) |
+| 1 | `GET /admin/users?loginAs=<ordinary user id>` | **302** → `/home` | **set** to that id | **yes** (2 occurrences) |
+| 2 | `GET /admin?logoutAs=1` | **302** → `/admin/users` | **STILL set** | **still yes** (2 occurrences) |
+| 3 | `GET /admin/users?logoutAs=1` | **302** → `/admin/users` | **cleared** | **no** (0 occurrences) |
+
+Steps 2 and 3 are byte-identical on the wire and opposite in effect. Impersonation itself is honoured only for
+administrators — `lib/util/routeParser.js:L136` gates the `User.findById(loginAs)` swap on
+`request.user.hasRole("admin")` — so a non-admin cannot reach any of this, and the quirk is confined to an
+administrator's own exit path.
+
+**The property that makes this a section-4 entry.** Impersonation is entered and left by **GET with no CSRF token**, and
+the page that carries both links is the same page that carries the stored-XSS sink at
+[4.18](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved). A script running
+in the administrator's origin can therefore assume an identity with a single same-origin `GET`, and the operator's
+instinctive way out of that state — trying `/admin?logoutAs=1` — silently does not work. Neither half is a defect the
+other causes; together they are the reason both are catalogued rather than one. The absent CSRF token is
+[§4.16.1](#4161-the-final-security-gates-findings-sv-nn-and-why-each-remaining-one-is-deferred)'s `SV-27`.
+
+**Why it is preserved.** Reordering the two branches, or adding a `logoutAs` test to the `/admin` route, changes what
+`GET /admin?logoutAs=1` does — from "redirect and keep impersonating" to "redirect and stop impersonating" — which is a
+change to a **measured** session outcome on an authenticated route, and §0.9.4 freezes session and auth behaviour and
+login-flow outcomes in those words. R-1 additionally excludes it as latent-bug repair. Nothing here is a defect this
+migration introduced.
+
+**What a naive fix would have broken.** Swapping the branch order is the obvious repair and it breaks the plain
+`/admin` case: `GET /admin` with no query string would fall through the `logoutAs` test into the body of the handler
+with `page` undefined, so the bare `/admin` entry point — reachable from the nav's `Admin` link, and measured
+**authenticated** at `302 → /admin/users` — would stop redirecting and start rendering with no page selected. (The
+committed corpus covers `/admin` only **unauthenticated**, where it is the `302 → /login` takeover of
+`test/baseline/responses.json`'s `unauthenticated` set, so replay would not catch this; the authenticated redirect was
+measured directly.) Adding a third branch instead avoids that but still changes the session outcome above.
+
+**The authorized change it needs.** Test `request.query.logoutAs` before the `adminPage` guard **and** keep the
+`!adminPage` redirect as the fall-through, so both paths clear impersonation and the bare `/admin` redirect is
+unchanged; and move the state change off `GET` onto a `POST` with a CSRF token, which is the `SV-27` work. The first
+half changes a session outcome and the second changes a route's method, so both need the authorization §4.16 asks for.
+
+### 4.22 Deleting a user leaves its folders behind, with a dangling owner reference
+
+**Provenance.** Found by the final runtime-security assessment's data-governance probe, which drove the full
+self-deletion flow and then read MongoDB rather than trusting the response. Catalogued in section 4 as a **data
+retention** condition: the PII-bearing document itself *is* removed, which is what keeps this informational.
+
+- **Origin:** **baseline.** The cascade hook and its single callee are unchanged: `git diff 2f8712a..HEAD --
+  lib/models/user.js lib/models/course.js lib/models/plugins/ownable.js` shows no change to any of the three.
+- **Reachable in the shipped default configuration:** **yes**, on every account deletion, self-service or otherwise.
+- **Disposition:** **PRESERVED.** Bucket C.
+- **CWE:** CWE-459 (incomplete cleanup), in its data-retention rather than its security sense.
+
+**What it is.** `DELETE /api/users?username=<own>` removes the user document and answers **200**. Documents the user
+owned in the `ownable`-plugin collections are **not** removed and **not** re-owned: they survive carrying an `_owner`
+ObjectId that no longer resolves, plus a denormalized `ownerSlug` copy of the deleted username.
+
+**The mechanism — a cascade that exists but covers one collection.** `lib/models/user.js` **does** register a removal
+hook, `post: { remove: { markAsDeleted } }` at `L332-L334`, and it reaches exactly one model:
+
+```javascript
+function markAsDeleted(doc) {
+  // Clean up user's association with courses when user is removed
+  Course.userDeleted(doc);
+}
+```
+
+`Course.userDeleted` (`lib/models/course.js:L244`) walks `user.roles`, selects the entries whose `context` matches
+`/^course:/`, and sets `users.$.deleted = true` on each matching course — a **soft** mark on course membership, and
+nothing else. No other model is consulted. The `ownable` plugin that supplies the ownership field declares it as
+
+```javascript
+_owner: { type: ObjectId, ref: 'User', required: true, index: options.index }
+```
+
+and `ref: 'User'` is **population metadata, not referential integrity** — mongoose uses it to resolve `populate()`, and
+neither mongoose nor MongoDB enforces anything when the referenced document disappears. `required: true` constrains
+writes to this document, never the lifetime of the one it points at. So the reference dangles silently, and the code
+that reads it degrades rather than erroring: an owner lookup returns `null` and the folder simply does not appear in any
+user's list.
+
+**Evidence — measured end to end, with a whole-database sweep rather than a targeted check.**
+
+| # | Step | Result |
+|---|---|---|
+| 1 | Register a throwaway user, log in | 302 / 200 |
+| 2 | `POST /api/folders {"name":"qafix-to-be-orphaned"}` | **200**, `{"success":true,"folder":{…,"_owner":"<uid>"}}` |
+| 3 | Read the document in MongoDB | `{"name":"qafix-to-be-orphaned","_owner":"<uid>","ownerSlug":"qafixdel"}` |
+| 4 | `DELETE /api/users?username=qafixdel` | **200** |
+| 5 | `db.users.countDocuments({username:"qafixdel"})` | **0** — the user document is genuinely gone |
+| 6 | Re-read the folder | **unchanged**, `_owner` still the deleted id |
+| 7 | Sweep **every** collection for `_owner`, `_creator`, `userId` or `users.userId` equal to the deleted id | **exactly one** collection matches: `folders: 1` |
+
+Step 7 is the measurement that sizes the condition, and it is the reason this is INFO rather than higher. The surviving
+document carries **no e-mail and no password hash** — only the name the user gave the folder and the `ownerSlug` copy of
+the username. Everything that makes a user record sensitive is in the document that was removed, which
+[§4.16](#416-crosswalk-to-the-cumulative-reviews-security-findings-and-the-authorized-change-each-preserved-condition-still-needs)'s
+data-minimization measurements enumerate at 14 fields. The session does not outlive its subject either: replaying the
+deleted user's cookie answers **401 `User not found`**.
+
+**Why it is preserved.** Adding a cascade is **new behaviour**, which §0.9.5 excludes outright — the prompt's exclusion
+list rules out new features, and a delete that now also deletes folders is a new effect on a persisted store. It is also
+a **storage-format** question under TR6: the choices are to remove the documents, to null the `_owner` (which
+`required: true` forbids), or to introduce a tombstone field, and each changes what the `folders` collection contains
+after a deletion. R-1 independently excludes it as latent-bug repair. And the existing hook shows the shape a deliberate
+decision would take — `Course.userDeleted` **soft**-marks rather than deleting, so the 2013-era intent for this flow was
+evidently to retain rather than to purge; extending it to hard-delete would be a policy change, not a bug fix.
+
+**What a naive fix would have broken.** Three candidates, each with a concrete cost:
+
+- **Deleting the owned documents in a widened `markAsDeleted`** makes account deletion destructive across collections
+  it does not touch today, with no undo and no audit record, and it would run inside a mongoose `post('remove')` hook
+  whose rejection nobody awaits — a failure halfway through would leave a partially cascaded delete with the user
+  already gone.
+- **Nulling `_owner`** is rejected by the plugin's own `required: true`, so it would fail validation on save.
+- **Adding a tombstone or an owner-deleted flag** changes the persisted document shape for every collection carrying the
+  plugin, which is exactly the storage-format invariance TR6 protects.
+
+**The authorized change it needs.** A deliberate retention policy for owned content on account deletion — cascade,
+reassign, or tombstone — applied uniformly to every `ownable` collection, driven from a single place rather than from a
+model hook, and awaited so a partial cascade cannot be silently left behind. It changes persisted data on a
+user-initiated action, so it needs product sign-off as well as the authorization §4.16 asks for.
+
+
+### 4.23 Crosswalk to the final runtime-security assessment's findings
+
+**Why this subsection exists.** The final runtime-security assessment — 1,180-plus checks driven over real HTTP, in a
+real browser and against MongoDB, plus a 445-version advisory census — recorded a **FAIL** verdict on the strength of
+**eight new findings**: one Critical, one Minor and six Informational. Every other row of its AAP-compliance matrix
+passed, including the `npm audit --omit=dev` gate, TR1 through TR8, and the §0.9.4 preservation directives. The single
+Critical was **not a migration regression**: it is baseline code, and the reason it was reported rather than accepted is
+that **R-4 requires a preserved defect to be documented, and that one was not**. This table is the answer to every one
+of the eight, so that none is left to be rediscovered, and so that a reader holding an issue number from that report has
+a way in.
+
+Three of the eight were resolved by **changing code** — all three in the container build, none of them touching
+application behaviour. The other five are **preserved and documented**, which is the disposition R-4 mandates for an
+inherited defect whose only fix breaches a frozen contract.
+
+| Report ID | Sev | Condition as reported | Disposition | Where it is answered |
+|---|---|---|---|---|
+| `Issue 1` (**X-2**) | **CRITICAL** | Stored XSS authored by any ordinary user executes JavaScript inside an authenticated administrator's session, via `{{ data \| json("pretty") \| safe }}`; **not catalogued as an XSS sink** | **PRESERVED + DOCUMENTED** — the reported gap was the documentation, and it is closed | [4.18 SEC-15](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved), threaded into the §4 condition table, §4.0 bucket C, §4.14, §4.15.3 and §4.16 |
+| `Issue 2` (**C-1**) | MINOR | The shipped production image contains the entire devDependency tree, `vite` 4.5.14 with two HIGH advisories among it, and the image's own default audit hides them | **FIXED** — `Dockerfile` prunes the development half of the tree after the stylesheet build and before the runtime `COPY`; version-neutral, so the `sass`/`vite` holds and the byte-exact CSS contract are untouched | `Dockerfile`, and the container bullet in `CHANGELOG.md`. Measured 304 → 217 top-level modules, 210 MB → 169 MB, `vite` present → absent, in-image default audit `0 high` now truthful |
+| `Issue 3` (**C-2**) | INFO | `.dockerignore` is a four-entry deny list, so arbitrary gitignored host state — including `config/production.yaml`, the documented deployment path — is baked into the image | **FIXED** — the whole gitignored node-config set is excluded, with the two **tracked** templates re-included by name so nothing else changes | `.dockerignore`, and the same CHANGELOG bullet. Verified with a positive control: four marked secret files entered the image under the old list and none under the new one |
+| `Issue 4` | INFO | A failed validation answers HTTP 200 and echoes the whole submitted payload, plaintext password included | **PRESERVED + INDEXED** — the report's own suggested fix is "none within the AAP"; both halves were already documented, but not from section 4 | [4.19](#419-a-failed-validation-answers-http-200-and-echoes-the-whole-submitted-payload-including-the-plaintext-password), with `DB-18` and `VQ-6` |
+| `Issue 5` | INFO | A deleted user leaves an orphaned folder document with a dangling owner reference; the report notes it "is not currently recorded" | **PRESERVED + DOCUMENTED** | [4.22](#422-deleting-a-user-leaves-its-folders-behind-with-a-dangling-owner-reference) |
+| `Issue 6` | INFO | The `logoutAs` impersonation escape hatch is unreachable at `/admin?logoutAs=1` | **PRESERVED + DOCUMENTED** | [4.21](#421-the-logoutas-impersonation-escape-hatch-is-unreachable-at-adminlogoutas1) |
+| *(inline, Injection section)* | INFO | The archive `filename` sanitizer lets CR and LF through, because `\s` matches them — a real sanitizer gap, not exploitable | **PRESERVED + DOCUMENTED** | [4.20](#420-the-archive-filename-sanitizer-lets-cr-and-lf-through-because-its-own-character-class-admits-them) |
+| *(inline, Deprecation table)* | INFO | Four production-tree packages carry registry deprecation notices with **zero** advisories: `@aws-sdk/core` 3.977.4, `cron-parser` 4.9.0, `crypto-js` 4.2.0, `glob` 10.5.0 | **HELD + DOCUMENTED** — each notice is a maintenance or correctness notice, not a security one, and each pinned version is held by the plan | [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) *The production-tree deprecation notices* |
+
+**The report's `R-4` row is the one this subsection settles.** Its compliance matrix marked R-4 **⚠️ PARTIAL** with the
+reason stated precisely: 17 conditions correctly catalogued and preserved, but the admin JSON-dump stored XSS "is NOT
+catalogued as an XSS sink" — line 4364 of an earlier revision of this document cited the sink only as a PII surface
+under §4.14. That sink is now [SEC-15](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved),
+§4.14's own row points at it, and the §4 condition table, §4.0's bucket list, §4.15.3 and §4.16 all name it. The
+remaining five informational conditions were likewise either already documented or are documented above, so R-4 is
+discharged for all eight.
+
+**The 17 re-confirmed conditions and the zero regressions are not repeated here.** The same assessment re-tested 26
+prior conditions and recorded **5 remediations still closed, 21 preserved and 0 regressions introduced by the
+migration** — sizing evidence for the dispositions in §4.1 through §4.17 rather than new findings, so each stays in the
+entry it belongs to. Two of its measurements are worth keeping in this section because they close arguments made
+elsewhere in it: SEC-1's, SEC-4's and SEC-13's remediations were re-verified **closed on the delivered tree**, which is
+the empirical form of §4.0's bucket-B adjudication and the reason §4.17's earlier "reverted on review" sentence had to
+be corrected; and the production audit was independently re-measured on the host **and inside the shipped image** at
+`{critical 0, high 0, moderate 3}`, which is the G4 gate.
 
 
 ## 5. Crosswalk — in-code quirk labels to catalogue entries
@@ -8143,6 +8733,16 @@ real error stays in the log; that no XSS payload of the ten submitted executed, 
 no bcrypt hash, session seal or credential appeared on any audited page; and that all four write-then-read-back chains
 agreed field by field. The FAIL verdict the pass recorded reflects the state of the product surface it was asked to
 assess, not a defect introduced by this change.
+
+> ⚠️ **The XSS clause above is scoped to the surfaces this pass covered, and two later passes each found one execution
+> outside them.** The ten payloads submitted here did not execute, and that remains a true measurement — but it must not
+> be read as a whole-application result. `bind-html-unsafe` in the library-search typeahead
+> ([SEC-14](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved)) and
+> `{{ … | safe }}` in the admin user-detail JSON dump
+> ([SEC-15](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved)) both execute,
+> and neither surface was in this pass's inventory. What generalizes from all four passes together is narrower and more
+> useful: every surface that relies on Nunjucks autoescaping has held, and every execution found has been on a surface
+> that bypasses it.
 
 
 ## 18. Runtime-QA observations on the database surface — attributed, and preserved

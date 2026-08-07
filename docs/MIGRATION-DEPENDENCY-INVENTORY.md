@@ -1183,6 +1183,15 @@ Every figure in this section was **regenerated from the committed artifacts** im
 never transcribed from the plan. Where a regenerated figure differs from the plan's, both are shown and the drift is
 explained, because an advisory database is a moving target and a number with no provenance is worse than no number.
 
+**Two different questions are answered in this section, and conflating them is the commonest way to misread it.** The
+gate AAP G4 sets is an **advisory** question — `npm audit --omit=dev` at zero critical and zero high — and it is
+measured in the tables below and reconciled package by package in *The three accepted moderate findings* and *Current
+advisory status*. Whether a package is **deprecated** is a separate question that `npm audit` does not answer at all: a
+deprecation notice is publisher free-text with no CWE, no range and no score, and the two sets turn out to be
+**disjoint** in this tree. *The production-tree deprecation notices* below carries that half, and the short version is
+that four production packages are deprecated without carrying any advisory, and the two that carry advisories are not
+deprecated.
+
 **Baseline, at the base commit, re-measured.** The base commit's own `package.json` and `package-lock.json` were
 extracted from `2f8712a` into a scratch directory and audited with `--package-lock-only`, so the measurement is of the
 base commit's resolution rather than of anything this change installed. That lockfile holds **677** package entries
@@ -1390,6 +1399,84 @@ would also reinstate `node-uuid`, which npm itself marks `deprecated: "Use uuid 
 the 23 runtime packages this migration removed as dead (present in the base commit's manifest, absent from the current
 one), and `bluebird`, a promise library whose removal is the point of AAP G3. Accepting three unreachable moderates is
 the only disposition consistent with the gate G4 actually sets.
+
+### The production-tree deprecation notices, and why none of them moves a pin
+
+**Why this subsection exists, and why it is separate from the advisory section above.** The final runtime-security
+assessment's dependency census reported **four packages in the production tree carrying an npm registry deprecation
+notice**. A deprecation notice and an advisory are different things and they are easy to conflate: an advisory is a
+security finding with a CWE, a range and a CVSS score, and it is what `npm audit --omit=dev` and AAP G4 measure; a
+deprecation notice is free-text the publisher attaches to a version, and npm prints it on install regardless of whether
+any vulnerability exists. **All four of these are notices with zero advisories**, so none of them touches the G4 gate —
+and none is a reason on its own to move a pin the plan sets.
+
+**They are registry-only metadata, which is why a source read cannot find them.** The `deprecated` field is **absent**
+from the installed `package.json` of all four — verified by reading `node_modules/<pkg>/package.json` for each — so it is
+observable only from the packument. Each notice below was therefore read from the registry directly, at the exact version
+this lockfile resolves.
+
+**The advisory status is a real negative, not a coverage gap.** The four resolved versions were submitted to the same
+bulk endpoint the section above uses and the response was **`{}`** — literally zero advisories. The query carried a
+**positive control** in the same request so the empty result cannot be a lookup failure: `brace-expansion@1.1.6` returned
+**6** advisories and `minimatch@3.0.2` returned **4**, while the versions this tree actually resolves —
+`brace-expansion` 2.1.4 and `minimatch` 9.0.9 — returned none.
+
+| Package @ resolved version | Reached through | Registry notice (verbatim, abridged) | Advisories | Disposition |
+|---|---|---|---|---|
+| `@aws-sdk/core` **3.977.4** | **14** distinct `@aws-sdk/*` packages declare it — `client-s3` 3.1098.0 directly, plus `checksums`, `middleware-sdk-s3`, `s3-request-presigner`, eight `credential-provider*`, `nested-clients` and `token-providers` — all resolving to a **single installed copy** at `node_modules/@aws-sdk/core` | *"Deprecated due to Document number parsing bug in JSON, see …aws-sdk-js-v3#8246. Newer version available."* | **NONE** | **HELD** — a correctness notice, not a security one |
+| `cron-parser` **4.9.0** | `bull` 4.16.5 | *"v4 is no longer maintained, upgrade to v5"* | **NONE** | **HELD** — not clearable while `bull` stays |
+| `crypto-js` **4.2.0** | direct dependency (AAP I11) | *"Active development of CryptoJS has been discontinued. This library is no longer maintained."* | **NONE** | **HELD** — 4.2.0 **is** `latest`; there is nothing to move to |
+| `glob` **10.5.0** | `archiver` 7.0.1 → `archiver-utils` 5.0.2 | *"Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version."* | **NONE** | **HELD** — the notice's premise does not hold in this tree; see below |
+
+Each disposition is stated with the fact that decides it, rather than by appeal to scope.
+
+- **`@aws-sdk/core` is the only one of the four that a version bump would clear, and the bump is the plan's to authorize.**
+  Measured: `@aws-sdk/core` **3.977.6** carries **no** deprecation notice, while 3.977.5 and 3.977.4 both do, and
+  `@aws-sdk/client-s3@3.1105.0` declares `@aws-sdk/core: ^3.977.6`. So moving the client 3.1098.0 → 3.1105.0 would
+  resolve a clean `@aws-sdk/core` and the notice would disappear. It is **held** because AAP §0.6.1.4 pins
+  `@aws-sdk/client-s3` at **3.1098.0** and `@aws-sdk/s3-request-presigner` at exactly the client's version, and because
+  the notice describes a **JSON Document number-parsing correctness bug**, not a vulnerability — nothing in this
+  application sends or receives an S3 shape that reaches it, since the only operations are `PutObject`, `GetObject`,
+  `DeleteObject` and presigning. Advancing the pin would also mean re-verifying the presigner's emitted URL against the
+  measurement in *Presigned download URLs: the second AWS package*. Recorded here so the decision is available rather
+  than implicit.
+- **`cron-parser` cannot be cleared at all without leaving `bull`.** The notice says *upgrade to v5*, and
+  `cron-parser` 5.7.0 is indeed not deprecated — but `bull` **4.16.5 is the newest `bull` npm publishes** (there is no
+  5.x line at all, verified against the full version list) and it declares `cron-parser: ^4.9.0`, a range that excludes
+  every 5.x. Reaching 5 would require an `overrides` entry forcing a **semver-major** change on a transitive dependency
+  of a queue library, across an API that changed between those majors, to silence a **maintenance** notice with no
+  advisory attached. Held, and the reasoning is the same one *Why there is no `uuid` override* gives for the sibling
+  finding in the same subtree.
+- **`crypto-js` has no upgrade target.** 4.2.0 is simultaneously the pinned version, the **`latest`** dist-tag, and the
+  release that fixed CVE-2023-46233 — the point *Rubric 3* makes about this package. The notice announces that the
+  project stopped, not that the code is unsafe, and AAP I11 adopted it precisely because its output is **bit-compatible**
+  with the retired `node-cryptojs-aes` envelope that the browser at `public/js/trinket-roles.js:L10-L11` decrypts.
+  Replacing it would change a client-visible ciphertext contract; there is nothing to upgrade to; so it is held with the
+  notice recorded.
+- **`glob`'s notice is the one that reads alarming and is the one that is measurably inapplicable here.** It cites
+  *"widely publicized security vulnerabilities"* — those belong to glob's own **dependency chain**, not to glob's code,
+  and the chain in this tree is already clean. `glob` 10.5.0 is the newest 10.x, `archiver-utils` 5.0.2 pins
+  `glob: ^10.0.0`, and the two resolved paths are
+  `archiver@7.0.1 → archiver-utils@5.0.2 → glob@10.5.0 → minimatch@9.0.9 → brace-expansion@2.1.4 (overridden)` and
+  `archiver@7.0.1 → readdir-glob@1.1.3 → minimatch@5.1.9 → brace-expansion@2.1.4 (overridden)`. The vulnerable versions
+  the notice alludes to are `minimatch` below 3.1.x and `brace-expansion` 1.1.x — the exact pair used as the positive
+  control above, which returned 10 advisories between them while the resolved pair returned none. The `brace-expansion`
+  **2.1.4** override this change declares is what closes that half, and it is the same override *Rubric 1* records as
+  collapsing seven high findings. Reaching a non-deprecated `glob` would mean overriding `archiver-utils`' own range by
+  three majors, or moving `archiver` to 8.0.0 — which *Rubric 2* rejects because 8.0.0 is **not CommonJS-callable**.
+- **None of the four is required by repository code.** `require('cron-parser')`, `require('glob')` and
+  `require('@aws-sdk/core')` appear **zero** times across `app.js`, `config/`, `lib/`, `scripts/` and `test/`; all three
+  are reached only through a declared dependency's own internals. `crypto-js` is the one that is called directly, and
+  from exactly one line — `require('crypto-js')` at `lib/util/roles.js:L2`, whose only uses are `CryptoJS.AES.encrypt`
+  and `CryptoJS.AES.decrypt`.
+
+**Read this beside the advisory picture, not instead of it.** The production tree's complete security position is
+**0 critical, 0 high and 3 moderate**, the three moderates being the `uuid`-in-`bull` pair and the deliberate
+`highlight.js` hold, both examined in *The three accepted moderate findings*. `highlight.js` 9.18.5 and `uuid` 8.3.2 are
+therefore the only production packages carrying **both** an advisory and, in `highlight.js`'s case, a hold — and neither
+appears in the table above, because neither is deprecated. The two lists are disjoint, and that is the point: four
+packages are deprecated without being vulnerable, and two are flagged without being deprecated.
+
 
 ### The one accepted HIGH finding, in the development tree
 

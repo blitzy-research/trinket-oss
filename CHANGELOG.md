@@ -27,16 +27,38 @@ per-package tables, the measurements and the adjudications live there and only t
   builder keeps `python3` and `build-essential` and now also clears the apt index it created, and the runtime stage is
   `node:22.23.2-bookworm-slim`, which carries no compiler at all. Slim was required rather than preferred — the full
   base image ships `python3`, `gcc`, `g++`, `make` and `cc` in its own layers, so relocating the explicit `apt-get
-  install` alone would not have removed them. `pm2` is pinned to the exact `5.4.3` the previous floating `pm2@5` already
-  resolved to, and a `HEALTHCHECK` probes the existing `GET /` route with `node` (slim carries no `curl`); no route was
-  added, so the 233-row table is untouched. Verified on the built image: all 38 production dependencies load, `bcrypt`
-  resolves its shipped prebuild and works, the two stylesheets arrive byte-identical with zero `.css.map` files, the app
-  boots and serves `GET /` as 200, and Docker reports the container healthy. Image 2.05 GB → 1.15 GB.
+  install` alone would not have removed them. `pm2` is pinned to the exact `5.4.3` the previous floating `pm2@5`
+  already resolved to, and a `HEALTHCHECK` probes the existing `GET /` route with `node` (slim carries no `curl`); no
+  route was added, so the 233-row table is untouched. The builder also **prunes the development half of the tree**
+  once the stylesheets are built and digest-verified, so the runtime `COPY` no longer carries it: `NODE_ENV` is
+  declared only in the runtime stage, so the builder's `npm ci` installed everything the lockfile declares and the
+  single `COPY --from=builder` shipped all of it, `vite` and `esbuild` among them. That mattered beyond size — with
+  `NODE_ENV=production` baked in, npm omits development dependencies by default, so an audit run *inside* the shipped
+  container reported `0 high` while `vite`'s two HIGH advisories were physically installed. Measured on two images
+  built from the same commit: **304 top-level `node_modules` entries and 210 MB with `vite` present** before, **217
+  and 169 MB with `vite`, `esbuild`, `sass`, `mocha`, `sinon`, `chai`, `sinon-chai`, `chai-as-promised`, `supertest`
+  and `redis-mock` all absent** after (`chokidar` correctly stays — it is a production transitive of `nunjucks`), and
+  the in-image default audit now reports `0 critical / 0 high / 3 moderate` truthfully rather than by omission. The
+  step pins nothing and changes no resolved version, so the `sass` and `vite` holds and the byte-exact stylesheet
+  contract are untouched. Verified on the built image: all 38 production dependencies load, `bcrypt` resolves its
+  shipped prebuild and works, the two stylesheets arrive byte-identical at 265,727 and 296,352 bytes with zero
+  `.css.map` files, the app boots under `pm2-docker` and serves `GET /`, `/login`, `/about` and `/help` as 200, `GET
+  /css/base.css` as 200 at exactly 265,727 bytes, and Docker reports the container healthy. Image 2.05 GB → 1.15 GB.
 - **`.dockerignore` no longer lets a developer's secrets into the image.** It excluded only `**/.git`, so `COPY . …`
   baked `config/local.yaml` — including the session-seal password — into a shipped layer; confirmed present at 3,465
-  bytes before the fix and absent after. `node_modules` and `public/components` are excluded too, since both are
-  reproduced inside the builder by deterministic steps, cutting the build context from 847 MB to 226 MB. The compose
-  workflow is unaffected: it bind-mounts the checkout at runtime, so a developer's `local.yaml` still applies.
+  bytes before the fix and absent after. It now excludes the **whole** gitignored node-config file set rather than
+  that one variant, because naming one was not enough: `.gitignore` also ignores `config/runtime.json` and its
+  `.tmp-*` siblings, `config/development.{yaml,yml,json}`, `config/production.{yaml,yml,json}`,
+  `config/local.{yml,json}` and `config/migration{,Db}.json`, and `config/production.yaml` is the documented
+  deployment path — so an operator building on a host that held real production credentials baked them into a layer
+  with nothing in `git status` to show it. The two **tracked** templates the wildcards would otherwise have swept up,
+  `config/local.example.yaml` and `config/production.yaml.dist`, are re-included by name so the image's contents are
+  unchanged apart from the exclusions. Measured with a positive control: four distinctively-marked secret files
+  planted on the build host entered the image under the previous list and **none** of them entered under this one,
+  with zero occurrences of the marker anywhere in the image tree or in `docker history --no-trunc`. `node_modules` and
+  `public/components` are excluded too, since both are reproduced inside the builder by deterministic steps, cutting
+  the build context from 847 MB to 226 MB. The compose workflow is unaffected: it bind-mounts the checkout at runtime,
+  so a developer's `local.yaml` still applies.
 - **The compose datastore ports are published on `127.0.0.1` instead of every interface.** Port numbers are unchanged,
   and the application is unaffected because it reaches both services by compose service name over the internal bridge
   network rather than through the published ports.

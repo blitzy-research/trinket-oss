@@ -12,6 +12,34 @@
 # environment - so it is excluded outright rather than managed.
 config/local.yaml
 
+# The rest of node-config's gitignored file set, excluded for exactly the same reason as
+# config/local.yaml above. Naming one variant was not enough: `.gitignore` lines 16-28 also
+# ignore config/runtime.json and its .tmp-* siblings, config/development.{yaml,yml,json},
+# config/production.{yaml,yml,json}, config/local.{yml,json} and config/migration{,Db}.json.
+# Every one of those is a place a real deployment secret lives - config/production.yaml is
+# the documented deployment path - and because none of them is tracked, `git status` on the
+# build host stays clean while `COPY . …` copies them verbatim into a layer. An operator who
+# builds on a host holding a real config/production.yaml would otherwise bake production
+# credentials into the image and get no signal that they had.
+#
+# Wildcards rather than exact names, so a new variant of an already-secret-bearing file is
+# excluded by default instead of needing this list to be remembered. The deployed
+# configuration reaches the container through NODE_ENV and the environment; nothing in the
+# image reads any of these paths.
+config/local.*
+config/production.*
+config/development.*
+config/runtime.json*
+config/migration*.json
+
+# The two TRACKED templates the wildcards above would otherwise have swept up. Both are in
+# git, both are secret-free by construction, and both were in every image built before this
+# exclusion list existed, so removing them would be an unrelated change to the image's
+# contents rather than the hardening this list is for. `.dockerignore` applies the last
+# matching pattern, so these two re-include exactly themselves and nothing else.
+!config/local.example.yaml
+!config/production.yaml.dist
+
 # node_modules is produced inside the builder by `npm ci` from the committed lockfile.
 # Shipping the host's copy into the context (210MB here) both slows every build and lets
 # host state influence a step whose entire purpose is to be determined by the lockfile

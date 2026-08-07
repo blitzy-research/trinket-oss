@@ -61,6 +61,16 @@ download can never leave the checkout with neither. Set
 `TRINKET_COMPONENTS_TARBALL` to a local copy of the archive to hydrate **without
 network access**; every check still applies to it.
 
+Two conditions on that chain are documented rather than assumed, and neither is
+this script's. `npm ci` needs **npm 10**, because `.npmrc` sets
+`engine-strict=true` and `package.json`'s `engines` caps npm below 11 -
+`docs/setup.md` gives the `npx -y npm@10.9.9 ci` form. And `node app.js` still
+needs `config/local.yaml` for its session secret, which `git clean -xfd` deletes
+and no script restores (`docs/setup.md`, *Verifying a clean-clone install*).
+`npm test` does **not**: `test/setup.js` forces the session password and the
+`app.url` origin through `$NODE_CONFIG`, recorded in
+[docs/PRESERVED-QUIRKS.md](docs/PRESERVED-QUIRKS.md) section 13.1.
+
 The manual fetch below is the exact equivalent, kept because it is what the
 Docker build performs, because it is what to reach for when you want to inspect
 the archive before it lands in your tree, and because
@@ -215,6 +225,18 @@ disagreements:
 
 - **viewerjs** - the table says `v0.2.1` and `_release` says `0.2.1`. The same
   version, written with and without the tag's `v` prefix.
+  ⚠️ That row does carry two **other** discrepancies, which are recorded here
+  rather than corrected in the table because the table is pre-existing and
+  changing it is not one of this migration's sanctioned changes. Its
+  **repository link is dead and names a different fork**: the table links
+  [nickvergessen/ViewerJS](https://github.com/nickvergessen/ViewerJS), which
+  returns **HTTP 404** - the only non-200 among the external URLs in this
+  document - while the hydrated tree's `_source` is
+  `git@github.com:kogmbh/ViewerJS_release.git`, whose web address
+  [kogmbh/ViewerJS_release](https://github.com/kogmbh/ViewerJS_release) returns
+  **200**. Both conditions are byte-identical to the base commit's row, so
+  neither was introduced here; read `_source` for the authoritative origin, the
+  same way `_release` is authoritative for the version.
 - **marked** and **midi** - the table says `master`, which is a branch rather
   than a version. `_release` records the commit that branch resolved to at
   install time, so the two fields are describing different things. (The `marked`

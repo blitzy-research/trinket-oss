@@ -304,14 +304,54 @@ readings are asserted — the value the application produces, and the base commi
 value — so no assertion was weakened. Every one is enumerated, with the measurement behind it, in
 [Preserved Quirks](PRESERVED-QUIRKS.md) section 0.1.
 
+### Replaying the baseline parity corpus
+
+`npm test` covers the suite. The separate parity evidence — the 233-row route table and the captured response corpus
+that prove the migrated server answers exactly as the base commit's did — is replayed with:
+
+```bash
+NODE_CONFIG='{"app":{"url":{"protocol":"https","hostname":"trinket.dev","port":null}}}' node test/baseline/replay.js
+```
+
+It boots the application on its own port (`30112`, or `30112 + CLONE_INDEX`, overridable with `BASELINE_PORT`),
+against its own disposable database (`test_baseline[_<CLONE_INDEX>]`, overridable with `BASELINE_MONGO_DATABASE`),
+issues real HTTP requests, and exits **0** printing `0 differences`.
+
+**The `NODE_CONFIG` prefix is a precondition, not decoration.** The corpus was captured under the production origin
+`https://trinket.dev`, and every absolute `Location` header and rendered body in it carries that origin. So the
+harness compares the origin this process is configured for against the one recorded in the artifact, and if they
+differ it **refuses to run** — exit **2**, naming both origins and printing the remedy above. It deliberately does
+not supply the origin for you: an injected origin would let a build that emits the wrong one replay clean, which
+would make the evidence worthless.
+
+You will hit that refusal on any working checkout, because step 4 above copies `config/local.example.yaml`, which
+sets `app.url` to your local address. Two ways past it, in order of preference:
+
+1. Prefix the command with the `NODE_CONFIG` above. This changes nothing on disk and is what CI does.
+2. Remove the `app.url` block from your `config/local.yaml` for the duration of the run.
+
+Do **not** edit `config/default.yaml` or `config/test.yaml` to work around it: those files are part of the frozen
+surface this modernization preserves, and `config/test.yaml`'s `start: false` in particular is what the existing
+suite depends on. The exit codes are worth knowing: `0` means parity, `1` means a genuine difference against the
+baseline — an application-code defect to report, never something to normalize away — and `2` means the run could not
+be made, as with the origin mismatch above. `node test/baseline/capture.js --dry-run` performs the same comparison
+from the capture side and writes nothing.
+
 ## Services
+
+`docker compose config --services` reports exactly three: `app`, `mongodb` and `redis`.
 
 | Service | Port | Bound on | Description |
 |---------|------|----------|-------------|
 | app | 3000 | all interfaces | Trinket web application |
 | mongodb | 17017 | `127.0.0.1` only | MongoDB database |
 | redis | 16379 | `127.0.0.1` only | Redis (optional - uses in-memory fallback if disabled) |
-| nginx | 443 | all interfaces | HTTPS proxy (optional) |
+
+An earlier revision of this table carried a fourth row, `nginx | 443 | HTTPS proxy (optional)`. **`docker-compose.yml`
+defines no `nginx` service and nothing in it publishes 443**, so that row has been removed rather than left to be read
+as an available service. That row was byte-identical to the base commit's, so the discrepancy is pre-existing rather
+than introduced here; terminating TLS in front of the app is still a perfectly reasonable deployment choice, but it is
+not something this repository's Compose file provides.
 
 The two datastore ports are published to the loopback interface only. They previously bound every interface, which put
 both datastores on the whole network with no authentication in front of either: **MongoDB holds every user record

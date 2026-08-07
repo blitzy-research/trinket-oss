@@ -46,7 +46,14 @@ withdrawn. **[Section 4](#4-the-security-condition-catalogue) is the missing hal
 for each whether it was preserved or remediated, and records the reachability measurement and the governing rule.
 R-4 is discharged by sections 1-4 read together, not by sections 1-3 alone.
 
-Section 4 has since grown by two entries that came from a **different** source: a runtime-security QA checkpoint
+Section 4 has since grown by **two further conditions** that came from sources a static review cannot reach, so it now
+runs SEC-1 … SEC-14. The later of the two, **SEC-14**
+([4.17](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved)), is a **stored
+cross-site scripting** in the library-search typeahead: the single most severe condition in this document, found by a
+frontend UX and interaction checkpoint typing into a search box, and missed by both earlier XSS sweeps because neither
+exercised that surface. A reader who takes only one thing from section 4 should take that one.
+
+The earlier of the two came from a runtime-security QA checkpoint
 that exercised the running application over real HTTP rather than reading its source. It contributed **SEC-13**
 ([4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated)), the one condition in
 this document that a static review did not find, and **nine informational observations**
@@ -102,13 +109,13 @@ used inside four source files onto the entries above, and doubles as the entry f
 do not cover. It is also the only section whose line numbers are migrated-frame rather than base-commit.
 
 **Where to find what.** Sections 1 and 2 are the discrete quirks and the deliberate version skews. Section 3 holds
-the R-6 adjudications: individual ambiguities decided against measured base-commit behavior. Sections 4 to 17 cover
+the R-6 adjudications: individual ambiguities decided against measured base-commit behavior. Sections 4 to 22 cover
 the **systemic** preservations, which do not fit the one-quirk-per-entry shape, and the appendix records the
 base-commit anchors every parity claim is checked against:
 
 | Section | Covers |
 |---|---|
-| 4 | the security-condition catalogue, SEC-1 … SEC-12, with reachability and disposition per condition |
+| 4 | the security-condition catalogue, SEC-1 … SEC-14, with reachability and disposition per condition — **SEC-14 (4.17) is the stored XSS, the most severe entry in this document** |
 | 5 | the crosswalk from the private quirk labels used inside four source files to the entries above |
 | 6 | the no-response / convergence decision table: every branch converted to an abandoned response, and why |
 | 7 | the mechanisms measured during the conversion — the error map, the responders, the censuses |
@@ -122,6 +129,11 @@ base-commit anchors every parity claim is checked against:
 | 15 | the post-migration behavioural sweep: twenty-one browser-and-API conditions, each adjudicated against the base commit |
 | 16 | the runtime-QA observations on the integration surface: pre-existing conditions, each attributed to the base commit |
 | 17 | the runtime-QA observations on the browser surface: 41 pre-existing conditions across nine journeys, each attributed to the base commit |
+| 18 | the runtime-QA observations on the database surface: the schema, model-factory and persistence conditions, each attributed to the base commit, plus the one documentation defect that pass reported and the correction it received |
+| 19 | the runtime-QA observations on the observability surface: where a failure leaves no trace, what each log channel does with a secret, and the log-channel conditions the pass added to the record |
+| 20 | the runtime-QA observations on the performance surface: 22 pre-existing conditions — unbounded results, N+1 fan-out, growth surfaces and the browser rendering costs — each attributed to the base commit by an A/B that ran the base commit beside this tree |
+| 21 | the runtime-QA observations on the final visual and rendering surface: the presentation-layer conditions found across 36 screen families and 13 viewport widths, each attributed to the base commit |
+| 22 | the runtime-QA observations on the frontend UX, interaction and data-state surface: 85 pre-existing conditions across 66 testable units and 48 screens. The entries are organised by **mechanism**, since several reported identifiers share one cause; **[22.14](#2214-the-complete-qa-identifier-crosswalk) is the index by identifier** — 105 generated rows covering all 72 numbered issues and all 83 lettered IDs, each resolving to the entry that measured it |
 | appendix | the base-commit parity anchors — route table, response corpus, cookie contract, error-mapping contract, build artifacts |
 
 Sections 6, 7 and 8 are the ones to read first if a source comment says only *"see docs/PRESERVED-QUIRKS.md"*: the
@@ -174,7 +186,7 @@ override to `test/baseline/capture.js:L384-L409`, and the `NODE_CONFIG_PERSIST_O
 section 12.4 to `test/baseline/capture.js:L384`. The same files are cited before and after, so the class counts above
 are unchanged; only the line numbers inside them moved.
 
-**Evidence status — the parity, build and QA outcomes in sections 14, 16, 17 and the appendix are provisional.** Those
+**Evidence status — the parity, build and QA outcomes in sections 14, 16, 17, 18, 19, 20, 21, 22 and the appendix are final.** Those
 sections quote figures that come from the **final parity artifacts** — `test/baseline/route-table.json`,
 `test/baseline/responses.json` — and from the runs that consume them: replay difference counts, route-table digests,
 response-status distributions, cookie-attribute sets, CSS artifact sizes and digests, and the deprecation-gate boot.
@@ -237,7 +249,7 @@ Every figure here was re-measured on the delivered tree with the command shown, 
 | Install | `npx -y npm@10.9.9 ci` | exit 0, **427 packages added** (`audited 428` = those 427 plus the root) | ✅ |
 | Install under npm 11 | `npm ci` | refused, `EBADENGINE` — `engines.npm` is `>=10.0.0 <11.0.0` and `.npmrc` sets `engine-strict=true` | ⚠️ by design |
 | Asset build | `npm run build` | exit 0; `public/css/base.css` **265,727** bytes sha256 `34f1b6e1…`, `public/css/embed.css` **296,352** bytes sha256 `53f47fc7…` — byte-identical to the recorded baseline | ✅ |
-| Production audit | `npm audit --omit=dev` | **0 critical, 0 high, 3 moderate** — exactly the plan's projected set | ✅ |
+| Production audit | `npm audit --omit=dev` | **0 critical, 0 high, 3 moderate** — exactly the plan's projected set. Holding this row true required one patch bump after a later advisory: the `js-yaml` pin is **3.15.1**, not the 3.15.0 the plan named, because GHSA-5p4m-2wfm-xmqj was published against 3.15.0 in the interval and charged as a **high**. It stays on the 3.x line, so `safeLoad` at `config/routes.js:L7` is untouched and all 9 YAML documents in the tree parse identically — [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) *The advisory that moved the `js-yaml` pin from 3.15.0 to 3.15.1* | ✅ |
 | Deprecation | `node --pending-deprecation app.js` with a `process.on('warning')` collector and a 3-second soak | zero process warnings | ✅ |
 | R-6 response/route replay | `node test/baseline/replay.js` | **0 differences**; unauthenticated 58, authenticated 7, assignment-`next` 8 | ✅ |
 | R-6 documented route-table anchor | `test/baseline/route-table.json#gates.documentedAnchorGate`, recomputed live by ONE shared evaluator — `capture.js#documentedAnchorGate`, declared in the harness that owns the artifact and **re-exported** unchanged by `test/baseline/replay.js` — and enforced by all three owners: the capture CLI's per-clause gate entries, the replay CLI's diff, and `test/lib/api/route-parity.js`, which recomputes the same clauses plus the exact sorted 233-row set and all three fingerprints from literals of its own | all **11** clauses satisfied — the frozen 32-character literal is retained verbatim and the 233-row table it names is byte-identical, clause by clause; the literal itself is not recomputable by any verifier (32 characters, labelled sha256, no serialization published — see §3.22) | ✅ **enforced as a mandatory gate** |
@@ -524,28 +536,47 @@ Start and `app | 3000` in its Services table.
 default-value defect, not a functional break. Correcting the default is latent-bug repair.
 
 **What a naive fix would have broken.** Any operator or wrapper script that already passes `3001` deliberately, or
-that relies on the documented default, would change behavior. The mismatch is therefore **documented, not corrected,
-in all three places**: `test/smoke-test.sh` receives a comment-only change pointing at this document, and the
-documentation keeps 3000 and never mentions 3001.
+that relies on the documented default, would change behavior. **The default is therefore preserved verbatim** — it is
+still `BASE_URL="${1:-http://localhost:3001}"`, at delivered L14 — and the mismatch is **documented, not corrected, in
+all three places**: the script gains a comment pointing at this document, and the documentation keeps 3000 and never
+mentions 3001.
 
-**A second drift in the same script: three of its eleven assertions cannot pass.** Pointed at a healthy server on the
-port the project actually publishes, the script reports **8 passing and 3 failing checks and exits 1** — measured as
-`bash test/smoke-test.sh http://localhost:<port>` against a live server. The three failures are `API root accessible`
-(`/api`), `HTML trinket page` (`/html`) and `Library page` (`/library`), each asserting HTTP 200 against a route that
-answers **404**. All three 404s are correct, and they have two different causes. `/api` and `/library` have **zero**
-exact rows in the 233-row route table — the only `library` rows are `GET /library/trinkets/{path*}` and
-`GET /library/folder/{slug}` — so both fall through to the `/{path*}` catch-all and render the 1,545-byte error page.
-`GET /html`, by contrast, **is** registered as one row of the table and 404s because `config/default.yaml:L8` sets
-`features.trinkets.html: false` while `L7` sets `features.trinkets.python: true`, which is quirk 1.4. The committed
-baseline corpus records the same reading: `test/baseline/responses.json` has `/html` at **404** with `/`, `/login`,
-`/signup`, `/python`, `/about` and `/help` at **200**.
+**A second drift in the same script, and the one disposition in this section that changed.** ⚠️ An earlier revision of
+this entry published a single reading — *8 passing and 3 failing checks, exit 1* — without saying which frame it was
+measured in, and concluded that "a fully green smoke run is unattainable without breaking the freeze" and that "the
+script's diff for this changeset is comment-only, so no assertion was touched". QA found all three of those statements
+false against the delivered tree. Both frames are therefore published here, measured on the **same** live server (the
+delivered application, `bash <script> http://localhost:<port>`):
 
-**Why those three assertions are preserved.** R-1 and R-4 both reach them. Rewriting an assertion to expect 404 is
-latent-bug repair in a file whose only sanctioned change in this changeset is the comment above, and enabling
-`features.trinkets.html` so the assertion passes would add a feature and change the status of the flag-gated routes —
-the change the exclusion directive rules out. A fully green smoke run is therefore unattainable without breaking the
-freeze, and a non-zero exit against a healthy server is this script's base-commit outcome rather than a regression
-introduced here. The script's diff for this changeset is comment-only, so no assertion was touched.
+| Frame | Checks in the script | Result |
+|---|---|---|
+| Base commit `2f8712a`'s script | **11** | **8 passed, 3 failed, exit 1** |
+| The delivered script | **13** | **13 passed, 0 failed, exit 0** |
+
+Those are check counts of the committed script, which the *Run totals are deliberately not published* rule explicitly
+does not cover — they are properties of a file, not of a Mocha run.
+
+The three base-frame failures are `API root accessible` (`/api`), `HTML trinket page` (`/html`) and `Library page`
+(`/library`), each asserting HTTP 200 against a route that answers **404**. All three 404s are correct, and they have
+two different causes. `/api` and `/library` have **zero** exact rows in the 233-row route table — the only `library`
+rows are `GET /library/trinkets/{path*}` and `GET /library/folder/{slug}` — so both fall through to the `/{path*}`
+catch-all and render the 1,545-byte error page. `GET /html`, by contrast, **is** registered as one row of the table and
+404s because `config/default.yaml:L8` sets `features.trinkets.html: false` while `L7` sets
+`features.trinkets.python: true`, which is quirk 1.4. The committed baseline corpus records the same reading:
+`test/baseline/responses.json` has `/html` at **404** with `/`, `/login`, `/signup`, `/python`, `/about` and `/help` at
+**200**.
+
+**What was preserved is the behavior, and what changed is what the script asserts about it.** The 404s themselves are
+untouched: enabling `features.trinkets.html` so the original assertion could pass would add a feature and move the
+status of the flag-gated routes — the change the exclusion directive rules out — and no route was added to give `/api`
+or `/library` an exact row. What the delivered script does instead is **assert the measured outcome**: `/api` and
+`/library` are asserted at 404 as catch-all paths, `/html` at 404 as feature-flagged off, and two checks were **added**
+(`GET /api/courses` at 401, and its body containing `"statusCode":401`) so that the API surface's authentication
+outcome and Boom JSON shape are covered rather than merely its absence. Eleven checks become thirteen; the diff is
+`50 insertions(+), 6 deletions(-)`, which also carries the `--connect-timeout`/`--max-time` bounding of review finding
+M-10. So the script's exit status against a healthy server is now 0, and it reports on preserved behavior instead of
+contradicting it. The reading that a **base-frame** script exits non-zero against a healthy delivered server still
+holds, and it is the row above; it is a property of the base commit's expectations, not a regression here.
 
 ### 1.7 Two orphaned SCSS entry points, and no `.css.map` files despite source maps being enabled
 
@@ -1100,6 +1131,7 @@ column are shorthand for `lib/controllers/`.
 
 | Controller branch (base commit) | Why it answered nothing | Parity handling |
 |---|---|---|
+| `admin.js:L116-L120` `uploadUsers` — a CSV payload the parser rejects | `parse(request.payload.userList, {…}, function (err, records) { if (err) return request.fail(err); … })` handed the **raw `CsvError`** to the failure responder, and that responder ends at `h.response(json)`, which refuses to wrap an `Error` — so the responder itself raised. At the base commit the raise happened inside csv's own `parse` callback, a frame the handler had already left, so it could not become a response and the deferred capture was never settled. The responder's log line had already been written by the time it raised, so this branch answers nothing **and still logs once** | `return NoResponse.rejectOrAbandon(h, err)` — same responder, same single raw argument, the raise contained and answered with `h.abandon`. Measured on the delivered tree: a `CSV_RECORD_INCONSISTENT_COLUMNS` payload receives **no response at all** (0 bytes, no status, the connection held until the client gives up) while an empty payload on the same route answers **200** and a 506-character single-token payload answers a byte-identical 200; the user census is unchanged across all three; the next request on any route is served normally; and **exactly one** log line is emitted — the responder's own — as at the base commit |
 | `admin.js:L158-L175` `updateUser` — a falsy `request.payload.roles` | `if (request.payload.roles)` has no `else`, so the lookup callback fell through without reaching any responder | `return h.abandon` |
 | `courses.js:L22-L53` `create` — a falsy `response.result`, or a result carrying neither `.course` nor `.err` | both responder calls sit inside `if (response.result)` and neither test matched; the handler then resolved `undefined` | `return h.abandon` |
 | `courses.js:L82-L98` `copy` — `Course#copy` reported an error | the callback discarded `err` and dereferenced `course.slug`, raising a `TypeError` inside a callback no promise chain owned | `if (!course) return h.abandon` after the awaited adapter |
@@ -1630,16 +1662,29 @@ unguarded `.pathname` read afterwards is a `TypeError`, i.e. a working response 
 
 **What baseline decided — one mechanism, two spellings, chosen per call-site shape.**
 
-- **Six `lib/` sites → `URL.parse(x)` with the `null` case neutralized.** `lib/controllers/trinket.js` L1482, L1599 and
-  L1809 go through a 5-line local `assetPathname()` helper declared at L35; `lib/workers/exports.js#assetPathBasename`
-  L46 applies the same two lines inline; `lib/controllers/users.js` L588 keeps the existing validation quirk, where the
-  raw payload is parsed and the absence of a protocol drives the rejection. Two of the trinket sites are genuinely
-  **unguarded** — only `if (!asset.url) return;` and the `/^data:/` test precede them — and both are reached
-  synchronously from a stream handler, so an unguarded read would be an uncaught exception rather than a caught
+⚠️ **The citations below were re-derived.** An earlier revision gave `lib/controllers/trinket.js` L1482/L1599/L1809
+with the helper at L35, and `test/lib/api/registration.js` L102 — numbers that resolve in **neither** frame, as QA
+reproduced. This section follows the catalogue's convention and cites the **base commit** (sections 1 to 3 do; only
+section 4 cites the current tree), with each delivered counterpart named alongside so both are checkable:
+
+| Base site | Delivered counterpart |
+|---|---|
+| `lib/controllers/trinket.js` L1253, L1350, L1521 | L1473, L1590, L1847, each calling the 5-line local `assetPathname()` helper declared at **L33** (its single `URL.parse` is L34) |
+| `lib/controllers/users.js` L588 | L849 |
+| `lib/workers/exports.js` L40, L304 | both now call `assetPathBasename()`, declared at **L45**, from L53 and L445 |
+| `test/helpers/flow.js` L399 | L574 |
+| `test/lib/api/registration.js` L85 | L111 |
+
+- **Six `lib/` sites → `URL.parse(x)` with the `null` case neutralized.** The three `lib/controllers/trinket.js` sites
+  go through the shared `assetPathname()` helper, and the two `lib/workers/exports.js` sites through
+  `assetPathBasename()`, which applies the same two lines; `lib/controllers/users.js` keeps the existing validation
+  quirk, where the raw payload is parsed and the absence of a protocol drives the rejection. Two of the trinket sites
+  are genuinely **unguarded** — only `if (!asset.url) return;` and the `/^data:/` test precede them — and both are
+  reached synchronously from a stream handler, so an unguarded read would be an uncaught exception rather than a caught
   rejection. The fallback is the **raw input string**, which is what the legacy parser's `pathname` was for a
   non-absolute input.
 - **Two test sites → `URL.parse(x, config.url)`.** `test/helpers/flow.js#setLastResponse` and
-  `test/lib/api/registration.js` L102 read a `Location` header. Both shapes really do reach those lines, so neither may
+  `test/lib/api/registration.js` read a `Location` header. Both shapes really do reach those lines, so neither may
   be assumed: relative ones (`/`, `/home`, `/login`, `/courses/algebra-1`, `/reset-pass?key=…`) come from `app.js`'s
   `onPreResponse` takeover and the controllers' own `h.redirect()`, absolute ones
   (`http://localhost:3000/home`, `https://accounts.google.com/o/oauth2/v2/auth?…`) from
@@ -1668,8 +1713,8 @@ untrusted input is not added on an assumption of parity.
 `test/lib/api/registration.js` = **23** pathname assertions, and every one of them still reads `pathname` off the value
 this line produces.
 
-**No `require('url')` binding remains** anywhere in `app.js`, `config/`, `lib/` or `test/`, so DEP0170 is gone from the
-tree entirely rather than merely from the hot paths.
+**No `require('url')` binding remains** anywhere in `app.js`, `config/`, `lib/` or `test/`, so **DEP0169** is gone from
+the tree entirely rather than merely from the hot paths.
 
 ### 3.14 The `.fail(` and `.spread(` census was refined
 
@@ -2093,7 +2138,7 @@ are the record, and the comments state only the resulting invariant.
 ### 3.24 `Query#stream()` has thrown since mongoose 5, and the throw is preserved — as is `count()`
 
 **The ambiguity.** `lib/workers/exports.js` builds its per-trinket archive by iterating a `Query#stream()`
-(`2f8712a:L215`; `L261` delivered). That method was removed in **mongoose 5** and this repository runs **6.13.10**,
+(`2f8712a:L215`; `L337` delivered). That method was removed in **mongoose 5** and this repository runs **6.13.10**,
 where `typeof query.stream` is `undefined` and the call raises `TypeError: <query>.stream is not a function`. The base
 commit contains the identical call, so the bulk-export worker has been unable to complete a job since the ODM was last
 advanced. Converting the surrounding callback chain to `async`/`await` put the question directly in front of the
@@ -2112,9 +2157,23 @@ deliberate change; nothing else in this changeset depends on the worker succeedi
 that wants modernising, and the only thing marking it as deliberate is the inline comment at the call site pointing
 here. The same reasoning governs the adjacent trinket count, which the base commit issued as
 `Q.nsend(Model, 'count', { _owner: userId })` at `2f8712a:L122` and which is now `await Model.count({ _owner: userId })`
-at `L149`: `count()` is deprecated on mongoose 6 and removed on 7 — one of the reasons the ODM is held inside the 6.x
-line, recorded in [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) — and it deliberately stays
-`count()` rather than becoming `countDocuments()`, which takes a different driver path.
+at `L166`: `count()` is deprecated on mongoose 6, and it deliberately stays `count()` rather than becoming
+`countDocuments()`, which takes a different driver path.
+
+**A correction to the version this entry used to name, and to the two delivered line numbers above.** An earlier
+revision read *"`count()` is deprecated on mongoose 6 and removed on 7 — one of the reasons the ODM is held inside the
+6.x line"*, and cited the delivered `stream()` at `L261` and the delivered `count()` at `L149`. All three figures are
+wrong on the delivered tree and have been corrected in place. `count()` is **not** removed in mongoose 7: measured on a
+real `mongoose@7.8.11` install against live `mongod`, `await Model.count({})` executes and returns a `number`. It is
+removed in mongoose **8** — `typeof Model.count` is `undefined` on 8.24.2 — so `count()` is a *second* ceiling one major
+beyond the first, not the reason 6.x is the ceiling. The reasons that hold at **7** are the wholesale removal of
+callback support and the removal of `Document.prototype.remove()`, both measured and both with call sites in this tree;
+[MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) Rubric 5 carries them, together with the
+correction note explaining why its own earlier rationale for the hold was withdrawn. The two line numbers drifted when
+this file's async conversion grew `lib/workers/exports.js`; they were re-derived from the committed source rather than
+adjusted by arithmetic, and the base-commit citations `2f8712a:L215` and `2f8712a:L122` were checked with
+`git show` and are unchanged. The condition is catalogued as `DB-16` in
+[section 18](#18-runtime-qa-observations-on-the-database-surface--attributed-and-preserved).
 
 ### 3.25 `validator` 13 silently changed a PERSISTED field, and the old verdict is restored by a shim
 
@@ -3329,7 +3388,7 @@ returned `true` — and pointed at `127.0.0.1:1`, which refuses every connection
 | `POST /api/ohnoes` with the admin catch stripped | process **died** with `Error: connect ECONNREFUSED 127.0.0.1:1`, exit 1 — it never even reported the status, so the client got nothing |
 | `POST /send-pass-reset`, delivered code | **200 in 19 ms** against the dead host — the response does not wait for SMTP; survived the 5-second window |
 | `POST /send-pass-reset` with the reset catch stripped | the route answered (its 26 ms timing line fired) and the process **then** died with the same `ECONNREFUSED`, exit 1 — the fault lands *after* the response, taking every other in-flight and future request with it |
-| Full suite and R-6 replay with all four catches in place | **271 passing**, and `0 differences` |
+| Full suite and R-6 replay with all four catches in place | `npm test` **exit 0 with zero failures**, and `0 differences` |
 
 **What a naive fix would have broken.** Awaiting any of the four moves the response behind SMTP — on the password-reset
 route that is the difference between 19 ms and a connection timeout. Logging the failure adds output the base commit
@@ -3378,7 +3437,7 @@ fails *after* the primary identity has already been persisted.
 | Forced mid-capture failure, delivered code | rejects with the original `ECONNREFUSED`; **throwaway=0, signup=0** |
 | The same failure with the old two-argument tail restored | rejects with the same original `ECONNREFUSED`, but **throwaway=1** — the defect, reproduced exactly |
 | Success path against the real listening server | **8** entries, order and state labels identical to the committed corpus, and **throwaway=0, signup=0** afterwards |
-| Full suite and R-6 replay | **271 passing**, and `0 differences` |
+| Full suite and R-6 replay | `npm test` **exit 0 with zero failures**, and `0 differences` |
 
 **What a naive fix would have broken.** Wrapping the tail so a cleanup outcome could reach the caller would let a
 cleanup result displace the `ECONNREFUSED` that tells the operator why the capture failed. Removing the mid-chain
@@ -3474,6 +3533,101 @@ described next), `grep -c "require('crypto')" lib/util/routeParser.js` → **1**
 `grep -n "require('tab')\|require('optimist')" lib/util/routeParser.js` → empty. The declaration block carries a
 seven-line note at `L1-L7` pointing back at this section, so the next census to raise the question finds the answer at
 the site as well as here.
+### 3.47 The snapshot cleanup's 404 exemption was disabled by the SDK replacement, and R-6 preserves the behavior, not the expression
+
+**The ambiguity.** `lib/models/trinket.js#postRemove` fires the best-effort snapshot delete and logs any failure
+except one: `if (err && err.statusCode !== 404)`. The exemption exists because an already-absent snapshot object is
+not an operator's problem. That expression is **byte-identical to the base commit** — `git diff 2f8712a HEAD --
+lib/models/trinket.js` is empty — and this file's own brief listed it among the lines to keep verbatim, with a
+`grep -c "err.statusCode !== 404" → 1` gate to prove it. So on a source reading, nothing here needed to change.
+
+The behavior had changed underneath it anyway. The base commit reached that guard through `aws-sdk` v2
+(`2f8712a:package.json` declares `"aws-sdk": "^2.1.20"`; `2f8712a:lib/util/file.js` calls
+`client.deleteObject(params, cb)`), whose `AWSError` carried a **top-level `statusCode`**. R-2 replaced it with
+`@aws-sdk/client-s3`, which publishes the status under **`$metadata.httpStatusCode`** and sets no `statusCode` at
+all. The guard therefore compared `undefined !== 404`, which is always true, and the 404s the base commit swallowed
+were logged. A runtime QA pass over the integration surface found it — its one deviation from base-commit behavior
+in 201 test cases — at MINOR, log-only.
+
+So two readings of "preserve" pointed opposite ways: preserve the **expression**, or preserve the **outcome**.
+
+**What baseline decided.** The outcome, and R-6 says so in its own terms: the tie-breaker is *the observed behavior
+of the application at the base commit*, which was **silence on a 404**. An expression is evidence of intent, not the
+thing being frozen — and here keeping it verbatim is precisely what destroys the behavior it was written to produce.
+Three further reasons converge on the same answer, and no reading of the rules supports the other branch:
+
+- **R-5 mandates it.** *"Every error-to-response mapping must survive the async conversion unchanged."* §0.8.7
+  records that R-5 wins over R-1 wherever the two touch, which is exactly this hunk.
+- **The migration had already written the contract down.** `config/aws.js`'s header states that v3 errors carry
+  `$metadata.httpStatusCode` "rather than code / statusCode, so a caller that branches on an error must still return
+  the status it returns today." This is the only caller in the tree that branches on an AWS error status, and it was
+  the one place that requirement had not been honored.
+- **The house precedent is settled.** Section 16 records that the previous integration pass also found exactly one
+  deviation from base behavior — the outbound OAuth form encoding — and that it was **repaired**, with the repair
+  recorded in the adjudication it belonged to (section 3.37). This is the same class of deviation, so it gets the
+  same disposition.
+
+⚠️ **Distinguished from the reverted security remediations.** SEC-1, SEC-4 and SEC-13 were repaired and then
+**reverted** (§0.2), and nothing here contradicts that. Those three moved client-observable behavior *away* from the
+base commit; this moves a log line *back to* it. The blast radius was measured, not assumed: `postRemove` is
+fire-and-forget and never awaited by a handler, and its `.catch` still swallows, so no status code, payload, cookie,
+database write or process fate changes. It is stderr, and only stderr.
+
+**How it is implemented.** One local reads the status from both shapes, and the condition tests that local:
+
+```javascript
+var status = err && (err.statusCode || (err.$metadata && err.$metadata.httpStatusCode));
+
+if (err && status !== 404) {
+  console.error('Failed to remove snapshot:', err.message);
+}
+```
+
+Four properties of that shape are deliberate. The **v2 term is kept first**, so the `statusCode` read the base
+commit performed is not dropped and an error still carrying that shape is still honored — the fix widens the guard
+rather than relocating it. An error carrying **neither** status still logs, which matters because this same handler
+receives a second, non-AWS rejection: `isSnapshotUsed`'s `countDocuments` failure is a plain `Error`, and that has
+never been suppressible. The **status is never invented** — no default, no coercion — so a shape neither term
+recognizes falls through to the log, which is the fail-loud direction. And everything around it is untouched: the
+`if (doc.snapshot)` outer guard, the fire-and-forget contract (nothing is awaited or returned), the message literal
+`'Failed to remove snapshot:'` and its `err.message` second argument. The hunk is one of R-1's four sanctioned
+categories — dependency swap — and it is the only hunk in the file.
+
+**Evidence, measured.** The error shapes were taken from the **real** `@aws-sdk/client-s3` 3.1098.0 driven over real
+HTTP against a server returning genuine S3 `<Error>` XML — not synthesized. The end-to-end runs then drove the whole
+production chain with **nothing stubbed**: a real `doc.remove()` on a real MongoDB document, the real mongoose
+post-remove hook, the real `removeSnapshot` → `isSnapshotUsed` → `removeFile` path, and the real
+`DeleteObjectCommand` over real HTTP, reached by giving the snapshots bucket a dotted name so the SDK addresses it
+path-style.
+
+| Measurement | Result |
+|---|---|
+| Real SDK error for an S3 404 `NoSuchKey` | own keys `$fault, $metadata, $retryable, Code, HostId, RequestId, message, name`; `typeof err.statusCode === "undefined"`; `$metadata.httpStatusCode === 404` |
+| The base expression against that error | `undefined !== 404` → **true**; the 404 could never be suppressed |
+| The delivered expression against that error | resolves **404** → suppressed |
+| The delivered expression, four further shapes | `NoSuchBucket` 404 → **404** · `AccessDenied` 403 → **403** · a legacy `statusCode: 404` → **404** · a status-less `Error` → **undefined** |
+| End to end, delivered: 404 `NoSuchKey` and 404 `NoSuchBucket` over real HTTP | a real path-style `DELETE …?x-id=DeleteObject` reached the endpoint, and **zero** log lines |
+| End to end, delivered: 403 `AccessDenied` | **one** log line, `Failed to remove snapshot: Access Denied` — text unchanged |
+| End to end, delivered: a successful 204 delete | **zero** log lines |
+| End to end, **guard reverted to the base expression** | the QA-reported line reappears byte-for-byte: `Failed to remove snapshot: The specified key does not exist.`, plus the `NoSuchBucket` variant — the defect, reproduced exactly |
+| `isSnapshotUsed` refcount guard, two trinkets sharing one snapshot | removing the first issues **no** `DeleteObject`; removing the last issues exactly **one**, whose 404 is suppressed |
+| A removed document with no `snapshot` | **zero** S3 calls, zero log lines |
+| `DELETE /api/trinkets/{id}` over real HTTP, authenticated | **200** `{"data":1}`, `deletedAt` set, snapshot URL retained, and **zero** S3 traffic — the soft delete never fires `postRemove` |
+| Suite | **576 passing**, 0 failing, `--check-leaks` active (569 before, plus the 7 new tests) |
+| The 7 new tests against the base expression | **2 failing** — the two v3-404 cases — and the legacy-`statusCode`, 403 and status-less cases still passing, so they pin the behavior rather than the fix |
+| R-6 replay | `0 differences`; unauthenticated 58, authenticated 7, assignment-`next` 8; resolved `{200:25, 401:7, 404:25, 500:1}`; `base.css` 265,727 B, `embed.css` 296,352 B, 0 map files |
+
+**What a naive fix would have broken.** Reading **only** `$metadata.httpStatusCode` would have dropped the v2 read
+the base commit performed — cosmetically tidier, and a second silent behavior change for any error still carrying
+that shape. Defaulting the status (`|| 404`, or `|| 0` compared loosely) would have swallowed the `countDocuments`
+rejection that has always been logged. `await`-ing or `return`-ing the cleanup so the failure could be inspected
+would have moved a best-effort failure onto the caller and changed save latency, which section 1's fire-and-forget
+inventory forbids. Rewording the message, or adding the status to it, would have changed the line an operator's
+tooling reads. Extracting a shared status helper into `config/aws.js` would have spread a one-line, log-only repair
+across two files for no behavioral gain, against R-1. And leaving it alone on the strength of the verbatim-preservation
+gate would have preserved the **text** of a guard while shipping the loss of the behavior it names — which is the one
+outcome R-6 actually forbids. The gate is therefore retired for this line, and stated as retired: `err.statusCode` is
+still read, but no longer as the whole condition.
 
 
 ## 4. The security-condition catalogue
@@ -4583,6 +4737,119 @@ behaviour, and each row above would change observable behaviour in a way a named
 The three that ship — SV-01, SV-02 and SV-03 — ship because no rule actually reached them and because their remediation
 was measured to change nothing a legitimate client observes, which is the test every row here is held to.
 
+### 4.17 SEC-14 — stored cross-site scripting in the library-search typeahead (CRITICAL) — PRESERVED
+
+**Provenance, and why this entry arrived late.** SEC-1 through SEC-12 came from a static security review; SEC-13 came
+from a runtime-security checkpoint. **SEC-14 came from neither.** It was found by the frontend UX / interaction /
+data-state checkpoint catalogued in [section 18](#22-runtime-qa-observations-on-the-frontend-ux-interaction-and-data-state-surface),
+by typing into a search box — a surface a source review does not exercise and an API-level probe cannot reach. It is the
+**one execution** that two earlier browser sweeps missed, and both of their conclusions are **corrected here**:
+[§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else)'s
+*"zero executions across sixteen stored payloads in a real browser"* and
+[section 17](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved)'s *"no XSS payload of the ten
+submitted executed"*. Both remain true **of the surfaces those sweeps covered**; neither sweep typed into the library
+search box, and that is the one surface where a payload does execute.
+
+- **Origin:** **baseline.** Both halves of the chain are byte-identical at `2f8712a`.
+- **Reachable in the shipped default configuration:** **yes**, and it requires no privilege beyond an ordinary account.
+- **Disposition:** **PRESERVED.** No remediation was attempted, and none was reverted.
+- **CWE:** CWE-79 (stored / persistent cross-site scripting), reached through CWE-116 (improper output encoding).
+
+**What it is.** A trinket name is stored verbatim and then written into the search-suggestion dropdown as **HTML**, so a
+name containing markup executes in the browser of whoever searches for it.
+
+**Evidence — the chain, measured at every stage over real HTTP and in a real browser.**
+
+1. **Storage accepts markup unchanged.** `PUT /api/trinkets/{trinketId}/name` is declared at
+   `config/api_routes.js:L791` with the validation `name : Joi.string().allow('').max(50)` — a length cap and nothing
+   else. Measured: a `PUT` carrying `{"name":"<img src=x onerror=window.__xssFired=1>QAFIXPROBE"}` answered **HTTP 200**
+   with `{"success":true,"flash":{},"context":null}`, and MongoDB then held that exact 49-character string in
+   `snippets.name`. There is no sanitiser, no escaper and no HTML rejection anywhere on this path.
+2. **The read path returns it raw.** `GET /api/trinkets/search?q=QAFIXPROBE` (`config/api_routes.js:L886`) answered
+   **200** with `"name":"<img src=x onerror=window.__xssFired=1>QAFIXPROBE"` — the raw `<img` present, `&lt;` absent.
+3. **The filter does not escape.** The suggestion template pipes the name through `typeaheadHighlight`. Executing that
+   live filter against the stored payload returned `<img src=x onerror=window.__xssFired=1><strong>QAFIXPROBE</strong>`
+   — it wraps the matched substring in `<strong>` and **performs no HTML escaping at all**.
+4. **The sink assigns it as markup.** `public/partials/directives/trinket-search.html:L16` is the whole defect:
+
+   ```html
+   <a class="trinket-list-with-lang lang-{{ match.model.lang }}"
+      bind-html-unsafe="match.model.name | typeaheadHighlight:query"></a>
+   ```
+
+   `bind-html-unsafe` assigns through `innerHTML`. The rendered dropdown, captured verbatim from
+   `ul[typeahead-popup]`, contains a **real element node**: `<img src="x" onerror="window.__xssFired=1">` with
+   `querySelectorAll('img').length === 1`, `src` attribute literally `x`, `naturalWidth === 0`.
+5. **It executes.** `window.__xssFired` went **0 → 1** as the dropdown rendered. `document.scripts.length` was **73
+   before and 73 after** — delta **0** — because the vector is the inline `onerror` attribute, not an injected
+   `<script>` element. A script-count check alone would have missed it, which is the likeliest reason the earlier sweep
+   scored this surface clean.
+6. **Server-side-observable corroboration.** The injected element made the browser issue
+   `GET http://localhost:3107/library/x` with `sec-fetch-dest: image`, answered **404** — the only status ≥ 400 in the
+   whole 182-request run. `src="x"` resolved relative to `/library/trinkets`, the load failed, and the inline `onerror`
+   ran. **A text payload cannot produce an image request**, so the execution is provable from access logs alone.
+
+**Three discriminations that keep this from being misread.** They matter because the naive checks all give the wrong
+answer here.
+
+- The substring `<img` **does** appear in the dropdown's `innerHTML` — and that is **not** evidence of escaping.
+  `innerHTML` re-serialises a live element node back into markup text. The valid discriminators are that `&lt;img` is
+  **absent**, that a real element node is **present**, and that `innerText` is only `QAFIXPROBE` — the payload
+  characters are never shown to the user.
+- The payload did **not** fire on page load or on list render. A raw read before any instrumentation was installed
+  returned `__xssFired: undefined` with `window.alert` still native, so the firing is attributable specifically to the
+  typeahead render.
+- The directive that makes the sink unsafe is **not** repository code. `bind-html-unsafe`, `typeaheadHighlight` and the
+  typeahead itself come from `mm-foundation-tpls.min.js` — angular-foundation 0.8.0, pinned as a CDN asset URL at
+  `config/default.yaml:L154`, `L169` and `L208`. That script **loaded successfully** (HTTP 200; the Angular modules
+  `mm.foundation`, `mm.foundation.typeahead`, `mm.foundation.tpls` and `mm.foundation.bindHtml` all registered; Angular
+  1.3.20), so the result reflects the real directive rather than a missing-script artifact.
+
+**The defect is isolated, not systemic — which is the most useful thing in this entry.** The *same* stored string is
+rendered correctly escaped everywhere else it appears, measured on the same page load:
+
+| Surface | Rendering of the identical stored value | Accessibility tree |
+|---|---|---|
+| Search-suggestion row (`trinket-search.html:L16`) | parsed as markup; `<img>` element node; **executes** | `StaticText "QAFIXPROBE"` — the `<img>` has no `alt`, so contributes no text |
+| `/library/trinkets` grid card caption | visible literal text | `heading "<img src=x onerror=window.__xssFired=1>QAFIXPROBE" level="3"` |
+| `/home` trinket tile | `&lt;img src=x onerror=…&gt;` entity-escaped; zero `<img src="x">`; `__xssFired` stays `undefined` | literal text |
+
+So one template is wrong and the platform's default is right. Two independent QA passes agree on that default: the
+sixteen-payload sweep behind §4.15.3 and the adversarial suite behind
+[section 18](#22-runtime-qa-observations-on-the-frontend-ux-interaction-and-data-state-surface), which measured payloads
+in course names, descriptions, material names, material bodies, admin user rows, two sinks in one reader view, and an
+82-character entity-and-quote mixture — all inert, several **double**-escaped.
+
+**Why it is preserved.** The sink is `public/partials/directives/trinket-search.html`, and `public/**` is frozen: §0.2.2.1
+excludes a frontend rewrite and lists `public/partials/**` (54 files) among the untouched trees, §0.2.2.2 freezes the tree
+outright, and §0.9.4 places "client-visible page behavior" under the preservation directives. `git diff 2f8712a..HEAD --
+public/ lib/views/ static/` reports **zero changed files**, and this file's sha256 is
+`b4baa350af92296c7e0a020fb4a266dbf4519a6199d321be3eab8e8ca3018e93` at **both** commits. Beyond the frozen-surface rule,
+R-1 excludes latent-bug repair from its four sanctioned diff categories, and §4.16's precedent is directly on point:
+three security remediations attempted during this changeset — SEC-1, SEC-4 and SEC-13, one of them also CRITICAL — were
+**reverted on review** for exactly that reason. Fixing this one while those three stay open would be inconsistent as well
+as out of scope.
+
+**What a naive fix would have broken.** Each of the three obvious repairs has a concrete cost:
+
+- **Swapping `bind-html-unsafe` for `ng-bind`** edits a frozen template, and it changes the rendered suggestion: the
+  `<strong>` match highlight that `typeaheadHighlight` exists to produce would render as visible `<strong>` text, so the
+  feature's one visual affordance would be lost on every search, for every user, not only for hostile names.
+- **Routing the value through `$sce`/`$sanitize`** additionally requires loading `angular-sanitize`, which is **not** in
+  the `library` script list at `config/default.yaml:L206-L235`. Adding it changes the asset URL set that TR5 freezes.
+- **Escaping server-side, on write or on read**, changes a persisted field and a response body — TR6 and TR2
+  respectively — and would make every existing name containing `<` or `&` display differently on the surfaces that today
+  render it correctly, converting one broken surface into six changed ones.
+
+**The authorized change it needs.** Escape at the sink, not at the source: replace `bind-html-unsafe` with a binding that
+HTML-escapes the model value and re-applies the match highlight from already-escaped text — or keep
+`bind-html-unsafe` and make `typeaheadHighlight` escape before it wraps. Either is a small edit to one frozen template
+and needs the same behaviour-change authorization §4.16 asks for on SEC-1, SEC-4 and SEC-13; it belongs in that same
+separately authorized hardening effort, and it should be **first** in it, because this is the one condition in section 4
+that executes attacker-controlled JavaScript in a victim's authenticated origin. Two properties raise its priority above
+the other preserved conditions: it is **stored**, so it persists for every viewer, and it fires on **typing alone** —
+no click, no navigation and no confirmation. With no CSP anywhere on the application (§4.15.3), there is no second layer
+behind the escaping that is missing here.
 
 
 ## 5. Crosswalk — in-code quirk labels to catalogue entries
@@ -4734,9 +5001,9 @@ Line numbers are current-source positions; every row was derived from the base s
 **Preserved with** column names the delivered outcome — a bare `h.abandon`, or `lib/http/responseContract.js`'s
 `rejectOrAbandon` — and its line, so each citation can be checked against the file. Rows count **branches**, not
 call sites, and the two differ in one place: the four `downloadExport` denials share a single `try`/`catch`
-container, so the branch rows below map onto **35** call sites. The remaining three delivered sites —
+container, so the branch rows below map onto **35** call sites. Three further delivered sites —
 `courses.js` L143 (`copy`'s `!course` fall-through), `courses.js` L378 (`download`'s `!stats` fall-through) and
-`users.js` L519 (`savePassword`'s `Store.del` failure) — are the dereference-`TypeError` twins of the
+`users.js` L499 (`savePassword`'s `Store.del` failure) — are the dereference-`TypeError` twins of the
 ignored-error catches listed here and are catalogued in
 [section 9](#9-the-no-response-and-process-fate-preservations-site-by-site) instead. Between the two tables every
 one of the **39** no-response sites in the tree — 29 bare `h.abandon` returns, 9 `rejectOrAbandon` calls and the one
@@ -4744,41 +5011,42 @@ ternary arm at `trinket.js:L1001` — is accounted for exactly once.
 
 | Controller | Handler | Branch | Baseline fate | Mechanism at baseline | Preserved with |
 |---|---|---|---|---|---|
-| `admin.js` | `uploadUsers` | csv parse failure | NO RESPONSE | raw `Error` handed to the responder inside a `csv.parse` callback the frame had left | `rejectOrAbandon` L170 |
-| `admin.js` | `updateUser` | lookup / merge / save failure ×3 | NO RESPONSE | raw `Error` to the responder from an orphaned callback | `rejectOrAbandon` L225, L248, L261 |
-| `admin.js` | `updateUser` | falsy `roles` | NO RESPONSE | frame returned `undefined`, no responder ran | `h.abandon` L283 |
-| `admin.js` | `grantRole` | grant / save failure ×2 | NO RESPONSE | as `updateUser` | `rejectOrAbandon` L292, L355 |
-| `auth.js` | `googleCallback` | an empty or literal-`null` token payload | NO RESPONSE | `body.access_token` raised a `TypeError` inside the retired client's callback, after the enclosing `new Promise` executor had already returned | `h.abandon` L174 |
-| `auth.js` | `googleCallback` | an empty or literal-`null` profile payload | NO RESPONSE | `profile.email` raised in the same unowned callback, for the same reason | `h.abandon` L198 |
-| `course.js` | `createCourse` | unknown failure | NO RESPONSE | bare builder returned from a callback, never resolved (rule 4) | `h.abandon` L60 |
-| `course.js` | `updateCourse` | unknown failure | NO RESPONSE | as above | `h.abandon` L185 |
-| `course.js` | `copyCourse` | copy failure | NO RESPONSE | returned from the `copy()` callback; frame had no `return` | `h.abandon` L276 |
-| `course.js` | `updateLesson` | absent lesson | NO RESPONSE | callback dereferenced the absent document | `h.abandon` L351 |
-| `course.js` | `moveLesson` | absent lesson | NO RESPONSE | same mechanism as `updateLesson` | `h.abandon` L385 |
-| `course.js` | `userLookup` | third case | NO RESPONSE | the `.then` had no `else` branch | `h.abandon` L749 |
-| `courses.js` | `create` | fall-through | NO RESPONSE | frame returned `undefined`; no responder ran | `h.abandon` L68 |
+| `admin.js` | `uploadUsers` | csv parse failure | NO RESPONSE | raw `Error` handed to the responder inside a `csv.parse` callback the frame had left | `rejectOrAbandon` L176 |
+| `admin.js` | `updateUser` | lookup / merge / save failure ×3 | NO RESPONSE | raw `Error` to the responder from an orphaned callback | `rejectOrAbandon` L231, L254, L267 |
+| `admin.js` | `updateUser` | falsy `roles` | NO RESPONSE | frame returned `undefined`, no responder ran | `h.abandon` L289 |
+| `admin.js` | `grantRole` | grant / save failure ×2 | NO RESPONSE | as `updateUser` | `rejectOrAbandon` L298, L357 |
+| `auth.js` | `googleCallback` | an empty or literal-`null` token payload | NO RESPONSE | `body.access_token` raised a `TypeError` inside the retired client's callback, after the enclosing `new Promise` executor had already returned | `h.abandon` L166 |
+| `auth.js` | `googleCallback` | an empty or literal-`null` profile payload | NO RESPONSE | `profile.email` raised in the same unowned callback, for the same reason | `h.abandon` L190 |
+| `course.js` | `createCourse` | unknown failure | NO RESPONSE | bare builder returned from a callback, never resolved (rule 4) | `h.abandon` L55 |
+| `course.js` | `updateCourse` | unknown failure | NO RESPONSE | as above | `h.abandon` L170 |
+| `course.js` | `copyCourse` | copy failure | NO RESPONSE | returned from the `copy()` callback; frame had no `return` | `h.abandon` L273 |
+| `course.js` | `updateLesson` | absent lesson | NO RESPONSE | callback dereferenced the absent document | `h.abandon` L348 |
+| `course.js` | `moveLesson` | absent lesson | NO RESPONSE | same mechanism as `updateLesson` | `h.abandon` L382 |
+| `course.js` | `userLookup` | third case | NO RESPONSE | the `.then` had no `else` branch | `h.abandon` L746 |
+| `courses.js` | `create` | fall-through | NO RESPONSE | frame returned `undefined`; no responder ran | `h.abandon` L67 |
 | `courses.js` | `copy` | copy failure | NO RESPONSE | orphaned callback | `h.abandon` L136 |
 | `courses.js` | `download` | `fs.stat` failure | NO RESPONSE | orphaned callback, after the same cleanup the base performed | `h.abandon` L361 |
 | `folders.js` | `create` | duplicate key (`11000`) | NO RESPONSE | `request.catch` is not a function ⇒ `TypeError` inside the save callback | `h.abandon` L116 |
 | `folders.js` | `create` | unknown failure | NO RESPONSE | bare builder returned from the save callback (rule 4) | `h.abandon` L130 |
-| `trinket.js` | `email` | send failure | NO RESPONSE | orphaned callback | `h.abandon` L1007 |
-| `trinket.js` | `draft` | save failure | NO RESPONSE | orphaned callback | `h.abandon` L1196 |
-| `trinket.js` | `autosave` | save failure | NO RESPONSE | orphaned callback | `h.abandon` L1296 |
-| `users.js` | `sendPassReset` | responder given a raw `Error` | NO RESPONSE | see section 7.3 | `rejectOrAbandon` L379 |
-| `users.js` | `sendPassReset` | `Store.set` / `Store.expire` failure | NO RESPONSE | raised inside the unowned `randomBytes` callback | `h.abandon` L410 |
-| `users.js` | `assetUpload` | responder given a raw `Error` | NO RESPONSE | see section 7.3 | `rejectOrAbandon` L799 |
-| `users.js` | `assetUploadFromURL` | transfer failure | NO RESPONSE | orphaned callback | `h.abandon` L914 |
-| `users.js` | `assetUploadFromURL` | responder given a raw `Error` | NO RESPONSE | see section 7.3 | `rejectOrAbandon` L941 |
-| `users.js` | `sendEmailChange` | **API-03** — `POST /api/users/email` | NO RESPONSE, and **no email sent** | a third argument was passed to an **arity-two** `Store.set`, so the callback never ran | `h.abandon` L1091 |
-| `users.js` | `sendEmailVerification` | `Store.set` failure | NO RESPONSE | same unowned-callback position | `h.abandon` L1200 |
-| `users.js` | `activateAccount` | `Store.del` failure | NO RESPONSE | orphaned callback | `h.abandon` L1347 |
-| `users.js` | `getExportStatus` | not found / access denied | NO RESPONSE | undeclared `Boom` ⇒ `ReferenceError` in an orphaned callback | `h.abandon` L1534, L1546 |
-| `users.js` | `downloadExport` | four denial branches | NO RESPONSE — not 404, not 403, not 400 | undeclared `Boom` ⇒ `ReferenceError` before any Boom is constructed | `h.abandon` L1616 — one container, four branches |
-| `users.js` | `downloadExport` | the **success** path | NO RESPONSE | `config.aws.buckets.exports` is declared by **no** configuration file, so the presign parameters raise a `TypeError` — see section 7.5 | `h.abandon` L1650 |
+| `trinket.js` | `email` | send failure | NO RESPONSE | orphaned callback | `h.abandon` L1001 |
+| `trinket.js` | `draft` | save failure | NO RESPONSE | orphaned callback | `h.abandon` L1186 |
+| `trinket.js` | `autosave` | save failure | NO RESPONSE | orphaned callback | `h.abandon` L1286 |
+| `users.js` | `sendPassReset` | responder given a raw `Error` | NO RESPONSE | see section 7.3 | `rejectOrAbandon` L352 |
+| `users.js` | `sendPassReset` | `Store.set` / `Store.expire` failure | NO RESPONSE | raised inside the unowned `randomBytes` callback | `h.abandon` L383 |
+| `users.js` | `assetUpload` | responder given a raw `Error` | NO RESPONSE | see section 7.3 | `rejectOrAbandon` L773 |
+| `users.js` | `assetUploadFromURL` | transfer failure | NO RESPONSE | orphaned callback | `h.abandon` L888 |
+| `users.js` | `assetUploadFromURL` | responder given a raw `Error` | NO RESPONSE | see section 7.3 | `rejectOrAbandon` L915 |
+| `users.js` | `sendEmailChange` | **API-03** — `POST /api/users/email` | NO RESPONSE, and **no email sent** | a third argument was passed to an **arity-two** `Store.set`, so the callback never ran | `h.abandon` L1065 |
+| `users.js` | `sendEmailVerification` | `Store.set` failure | NO RESPONSE | same unowned-callback position | `h.abandon` L1172 |
+| `users.js` | `activateAccount` | `Store.del` failure | NO RESPONSE | orphaned callback | `h.abandon` L1318 |
+| `users.js` | `getExportStatus` | not found / access denied | NO RESPONSE | undeclared `Boom` ⇒ `ReferenceError` in an orphaned callback | `h.abandon` L1517, L1529 |
+| `users.js` | `downloadExport` | four denial branches | NO RESPONSE — not 404, not 403, not 400 | undeclared `Boom` ⇒ `ReferenceError` before any Boom is constructed | `h.abandon` L1599 — one container, four branches |
+| `users.js` | `downloadExport` | the **success** path | NO RESPONSE | `config.aws.buckets.exports` is declared by **no** configuration file, so the presign parameters raise a `TypeError` — see section 7.5 | `h.abandon` L1633 |
 
-That is **38 preserved no-response sites across 7 controllers and 21 handlers**, covering all 19 routes the review cited
-plus 8 further sites found by applying the rule in section 6.1 to branches the review had not flagged, and the two
-`googleCallback` provider-payload branches adjudicated in section 3.37.
+That is **39 preserved no-response sites across 7 controllers and 21 handlers**, covering all 19 routes the review cited
+plus 8 further sites found by applying the rule in section 6.1 to branches the review had not flagged, the two
+`googleCallback` provider-payload branches adjudicated in section 3.37, and the `copyCourse` silent-outcome
+translation of section 3.40.
 
 ### 6.3 Branches that were *not* converted to no-response returns
 
@@ -5144,30 +5412,30 @@ section 8.3.
 
 | File | Site | Handler | Fate | Base-commit mechanism |
 |---|---|---|---|---|
-| `lib/controllers/course.js` | L60 | `createCourse` | A | builder returned to Mongoose's `save` callback, which discards it (R1) |
-| `lib/controllers/course.js` | L185 | `updateCourse` | A | same shape as `createCourse` |
-| `lib/controllers/course.js` | L276 | `copyCourse` | A | builder returned to `Course#copy`'s error-first callback |
-| `lib/controllers/course.js` | L351 | `updateLesson` | B | callback ignored `err`, then read `course.id` → `TypeError` in an unowned callback |
-| `lib/controllers/course.js` | L385 | `moveLesson` | B | identical to `updateLesson` |
-| `lib/controllers/course.js` | L749 | `userLookup` | A | `if`-chain fall-through; nothing settled the deferral |
-| `lib/controllers/courses.js` | L68 | `create` | A | unknown-failure fall-through |
+| `lib/controllers/course.js` | L55 | `createCourse` | A | builder returned to Mongoose's `save` callback, which discards it (R1) |
+| `lib/controllers/course.js` | L170 | `updateCourse` | A | same shape as `createCourse` |
+| `lib/controllers/course.js` | L273 | `copyCourse` | A | builder returned to `Course#copy`'s error-first callback |
+| `lib/controllers/course.js` | L348 | `updateLesson` | B | callback ignored `err`, then read `course.id` → `TypeError` in an unowned callback |
+| `lib/controllers/course.js` | L382 | `moveLesson` | B | identical to `updateLesson` |
+| `lib/controllers/course.js` | L746 | `userLookup` | A | `if`-chain fall-through; nothing settled the deferral |
+| `lib/controllers/courses.js` | L67 | `create` | A | unknown-failure fall-through |
 | `lib/controllers/courses.js` | L143 | `copy` | B | `TypeError` plus an unterminated inner chain |
 | `lib/controllers/courses.js` | L378 | `download` | B | `fs.stat`'s `err` ignored, then dereferenced |
 | `lib/controllers/folders.js` | L116 | `create` | B | `request.catch` is **undefined** → `TypeError` on the duplicate-name path |
 | `lib/controllers/folders.js` | L130 | `create` | A | unknown save-error fall-through (R3: `.type()`/`.bytes()` never settled) |
-| `lib/controllers/admin.js` | L283 | `updateUser` | A | falsy `payload.roles` fall-through |
-| `lib/controllers/trinket.js` | L1007 | `email` | A | bare `recaptcha.verify(...)` statement plus an argument-less `reply()` |
-| `lib/controllers/trinket.js` | L1196 | `draft` | B | unhandled rejection from the zip path |
-| `lib/controllers/trinket.js` | L1296 | `autosave` | B | bare `zip.loadAsync(...)` statement → unhandled rejection |
-| `lib/controllers/users.js` | L410 | `sendPassReset` | B | `async` callback handed to an API that discards it → unhandled rejection |
-| `lib/controllers/users.js` | L519 | `savePassword` | B | same shape, on `Store.del` |
-| `lib/controllers/users.js` | L914 | `assetUploadFromURL` | B | `.on('error')` only logged; a write-side error was not forwarded by `.pipe()` |
-| `lib/controllers/users.js` | L1091 | `sendEmailChange` | A | arity-2 `Store.set` never invoked the third callback → **no email and no response** |
-| `lib/controllers/users.js` | L1200 | `sendEmailVerification` | B | rejection arm only; the happy path still answers 200 |
-| `lib/controllers/users.js` | L1347 | `activateAccount` | B | `Store.del` rejection inside a discarded `async` callback |
-| `lib/controllers/users.js` | L1534 | `getExportStatus` | B | undeclared `Boom` → `ReferenceError` in an unowned callback |
-| `lib/controllers/users.js` | L1546 | `getExportStatus` | B | the second of the two, so exactly **one** log line prints per request |
-| `lib/controllers/users.js` | L1616 and L1650 | `downloadExport` | B | four undeclared-`Boom` branches, an `_owner.toString()` `TypeError`, and the presigner throw |
+| `lib/controllers/admin.js` | L289 | `updateUser` | A | falsy `payload.roles` fall-through |
+| `lib/controllers/trinket.js` | L1001 | `email` | A | bare `recaptcha.verify(...)` statement plus an argument-less `reply()` |
+| `lib/controllers/trinket.js` | L1186 | `draft` | B | unhandled rejection from the zip path |
+| `lib/controllers/trinket.js` | L1286 | `autosave` | B | bare `zip.loadAsync(...)` statement → unhandled rejection |
+| `lib/controllers/users.js` | L383 | `sendPassReset` | B | `async` callback handed to an API that discards it → unhandled rejection |
+| `lib/controllers/users.js` | L499 | `savePassword` | B | same shape, on `Store.del` |
+| `lib/controllers/users.js` | L888 | `assetUploadFromURL` | B | `.on('error')` only logged; a write-side error was not forwarded by `.pipe()` |
+| `lib/controllers/users.js` | L1065 | `sendEmailChange` | A | arity-2 `Store.set` never invoked the third callback → **no email and no response** |
+| `lib/controllers/users.js` | L1172 | `sendEmailVerification` | B | rejection arm only; the happy path still answers 200 |
+| `lib/controllers/users.js` | L1318 | `activateAccount` | B | `Store.del` rejection inside a discarded `async` callback |
+| `lib/controllers/users.js` | L1517 | `getExportStatus` | B | undeclared `Boom` → `ReferenceError` in an unowned callback |
+| `lib/controllers/users.js` | L1529 | `getExportStatus` | B | the second of the two, so exactly **one** log line prints per request |
+| `lib/controllers/users.js` | L1599 and L1633 | `downloadExport` | B | four undeclared-`Boom` branches, an `_owner.toString()` `TypeError`, and the presigner throw |
 
 **The complement matters as much as the list.** Six sites that look identical to the rows above were measured as
 fate (C) and are therefore **left answering a real response**:
@@ -5259,15 +5527,21 @@ requires the null case to be neutralized at the two genuinely unguarded sites; s
 
 **How each site handles it.**
 
-| Site | Guarded at base? | Treatment |
-|---|---|---|
-| `lib/controllers/trinket.js` L1482 (`file.url`) | yes — behind `if (file)` | `assetPathname()`, the 5-line local helper at L35 |
-| `lib/controllers/trinket.js` L1599 (`asset.url`) | **no** | same helper; its null fallback is load-bearing |
-| `lib/controllers/trinket.js` L1809 (`asset.url`) | **no** | same helper; its null fallback is load-bearing |
-| `lib/workers/exports.js#assetPathBasename` L46 | caller-guarded | `URL.parse(...)` with the same fallback, inline |
-| `lib/controllers/users.js` L588 | validation quirk | parsed then `if (!requestUrl.protocol)`; accept/reject unchanged |
-| `test/helpers/flow.js` `setLastResponse` | n/a | `URL.parse(location, config.url)` — see below |
-| `test/lib/api/registration.js` L102 | n/a | `URL.parse(location, config.url).pathname` |
+Both frames are given per row, because the sites moved: the **base** column is where the deprecated call stood at
+`2f8712a`, the **delivered** column where its replacement stands now. ⚠️ An earlier revision of this table gave
+`lib/controllers/trinket.js` L1482/L1599/L1809 with the helper at L35, `lib/workers/exports.js` L46 and
+`test/lib/api/registration.js` L102 in one unlabelled column; three of those five resolve in neither frame, which QA
+reproduced. Every number below was re-derived with `grep -n` in each frame.
+
+| Site | Base line | Delivered line | Guarded at base? | Treatment |
+|---|---|---|---|---|
+| `lib/controllers/trinket.js` (`file.url`) | L1253 | L1473 | yes — behind `if (file)` | `assetPathname()`, the 5-line local helper declared at L33 |
+| `lib/controllers/trinket.js` (`asset.url`) | L1350 | L1590 | **no** | same helper; its null fallback is load-bearing |
+| `lib/controllers/trinket.js` (`asset.url`) | L1521 | L1847 | **no** | same helper; its null fallback is load-bearing |
+| `lib/workers/exports.js` (asset filename) | L40, L304 | both call `assetPathBasename()`, declared at L45, from L53 and L445 | caller-guarded | `URL.parse(...)` with the same fallback, inside that helper |
+| `lib/controllers/users.js` (payload URL) | L588 | L849 | validation quirk | parsed then `if (!requestUrl.protocol)`; accept/reject unchanged |
+| `test/helpers/flow.js` `setLastResponse` | L399 | L574 | n/a | `URL.parse(location, config.url)` — see below |
+| `test/lib/api/registration.js` | L85 | L111 | n/a | `URL.parse(location, config.url).pathname` |
 
 **The fallback, and why it reproduces the legacy result.** On `null` the helper falls back to the **raw input string**,
 because the legacy parser's `pathname` for a non-absolute input was the input itself. The derived value is a persisted,
@@ -5283,9 +5557,15 @@ outright when the header is already absolute, so one expression covers both. Mea
 `https://trinket.dev` origin `default.yaml` supplies and the `http://localhost:3000` a local config supplies. Only
 `lastRedirect.pathname` is ever read, which is what makes the WHATWG object a genuine drop-in.
 
-**A positive migration result.** Under `node --pending-deprecation`, `require('url').parse` emits DEP0170 and
+**A positive migration result.** Under `node --pending-deprecation`, `require('url').parse` emits **DEP0169** and
 `URL.parse` emits **nothing**, so the deprecation this migration set out to remove really is removed at every call
-site, and no `require('url')` binding remains anywhere in `app.js`, `config/`, `lib/` or `test/`.
+site, and no `require('url')` binding remains anywhere in `app.js`, `config/`, `lib/` or `test/`. ⚠️ Earlier revisions
+of this line and of section 3.13 named **DEP0170** here, which QA reproduced as wrong and which also contradicted
+[MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md)'s correct reading. Measured on the installed
+v22.23.2: `require('url').parse('/x')` emits `DEP0169` — *"`url.parse()` behavior is not standardized and prone to
+errors that have security implications"* — while `DEP0170` is the separate **invalid-port** notice, *"The URL … is
+invalid. Future versions of Node.js will throw an error"*, which reproduces only for an input such as
+`http://host:invalid` and fires **in addition to** DEP0169 rather than instead of it.
 
 **What is NOT claimed.** `URL.parse` is not bit-identical to the legacy parser in general. Two classes of input
 genuinely differ — opaque schemes such as `urn:example:test`, and the legacy `autoEscape` set, which includes `|` and
@@ -5694,14 +5974,47 @@ and left the marker in place. Forcing `mongoose.connection.name` to `'trinket'` 
 "test"`. And with `config/local.yaml` moved aside entirely — the state `git clean -xfd` leaves — the suite still ran
 **exit 0 with zero failures**.
 
-**A related reproducibility landmine, closed by the same mechanism.** `app.js:L47-L62` calls `process.exit(1)` when
-`app.plugins.session.cookieOptions.password` is shorter than 32 characters. `config/default.yaml` ships it empty,
-`config/test.yaml` sets no override, and `config/local.yaml` is gitignored — so on a clean checkout the bootstrap's
-`require('../app.js')` killed the process before a single test ran, and the suite only appeared to work because a
-developer had an ignored file. `test/setup.js` now forces a tracked, non-secret, test-only password through the same
-`$NODE_CONFIG` layer. It seals cookies for the duration of one `npm test` and nothing else, and it is what makes AAP
-goal G6 reproducible from a fresh clone. `config/*.yaml` stays frozen — no YAML layer was edited to achieve any of
-this.
+⚠️ **That last sentence was published before it was true, and the gap is recorded rather than quietly closed.** When QA
+ran the document's own experiment it reproduced **exit 1 with exactly one failure**, three times out of three: with
+`config/local.yaml` absent the run failed at `test/lib/models/courseInvitation.js:208`, where the expected `acceptUrl`
+`http://localhost/courses/accept/pending1` arrived as `https://trinket.dev/courses/accept/pending1`. The database
+mechanism this section describes was **not** what was missing — the run reached that single assertion instead of dying
+in `app.js`, so the session-password and database halves were both doing their job. What was missing was a **third**
+value of exactly the same kind, and it is now forced by the same layer; the sentence above is a re-measurement after
+that fix, not the original claim.
+
+**Two related reproducibility landmines, closed by the same mechanism.** Both are the same defect as the database one:
+a value that decides a test outcome, sourced from a file git cannot restore.
+
+1. **The session password.** `app.js:L47-L62` calls `process.exit(1)` when
+   `app.plugins.session.cookieOptions.password` is shorter than 32 characters. `config/default.yaml` ships it empty,
+   `config/test.yaml` sets no override, and `config/local.yaml` is gitignored — so on a clean checkout the bootstrap's
+   `require('../app.js')` killed the process before a single test ran, and the suite only appeared to work because a
+   developer had an ignored file. `test/setup.js` forces a tracked, non-secret, test-only password through the same
+   `$NODE_CONFIG` layer. It seals cookies for the duration of one `npm test` and nothing else.
+2. **The client-facing `app.url` origin** — the QA finding above. `config/app.config.js:L16-L17` computes `config.url`
+   from `app.url`, and `lib/models/courseInvitation.js:L17` composes an invitation's `acceptUrl` from
+   `app.url.protocol` and `app.url.hostname` alone. `config/default.yaml:L29-L32` declares `https` + `trinket.dev` +
+   no port, `config/test.yaml` declares **no** `app.url` at all, and the only layer supplying `http` + `localhost` +
+   `3000` is the gitignored `config/local.yaml` that `docs/setup.md` tells a developer to copy from
+   `config/local.example.yaml:L10-L13`. `test/setup.js` now forces those three keys — **`local.example.yaml`'s own
+   values**, so the suite measures the configuration the documented flow produces rather than a third invented origin.
+   The assertion itself is untouched: it is still the base-frame literal, and it is the *configuration* that stopped
+   depending on an ignored file. Measured after the fix, on the same tree, **`npm test` exits 0 with zero failures both
+   with `config/local.yaml` present and with it absent**, and the two runs report the same total.
+
+Both are what make AAP goal G6 reproducible from a fresh clone. `config/*.yaml` stays frozen — no YAML layer was
+edited to achieve any of this, which is why the forcing lives in `$NODE_CONFIG`, the one layer that outranks
+`local.yaml`.
+
+⚠️ **The R-6 harness is deliberately outside this mechanism, and must stay outside it.** `test/baseline/capture.js` and
+`test/baseline/replay.js` are standalone (`require.main === module`) and never require `test/setup.js`, so the forced
+`app.url` above does not reach them. That is required, not incidental: the corpus was captured under
+`config/default.yaml`'s `https://trinket.dev` origin, and `capture.js#originPrecondition` **refuses** a replay whose
+live origin differs instead of adapting to it (§3.22). A replay therefore still needs that origin — either from an
+absent `app.url` layer or from its own documented
+`NODE_CONFIG='{"app":{"url":{"protocol":"https","hostname":"trinket.dev","port":null}}}'` — and forcing an origin into
+the harness would be the "rebasing" that precondition exists to forbid.
 
 **One thing that has not changed: CLI `--require` still runs first.** Measured: a file passed as `--require` on the
 command line loads before anything the config file arranges, so a diagnostic added that way saw `NODE_ENV=undefined`
@@ -6299,12 +6612,36 @@ reports **0 differences**, which is the parity proof.
    mandatory, and the verdict is `UNREPRODUCIBLE` rather than `PASS`. See section 3.22.
 
 **One condition this remediation did not create and does not fix.** `test/lib/api/registration.js` performs roughly a
-second of real work in a `before` hook against Mocha's 2,000 ms default, and `test/lib/util/database-guard.js` waits a
-fixed 1,500 ms for a child process to announce its refusal. On a host where several checkouts share one `mongod` both
-can exceed their budget, and a checkout running with `CLONE_INDEX` unset additionally shares the `test` database with
-every sibling that drops it. Neither file is touched here: both are base-commit-adjacent test scaffolding outside the
-four sanctioned diff categories, and each was proven transient by re-running byte-identical code. Isolate with
-`CLONE_INDEX`, as `test/setup.js` already documents.
+second of real work in a `before` hook against Mocha's 2,000 ms default. On a host where several checkouts share one
+`mongod` it can exceed that budget, and a checkout running with `CLONE_INDEX` unset additionally shares the `test`
+database with every sibling that drops it. That file is not touched here: it is base-commit test scaffolding —
+`git cat-file -e 2f8712a:test/lib/api/registration.js` succeeds — outside the four sanctioned diff categories, and the
+condition was proven transient by re-running byte-identical code. Isolate with `CLONE_INDEX`, as `test/setup.js`
+already documents.
+
+⚠️ **One condition that WAS fixed here, and the earlier claim about it that this corrects.** An earlier revision of this
+paragraph named `test/lib/util/database-guard.js` alongside `registration.js` and called both "base-commit-adjacent
+test scaffolding". That was wrong about the guard, and the error mattered, because it is the stated reason the file was
+left alone: the guard **does not exist at the base commit at all**. `git cat-file -e 2f8712a:test/lib/util/database-guard.js`
+fails, `git log --diff-filter=A` attributes the file to this modernization's own `f1b4b5a`, and this appendix already
+counts it among the **seven** new `.js` files the changeset adds. A race inside code this changeset authored is this
+changeset's own defect, not a base-commit condition to be catalogued, so it is fixed.
+
+The measured mechanism is **not** the 1,500 ms wait for the child's refusal — that wait is unchanged — but what followed
+it. Requiring `test/helpers/db.js` inside the child also requires `app.js`, which registers every model on the default
+mongoose connection; mongoose then builds each schema's declared indexes, and an index build **creates the collection it
+indexes**. Measured against an empty probe database on the delivered tree: fifteen collections the probe never seeded
+materialize asynchronously from eight index-bearing models — `files`, `snippets`, `drafts`, `exports`, `folders`,
+`errorevents`, `clientmetrics` and `featuredcourses` among them. The probe then took a **single** `collections()`
+snapshot, dropped exactly that snapshot, and asserted the database listed empty, so any build landing after the snapshot
+survived it: a cold first run in a fresh checkout failed with `expected [ "files" ] to deeply equal []` while every warm
+run, and the same spec run in isolation, passed. The cleanup is now a **convergent sweep** — list, drop, repeat until the
+database lists empty twice in a row, bounded by a 20-second deadline — and nothing is relaxed by it: every assertion is
+byte-unchanged, `dropDatabase()` is still never called anywhere in the probe, and a sweep that cannot converge still
+reports what is left so the spec fails loudly rather than tolerating a leftover. Verified by a differential probe in
+which a collection is created immediately after the first snapshot resolves — the previous cleanup leaves exactly
+`["files"]` behind, the convergent sweep converges to `[]` — and by the child's own verdict on the delivered code, which
+now reports all fifteen collections plus the sentinel dropped, `remaining` empty and the probe database gone.
 
 
 
@@ -6557,7 +6894,6 @@ adds and 4.14 does not is why the route declaration carries no projection spec, 
 route-level `reply` projection or a `select('-password')` on the population would remove **several** keys from a 200
 body, where the withdrawn redactor removed exactly one path.
 
-
 ### 15.6 A failed form submission wrote the submitted password to the application log (CWE-532) — REMEDIATED, log-only
 
 **What it is.** When a form submission failed validation, the failure responder logged the **entire submitted
@@ -6611,20 +6947,23 @@ body** still echoes both submitted values verbatim alongside the real Joi messag
 because the form is re-rendered from the payload. That contrast is the whole point of the disposition: the log
 changed and the wire did not.
 
-**The evidence.** One shared emitter and one shared caller, both character-identical to the base commit.
-`lib/http/responseContract.js:L279` is the emitter:
+**The evidence, quoted in the BASE frame** — this is the condition as it stood, which is what makes the CWE real; the
+delivered lines are the redacted forms given above. One shared emitter and one shared caller. The emitter is base
+`lib/util/routeParser.js:L485`:
 
 ```javascript
 log.info(util.inspect(json) + " " + err);
 ```
 
-It is base `lib/util/routeParser.js:L485`. The validation bridge reaches it at `lib/http/validation.js:L64`:
+It is `lib/http/responseContract.js:L412` in the delivered tree, where the argument is `redactSecrets(json)`. The
+validation bridge reaches it at base `lib/util/routeParser.js:L539`:
 
 ```javascript
-return reject(request, h, request.payload, util.inspect(validationErrors));
+return request.fail(request.payload, util.inspect(validationErrors));
 ```
 
-which is base `lib/util/routeParser.js:L539`. Because the payload *is* the logged object, everything the visitor typed
+which is `lib/http/validation.js:L84` in the delivered tree, where the second argument is the parallel
+`loggableErrors` map. Because the payload *is* the logged object, everything the visitor typed
 is inspected into the log. Measured by posting an invalid e-mail with a sentinel password to `POST /users`:
 
 ```text
@@ -6985,6 +7324,18 @@ condition, not in the data.
 
 All four `/api/` responses observed across `/home` and `/library` were byte-identical 37-byte
 `{"data":[],"flash":{},"context":null}` payloads.
+
+⚠️ **The one conjunct that fails cannot be made to pass by populating the list either, for an unrelated reason.** The
+reading above — `GET /api/featured-courses` answering `{"data":[],"flash":{},"context":null}` — is correct for the
+**shipped, empty** featured list, and that is the only state this sweep exercised. The later performance pass seeded
+three members and re-measured the same route: it then answers **500 with the 96-byte scrubbed body**, every time,
+through the double serialization in
+[section 7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid). So `featuredCourses.length` is
+`0` while the list is empty and the request fails once it is not, which means the 71-character guidance sentence has
+**no reachable path to the screen in either state** — the gate is stricter than it looks. See
+[18.3](#203-pq-3-the-three-n1-fan-outs-and-the-one-that-turns-into-a-500) and row PQ-4 of
+[section 18](#20-runtime-qa-observations-on-the-performance-surface-attributed-and-preserved). Both readings are
+base-commit behavior, measured at both builds, and neither may be repaired here.
 
 **Why it is preserved.** Both gates live in the frozen frontend: `lib/views/home.html` and
 `lib/views/classes/courses.html` are two of the 79 templates AAP §0.2.2.2 freezes, and
@@ -7608,7 +7959,12 @@ so both includes and the one-include-per-page mechanism are exactly as they were
 that paints a red banner. That is a client-visible page behaviour change on a form, which §0.9.4 places under the
 preservation directive and R-4 prohibits outright. It is worth stating plainly what is **not** wrong here: the server
 answers correctly, the failure is real and is logged, and nothing is silently succeeding — only the notification is
-lost. A related consequence of the same variable-include mechanism is recorded at BQ-5: an unknown sub-page name
+lost. **Extended by a later pass:**
+[18.11.2](#22112-the-mis-targeted-alert-reproduced-end-to-end-through-a-real-session-expiry) reproduces this end to
+end through a genuine mid-flow session expiry and adds what this entry leaves open — the 401 on the wire, the
+mutation timeline showing the text arrive at +13.9 ms with no class change on either alert div, a pixel-level proof
+that nothing becomes visible, and the fact that the browser emits **no diagnostic at all**. A related consequence of
+the same variable-include mechanism is recorded at BQ-5: an unknown sub-page name
 resolves to a template that does not exist and raises during response marshalling. It reproduces on this route too —
 `/account/settings` answers **500** at 96 bytes with `content-type: application/json`, exactly as `/admin/{unknown}`
 does, and `lib/views/users/account.html` is likewise a 0-line diff.
@@ -7618,10 +7974,19 @@ does, and `lib/views/users/account.html` is likewise a 0-line diff.
 **What it is.** The two controls that add a topic and open the outline in the course editor are positioned entirely
 outside the viewport, and widening the window does not bring them back.
 
+> ⚠️ **This entry carried a measurement error, and the corrected figures are given below.** An earlier revision
+> asserted that the two controls report 0.00 px visible at 375, 768, 1024, **1280 and 1920**. That is true only of the
+> three narrow widths. A later pass re-measured with **fresh document loads at each width** rather than by resizing one
+> already-loaded page, and found the controls **175 px visible each** at a genuine 1280 and 1920 load. The five-width
+> claim is **withdrawn**; the corrected rule and the reason the original reading occurred are stated in
+> [17.5.1](#1751-corrected-the-drawer-opens-by-default-when-the-document-loads-wide-and-is-never-re-evaluated).
+> Every other claim in this entry was re-verified and stands.
+
 **What the measurement actually showed, against what was expected.** The reported condition was that the controls
-"only enter view at ≥ 1025 px". That is measurably false. The container's rect is `(-350.00, 752.00, 350 × 48)` and both
-buttons report **0.00 px visible** at 375, 768, 1024, 1280 **and 1920** — five widths spanning small phone to large
-desktop, with identical rects. Reading the rule off the live CSSOM rather than inferring it explains why:
+"only enter view at ≥ 1025 px". As a statement about **resizing**, that is measurably false: the container's rect is
+`(-350.00, 752.00, 350 × 48)` and both buttons report **0.00 px visible** at 375, 768 and 1024, and continue to report
+0.00 px after widening the same document to 1280 or 1920. Reading the rule off the live CSSOM rather than inferring it
+explains why:
 `body.course #new-topic-container { position: fixed; left: 0; bottom: 0; max-width: 350px; margin-left: -350px }`,
 authored at `static/scss/_course-edit.scss:L224`. The rule is **not inside any media query**. That is worth stating
 carefully, because the file does contain four — at L6, L31, L190 and L408 — and none of them encloses this selector:
@@ -7640,6 +8005,48 @@ proof that the presentation layer did not move. §0.3.1 additionally records the
 release-hydrated tree that must not be touched, which is why `sass` and `vite` are both held at their current versions.
 The correct reading is that this is a drawer-coupled affordance in a desktop-era editor, not a responsive bug with a
 breakpoint to find.
+
+#### 17.5.1 Corrected: the drawer opens by default when the document loads wide, and is never re-evaluated
+
+The flag those controls hang off is initialised exactly once. `public/js/courseEditor/controllers/root.js:L212` runs
+`self.$scope.menuOpen = self.trinketUtil.isLarge() ? true : false;` at controller construction, and
+`public/js/services/util.js:L31-L33` defines `isLarge()` as
+`matchMedia(Foundation.media_queries['large']).matches`. Measured live, `Foundation.media_queries['large']` is an
+**object** — `{selector: ".foundation-mq-large", query: "only screen and (min-width:64.0625em)"}` — whose `toString()`
+returns its `query`, so `matchMedia` receives `only screen and (min-width:64.0625em)`, i.e. a **1025 px** threshold.
+(That the coercion is real rather than accidental was checked: `matchMedia('[object Object]')` resolves to media
+`not all` and matches `false`, whereas the coerced form matches identically to the literal query string.) **Nothing
+re-runs that line** — there is no resize handler and no `matchMedia` change listener.
+
+The consequence is a 2 × 2, measured with genuine fresh navigations at each width:
+
+| Document **loaded** at | Measured at | `matchMedia` large | `menuOpen` | `#course-content` has `open` | `#outline` left edge | Topic / Outline visible |
+|---|---|---|---|---|---|---|
+| **1920** | 1920 | true | **true** | yes | **0 — on screen** | **175 px / 175 px** |
+| 1920 | 375, after resize | **false** | **true** — unchanged | yes | **0 — on screen** | **175 px / 175 px** |
+| **375** | 375 | false | **false** | no | **−350 — off screen** | **0 px / 0 px** |
+| 375 | 1920, after resize | **true** | **false** — unchanged | no | **−350 — off screen** | **0 px / 0 px** |
+| **1280** | 1280 | true | **true** | yes | **0 — on screen** | **175 px / 175 px** |
+
+So the corrected rule is: **the drawer is closed by default when the document is loaded below ~1025 px, open by default
+when it is loaded at or above ~1025 px, and the decision is never revisited in either direction.** At a fresh 1920 load
+`#new-topic-container` computes `margin-left: 0px` with class `row collapse open` and 350 px of visible width, and
+`#outline` sits at left edge 0 because its used `left` of 350 px cancels its `−350 px` margin. Widening an
+already-narrow document leaves `menuOpen` false and every one of those values at zero; narrowing an already-wide one
+leaves the drawer open and squeezes the content column to a 25 px sliver while `scrollWidth` reaches 539 against a
+375 px viewport.
+
+The original five-width reading is exactly what a sweep that loads once and then resizes produces, and the artefact is
+identifiable: re-loading at 375 and widening to 1920 reproduces the 0 px figure at 1920 precisely. A corroborating
+detail settles it — the fresh-375 control frame captured during the re-measurement is **byte-for-byte the same size,
+25,390 bytes, as the earlier sweep's own 375 frame**, so that sweep's narrow frame was a genuine fresh-narrow state and
+its wider frames simply carried the stale flag forward.
+
+None of this weakens the entry's disposition. Below ~1025 px the controls really are unreachable, and
+[18.9.5](#2295-the-course-outline-toggle-is-visible-and-completely-unclickable) shows the toggle that would open the
+drawer is itself 0 % pointer-reachable at 375 — so at narrow widths there is no route to them at all. `static/scss` and
+`public/partials` both still have a 0-line diff against the base commit. Disposition: **PRESERVED**, with the corrected
+figures on the record.
 
 ### 17.6 BQ-15: the editor sub-navigation that outgrows its header
 
@@ -7692,6 +8099,14 @@ driving the segment widths from data means replacing four hard-coded inline styl
 exists so that the absence is understood as an unfinished 2013-era feature whose data path still works, rather than as
 a metrics regression introduced by the migration.
 
+**Extended by a later pass.** A third runtime QA pass traced the mechanism behind this entry to its root and separated
+out four adjacent conditions; see
+[18.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it). The decisive
+addition is that the `ng-if` placeholder noted above is the **outer** gate: the `assignment-dashboard` directive is never
+instantiated at all — instance count **0**, even though its partial is fetched **200** — while the payload sits bound and
+intact in `scope.assignmentsOverview`. The consequence is stronger than "zero-valued metrics are omitted": **non-zero
+metrics vanish too**, because the chart that would host them is never created.
+
 ### 17.8 BQ-19: the three controls that lose their accessible name at one particular width
 
 **What it is.** Five icon-only controls expose no accessible name, and three of those five are named at 1920 px and
@@ -7729,6 +8144,4008 @@ no bcrypt hash, session seal or credential appeared on any audited page; and tha
 agreed field by field. The FAIL verdict the pass recorded reflects the state of the product surface it was asked to
 assess, not a defect introduced by this change.
 
+
+## 18. Runtime-QA observations on the database surface — attributed, and preserved
+
+> ✅ **Evidence status: final.** As in sections 16 and 17, the pass's own verdict and assertion counts are that pass's
+> readings and are labelled as such. Everything in the table below was **re-measured against live `mongod` 6.0 while
+> this section was written** — model layer booted the way `app.js` boots it, writes and reads verified against raw BSON,
+> nothing carried over on the strength of the report alone. The gate figures are re-measured too: `npm test` exits **0**
+> with **569 passing**, and `node test/baseline/replay.js` reports **zero** differences. Each condition's attribution to
+> the base commit is a source-level fact established by `git diff` / `git show` against `2f8712a` and is not qualified.
+> See [How to read this catalogue](#how-to-read-this-catalogue).
+
+A third runtime QA pass exercised the persistence layer — all 14 models and their 226 schema paths, the 35 declared
+indexes, the model factory's 123 class and object methods, the seven schema plugins, the five store modules, the
+Mongo-backed catbox session engine and the two database-backed workers — with roughly 1,200 assertions across 32
+purpose-built harness scripts, over real HTTP and directly against MongoDB, with no repository file modified.
+
+**Its verdict on behavior was unqualified: zero migration-attributable defects.** All 14 entities completed full CRUD
+with field-level fidelity into raw BSON; the index topology reconciled exactly — **re-measured** read-only against the
+live application database as 14 models declaring **35** indexes against **49** built across their 14 collections,
+which is exactly 35 plus the 14 automatic `_id_`, with the `sessions` collection's own `_id_` and `stored_1` TTL index
+sitting outside that count as the catbox engine's rather than a model's; all eight unique indexes held under eight-way
+concurrent inserts with stable `11000` errors; all 25 reference paths in live data were free of dangling references;
+every persisted format — bcrypt cost, the AES `Salted__` envelope, md5 invitation tokens, slugs, dotted progress keys,
+S3 keys, archive names — was baseline-compatible; and no fire-and-forget or silent-outcome path hung, corrupted or
+emitted an unhandled rejection.
+
+**The one defect it reported was a defect in this documentation set, not in the code** — the rationale the delivered
+dependency inventory gave for holding `mongoose` inside 6.x. It is `DB-16` below, and it is the only row here whose
+disposition is `CORRECTED` rather than `PRESERVED` or `ACCEPTED`; the correction is in
+[MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) Rubric 5 and in [section
+3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved--as-is-count).
+
+Everything else the pass surfaced was informational and **pre-existing**, and each was attributed to the base commit
+by direct comparison rather than by inspection. One was already catalogued and is cross-referenced rather than
+restated: `npm ci` refusing to run under npm 11 with `EBADENGINE`, which is the runtime pin doing its job and is
+recorded in [section 0](#0-current-delivery-status--the-single-source-of-truth-for-every-measured-figure)'s gate
+table, with the `corepack` and `npx -y npm@10.9.9 ci` remedies spelled out in `.npmrc`'s own comment block. The
+specification asks for **npm 10** by name, so widening `engines.npm` to admit 11 would depart from the plan rather
+than comply with it, and the pin is unchanged.
+
+The last three rows are the pass's own *areas of concern* rather than its informational list: two security-shaped
+conditions it reached from the data side — the raw finders' operator permeability and the submitted password in the
+session flash — and one deployment condition, the shared Bull queue namespace. All three are baseline, all three carry
+their own narrative below, and none of them is repairable inside this changeset's diff budget; 18.2 and 18.3 say
+exactly what an authorized change would do instead.
+
+Citations are given in the **delivered** frame, with base-commit citations prefixed `2f8712a:` per the
+explicit-marking rule in *How to read this catalogue*.
+
+| # | Condition | Measured evidence | Base identity | Disposition |
+|---|---|---|---|---|
+| DB-1 | The slug plugin mis-nests its own `index` option, so four models carry a stray `Mixed` schema path literally named `index` — and the `slug` index the option was meant to declare does not exist | `lib/models/plugins/slug.js:L15` is `schema.add({ slug: { type: String }, index: options.index })`, so `index` is a **sibling key of `slug`** rather than an option of it. Measured on the four consumers: `schema.path('index').instance` is **`Mixed`** on `Course`, `Lesson`, `Material` and `Folder`, and the path is **absent** on `Trinket` and `File`, which do not load the plugin. A `Folder` saved after `set('index', { anything: [1, 'two'] })` persists `{"anything":[1,"two"]}` verbatim, because `Mixed` accepts anything. `Course.schema.indexes()` declares `accessCode`, `externalLink.sourceId` and `_owner+slug` and **no standalone `slug` index** | `git diff 2f8712a -- lib/models/plugins/slug.js` is **empty**; the file is byte-identical | PRESERVED — see 18.1 |
+| DB-2 | `updateAsset` cannot succeed with either argument shape, on either model that defines it, and has no caller | `lib/models/draft.js:L52` and `lib/models/trinket.js:L525` match on `assets.$elemMatch.id` against the argument while `$set`-ting `asset.url`, `asset.name` and `asset.thumbnail` off it, so the two readings are mutually exclusive. Measured: the whole asset object throws `CastError: Cast to ObjectId failed for value "{ id: new ObjectId(…), url: 'u', name: 'n', thumbnail: 't' }"` with `err.path === 'id'` and `err.kind === 'ObjectId'`; a bare `ObjectId` answers `{"acknowledged":false}`, because every `$set` value is then `undefined` and the driver sends no write at all | both files are byte-identical to `2f8712a` | PRESERVED — an unreachable method with no correct call, and R-1 excludes repairing one |
+| DB-3 | `ErrorEvent.code` is `required` **with an empty-string default**, so a save that omits it always fails validation — and its one consumer swallows the failure | `lib/models/errorEvent.js:L34` is `code : { type: String, required: true, default: '' }`; measured `isRequired === true` and `defaultValue === ''`, and a save with the other six required paths satisfied but no explicit `code` rejects `ValidationError` with `errors.code.kind === 'required'`, while the same document with `code: 'x = 1'` saves. The consumer is `lib/controllers/trinket.js:L1088`, `await error.save().catch(function () {});`, so the route answers success either way | the model file is byte-identical; the swallow is `2f8712a:lib/controllers/trinket.js:L944-L946`, `error.save(function (err, error) { return request.success(); })` — an error-first callback that never reads `err` | PRESERVED — a failed save answers success at the base commit too, and the delivered `.catch(function () {})` is what reproduces that; making `code` optional would change which documents the collection accepts |
+| DB-4 | `ClientMetric.values[]` subdocuments carry no `_id` | Measured `_id: false` on the sub-schema at `lib/models/clientMetric.js:L7`, and after `addMetric({ event_type: 'db4', lang: 'python' })` the persisted subdocument's key set is exactly `["event_type","lang"]` | byte-identical to `2f8712a` | **NOT A DEFECT** — recorded because the pass measured it: the absence is the sub-schema's own explicit option, not an accident of `$push` |
+| DB-5 | The `orderedList` plugin has no consumer anywhere | A repository-wide search across `app.js`, `config/`, `lib/`, `scripts/` and `test/` finds the string `orderedList` exactly **once** — inside `lib/models/plugins/orderedList.js:L6`, its own guard message. The module is not broken: called with `{ path: 'items' }` it adds the path and the four methods `addItems`, `getItems`, `indexOfItems` and `updateItemsIndex`; called without `options.path` it throws its own `Error: Must specify a path to add the orderedList plugin` | byte-identical to `2f8712a` | PRESERVED — deleting an unreferenced module is not one of R-1's four sanctioned categories; [section 7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit) is where the other already-dead paths are listed |
+| DB-6 | `Trinket#updateSlug` **resolves with** its own error instead of rejecting, and resolves the literal `false` when the slug is taken | Measured on two trinkets under one owner: `t2.updateSlug(t1.slug)` resolves `false` with `typeof 'boolean'`; with `t2.lang` set to a value outside the enum, `t2.updateSlug('db6-brand-new-slug')` **resolves** a `ValidationError` instance — `instanceof Error` is true and the promise is fulfilled, not rejected — because of the trailing `.catch(function (err) { return err; })` at `lib/models/trinket.js:L575-L577` | byte-identical to `2f8712a` | PRESERVED — a caller testing the resolved value for truthiness cannot tell "slug taken" from "save failed", and both resolutions are values a client-visible path already consumes |
+| DB-7 | `FeaturedCourses.removeCourse` and `moveCourse` resolve **`undefined`** on their early-return branch, and invoke their callback **twice** | Measured with the `{ key: 'featured' }` singleton absent: both resolve `undefined`, and the callback fires **twice** — first `(null, [])` from the early return at `lib/models/featuredCourses.js:L56` and `L78`, then `(null, undefined)` from the following `.then`, which receives that `[]` as its `doc` and reads `doc.courses` off an array | byte-identical to `2f8712a` | PRESERVED — the double invocation and the `undefined` are both the base commit's, and the store wrapper above them already tolerates them |
+| DB-8 | `Trinket#findModulesUsed` reports **both** halves of `from X import Y` as modules | Measured: code `from math import sqrt` followed by `import random` yields `modules = ["math","sqrt","random"]`. The rewind at `lib/models/trinket.js:L168`, `module_re.lastIndex = matchFound.index + 1`, deliberately re-scans from one character past the previous match, so the `import (\w+)` alternative matches inside text the `from (\w+) import` alternative already consumed | byte-identical to `2f8712a` | PRESERVED — `modules` is a **persisted** field, so changing the scan rewrites stored documents, which TR6 forbids |
+| DB-9 | `Draft.findOneMoreRecent` **mutates the caller's query object**, and resolves `undefined` rather than `null` on a miss | Measured: a caller's `{ user, trinket, lastUpdated }` comes back as `{ user, trinket }` — `delete query.lastUpdated` at `lib/models/draft.js:L26` — and a query matching nothing resolves `undefined` | byte-identical to `2f8712a` | PRESERVED — the mutation is how the date is withheld from the query, and the `undefined` is what the controller's falsy test already expects |
+| DB-10 | `Material.type` carries no enum, so any string is accepted | Measured `enumValues` is `[]` with `default "page"`, and a material saved with `type: 'not-a-real-type'` persists that string verbatim in raw BSON. `lib/models/material.js:L11` names the two intended values — `page`, `assignment` — in a trailing **comment** only | the same line is `2f8712a:lib/models/material.js:L11`, character-identical | PRESERVED — adding the enum would start rejecting writes the base commit accepts |
+| DB-11 | `$rename` is not filtered by mongoose `strict`, so it can move a schema path onto a non-schema key | Measured: `updateOne({ _id }, { $rename: { name: 'notASchemaPath' } })` answers `{"acknowledged":true,"modifiedCount":1,…}` and raw BSON afterwards carries `notASchemaPath` with **no** `name`, on a schema built with `strict: true`. **Unreachable here**: `$rename` appears **zero** times across `app.js`, `config/`, `lib/`, `scripts/` and `test/` | a property of mongoose 6's `strict` implementation, identical at both commits | ACCEPTED — not a repository condition |
+| DB-12 | `{ strict: false }` passed through the factory's `findByIdAndUpdate` persists an unknown field | Measured: with the option, `smuggledField` lands in raw BSON; the identical call without it leaves `secondField` `undefined`. The factory forwards its caller's options untouched at `lib/models/model.js:L163`. **No call site passes it**: `strict` is set to `false` **zero** times across `app.js`, `config/`, `lib/`, `scripts/` and `test/` | that forward is `2f8712a:lib/models/model.js:L163`, character-identical | ACCEPTED — a guard against a caller that does not exist, and adding one is defence-in-depth rather than a sanctioned diff |
+| DB-13 | `grant()` persists on its own, so a caller that *also* calls `save()` **duplicates** the role entry — and `revokeAll()` then leaves a survivor | Measured on one user: after `grant('course-owner', 'course', { id })` the persisted contexts are `["site","course:<id>"]`, and a following `user.save()` makes them `["site","course:<id>","course:<id>"]`, because `grant()` pushes onto the in-memory array at `lib/models/plugins/roles.js:L86` *and* writes the whole array with `$set` at `L125-L131`, so `save()` replays the push as an atomic `$push` on top of what was already stored. `revokeAll('course', { id })` then splices **one** index, leaving exactly one survivor. **No caller does this**: sixteen `.grant(` occurrences — nine in `lib/`, of which seven are live calls, one is commented out at `lib/controllers/course.js:L58` and one is the internal delegation at `lib/models/plugins/roles.js:L143`, plus six live calls and one comment in the suite — and **none** is followed by a `save()` on the same document | `lib/models/plugins/roles.js` is byte-identical to `2f8712a` | PRESERVED — the duplication is only reachable through a call sequence nothing performs |
+| DB-14 | `ClientMetric.addMetric` buckets with `Math.round`, so anything past `:30` seconds is filed under the **next** minute | Measured with the clock pinned to `2026-08-05T12:34:31.000Z`: the persisted `timestamp_minute` is `2026-08-05T12:35:00.000Z`, **29 s in the future**, where `Math.floor` would have produced `12:34:00.000Z`. The arithmetic is `lib/models/clientMetric.js:L27` | byte-identical to `2f8712a` | PRESERVED — `timestamp_minute` is both a **persisted value** and the collection's unique index, so re-bucketing changes stored data and which writes collide (TR6) |
+| DB-15 | A 5000-character name yields a 5000-character slug | Measured: a `Folder` named with 5000 `x`s persists `slug.length === 5000`; the `slug` path declares no `maxlength` and no `match` | `lib/models/plugins/slug.js` is byte-identical to `2f8712a` | PRESERVED — slug output **is** public URLs, which is why `limax` and `transliteration` are held in Rubric 5 of the inventory; a length constraint changes URLs that already exist |
+| DB-16 | The delivered dependency inventory stated a rationale for the `mongoose` 6.x hold that measurement contradicts: that mongoose 7 removes behavior `Model.extend` depends on, and that `mongoose-schema-extend` is why the ceiling exists | `Model.extend` does not work on mongoose **6** at all. Measured: `Model.extend(name, obj)` raises `TypeError: Method Map.prototype.get called on incompatible receiver [object Map]` through `lib/models/model.js:L191` → `mongoose-schema-extend/index.js:L92` → `mongoose/lib/schema.js:L1785` → `kareem/index.js:L525`, identically on **6.13.9**, **6.13.10** and **7.8.11**, with and without a pre-save hook, and as the sibling `Map.prototype.has` message on **5.13.23**. `Model.extend` has **zero call sites**. The ceiling that measurement does establish at 7 is the wholesale removal of callback support — eleven sites in this tree hand a callback straight to mongoose — and the removal of `Document.prototype.remove()`, four sites; `count()` survives 7.8.11 and is gone on 8.24.2 | identical failure on the base commit's own resolved mongoose ⇒ **zero** behavior change, so R-4 is satisfied and only the documentation was wrong | **CORRECTED** — the rows and the correction note are in [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) Rubric 5, and [section 3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved--as-is-count) carries the version correction and its two re-derived line numbers |
+| DB-17 | The model factory's generated finders pass their argument straight into a mongoose query, so a **Mongo operator object** is executed as an operator rather than compared as a value | Measured with one document seeded per probed collection, so that an empty result would mean refusal rather than emptiness: **8 of the 9** finders probed with `{ $ne: null }` returned rows — `Trinket.findById`, `Trinket.findByHash`, `User.findById`, `Course.findById`, `File.findById`, `Folder.findById` and `CourseInvitation.findByToken` one row each, and `Trinket.findForUser` **all three** of the owner's trinkets. `User.findByLogin` is immune outright: `TypeError: login.toLowerCase is not a function` before any query is built. **Unreachable over HTTP**, measured live against a running instance: an object, an array and a number in a field declared `Joi.string()` are each answered `{"validation":{"lang":"\"lang\" must be a string"}}` and persist **nothing** — the `snippets` count stayed **0** across all three, while the identical request with `"lang":"python"` created exactly one — operator-shaped path segments answer **404** in all three spellings (`$ne`, `%24ne`, a URL-encoded `{"$ne":null}`), and a bracket-syntax query key answers exactly what the same route answers with the parameter simply absent, because hapi does not nest bracket keys into an object | `git show 2f8712a:lib/models/model.js` and the delivered file are **identical across the entire generated-finder region, lines 100-205**; the file's `+44/-1` diff is the appended `silentOutcome` helper and nothing else | ACCEPTED — pre-existing and gated. See 18.2 |
+| DB-18 | A form submission that fails validation **persists the submitted plaintext password** into the Mongo `sessions` collection | Measured live end to end. A `POST /users` whose `username` fails its pattern answers **302** to `/signup` and leaves one 450-byte session document whose `_flash` keys are exactly `validation`, `failure`, `payload`, `query`: `_flash.validation` carries only the field message, `_flash.query` is `{}`, and **both** `_flash.failure` and `_flash.payload` carry `"password":"<the submitted secret>"` verbatim. A failed `POST /login` for an unknown address leaves `_flash.failure` as `{"message":"Unknown user …"}` — no secret — while `_flash.payload` again carries the password. Both documents show `ttl = 86400000` and a numeric `stored`, i.e. server-side storage rather than a cookie. No template ever reads it back: `lib/views/signup.html:L21` and `lib/views/login.html:L26` re-render `flash.payload.email` only, and `flash.payload.password` appears in **no** view | `app.js:L100` sets `maxCookieSize: 0` and so does `2f8712a:app.js:L103`, so the flash was already server-side at the base commit; the three writes are `2f8712a:lib/util/routeParser.js:L490`, `L493` and `L494` — `flash('failure', json, true)`, `flash('payload', request.payload, true)`, `flash('query', request.query, true)` — reproduced verbatim by the delivered responder | PRESERVED — see 18.3 |
+| DB-19 | The one live Bull queue uses the fixed name `exports` with no key prefix, so two instances sharing a Redis but **not** a Mongo database share one job namespace | Measured: `lib/util/queues.js:L127` is `new Queue(name, opts)` with `opts.redis` carrying only `host`, `port` and an optional `password` from `config.db.redis[name] \|\| config.db.redis.app`, and the exported getter list is the one-element `['exports']` at `L142-L144`. The running instance logs `Queue [exports] using Bull with Redis`, and the shared Redis holds a single `bull:exports:*` keyspace — `bull:exports:failed` plus numbered job keys — with no database discriminator anywhere in the key. The consequence is in the worker: `processBulkExport` updates `Export` by id (a no-op where the record does not exist) and then throws `Error('User not found')` at `lib/workers/exports.js:L159`, so the consuming instance fails the job while the originating database's `Export` document stays `pending` for good | `git diff 2f8712a -- lib/util/queues.js` is **eight added comment lines and nothing else**; the queue construction is the base commit's | ACCEPTED — an environment and deployment concern rather than a code condition: it needs a per-deployment Redis, or a `prefix`, which is configuration this changeset does not own. Single-deployment operation is unaffected |
+
+### 18.1 The stray `index` path, and why neither half of the obvious repair is available
+
+`lib/models/plugins/slug.js:L15` was plainly meant to read `schema.add({ slug: { type: String, index: options.index }
+})`. Written as it is, it does two things at once, and each has a different reason for staying.
+
+The **stray path** is a schema change. `index` is a live `Mixed` path on `Course`, `Lesson`, `Material` and `Folder`;
+`Mixed` accepts any value, and a document that sets it persists it. Removing the path is therefore only safe on a
+collection where nothing has ever written it, which is a claim about production data that this changeset cannot make
+from inside a checkout. Nothing in the application writes it — the name appears in no controller, model method or
+template — so the exposure is theoretical, and the disposition is to record it rather than to act on it.
+
+The **missing index** is the sharper half, because "add the index" looks free. It is not. The delivered index topology
+is a **gate**: [section 0](#0-current-delivery-status--the-single-source-of-truth-for-every-measured-figure) records
+it, and the database pass verified it as 35 declared against 49 built less the 14 automatic `_id_`, with *no extra
+index*. Adding a `slug` index to four collections adds four indexes, so the reconciliation that currently balances
+exactly would stop balancing, and the change would alter query plans on the paths that read by slug — a performance
+change, which section 0.9.9 of the specification places outside this changeset's objectives and R-1 outside its diff.
+`Course` and `Folder` already carry the compound `_owner+slug` unique index, which is what the slug reads actually
+use.
+
+### 18.2 The raw finders do execute an operator object, and the gate that makes it unreachable
+
+`DB-17` is the sharpest-looking row in this section, so it is worth stating exactly what it is and is not. The
+factory's generated finders — `findById`, `findByIds`, `findForUser` and the per-model `findByHash`, `findByToken` and
+`findByOwnerAndSlug` — take whatever they are handed and put it in a query position. Hand one an `ObjectId` string and
+it compares; hand it `{ $ne: null }` and MongoDB evaluates it as an operator. Eight of the nine probed finders return
+rows that way, and `Trinket.findForUser({ $ne: null })` returns every trinket of every owner rather than one owner's,
+which is the shape that matters: owner scoping can be widened at the raw API.
+
+**What stops it is Joi, and the stop was measured rather than assumed.** Every request-fed finder argument arrives
+through a route declaration that types it, and the types are scalar: an object, an array and a number offered where
+`Joi.string()` is declared are each rejected with `"lang" must be a string` before the handler runs, and the
+persistence check confirms it — nothing was written, while the identical well-formed request wrote exactly one
+document. The other two routes an operator could travel are closed by the framework rather than by the schema: a path
+parameter is always a string, so `/$ne`, `/%24ne` and a URL-encoded `{"$ne":null}` are three 404s, and hapi does not
+expand `?field[$op]=` into a nested object, so a bracket key is indistinguishable from an absent parameter.
+
+**Why it is not repaired here.** The finder region is byte-identical to the base commit across lines 100-205, so this
+is not a migration regression, and the repair — a `typeof === 'string'` or `isValidObjectId` guard inside the factory
+— is defence-in-depth against an unreachable path. R-1 admits the runtime bump, the hapi API migration, the async
+conversion and dependency swaps; a hardening guard is none of them, and `lib/models/model.js` is a file whose blast
+radius reaches all 233 routes. It belongs to authorized post-migration security work, alongside the conditions in
+[section 4](#4-the-security-condition-catalogue).
+
+### 18.3 The submitted password in the session flash, and why the log remediation does not extend to it
+
+`DB-18` and [section
+15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) are the
+same credential travelling through two different channels, and the two channels have different dispositions for a
+reason that is worth stating once.
+
+The **log** channel was remediated. `lib/http/responseContract.js` passes a redacted **copy** to `log.info`, and
+`lib/http/validation.js` builds a parallel `loggableErrors` map so a Joi message cannot smuggle the offending value
+into the second argument. That remediation is wire-neutral by construction: it redacts a copy on the way to the log
+and leaves the object that is flashed, re-rendered and returned untouched.
+
+The **flash** channel is not remediable on the same terms. `request.yar.flash('payload', request.payload, true)`
+persists the payload so the form can be re-rendered after the redirect, and because `maxCookieSize: 0` routes yar's
+state into MongoDB through `lib/util/catbox-mongoose.js`, "persists" means a document in the `sessions` collection.
+Scrubbing it is not a log-hygiene change: it changes **stored data**, which TR6 freezes, and it changes what a
+subsequent request reads out of the bag. Measurement narrows the argument rather than settling it — no template reads
+`flash.payload.password`, so a scrub would change no rendered byte — but "no template reads it today" is not the same
+as "nothing reads it", and a credential-scrubbing change to a persisted format is a security repair, which R-1
+excludes and [section 4.0](#40-the-disposition-rule-this-section-applies) dispositions accordingly.
+
+The exposure is bounded and worth recording precisely: the password is written **only** on the failure path, it lives
+for the session's 24-hour TTL, and it is reachable only by something that can already read the application's database.
+The authorized change to make is the one [section
+4.16](#416-crosswalk-to-the-cumulative-reviews-security-findings-and-the-authorized-change-each-preserved-condition-still-needs)
+asks for on the rest of section 4: redact secret-shaped keys before `flash('payload', …)`, with the same closed
+deny-list `isSecretName()` already implements, in a change whose diff budget admits it.
+
+### 18.4 What this pass confirmed rather than found
+
+The same run verified, at runtime and against raw BSON, that the `sessions` TTL index is declared exactly as
+`lib/util/catbox-mongoose.js` states it — `expireAfterSeconds: 0` with `partialFilterExpression { ttl: { $exists: true
+} }` — and that it is **inert by design**, with expiry actually delivered lazily per read, which is the condition
+[section 1.14 E](#114-eight-further-preserved-conditions) records; that `config/db.js`'s explicit `strictQuery` is
+effective at runtime even though the `set()` executes after schema construction; that the nine sloppy-mode model
+globals function, with the User post-`remove` hook reaching `Course.userDeleted` **through the global `Course`**; that
+the bulk-export worker still fails on `Query#stream()` with `count()` retained, exactly as [section
+3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved--as-is-count) requires; that the
+`isEmailLegacy` shim of [section
+3.25](#325-validator-13-silently-changed-a-persisted-field-and-the-old-verdict-is-restored-by-a-shim) holds the
+persisted `status` verdict at BSON level; that the `comparePassword` bridge still hands `err === undefined` per
+[section 3.36](#336-the-password-comparison-stays-callback-compatible-even-though-bcrypt-no-longer-needs-it); that
+every 5xx observed was the scrubbed fixed string; and that the only error-level line in the application log across the
+whole session was the known `assetList` `TypeError` behind the deliberately preserved 500 at `GET /api/users/assets`,
+recorded in [section 1.14 A](#114-eight-further-preserved-conditions).
+## 19. Runtime-QA observations on the observability surface — attributed, and preserved
+
+> ✅ **Evidence status: final.** As in sections 16 and 17, the gate figures this section quotes — the replayed route
+> table, the response-corpus difference count, the CSS artifact bytes, the zero-warning boot — come from the parity
+> artifacts and their runs, and section 0 records each with the command that produced it. Every per-condition
+> measurement below was **re-measured on the delivered tree while this section was written**, on Node **v22.23.2**,
+> against a throwaway `mongo:6.0` container and a local S3 stand-in, over real HTTP, with `server.inject` never used —
+> and each condition's **attribution to the base commit** rests on `git show` / `git diff` against `2f8712a` rather
+> than on a run. See [How to read this catalogue](#how-to-read-this-catalogue).
+
+A third runtime QA pass exercised the **observability** surface: application startup, the HTTP lifecycle and its error
+mapping, auth and session, route timing, log levels, formats and sinks, MongoDB, Redis, the Bull queue, the export
+worker, S3, mail, reCAPTCHA and OAuth, plus the shipped scripts, the parity harness and the container. Eleven
+independent application instances, three worker harnesses, six containers and roughly 350 real HTTP requests, with no
+repository file created, modified or deleted.
+
+**Its verdict on this changeset's own behavior was, again, unqualified.** The zero-deprecation boot gate held over real
+HTTP; every 5xx on the wire was the scrubbed fixed string while the real error, its stack and its call site stayed in
+the log; the failure-log redaction of
+[section 15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only)
+held against nested, array-borne, camelCase, deeply buried and injection-shaped payloads without altering a single
+response byte; the three retired shim traces were gone with every other intentional log line still firing
+([section 1.12](#112-the-leftover-consolelog-calls--64-matching-lines-at-the-base-commit-64-now)); and the R-6 replay reported **0
+differences**.
+
+**Two conditions it measured were not catalogued anywhere, and they are the whole of its FAIL verdict.** Both are
+inherited from the base commit, so R-4 forbids repairing either one here, and for both the AAP-sanctioned remedy is the
+catalogue entry — which is what 19.1 and 19.2 are. A further set of informational conditions is recorded in 19.3, and
+19.4 lists what the pass confirmed rather than found.
+
+Citations in this section are given in the **delivered** frame, with base-commit citations prefixed `2f8712a:` per the
+explicit-marking rule in *How to read this catalogue*. `node_modules/` citations are versioned by the committed
+lockfile, as that rule provides.
+
+| # | Condition | Measured evidence | Base identity | Disposition |
+|---|---|---|---|---|
+| F-OBS-1 | A **total datastore outage is silent in production** — and so is every other failure raised in a lifecycle phase rather than in a handler: a malformed JSON body, an oversized body, a forged session cookie and a response-marshalling failure all answer their status code with **zero** bytes written to any application log sink | Production instance, throwaway mongo stopped mid-run: `GET /` **500**, `GET /home` with a session cookie **500**, `GET /api/folders` with one **500**, `GET /api/trinkets` **401** — and the stdout, stderr and winston-file byte deltas were **0, 0, 0** for every one of them, and **0, 0, 0** again across the recovery. Four further instances, same three zero deltas: malformed JSON → **400** `Invalid request payload JSON format`; a 1.2 MB body → **413** `Payload content length greater than maximum allowed: 1048576`; a forged `session=Fe26.2**deadbeef…` cookie → **401** `Not logged in` on an API route and **302** on an HTML page; authenticated `POST /api/exports` → **500** scrubbed. The raise site is `Boom.internal('Disconnected')` at `node_modules/@hapi/catbox/lib/client.js:104` | `git show 2f8712a:app.js \| grep server.events.on` returns **nothing** — the base commit had no subscriber of any kind — and the delivered server-options region (`app.js:L64-L107`) is **byte-identical** to `2f8712a:app.js:L67-L110`, `state.failAction: 'log'`, the `isDev` debug gate, the `sessions` cache provider and the Yar options included. `git diff 2f8712a -- config/log.js` and `git diff 2f8712a -- config/default.yaml` are both **empty** | PRESERVED — see 19.1 |
+| F-OBS-2 | A failed S3 write logs the **AWS access key ID**, because the v3 error object carries every member of S3's own `<Error>` document. The **secret** access key is never logged | Driven through `lib/util/file.js#uploadMaterialFile` against a local stand-in answering the real `InvalidAccessKeyId` document: the log line carries `Code: 'InvalidAccessKeyId'`, **`AWSAccessKeyId: 'W002QAFIXKEYID000000'`**, `RequestId`, `HostId`, `$fault: 'client'` and `$metadata.httpStatusCode: 403`. Sentinel-secret occurrences in stdout **0** and in stderr **0**; `AWS4-HMAC`/`Credential=` occurrences in the application log **0**. `@smithy` writes `An error was encountered in a non-retryable streaming request.` to **stderr**, and the caller still receives the success-shaped `{ err : null, results : {…} }` | The emitting statement is `2f8712a:lib/util/file.js:L49` `err && console.log(err);`, delivered as `lib/util/file.js:L132` `uploadError && console.log(uploadError);` — the same statement with the identifier renamed by the async conversion. **The field is not:** measured on `aws-sdk` 2.1693.0 against the identical response, the base commit's error object carried `["message","code","region","time","requestId","extendedRequestId","cfId","statusCode","retryable","retryDelay"]` and `hasOwnProperty('AWSAccessKeyId')` was **false** | PRESERVED — see 19.2 |
+
+### 19.1 F-OBS-1: a datastore outage is silent in production, and so is every other lifecycle-phase failure
+
+**What it is.** When MongoDB becomes unreachable while the process is running, **100% of requests fail and every
+application log sink stays completely empty**. The application does not crash, does not warn, and does not record the
+outage or the recovery. The same silence covers every other failure that hapi raises *outside* a route handler.
+
+**The mechanism, traced rather than inferred.** The session plugin reaches the `sessions` catbox policy on every
+request — reading the session before authentication and committing it in its own `onPreResponse`. With the connection
+down, catbox refuses both operations from one place:
+
+```javascript
+// node_modules/@hapi/catbox/lib/client.js:104
+if (!this.isReady()) {
+    throw Boom.internal('Disconnected');
+}
+```
+
+That throw happens in a **lifecycle extension**, not in a handler, so it never passes through the route wrapper's
+`try`/`catch` and [`lib/http/errorMap.js`](#71-errormaptoresponse-has-no-isboom-test-so-throw-and-return-are-not-interchangeable)
+never observes it — the module that would have logged it is downstream of where it is raised. hapi boomifies it
+internally, and whether *anything* is printed depends on one option in `app.js:L75`:
+
+```javascript
+debug: config.isDev ? { request: ['error'] } : false,
+```
+
+`config.isDev` is `node_env === 'development'` (`config/app.config.js:L11`), so in production the framework's own
+error console is switched off and nothing takes its place: `app.js:L310-L312` carries the only `server.events.on` in
+the tree, and it listens for `'stop'` so the shared S3 client can be released. Nothing subscribes to hapi's `request`
+events, which is also why `routes.state.failAction: 'log'` (`app.js:L71`) has no observable effect — the cookie-parse
+failure record is emitted into a channel with no listener.
+
+**What development shows, and how little.** Even with `debug: { request: ['error'] }` active, the trace appears for
+only some request shapes. Measured on a development instance against the same stopped container:
+
+| Request, mongo down | Status | Development stderr | Failing catbox call |
+|---|---|---|---|
+| anonymous `GET /` | 500 | **1,605 bytes** — `Debug: internal, error / Error: Disconnected at [validate] (catbox/lib/client.js:104) at module.exports.set (client.js:85) at Policy.set (policy.js:311) at internals.Yar.commit (@hapi/yar/lib/index.js:297) at internals.onPreResponse (yar/lib/index.js:311)` | the session **write** |
+| `GET /api/folders` with a session cookie | 500 | **1,634 bytes** — the same block through `module.exports.get` | the session **read** |
+| `GET /home` with a session cookie | 500 | **0 bytes** | the session **read**, on a route whose 500 `app.js`'s first `onPreResponse` re-renders as `50x.html` and **takes over**, so hapi never records an internal-error event |
+
+The third row is the one worth remembering: an HTML page can fail on a dead datastore and leave no trace **even in
+development**. In production all three rows are 0 bytes, measured — including the row that prints in development.
+
+**The four further instances, each measured with the same three zero deltas.** They matter because they show the
+condition is not about MongoDB at all — it is about *where in the lifecycle* a failure is raised:
+
+- a malformed JSON body → **400** `Invalid request payload JSON format`, raised by the payload parser;
+- a 1.2 MB body → **413** `Payload content length greater than maximum allowed: 1048576`, raised by the same parser;
+- a forged `session=Fe26.2**deadbeef…` cookie → **401** `Not logged in` on an API route and **302** to `/login` on an
+  HTML page, despite `state.failAction: 'log'`;
+- an authenticated `POST /api/exports` → **500** scrubbed, from the response-marshalling `TypeError` that
+  [section 7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid) records — raised *after* the
+  handler returned, which is why the handler's own error channel cannot see it either.
+
+**What is *not* silent, so the boundary is exact.** A failure raised *inside* a handler is logged with its stack: the
+undeclared-`Boom` `ReferenceError` of [section 4.13](#413-the-undeclared-boom-identifier-in-coursejs) and the
+`GET /api/users/assets` `TypeError` of the baseline corpus both print `error:` plus a stack while answering the
+scrubbed 500. A validation failure is logged, redacted, by the failure responder
+([section 15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only)).
+A slow route prints its timing label — measured at `info: <yar id>-users: 83ms`. And a datastore that is unreachable
+**at boot** is fatal and loud: measured against a dead port, the process logged
+`error: Failed to start server: connect ECONNREFUSED 127.0.0.1:27399 … MongooseServerSelectionError` with its stack and
+**exited 1 after 31 seconds** — on **stdout**, for the reason 19.3 gives, with stderr at 0 bytes. It is only the
+mid-flight, out-of-handler failure that vanishes. The scrubbed-500 half of that boundary was re-measured too:
+`GET /api/users/assets` answered the 96-byte scrubbed body while writing **438 bytes** of `error:` plus a stack naming
+`lib/controllers/users.js:699` to the log.
+
+**Why it is preserved.** Every ingredient is the base commit's. The `debug` gate, `state.failAction: 'log'`, the
+`sessions` cache provider and the Yar options are byte-identical to `2f8712a:app.js:L67-L110`; `config/log.js` and
+`config/default.yaml` have empty diffs; and the base commit had **no** `server.events.on` subscriber at all, so the
+one this changeset adds — `'stop'` → `aws.destroyS3Client()`, required by the v3 SDK's per-client socket pool — is the
+only listener that has ever existed here. Adding a `server.events.on('request', …)` logger would be a new
+diagnostic facility, which is not one of R-1's four sanctioned diff categories, and R-4 prohibits the improvement
+outright. The remedy this catalogue can deliver is the record, not the repair.
+
+**What a naive fix would have broken.** Subscribing to hapi's `request` channel would put the *unredacted* request
+context of every failed request into the log, immediately re-opening the CWE-532 exposure that
+[section 15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only)
+closed by hand; flipping `debug` on in production would write hapi's own stack traces to stderr on every 4xx, changing
+what the container log stream contains for routes that answer 404 and 401 by design (the sweep in section 16 counted
+those); and touching `state.failAction` would change the status a forged cookie receives, which the R-6 corpus pins.
+
+**Operator guidance, because the absence has practical consequences.** There is **no** health, readiness or metrics
+endpoint — `/health`, `/healthz`, `/status`, `/metrics`, `/api/health`, `/api/status` and `/ping` all answer 404, and
+the 233-row route table confirms none exists — and there are no correlation identifiers. During a datastore outage the
+only signals available to an operator are therefore **HTTP status codes from an external probe and process liveness**:
+the process stays up and the port stays open, so a TCP or PID check reports healthy while every request fails. A
+deployment that needs to detect this must probe a route that touches the session cache (any authenticated route, or
+`GET /` which commits a session) and alert on its status code, and must not rely on log-based alerting for it.
+Recovery is automatic and equally silent: the measured instance was **still answering 500 eight seconds** after the
+container came back and had returned to **200 within twenty-three**, with the three log deltas still 0 across the whole
+transition. Nothing marks either edge of the outage, so its duration cannot be recovered from the logs afterwards.
+
+### 19.2 F-OBS-2: a failed S3 write logs the AWS access key ID, and that field arrived with the mandated v2→v3 swap
+
+**What it is.** When an S3 write fails, the swallowing catch in `lib/util/file.js` logs the SDK's error object whole, and
+under `@aws-sdk/client-s3` that object carries **every top-level member of S3's own `<Error>` document** — including
+`AWSAccessKeyId`, which is the access key ID the request was signed with. The **secret** access key never appears.
+
+**The emitting statement is the base commit's, and the log *content* is not.** That distinction is the whole of this
+entry. The statement:
+
+```javascript
+// 2f8712a:lib/util/file.js:L49   -> err && console.log(err);
+// delivered lib/util/file.js:L132 -> uploadError && console.log(uploadError);
+```
+
+is one identifier rename apart, performed by the async conversion when the `_upload` callback became a `try`/`catch`;
+the swallow around it — a failed write still reports success to every caller — is recorded in
+[section 3.42](#342-uploads-measure-before-they-open-and-an-abandoned-download-releases-its-s3-body). What changed is
+the **shape of the object handed to it**, and that change came in with the SDK replacement AAP §0.5.2.1 mandates.
+
+**Measured on both SDKs against the identical response, so the delta is a measurement rather than an inference.** A
+local stand-in answered the real S3 `InvalidAccessKeyId` document; sentinel credentials were configured; each SDK was
+driven through the call shape its own frame uses.
+
+| Frame | Error-object own keys, as printed | `AWSAccessKeyId` present |
+|---|---|---|
+| base commit, `aws-sdk` **2.1693.0**, `new AWS.S3().putObject(params, cb)` | `message`, `code`, `region`, `time`, `requestId`, `extendedRequestId`, `cfId`, `statusCode`, `retryable`, `retryDelay` | **no** — `hasOwnProperty` returned false |
+| delivered, `@aws-sdk/client-s3` **3.1098.0**, through `uploadMaterialFile` | `$fault`, `$retryable`, `$metadata` (`httpStatusCode: 403`, `requestId`), `Code`, **`AWSAccessKeyId`**, `RequestId`, `HostId` | **yes** |
+
+The v2 probe also re-confirmed, in passing, why the swap was not optional: requiring the package printed
+`NOTE: The AWS SDK for JavaScript (v2) has reached end-of-support.` — the very
+`process.on('warning')` event the zero-warning boot gate of
+[section 7.6](#76-the-two-deprecation-warnings-and-why-neither-is-repairable-here) forbids.
+
+**The value logged is whatever the server echoed, not the local credential.** Proven by making the two differ: with the
+stand-in returning `<AWSAccessKeyId>BODYSUPPLIEDVALUE999</AWSAccessKeyId>` while the client was configured with
+`W002QAFIXKEYID000000`, the logged field read **`BODYSUPPLIEDVALUE999`**. The v3 XML error deserializer hydrates the
+error from the response document, so this field is an echo of S3's reply — which also means a request signed by an
+instance role logs whatever key ID that role resolved to.
+
+**What is and is not exposed, measured rather than assumed.**
+
+- the sentinel **secret** access key: **0** occurrences in stdout, **0** in stderr;
+- `AWS4-HMAC` and `Credential=`: **0** occurrences in the application log;
+- the key ID itself: **1** occurrence, in the logged error object;
+- and the same key ID travels in clear on **every** signed request anyway — the stand-in recorded
+  `authorization: AWS4-HMAC-SHA256 Credential=W002QAFIXKEYID000000/20260805/us-east-1/s3/aws4_request, SignedHeaders=…`
+  — and every presigned download URL this application hands to a browser publishes it as a query parameter:
+  `X-Amz-Credential` under the delivered SigV4 implementation, and `AWSAccessKeyId` under the base commit's SigV2, both
+  recorded in [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) under *Presigned download URLs*.
+  An access key ID is an identifier, not a credential; on its own it authenticates nothing.
+
+**Why it is preserved.** R-1 admits only the runtime bump, the hapi API migration, the async conversion and dependency
+swaps. Narrowing what the log line prints — `console.log(uploadError.name)`, a field projection, a redactor — is
+log-hygiene repair, which is exactly the latent-bug fix R-1 excludes and the behavior improvement R-4 prohibits; and the
+line is the one an operator's own tooling reads today. The one remediation this changeset does keep in a log path,
+[section 15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only),
+was admitted only because it closes a **cleartext password** written by the application's own responder. An identifier
+echoed back by AWS in an error document is not that, which is why this one is recorded rather than repaired.
+
+**What a naive fix would have broken.** Printing `uploadError.name` or `uploadError.message` instead of the object would
+discard `$metadata.httpStatusCode`, `Code`, `RequestId` and `HostId` — precisely the fields AWS support asks for when a
+bucket policy or a checksum mismatch has to be diagnosed — and would leave the operator with a swallowed failure and
+nothing to correlate, because the caller reports success either way. A projection that dropped only `AWSAccessKeyId`
+would have to be written against an SDK error shape that is versioned by the lockfile rather than by this repository.
+
+**Operator guidance.** Treat the application log as containing AWS **key identifiers** — never key material — and keep
+its retention policy aligned with that. There is nothing to rotate on the strength of a log leak of this field alone:
+the same value is on the wire in every request the process makes. If the deployment's policy is that key IDs must not be
+persisted at all, the correct lever is outside this repository — an instance role instead of static credentials, or a
+log-processing filter — and not a change to this line.
+
+### 19.3 The log-channel conditions the pass added to the record
+
+Six further conditions are informational rather than defects: they are properties of how this application's log channels
+are wired, they change no response, and every one of them is the base commit's. They are recorded because an operator
+reading the two entries above will otherwise mis-read what the log stream in front of them contains. Each row was
+re-measured on the delivered tree; the diffs quoted are against `2f8712a`.
+
+| # | Condition | Measured | Base identity |
+|---|---|---|---|
+| OBS-3 | **Every winston level goes to stdout, and the application's two fatal paths disagree about which stream is theirs.** `config/log.js` declares a Console transport with no `stderrLevels`, so `error` is written to stdout alongside `info`; the session-password guard uses `console.error` and therefore stderr | Unreachable-MongoDB boot: `error: Failed to start server: … MongooseServerSelectionError` on **stdout**, stderr **0 bytes**, exit **1** after **31 s**. Short session password: **437 bytes** on **stderr**, stdout only the 61-byte queue line, exit **1**, and the offending value **not** echoed (0 occurrences in either stream) | `git diff 2f8712a -- config/log.js` is **empty**; the guard block in `app.js` is unchanged |
+| OBS-4 | **`app.log.level` governs winston's console transport only** — the application's raw `console.*` calls bypass it entirely, so lowering the level hides the startup banner and the route timings while leaving the login traces at full volume | With `app.log.level: error`: `Server started on port` **0** occurrences on the console, route-timing `info:` lines **0**, while **11** `LOGIN:` traces plus `Queue [exports] using Bull with Redis` and `Redis client connected to …` still printed. The file sink, which is fixed at `level: 'debug'`, still recorded both suppressed lines as JSON | `config/log.js` empty diff; the console census this rests on is [section 1.12](#112-the-leftover-consolelog-calls--64-matching-lines-at-the-base-commit-64-now) |
+| OBS-5 | **The shipped debug sink is one fixed absolute path with no rotation**, so every process on a host appends to the same file for the life of the machine | `config/default.yaml:L129` is `filename: '/tmp/debug.txt'`, and `config/log.js`'s File transport declares **no** `maxsize`, `maxFiles`, `tailable`, `zippedArchive` or rotation of any kind — 0 matches. `files`, `unauth` and `routehandlertiming` are all `true` by default, which widens what lands there | `git diff 2f8712a -- config/default.yaml` and `-- config/log.js` are both **empty** |
+| OBS-6 | **Two independent Redis clients emit a character-identical connect line**, and neither line names its client | `config/redis.js:L45` and `lib/util/store.js:L174` are the same statement. Measured against a throwaway `redis:7.4`: the first line appears at boot, the second only after a store operation (a signup) — both reading `Redis client connected to localhost:6412` | both files have **empty** diffs against `2f8712a` |
+| OBS-7 | **Under the shipped `pm2-docker` CMD, whether a fatal misconfiguration produces a visible container failure or an invisible restart loop depends on how long the process survives** — pm2's `min_uptime` is the discriminator, not the error | Fast fatal (short session password, process dies in <1 s): **16** `App [app:0] exited with code [1] via signal [SIGINT]` cycles, then pm2 stops retrying and the container ends at **`Running=false ExitCode=2`** — the orchestrator does see it. Slow fatal (unreachable MongoDB, ~31 s per attempt): **4** cycles in 150 s and still going, container reporting **`Running=true ExitCode=0 RestartCount=0`** — an unbounded loop no orchestrator signal reflects | `RUN npm install -g pm2@5` and `CMD ["pm2-docker", "start", "app.js"]` are **character-identical** to `2f8712a:Dockerfile:L12` and `L39`; only their line numbers moved, to `L33` and `L102` |
+| OBS-8 | **A successful login writes eleven `LOGIN:` console traces, two of which carry the account's e-mail address** — raw `console.log`, so [section 15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only)'s redactor never sees them; no password appears in any of them | 11 traces measured on one successful login, from `LOGIN: Starting login for <email>` to `LOGIN: About to redirect, redirect= null`; exactly **2** carry the address, and the password count is **0** | part of the 64-call census of [section 1.12](#112-the-leftover-consolelog-calls--64-matching-lines-at-the-base-commit-64-now), unchanged |
+
+**The pass's remaining informational conditions were already catalogued, and are cross-referenced rather than
+duplicated.** Recording them twice is how a catalogue starts contradicting itself, so each is listed here with the entry
+that owns it, plus whatever the pass *added* to that entry:
+
+| The pass's observation | Owning entry | What the pass added |
+|---|---|---|
+| The mailer's unconfigured branch logs the recipient address | [section 16](#16-runtime-qa-observations-on-the-integration-surface--attributed-and-preserved), QA-2 | nothing — re-confirmed firing |
+| Redis configured but unreachable logs the error event about twice a second, without a ceiling, while the application keeps serving | [section 16](#16-runtime-qa-observations-on-the-integration-surface--attributed-and-preserved), QA-4 | a volume figure: 3,313 lines in 25 minutes, ≈20.6 MB/day/instance, into an unrotated sink (see OBS-5), and Bull's own queue-`error` listener as a second channel for the same outage |
+| A rejected reCAPTCHA verification logs nothing at all, so a bot signup that was correctly refused leaves no trace | the mechanism is the argument-less `h.reject()` meeting the responder's inherited `if (json)` guard — `lib/http/responseContract.js:L408-L413`, whose guard is verbatim from `2f8712a:lib/util/routeParser.js:L484-L486` — and the destination it redirects to is [section 15.3](#153-post-users-sends-every-signup-failure-to-a-path-that-does-not-exist) | confirmation over a real network with a bogus secret: 302 to the un-interpolated `/{formName}`, user count 0, log output 0 |
+| A reCAPTCHA **transport** failure is process-fatal | [section 1.10](#110-the-unchecked-err-crash-path-in-recaptcha-verification) | container `ExitCode=1` with a diagnostic naming `lib/util/recaptcha.js` |
+| When the failure e-mail also fails, the export's root cause is overwritten in the log and in `Export.errorMessage` | the ordering is `lib/workers/exports.js`'s own documented shape — the failed-status write and `errorMessage: err.message` are persisted first, then `await sendFailureEmail(…)`, whose rejection "surfaces instead of this one" and reaches the queue's `'failed'` listener, which logs it and re-writes `errorMessage` at `L95`. The fire-and-forget half is [section 3.43](#343-fire-and-forget-mail-owns-its-rejection-and-still-reports-nothing) | the end-to-end confirmation, including the persisted field |
+| The export worker cannot be loaded as a standalone entry point, and no start script exists, so enqueued jobs are never consumed in a stock deployment | [section 7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit) | a 5-way combination test isolating the require order that fails |
+| The nine frozen disabled-queue names are unreachable at runtime, so their no-op line can never fire | [section 3.11](#311-a-seventh-test-blocker-beyond-the-six-catalogued-in-the-specification) | nothing — re-confirmed |
+| `DEP0169` is reachable only through the application's own internal sub-request | [section 7.6](#76-the-two-deprecation-warnings-and-why-neither-is-repairable-here) | the first occurrence traced to `POST /courses` → `courses.create`, with `--trace-warnings` naming `@hapi/shot/lib/request.js:30` |
+| One worker draining a sibling clone's jobs, because several clones shared one Redis | — | **not a repository condition**: a property of the test environment, recorded here only so the log lines it produced are not mistaken for a defect |
+
+### 19.4 What the pass confirmed rather than found
+
+The same run verified, at runtime and without `server.inject`, that the boot emits **zero** process warnings under
+`--pending-deprecation` and keeps emitting none across 120-plus real requests — the 58 parameter-less GETs
+unauthenticated and authenticated, a login, an authenticated course creation, a signup validation failure and a search —
+with the only warning in the whole process being the `@hapi/shot` `DEP0169` of
+[section 7.6](#76-the-two-deprecation-warnings-and-why-neither-is-repairable-here), and with **no** `aws-sdk` v2 `NOTE`
+event, no `DEP0005` from `new Buffer`, and no mongoose `strictQuery` notice. It verified that every 5xx on the wire is
+the scrubbed fixed string while the internal log carries the real error, its stack and its call site, and that a 4xx
+message still passes through verbatim — `Not logged in` at 401. It verified the redaction of
+[section 15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only)
+against nested, array-borne, camelCase, nine-levels-deep, cyclic and injection-shaped payloads, with the deliberate
+look-alikes `monkey` and `keystone` preserved verbatim, no response byte altered, and its unit spec green. It verified
+that the retired shim's own traces — the three per-request `ROUTE:` lines at `2f8712a:lib/util/routeParser.js:L311, L544,
+L550` and the `still going after 1s` watchdog at `L546` — are gone with **0** occurrences across 71 captured streams
+while every other intentional log line still fires, which is
+[section 1.12](#112-the-leftover-consolelog-calls--64-matching-lines-at-the-base-commit-64-now)'s census holding. And it re-ran the
+R-6 harness, which reported **0 differences** against the committed corpus and reproduced both CSS artifacts at their
+recorded byte lengths.
+
+It also confirmed the shape of the facilities this application does **not** have, which is why 19.1's operator guidance
+is worded as it is: no health, readiness or metrics endpoint; no correlation or trace identifier anywhere — none read
+from an inbound header, none emitted, none in the Bull job payload, none on the internal sub-request or the outbound
+S3 and SMTP calls; no log rotation; no stdout/stderr level separation; and no `uncaughtException` or
+`unhandledRejection` handler, so the process fate on an unowned rejection is Node's default, which
+[section 1.10](#110-the-unchecked-err-crash-path-in-recaptcha-verification) and
+[section 9](#9-the-no-response-and-process-fate-preservations-site-by-site) already record. The route-timing label —
+`<yar id>-<path>[-<userId>]`, printed only above 10 ms — is the only correlator the application has, and it was measured
+byte-identical to the base commit's.
+
+The pass's FAIL verdict reflects the two undocumented conditions above, both inherited and both now catalogued. It
+recorded no defect attributable to this changeset.
+## 20. Runtime-QA observations on the performance surface — attributed, and preserved
+
+> ✅ **Evidence status: final.** As in sections 16 and 17, the gate figures this section leans on — the 233-row route
+> table, the replayed response corpus, the two stylesheet artifacts, the deprecation-gate boot — belong to the parity
+> artifacts and their runs, and [section 0](#0-current-delivery-status-the-single-source-of-truth-for-every-measured-figure)
+> is the single place their current status is stated. The pass's own *verdict* and *counts* are that pass's readings and
+> are labelled as such where they appear. Every figure below that is **not** attributed to the pass was re-measured on
+> the delivered tree while this section was written, on an isolated instance with its own database and port and a
+> 4,001-trinket owner; where the two datasets differ, both readings are given. The per-condition **attribution to the
+> base commit** is a source-level fact, established by `git show 2f8712a:<path>` or `git diff 2f8712a..HEAD -- <path>`,
+> and is not qualified. See [How to read this catalogue](#how-to-read-this-catalogue).
+
+A third runtime QA pass profiled the performance surface: route startup, list, search and pagination, authentication
+and session lifecycle, course, folder and trinket CRUD, database query efficiency, the cache and store layer, the
+archive and stream paths, queue and worker concurrency, and seven browser pages. It did not read source and then
+reason: it **built the base commit `2f8712a` and ran it beside the delivered tree**, against the same MongoDB, the same
+Redis and the same host, interleaving every measurement so that host drift cancelled.
+
+**It found no regression attributable to this changeset.** Its own A/B put the delivered tree equal-or-better on every
+dimension it measured — a latency ratio whose median was **0.938** across 19 endpoints with the delivered tree faster
+on 15 of them, **identical** HTTP statuses, byte-identical response bodies, identical database operation counts,
+`COLLSCAN` counts and `docsExamined` on every endpoint profiled, **233 routes registered at both builds on all six
+boot runs**, startup and resident memory both lower, and boot-time deprecation warnings **2 → 0**. It also confirmed at
+runtime three defects this changeset repaired rather than introduced: the write-stream leak on a failed export job
+([section 3.41](#341-archive-failures-release-their-peers-and-queue-promises-are-owned)), the unbounded heap buffering
+in the remote-asset importer ([section 4.2a](#42-sec-2-assetuploadfromurl-unbounded-buffering-high-remediated-and-ssrf-high-preserved)),
+and the **one-request full-process denial of service** a duplicate folder name triggered at the base commit, which the
+delivered tree survives — the residual divergence
+[section 8.3](#83-the-three-fates-and-what-may-be-reproduced) prices and
+[section 9](#9-the-no-response-and-process-fate-preservations-site-by-site) records site by site.
+
+**Its verdict was nevertheless FAIL, and that is a property of the checkpoint's criteria rather than of this
+changeset.** The checkpoint fails automatically on an unbounded result set, on N+1 query fan-out, on a request that
+answers nothing, and on a surface that grows without bound — and the pass measured all four. Every one of them is
+**base-commit behavior**, so the disposition is the one
+[section 4.0](#40-the-disposition-rule-this-section-applies) states: preserve and document. Three rules make that
+disposition mandatory rather than discretionary here, and they are quoted rather than paraphrased because the
+temptation to "just add a `max()`" is strongest exactly where the finding is largest:
+
+- **AAP §0.9.9** — *"No performance or scalability improvement was requested, and none is pursued as an objective… no
+  change may be justified on performance grounds."* The same section freezes query patterns, index definitions and
+  caching behavior explicitly, and preserves the logging this section quantifies.
+- **R-4** — *"Behavior 'improvements' are prohibited. A 2013-era quirk that clients may depend on is preserved and
+  documented, not fixed."*
+- **TR1 and TR2** — the HTTP surface and the payload shapes are frozen, which is what forbids bounding `?limit`: a
+  `max()` changes which inputs are **accepted**, and that is a validation-outcome change, not an optimization.
+
+**What is new here, and what is not.** The rows below are the conditions the earlier passes did not name. The ones they
+did name are cross-referenced rather than restated — a repeated entry that drifts is worse than a pointer — and the
+mapping table at the end of this section closes the loop so that every condition the pass reported has exactly one home
+in this catalogue. Citations are in the **delivered** frame, with base-commit citations prefixed `2f8712a:` per the
+explicit-marking rule in *How to read this catalogue*.
+
+| # | Observation | Delivered site | Base-commit attribution (measured) | Disposition |
+|---|---|---|---|---|
+| PQ-1 | **`?limit` has no upper bound**, so one request can serve the caller's entire dataset (pass issue 4, MAJOR) | `config/api_routes.js:L855` declares `limit  : Joi.string().optional()`; `lib/controllers/trinket.js:L248-L249` spends it as `$limit : parseInt(request.query.limit) \|\| 20` | the identical declaration sits at `2f8712a:config/api_routes.js:L855`, and the same base file bounds three **other** list routes at `.max(100)` (L719, L734) and `.max(50)` (L1515) — the omission is deliberate at base, not a migration slip | PRESERVED — see [20.1](#201-pq-1-the-unbounded-limit-and-why-a-max-is-the-one-repair-that-cannot-be-made-here) |
+| PQ-2 | **The primary list endpoint examines every document the owner has** to serve a 20-row page (pass issue 5, MAJOR) | the four-stage `$project` → `$sort` → `$skip` → `$limit` pipeline at `lib/controllers/trinket.js:L205-L250` | `git diff 2f8712a..HEAD -- lib/controllers/trinket.js` leaves the pipeline, its `$match` and its `sortMap` untouched; the file's only change in that handler is `getUserId = function()` → `async function()` | PRESERVED — see [20.2](#202-pq-2-the-list-endpoint-that-examines-the-whole-owner-set-and-why-its-shape-is-frozen) |
+| PQ-3 | **N+1 query fan-out in three places** — materials per lesson, and one `findById` per course on two different routes (pass issue 8, MINOR) | `lib/controllers/course.js:L1329` `Promise.all(course.lessons.map(… populate materials …))`; `lib/models/user.js:L214-L221` one `Course.findById` per role-derived id, reached by `lib/controllers/courses.js:L74-L80`; `lib/models/course.js:L451-L455` one `findById` per featured member | every one of the three expressions is byte-identical at `2f8712a:lib/controllers/course.js:L1163-L1175`, `2f8712a:lib/models/user.js:L173-L180` and `2f8712a:lib/models/course.js` — and `lib/models/featuredCourses.js` has an **empty** diff | PRESERVED — see [20.3](#203-pq-3-the-three-n1-fan-outs-and-the-one-that-turns-into-a-500) |
+| PQ-4 | **`GET /api/featured-courses` answers 500 whenever the featured list is non-empty** — the empty list, which is what ships, answers 200 | `lib/controllers/courses.js:L83-L97` serializes each course and hands the result to a responder that serializes again at `lib/http/responseContract.js:L306` | base `2f8712a:lib/controllers/courses.js:L65-L79` builds the same value and hands it to `request.success`, whose `ObjectUtils.serialize(json \|\| {})` is the same call; `lib/util/objectUtils.js` has an **empty** diff | PRESERVED — the mechanism is [section 7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid); see [20.3](#203-pq-3-the-three-n1-fan-outs-and-the-one-that-turns-into-a-500) and the note added to [section 15.11](#1511-two-pages-render-an-empty-grid-with-no-empty-state-message-and-the-message-that-exists-is-gated-on-a-non-empty-featured-list) |
+| PQ-5 | **One wasted Redis `lPush` per course create**, into the literal key `courses:undefined:ids` | `lib/models/course.js:L288-L296` — `preserveSlug` captures `this.slug` **before** the slug plugin assigns it, so `_original_slug` is `undefined` when `ensureSlugAlias` calls `courseStore.linkIdToSlug` | the two functions are byte-identical at `2f8712a:lib/models/course.js:L288-L296`, and `git diff 2f8712a..HEAD -- lib/util/store.js lib/util/store/` is **empty** | PRESERVED — see [20.4](#204-pq-5-and-pq-6-two-writes-that-go-nowhere-useful-and-both-are-load-bearing-to-reproduce) |
+| PQ-6 | **A signed `emailToken:<shortCode>` is written to the session on every trinket create**, so the session grows with the owner's activity | `lib/controllers/trinket.js:L417-L419` — `jwt.sign(...)` then `request.yar.set('emailToken:' + doc.shortCode, …)` | the same three statements at `2f8712a:lib/controllers/trinket.js:L368-L370` | PRESERVED — see [20.4](#204-pq-5-and-pq-6-two-writes-that-go-nowhere-useful-and-both-are-load-bearing-to-reproduce) |
+| PQ-7 | **Anonymous traffic manufactures session documents that the declared TTL index can never reap** (pass issue 1, MINOR) | `lib/util/catbox-mongoose.js` — `stored` is a Number, and the index is `{stored:1}` with `expireAfterSeconds: 0` and `partialFilterExpression {ttl:{$exists:true}}` | `git diff 2f8712a..HEAD -- lib/util/catbox-mongoose.js` is **comment-only**; the two comments added merely say what this row measures | PRESERVED — already catalogued as [section 1.14 E](#114-eight-further-preserved-conditions); the figures re-measured here are in [20.5](#205-pq-7-and-pq-8-the-three-surfaces-that-grow-and-the-one-whose-growth-rate-is-conditional) |
+| PQ-8 | **The debug log and `/tmp` both grow without a retention story** — and the log's growth rate is **conditional**, which the pass's figure did not show (pass issue 11, INFO) | `lib/util/routeParser.js:L201-L209` logs `label + ': ' + endTime + 'ms'` **only above a 10 ms threshold**, into the `level: 'debug'` file transport `config/log.js:L16-L21` opens at `config/default.yaml:L129` (`/tmp/debug.txt`); the archive paths release their `/tmp` working files fire-and-forget (`lib/controllers/trinket.js:L1677`, `lib/workers/exports.js:L141`) and skip the release entirely when the request fails (`lib/controllers/courses.js:L355`, `L369`) | the threshold block is byte-identical at `2f8712a:lib/util/routeParser.js:L556-L563`, comment `// 10ms` included; the config keys and the transport are unchanged | PRESERVED — the unlink decision is [section 3.27](#327-the-temp-file-unlink-is-fire-and-forget-and-the-job-settles-without-it) and the shared-path risk is [section 4.8](#48-sec-8-predictable-tmp-archive-names-toctou-no-cleanup-medium-preserved); the refined rate is in [20.5](#205-pq-7-and-pq-8-the-three-surfaces-that-grow-and-the-one-whose-growth-rate-is-conditional) |
+| PQ-9 | **Views are never cached outside production**, so the first render after a boot pays the compile and every render re-reads its template | `app.js:L149` `isCached: config.isProd`, with `lib/util/nunjucks.js:L8` configuring `watch: config.isDev \|\| config.isTest` | `2f8712a:app.js:L148` is the identical expression | PRESERVED — measured in [20.6](#206-pq-9-pq-10-and-pq-11-three-shapes-that-look-like-oversights-and-are-all-base-commit-behavior) |
+| PQ-10 | **`GET /api/exports?limit=N` fetches every export the owner has and then slices in JavaScript** | `lib/controllers/users.js:L1414-L1422` — `Export.findByOwner(request.user)` with no limit, then `exports.slice(0, limit)` | `2f8712a:lib/controllers/users.js:L990-L996` is the same sequence, `limit` default included | PRESERVED — measured in [20.6](#206-pq-9-pq-10-and-pq-11-three-shapes-that-look-like-oversights-and-are-all-base-commit-behavior) |
+| PQ-11 | **Seven list-parameter shapes answer a scrubbed 500 rather than a 4xx**, and three more silently coerce (pass issue 6, recorded as a PASS) | the `sortMap` lookup at `lib/controllers/trinket.js:L166-L172` dereferences an unknown sort key, and `parseInt` feeds `$limit`/`$skip` at `L244` and `L249` unvalidated | the `sortMap`, both `parseInt` calls and the Joi query schema are unchanged from base; the pass measured the same status for each input at both commits | PRESERVED — the input matrix is in [20.6](#206-pq-9-pq-10-and-pq-11-three-shapes-that-look-like-oversights-and-are-all-base-commit-behavior) |
+| PQ-12 | **Three endpoints answer nothing at all**, and the pass proved the silence is **not** a server-side block (pass issue 12, MINOR) | `lib/controllers/folders.js:L116` (duplicate folder name), `lib/controllers/users.js:L1616` and `L1650` (`downloadExport`), `lib/controllers/users.js:L914` (`assetUploadFromURL`, reachable only with `features.assets` on) | each is a fate-(A)/fate-(B) reproduction of the base commit's own measured no-answer, classified branch by branch in [section 9](#9-the-no-response-and-process-fate-preservations-site-by-site) | PRESERVED — decision already recorded ([1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them), [3.39](#339-the-no-response-fate-is-habandon-not-a-never-settling-promise), [6.2](#62-the-table), [9](#9-the-no-response-and-process-fate-preservations-site-by-site)); the non-blocking evidence is new and is in [20.7](#207-pq-12-the-silence-is-preserved-and-the-pass-proved-it-costs-the-server-nothing) |
+| PQ-13 | Two declared routes name handlers that do not exist, so an admin gets an empty 200 and everyone else a 403 | `config/api_routes.js:L714` and `L729` name `trinket.mostActive` and `trinket.risingActive` | neither name is defined in `2f8712a:lib/controllers/trinket.js` either — a grep for both returns zero at both commits | PRESERVED — already catalogued as [section 3.19](#319-three-route-declarations-name-handlers-that-have-never-existed); re-measured 403 with `?lang=python`, and 404 without a `lang` because `helpers.validLang` runs first |
+| PQ-14 | `PUT …/materials/{id}/patchContent` answers a scrubbed 500 for a patch that does not apply — and the failure is **input-dependent**, not unconditional | `lib/controllers/course.js#updateMaterial`, via the `diff` 9 hunk-header adaptation | the pass's live A/B measured 500 / 96 bytes at **both** commits for its own payload, the delivered tree faster | PRESERVED — already catalogued as [section 3.17](#317-the-leading-10-hunk-header-is-rewritten-to-00-before-applypatch); re-measured here as 200 for a well-formed patch and 500 / 96 bytes for one whose context does not match |
+| PQ-15 | `download.zip?format=html` answers 500 because it renders a stylesheet template that the build never emits | `lib/controllers/courses.js#download`, reaching `courses/download/course.css` | `git diff 2f8712a..HEAD -- vite.config.mjs lib/views/ static/` is **empty** | PRESERVED — already catalogued as [section 1.7](#17-two-orphaned-scss-entry-points-and-no-cssmap-files-despite-source-maps-being-enabled); re-measured as 500 / 1,600 bytes, while `?format=md` answers 200 `application/zip` whose `testzip()` is clean |
+| PQ-16 | `POST /api/exports` answers 500 **and still persists the record and enqueues the job**, and the worker then fails on a query API mongoose removed | `lib/controllers/users.js#requestExport` returns a payload carrying a raw `ObjectId`; `lib/workers/exports.js` iterates a `Query#stream()` | the base handler builds the identical payload through the identical serializer, and the `stream()` call is present at both commits | PRESERVED — the serializer mechanism is [section 7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid) and the worker throw is [section 3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved-as-is-count); re-measured as 500 / 96 bytes with the `pending` document written and the Bull job queued, and a second request answering `200 {"error":"Export already in progress"}` |
+| PQ-17 | **The cache-busting prefix is regenerated per asset URL, and every response is `no-store`, so no same-origin asset is ever reused** — and Chrome refuses the back/forward cache outright (pass issue 13, MINOR) | `lib/util/nunjucks.js:L16-L23`'s `cachePrefix` filter over `lib/util/stringUtils.js#addPrefix`, whose fallback is a timestamped `/cache-prefix-<epoch-ms>`; the `no-store` string is set for every response by `app.js`'s second `onPreResponse` | `git diff 2f8712a..HEAD -- lib/util/cachify.js` is **empty** and the `lib/util/nunjucks.js` diff is **comment-only** — the nine lines it adds say only that these URLs are a frozen contract | PRESERVED — see [20.8](#208-pq-17-the-cache-buster-regenerates-inside-a-single-render-and-no-store-does-the-rest) |
+| PQ-18 | **`/library/trinkets` never recycles a rendered item**, so DOM size and input cost grow without bound while the server's paging stays flat (pass issue 14, MINOR) | `ul#trinkets-list.large-view` carries `infinite-scroll="moreTrinkets()"` with `infinite-scroll-distance="1"`; the cards are `li[ng-repeat="item in items"]`. Both live in the frozen `lib/views/**` and `public/js/**` trees | `git diff 2f8712a..HEAD -- lib/views public` reports **zero changed files** | PRESERVED — see [20.9](#209-pq-18-nothing-is-virtualised-and-the-server-is-not-the-ceiling) |
+| PQ-19 | **197 px of horizontal overflow at a 375 px viewport**, caused by one absolutely-positioned 450 px search wrapper | `div.search-input` inside the `<trinket-search>` component of the library sub-navigation, at a hard `width: 450px` | the templates and `static/scss/**` are byte-identical at base, and `public/css/base.css` still reproduces its recorded 265,727 bytes | PRESERVED — see [20.10](#2010-pq-19-197-px-of-overflow-from-one-fixed-width-search-wrapper) |
+| PQ-20 | **Five script sources are requested twice on the course page, and one script is fetched under both a prefixed and an unprefixed URL on the embed page** (pass issues 16 and 13 combined) | the duplicate `<script>` tags are in the frozen course and embed templates; the prefixed/unprefixed pair is `js/trinket-config.js` | the pass measured **the same 69 script tags and the same five duplicated sources at both commits**, and `lib/views` is a zero-line diff | PRESERVED — see [20.11](#2011-pq-20-the-duplicated-script-tags-and-the-image-the-cache-buster-fetches-twice) |
+| PQ-21 | The shipped CDN host is a placeholder, so the browser Python runtime never loads on the embed page (pass issue 17, INFO) | `config/default.yaml` `aws.buckets.cdn.host` is `your-cdn-bucket.example.com`, and both Skulpt scripts fail DNS with `net::ERR_NAME_NOT_RESOLVED` | a configuration value shipped that way at both commits | PRESERVED — already catalogued as [section 15.9](#159-the-python-runtime-is-fetched-from-a-placeholder-cdn-host-so-it-never-initialises) and [section 4.15.6](#4156-the-shipped-configuration-points-at-placeholder-asset-hosts-so-skulpt-does-not-load-in-a-default-checkout); re-measured as two DNS failures with **no HTTP status**, an embed page that still renders with no visible error, and an Ace editor that initialises normally |
+| PQ-22 | `x-frame-options` is present on five allow-listed paths only, and the Boom error paths carry a **short** `cache-control` instead of the long frozen one (pass issue 18, INFO) | the allow-list is `config/default.yaml:L353-L358` (`/`, `/login`, `/signup`, `/contact`, `/educators`); the divergence is ordering — `app.js`'s error-page `onPreResponse` takes over before the header decorator runs | the pass A/B'd nine route classes and found the presence/absence pattern **identical at both commits** | PRESERVED — already catalogued as [section 4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else); re-measured: `deny` on `/` and on unauthenticated `/login` and `/signup`, absent on `/home`, `/library/trinkets`, the course page and `/api/courses`, and `cache-control: no-cache` alone on the 404, on `/api/users/assets` and on the authenticated `/login` 500 |
+
+### 20.1 PQ-1: the unbounded `?limit`, and why a `max()` is the one repair that cannot be made here
+
+**What it is.** `GET /api/trinkets` accepts any `?limit` a client cares to send, and answers with that many rows. There
+is no ceiling, and the response carries **no pagination metadata** — clients keyset-page through it with `?from=`, so
+nothing in the payload tells a caller that it just received the whole collection.
+
+**The evidence, re-measured on the delivered tree.** An owner with 4,001 trinkets, over real HTTP, authenticated:
+
+| Request | Status | Body | Rows | Database operations |
+|---|---|---|---|---|
+| `?limit=20` (or absent, or `0`, or `abc`) | 200 | 8,186 B | 20 | 4 |
+| `?limit=1000` | 200 | 408,926 B | 1,000 | 4 |
+| `?limit=100000` | 200 | **1,639,203 B** | **4,001 — the entire owner set** | **8**, of which **4 are `getmore` batches** |
+
+The pass measured the same shape one tier up: 466,816 B at `?limit=1000` and **1,867,394 B in 140 ms** at
+`?limit=100000` against a 5,000-trinket owner, likewise 8 operations with 4 `getmore` batches. Two independent
+datasets, one shape: the ceiling is the collection, not the parameter.
+
+**Why it is preserved.** The declaration is `limit  : Joi.string().optional()` at `config/api_routes.js:L855`, and the
+identical line sits at `2f8712a:config/api_routes.js:L855`. This is not an omission the migration introduced or could
+have inherited by accident: the **same base file** bounds three other list routes — `.max(100)` at L719 and L734 and
+`.max(50)` at L1515 — so the absence of a bound on `trinket.list` is a base-commit decision, and R-4 places it out of
+reach.
+
+**What a naive fix would have broken.** Adding `.max(...)` changes which requests are **accepted**. TR1 freezes
+validation outcomes — *"input accepted/rejected at baseline is accepted/rejected identically after"* — so a request
+that answers 200 today would begin answering a validation failure, which is a wire change on a route the R-6 corpus
+covers. It would also change the response *shape* for the newly-rejected input, because a Joi failure on this route
+does not answer 4xx: it flashes into `flash.validation` and still answers 200, as the `limit=` empty-string row in
+[20.6](#206-pq-9-pq-10-and-pq-11-three-shapes-that-look-like-oversights-and-are-all-base-commit-behavior) shows. The
+correct disposition is the one the pass itself recommended: record it here, and leave the bound to a separately
+authorized change that is allowed to move validation outcomes.
+
+### 20.2 PQ-2: the list endpoint that examines the whole owner set, and why its shape is frozen
+
+**What it is.** The same endpoint's aggregation sorts the owner's **entire** collection in memory before it skips and
+limits, so the work it does tracks how much the user owns rather than how much the page asks for.
+
+**The evidence, re-measured.** `?limit=20` at two dataset sizes on the same instance, with the MongoDB profiler at
+`slowms: 0`:
+
+| Owner's collection | Request | `docsExamined` for a 20-row page | Operations | Plan | Aggregate stage |
+|---|---|---|---|---|---|
+| 2,000 | `?limit=20` | **2,003** | 4 | `IXSCAN { _owner: 1 }` | 31 ms |
+| 4,001 | `?limit=20` | **4,004** | 4 | `IXSCAN { _owner: 1 }` | 33 ms |
+| 4,001 | `?limit=20&offset=3900` | **4,004** | 4 | `IXSCAN { _owner: 1 }` | 44 ms |
+
+The examined count is the collection plus a constant **3** — the session read, the user lookup and the session write
+every authenticated request performs — so doubling the collection doubled the work while the page stayed at 20 rows, and
+paging deep into it cost the same as paging into the front. Those are the two readings that together identify a full-set
+sort rather than a bounded scan. The pass
+measured the same relationship across four tiers: 23 examined at 20 documents, 5,003 at 5,000 and **50,007 at 50,003**,
+with the aggregate stage reaching 499 ms and the endpoint being the only operation above 1 ms in its entire session
+profile.
+
+**Why it is preserved.** `git diff 2f8712a..HEAD -- lib/controllers/trinket.js` leaves the pipeline at
+`lib/controllers/trinket.js:L205-L250`, its `$match`, its three `$project` stages and its `sortMap` untouched; the only
+change inside that handler is the `getUserId` helper becoming `async`, which is the sanctioned async conversion. The
+pass confirmed the same thing from the other side, at runtime: **4 operations and `docsExamined` 5,018 at both
+builds**. AAP §0.9.9 states that query patterns and index definitions are explicitly unchanged, which is precisely
+this.
+
+**What a naive fix would have broken.** The repair a reader will reach for — `$sort` before `$project`, or a
+`$match` on the sort key, or an index on `{_owner: 1, 'lastView.viewedOn': -1}` — changes the sort's tie-breaking, and
+this pipeline's sort keys are **synthesized**: `lastViewed` is `$ifNull` of a nested date against `2000-01-01`,
+`lowerName` is `$toLower` of a `$cond` that substitutes `~~~` for an empty name, and `totalViews` is the `$add` of
+three `$ifNull`s. Rows that currently tie, and therefore currently come back in one particular order, would come back
+in another — a change to the **first 20 rows a client sees**, which is exactly the payload TR2 freezes. Adding an index
+is not free either: AAP §0.9.9 freezes index definitions, and the pass's query-count A/B is what proves nothing moved.
+
+### 20.3 PQ-3: the three N+1 fan-outs, and the one that turns into a 500
+
+**What it is.** Three read paths issue one query per member of a collection they have already loaded.
+
+**The evidence, re-measured with the profiler at `slowms: 0`.** One request each, operations counted by namespace:
+
+| Endpoint | Fixture | Operations | The fan-out | `docsExamined` |
+|---|---|---|---|---|
+| `GET /api/courses/{id}/dashboard` | 6 lessons | 12 | **6 `materials` queries — one per lesson** | 28 |
+| `GET /api/courses` | 4 courses | 7 | **4 `courses` queries — one per role-derived id** | 7 |
+| `GET /u/{username}/classes` | 4 courses | 8 | **4 `courses` queries** | 8 |
+| `GET /api/featured-courses` | 3 members | 7 | 1 `featuredcourses` + **3 `courses` queries** | — |
+
+The pass measured the identical relationship — 3 materials queries for a 3-lesson course, **10 for a 10-lesson
+course**, 7 operations with 4 courses queries on `/api/courses`, 8 with 4 on `/u/{username}/classes` — and, decisively,
+recorded **`query materials: 10`, 16 operations and `docsExamined` 64 at *both* commits** for the same course. The
+count follows the lesson or course count exactly, at both builds.
+
+**Why it is preserved.** All three expressions are byte-identical to the base commit:
+`lib/controllers/course.js:L1329` against `2f8712a:lib/controllers/course.js:L1163-L1175`,
+`lib/models/user.js:L214-L221` — which is what `lib/controllers/courses.js:L74-L80` and the classes page both reach —
+against `2f8712a:lib/models/user.js:L173-L180`, and `lib/models/course.js:L451-L455` against its base twin, with
+`lib/models/featuredCourses.js` carrying an **empty** diff. Latency growth is sub-linear because each fan-out runs
+inside `Promise.all`, so today this is a query-count condition rather than a latency one; it becomes a latency one on a
+large course, which is why it is recorded rather than dismissed.
+
+**The featured-courses fan-out has a second, sharper consequence — PQ-4.** With the **shipped, empty** featured list
+the route answers `200 {"data":[],"flash":{},"context":null}`. Seed three members and the same route answers **500 with
+the 96-byte scrubbed body**, every time. Re-measured: 7 operations, then
+`TypeError: Cannot read properties of undefined (reading 'toString')`, whose captured stack names the throwing
+expression exactly. `node_modules/bson/lib/objectid.js:115` is `this.id.toString('hex')` inside
+`ObjectId.toHexString`, reached from `ObjectId.toJSON` at `node_modules/bson/lib/objectid.js:172` through
+`JSON.stringify`, which hapi calls at `Response._marshal` (`node_modules/@hapi/hapi/lib/response.js:614`) from
+`exports.content` (`node_modules/@hapi/hapi/lib/headers.js:41`) inside the route's marshal cycle
+(`node_modules/@hapi/hapi/lib/transmit.js:41`) — so the failure happens **after** the handler has returned
+successfully, and the response never reaches the socket. `this.id` being `undefined` at that line is
+[section 7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid)'s condition exactly:
+`lib/controllers/courses.js:L83-L97` serializes each course, and the responder at
+`lib/http/responseContract.js:L306` serializes the result **again**, turning the already-flattened `lessons`
+`ObjectId`s into buffer-less objects whose `toJSON` then throws. The base commit builds the same value at
+`2f8712a:lib/controllers/courses.js:L65-L79` and hands it to `request.success`, whose serializer is the same call, and
+`lib/util/objectUtils.js` has an **empty** diff — so the 500 is base behavior, not migration damage. Note what this
+does to the reading in
+[section 15.11](#1511-two-pages-render-an-empty-grid-with-no-empty-state-message-and-the-message-that-exists-is-gated-on-a-non-empty-featured-list):
+that entry records the route answering 200 with an empty payload, which is correct **for the shipped configuration**,
+and this row is the other half — the moment an operator populates the list, the page's own featured section loses its
+data source. Both readings are true, and neither may be repaired here.
+
+**What a naive fix would have broken.** Batching the materials queries into one `$in` changes the order in which
+`lesson.materials` arrives, and that order is what the dashboard's `assignmentOverview` array preserves on the wire.
+Making the responder skip a second serialization would change **every** payload that flows through it, not just this
+one — the single most load-bearing shared path in the delivered tree. And "fixing" the featured 500 into a 200 would
+put a body on the wire that the base commit never sent.
+
+### 20.4 PQ-5 and PQ-6: two writes that go nowhere useful, and both are load-bearing to reproduce
+
+**PQ-5 — one wasted Redis `lPush` per course create.** `preserveSlug` is registered as a pre-save hook and captures
+`this.slug` **before** the slug plugin has assigned one, so on a create `_original_slug` is `undefined`;
+`ensureSlugAlias` then compares it against the assigned slug, finds them different, and pushes the new course's id into
+the literal key `courses:undefined:ids`. Re-measured against the shared Redis: the list went from **237 to 240 entries
+for three course creates**, one per create. Cache correctness is untouched — real-slug alias keys are correctly absent,
+because an alias is only meaningful on a slug *change*, and course pages still resolve 200 by slug. Both functions are
+byte-identical at `2f8712a:lib/models/course.js:L288-L296`, and `git diff 2f8712a..HEAD -- lib/util/store.js
+lib/util/store/` is **empty**. That the shared instance already held 237 entries written by other checkouts of this
+same tree is itself corroboration: every build behaves this way.
+
+**PQ-6 — a signed token per trinket create, written into the session.** `lib/controllers/trinket.js:L417-L419` signs
+`{shortCode}` into a JWT and stores it under `'emailToken:' + doc.shortCode`. Re-measured by reading the persisted
+session document straight out of the cache collection: after one create its `value` map held exactly `_flash`, `userId`
+and `emailToken:8b1cfb8ba671`, and after a second create it held **both** tokens — each a full JWT of roughly 150
+bytes. The document therefore grows with the owner's creation activity for the life of the cookie, and nothing prunes
+it. The same three statements sit at `2f8712a:lib/controllers/trinket.js:L368-L370`.
+
+**Why both are preserved, and what a naive fix would have broken.** The `undefined` key is written by a hook whose
+ordering *is* the defect; reordering the hooks would change which slug the alias list records, and
+`lib/util/store/**` is a layer this changeset does not touch at all. The session token is read back by the e-mail-share
+path, and the tokens already persisted server-side are the reason
+[section 4.6](#46-sec-6-the-jwt-key-is-undefined-plus-a-public-short-code-medium-preserved) treats them as an
+inherited condition rather than a repairable one; dropping the write would break a working feature, and pruning old
+keys would change what a session document contains, which is a persisted-format change under TR6.
+
+### 20.5 PQ-7 and PQ-8: the three surfaces that grow, and the one whose growth rate is conditional
+
+**PQ-7 — session documents, and the index that cannot reap them.** Re-measured on an isolated database: **50
+unauthenticated `GET /login` requests took the `sessions` collection from 4 documents to 54**, one per request, while
+**50 authenticated requests on a single cookie added none** — that path updates in place. Of the 54 documents,
+`stored` is a **Number in 54 and a `Date` in none**, and the index is exactly `{stored: 1}` with
+`expireAfterSeconds: 0` and `partialFilterExpression {ttl: {$exists: true}}`; MongoDB's TTL monitor acts only on
+`Date`-valued fields, so it never fires. `avgObjSize` measured **124 bytes**. The working expiry is the lazy
+check on read, which the pass confirmed directly by ageing a session and watching its document disappear on next use
+while nine others were untouched. This is [section 1.14 E](#114-eight-further-preserved-conditions)'s condition; the
+figures here are a second, independent measurement of it, and `git diff 2f8712a..HEAD -- lib/util/catbox-mongoose.js`
+is **comment-only**.
+
+**PQ-8 — the debug log, and a rate the pass's figure did not reveal.** The pass reported `/tmp/debug.txt` growing
+**113.3 bytes and 1.03 lines per request** over a controlled 100-request run. Re-measuring split that into two
+readings, and the split matters:
+
+| 20 requests of | Handler duration | `/tmp/debug.txt` delta | Per request |
+|---|---|---|---|
+| `GET /api/trinkets?limit=20` | 38-49 ms | **+2,200 B, +20 lines** | **110.0 B, 1.00 line** |
+| `GET /login` | under 10 ms | **+0 B, +0 lines** | **0** |
+
+The growth is **threshold-gated, not per-request**: `lib/util/routeParser.js:L201-L209` emits
+`label + ': ' + endTime + 'ms'` only `if (endTime > 10)`, into the `level: 'debug'` file transport that
+`config/log.js:L16-L21` opens on `config/default.yaml:L129`. So the log grows in proportion to how many requests are
+slow, which is why the pass's figure — taken on a host it measured at 14-137 load average — reads as one line per
+request while a quiet host writes nothing at all. The threshold block is byte-identical at
+`2f8712a:lib/util/routeParser.js:L556-L563`, comment `// 10ms` included; what the migration removed alongside it were
+the shim's two unconditional per-request `console.log` traces and its 1-second watchdog, both recorded in
+[section 1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-64-now) and neither of them this signal.
+
+**PQ-8, second half — `/tmp` working files outlive their requests, but only on the failing paths.** The pass reported
+13 stale archives and 11 upload temporaries accumulated across its session. Re-measuring split that too, and the split
+is the same shape as the log's: **success cleans up and failure does not.** With `/tmp/<username>` emptied first:
+
+| Request | Status | Staging tree afterwards |
+|---|---|---|
+| `download.zip?format=md` | 200, a valid 24-entry archive | **none** — `lib/controllers/courses.js:L355` and `L369` `rm(ownerDir, {recursive: true, force: true})` both fire |
+| `download.zip?format=html` | 500 | `/tmp/<username>/<course-slug>/lesson-1 … lesson-x` **left in place** |
+
+The successful path is the base commit's `rimraf(ownerDir, …)` at `2f8712a:lib/controllers/courses.js:L268`, preserved;
+the failing path throws in the view layer before either cleanup is reached, which is why the residue exists at all and
+why it accumulates only in proportion to failures. The genuinely unbounded residue is the fire-and-forget class:
+`lib/controllers/trinket.js:L1677` unlinks `/tmp/download-<timestamp>.zip` without waiting and without a retry, and the
+export worker's `/tmp/trinket-export-<12 hex>.zip` temporary at `lib/workers/exports.js:L141` is released the same way —
+this host's shared `/tmp` currently holds **69** of the latter, written by runs of this same tree. The unlink decision
+is [section 3.27](#327-the-temp-file-unlink-is-fire-and-forget-and-the-job-settles-without-it) and the shared-path risk is
+[section 4.8](#48-sec-8-predictable-tmp-archive-names-toctou-no-cleanup-medium-preserved); both are preserved, and each
+needs the operational retention story §4.16 asks for rather than a repair here.
+
+### 20.6 PQ-9, PQ-10 and PQ-11: three shapes that look like oversights and are all base-commit behavior
+
+**PQ-9 — views are not cached outside production.** `app.js:L149` passes `isCached: config.isProd` to
+`server.views(...)`, and `lib/util/nunjucks.js:L8` configures the environment with `watch: config.isDev ||
+config.isTest`. Re-measured immediately after a boot, on two separate boots of the same instance: the first
+authenticated `/home` render took **69.4 ms** and then **72.5 ms**, and the next four settled at **12.4-19.8 ms** both
+times; `/` took 6.7-7.7 ms and then 4.3-6.6 ms. The pass measured the same first-versus-rest split
+at 120-125 ms against 2.4-4.0 ms on its loaded host. `2f8712a:app.js:L148` is the identical expression, so both the
+cold cost and the steady-state cost are base behavior. Setting `isCached: true` in development would change what a
+template edit does to a running server — a developer-visible behavior this changeset has no mandate to alter.
+
+**PQ-10 — `listExports` fetches everything, then slices.** `lib/controllers/users.js:L1414-L1422` calls
+`Export.findByOwner(request.user)` with no limit and applies `exports.slice(0, limit)` in JavaScript. Re-measured with
+the profiler against an owner holding 4 exports: `GET /api/exports?limit=1` issued **one** query with
+`limit: undefined`, `nreturned: 4` and `docsExamined: 4`, and returned exactly **1 row** to the client. The base
+sequence at `2f8712a:lib/controllers/users.js:L990-L996` is the same, `limit` default included — `listExports` opens at
+`L990`, `var limit = request.query.limit || 10` at `L991`, and `exports.slice(0, limit)` at `L996`.
+
+**PQ-11 — the list-parameter input matrix, reproduced value by value.** The pass recorded this as a PASS because every
+status matched the base commit; it is recorded here because seven of the sixteen inputs answer a **scrubbed 500** where
+a reader would expect a 4xx, and that is a wire contract:
+
+| Input | Status | Body | Mechanism |
+|---|---|---|---|
+| `limit=0`, `limit=abc`, `limit=20.7` | 200 | 8,186 B, 20 rows | `parseInt(...) \|\| 20` falls back to the default |
+| `limit=1e9` | 200 | 443 B, **1 row** | `parseInt('1e9')` is `1` |
+| `limit=` (empty) | 200 | 73 B | Joi rejects, and a rejection on this route flashes rather than 4xx-ing |
+| `limit=1&limit=2` | 200 | 63 B | Joi: `"limit" must be a string` — the duplicate arrives as an array |
+| `folder[$ne]=null` | 200 | 73 B | Joi: `"folder[$ne]" is not allowed` — the NoSQL-shaped key never reaches the query |
+| `from=notadate` | 200 | 37 B, 0 rows | the `$match` compares against an `Invalid Date` |
+| `limit=-1` | **500** | 96 B | MongoDB: `invalid argument to $limit stage` |
+| `offset=-1`, `offset=abc` | **500** | 96 B | `$skip` receives a negative or `NaN` |
+| `sort=bogusKey`, `sort=-metrics.runs` | **500** | 96 B | the `sortMap` lookup at `L166-L172` returns `undefined` and is then dereferenced |
+| `folder=notanobjectid` | **500** | 96 B | `new ObjectId(...)` throws a `BSONTypeError` |
+
+Every one of those statuses is the base commit's, measured by the pass at both builds; the `sortMap`, both `parseInt`
+calls and the query schema are unchanged. Validating any of these inputs into a 400 would move a status the corpus
+records, which TR2 forbids.
+
+### 20.7 PQ-12: the silence is preserved, and the pass proved it costs the server nothing
+
+**What it is.** Three request shapes receive **no response at all** — not a status, not a byte — and the client waits
+until its own timeout. Each one reproduces the base commit's own measured no-answer, and the decision to reproduce
+rather than converge is recorded in [section 1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them),
+[section 3.39](#339-the-no-response-fate-is-habandon-not-a-never-settling-promise),
+[section 6.2](#62-the-table) and site by site in
+[section 9](#9-the-no-response-and-process-fate-preservations-site-by-site).
+
+**What is new is the cost measurement.** Re-measured against the delivered tree, watching the server's own file
+descriptors while a client hung:
+
+| Request | Outcome | Server during the hang | File descriptors |
+|---|---|---|---|
+| Second `POST /api/folders` with a name that already exists | **HTTP 000, 0 bytes** after an 8-second client timeout | `GET /login` answered **200 in 4.5 ms**, process alive | 47 before, 47 after |
+| `GET /api/exports/{id}/download` for a `pending` export | **HTTP 000, 0 bytes** | `GET /login` answered 200 in 5.2 ms | 47 |
+| `POST /api/users/assetFromURL` whose download fails | **HTTP 000, 0 bytes** — but only with `features.assets` on; the shipped configuration answers **501 `Asset uploads are not enabled`** | `GET /login` answered 200 | unchanged |
+
+The pass reached the same conclusion at higher pressure: five concurrent hung download requests moved the descriptor
+count by exactly +5 and back again (36 → 41 → 36) while `/login` answered in 5.9 ms and the authenticated list in
+47.8 ms. The abandoned request holds one socket and nothing else — no worker thread, no database connection, no timer.
+
+**The duplicate-folder row is also the one place this behavior is strictly better than the base commit's.** At
+`2f8712a` that request raised `TypeError: request.catch is not a function` inside an unowned save callback, which
+became an unhandled `'error'` event and **killed the process** — the pass reproduced that deterministically, twice out
+of two. The delivered tree contains the raise and leaves the one request unanswered, which is fate (B) in
+[section 8.3](#83-the-three-fates-and-what-may-be-reproduced): the client-visible half is reproduced exactly, and the
+single residual divergence is that the worker survives. That divergence is recorded, priced and deliberate.
+
+### 20.8 PQ-17: the cache-buster regenerates inside a single render, and `no-store` does the rest
+
+**What it is.** Asset URLs carry a `/cache-prefix-<epoch-ms>/` segment that is re-evaluated **per asset reference**, not
+once per response, and every response — documents and static assets alike — carries the same `no-store` policy. Together
+they make same-origin caching unreachable, and they make Chrome refuse the back/forward cache.
+
+**The evidence, re-measured in a real browser.** Three consecutive loads of `/`, reading the values out of the served
+bytes:
+
+| Load | Occurrences | Distinct `cache-prefix` values in that one document |
+|---|---|---|
+| 1 (navigate) | 30 | 1 — `cache-prefix-1785972014424` |
+| 2 (reload) | 30 | **2** — `…036993` ×5, `…036994` ×25 |
+| 3 (reload) | 30 | **2** — `…064995` ×10, `…064996` ×20 |
+
+The value changes on **every** render, and more than one value appears **inside a single document** whenever a render
+straddles a millisecond boundary: 2 or 3 on the course page (`…099898` ×5, `…099899` ×6, `…099901` ×43 — note `…900` is
+absent, which is what proves per-reference evaluation), 3 plus a fourth on a runtime-fetched template on
+`/library/trinkets`, and **5** on the embed page. Three consecutive `curl` renders reproduced the same split
+server-side, so this is render behavior rather than a browser artifact. A second pass observed the course page **eight**
+times — through the browser and through `curl`, which runs no JavaScript — and counted **2 distinct values six times and
+3 twice, with the occurrence total exactly 54 every single time**. A third pass re-measured the embed page and read
+**2 where the first had read 5**, which is the sharpest demonstration of per-reference evaluation in this catalogue:
+`cache-prefix-1785980367068` carried `css/embed.css` and three images while `cache-prefix-1785980367069` carried five
+scripts and the two CDN URLs — the two values **one millisecond apart** inside one document. The same pass read 2 on
+`/python/qf000000`, where the split falls between the outer document and the embed iframe it nests. The count is
+therefore a range rather than a fixed number: it is however many millisecond boundaries a given render happens to
+straddle, which is also why the smaller `/` document, with 30 prefixed URLs, gives only 1 or 2.
+
+The policy half is exact and identical on both sides: the `/` document and the `/css/base.css` it links both answer
+
+```
+cache-control: private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate
+```
+
+**The consequence, measured rather than reasoned.** Across the three loads, same-origin subresources served from the
+browser cache were **0 of 27, 0 of 28 and 0 of 28**. The control that makes this a finding rather than a measurement
+artifact: on the same load, **4 of 19 cross-origin** requests *were* served from cache. The browser's cache works; this
+origin can never use it. And the two halves are independently sufficient — three same-origin assets have **stable,
+unprefixed** URLs (`/img/avatar-default.svg`, `/img/langs-6.0.png`, `/img/icons/favicon.ico`) and were still
+re-downloaded on every load, so `no-store` alone defeats reuse even where the URL never moves.
+
+**The back/forward cache is refused explicitly.** `PerformanceNavigationTiming.notRestoredReasons` is available in this
+Chrome and returned the same three reasons on `/home`, `/library/trinkets` and the course page: `masked`,
+**`response-cache-control-no-store`** and **`response-cache-control-no-store-with-js-network-request`**. No page was
+ever restored — corroborated by `navigation.type === "back_forward"` with a fresh timing entry, by a document-identity
+probe installed before leaving each page and absent after returning, and by the recording showing each Back press
+blanking to white and re-rendering. Two Back presses cost:
+
+| Back press | Requests | Transferred (document + same-origin) | Document re-downloaded | `activationStart` |
+|---|---|---|---|---|
+| #1 → `/library/trinkets` | **83** | **292,042 B** | yes — 8,265 B | 0 |
+| #2 → `/home` | **54** | **245,574 B** | yes — 7,454 B | 0 |
+
+Each Back emitted **fresh** prefixes, so every prefixed URL changed again and nothing could be reused; the only reuse
+observed was two and then three same-origin **images** from the in-memory cache. Cross-origin byte volume is not
+measurable — opaque responses report `transferSize: 0` — so those totals cover the document and same-origin subresources
+only, and the 25 and 22 cross-origin requests are counted but not weighed.
+
+**Why it is preserved.** `lib/util/cachify.js` is byte-identical at base and the `lib/util/nunjucks.js` diff is
+comment-only. AAP §0.9.9 freezes caching behavior in as many words, and TR5 freezes the asset-URL contract: the emitted
+URL **is** the contract, and the eight prefix declarations that feed it are read-only preservation points under AAP
+§0.2.1.9.
+
+**What a naive fix would have broken.** Hoisting the prefix to one value per render is the smallest imaginable change
+and it still changes every asset URL in every rendered page — the exact surface TR5 freezes and the R-6 corpus
+normalizes against. Shortening `cache-control` for assets changes a response header on every static route. Either one
+would also alter the byte length of pages the authenticated corpus measures. The condition is real, it triples the bytes
+a returning user moves, and it is the project owner's to price — not this changeset's to fix.
+
+### 20.9 PQ-18: nothing is virtualised, and the server is not the ceiling
+
+**What it is.** The library list appends forever. `ul#trinkets-list` uses ngInfiniteScroll
+(`infinite-scroll="moreTrinkets()"`, `infinite-scroll-distance="1"`), which has no eviction path, so every item ever
+fetched stays in the DOM.
+
+**The evidence, re-measured at 1280×900 against an owner with 4,001 trinkets.** Scrolling to the bottom repeatedly,
+sampling every round:
+
+| Checkpoint | Items | DOM nodes | `scrollHeight` | Nodes per item |
+|---|---|---|---|---|
+| settle | **20** | **705** | 2,478 px | 35.25 |
+| round 10 | 200 | 4,005 | 20,245 px | 20.03 |
+| round 20 | 400 | 7,603 | 39,904 px | 19.01 |
+| round 30 | **600** | **11,201** | **59,490 px** | 20.67 |
+| deepest | 640 | 11,920 | 63,422 px | 20.63 |
+
+The marginal cost is flat at **17.98–20.33 nodes and ≈98.3 px per added item**, so the whole 4,001-item collection would
+reach roughly **72,700 nodes** in a **~393,000 px** document. An independent shorter run reproduced the same slope
+exactly — 705 nodes at 20 items rising to 3,224 at 160, which is **17.99** overall and **20.00 in every steady-state
+round** — and pinned the reason: one card's own subtree is 17 nodes plus its `li`, i.e. **exactly 18**. Six
+independent tests confirm nothing is recycled: the
+rendered count never decreased across 31 samples; the live reference to the **first** card was still `=== ` the same
+node, still at index 0, still measuring 280×373 px at 600 items while sitting at `rect.top = −56,495 px`; 600 cards
+carried 600 unique `data-id` values; no card had a `transform` or `position: absolute` and there were no spacer
+elements; and Angular's own `items.length` matched the DOM 1:1 at every sample.
+
+**The server half is the mirror image, and it is what makes this a client ceiling rather than a system one.** The same
+scroll produced **32** `/api/trinkets` requests — 1 at settle plus 31 while scrolling, and 32 × 20 = the 640 rendered
+cards exactly, so nothing was fetched twice or dropped. All **32 answered 200**. Latency was **43.10 ms minimum, 54.95
+ms median, 197.40 ms maximum**, and it did **not** grow with depth: an ordinary least-squares fit of duration against
+request index has a slope of **−1.82 ms per page**, the two slowest requests of the run were the second and the fourth,
+and the decoded response bodies stayed within 0.7 % of each other. The paging is a true cursor walk —
+`from=<ISO>&limit=20&offset=1&sort=-lastUpdated`, with `offset` pinned at 1 — so it does not degrade the way PQ-2's
+`$skip` path would. **Zero console errors, zero console warnings and zero requests at 400 or above** across all 139
+requests of that session.
+
+**Why it is preserved, and what a naive fix would have broken.** Virtualising the list means rewriting a template in
+`lib/views/**` and a controller in `public/js/**`, both frozen by AAP §0.2.2.2 with a zero-line diff against the base
+commit. It would also change what the page renders at a given scroll position, which is client-visible behavior under
+§0.9.4. The honest framing is the one the measurement supports: the server is flat and the client is linear, so this is
+a product decision about how many items a page should hold — not a migration defect.
+
+### 20.10 PQ-19: 197 px of overflow from one fixed-width search wrapper
+
+**What it is.** At a 375 px viewport `/library/trinkets` is 572 px wide.
+
+**The evidence, re-measured at exactly 375×812.** `document.documentElement.clientWidth` = **375**, `scrollWidth` =
+**572**, so the maximum `scrollLeft` is **197 px**; `overflow-x` is `visible` on both `html` and `body`. Of 705
+elements, **27** have a bounding rect extending past the right edge — and the arithmetic closes on exactly one of them:
+
+| Offender | Rect left → right | Width | Computed `width` | Overhang |
+|---|---|---|---|---|
+| `div.search-input` (inside `<trinket-search>`, library sub-navigation) | 122.39 → **572.39** | **450.00 px** | **`450px`**, `min-width: 0px`, `position: absolute` | **197.39 px** |
+| the other 26 | — | 0–30 px | — | 1–36.5 px |
+
+The widest element's right edge, **572.39**, *is* the document's `scrollWidth`, so that one absolutely-positioned 450 px
+wrapper accounts for the entire overflow. The `<input>` it contains is not itself an offender: `input#trinket-search`
+measures 150 px and is parked at `left: -450px`, which is its collapsed state — it slides in when the magnifier is
+pressed. **26 of the 27 offenders are inside the collapsed hamburger navigation**, hidden by Foundation's `clip:
+rect(1px, 1px, 1px, 1px)` technique and overhanging by at most 36.5 px, so they paint nothing and change nothing;
+exactly **one** offender is visible content. The overflow is genuinely reachable — `window.scrollTo(9999, 0)` lands at
+`scrollX` **197**, 100 % of the available range — and what it reveals is blank dead space. The full-page screenshot is
+**572 × 9,240 px**: Chrome had to widen its own canvas to the document, which is independent corroboration of the same
+197 px. A second capture taken in a later pass came back **pixel-identical at 572 × 9,240**, and that pass re-measured
+`375 / 572 / 197` twice more, so the condition is stable rather than incidental to one render.
+
+**Why it is preserved, and what a naive fix would have broken.** The 450 px is declared in `static/scss/**`, which is
+frozen and byte-identical at base, and the compiled `public/css/base.css` still reproduces its recorded **265,727
+bytes** — the §0.3.3 artifact check that any SCSS edit would break by definition. Making the wrapper fluid would also
+change the desktop layout, where the same 450 px is what gives the expanded search field its room. This is the same
+precedence argument [section
+15.12](#1512-the-course-reader-loses-its-layout-at-and-below-641px-because-the-outline-is-fixed-at-a-hard-350px) and
+[section 15.14](#1514-a-long-display-name-overflows-the-page-on-the-one-template-that-echoes-it-into-free-flowing-text)
+already record for the other two overflow conditions in this tree.
+
+### 20.11 PQ-20: the duplicated script tags, and the image the cache-buster fetches twice
+
+**What it is.** The course page includes five script sources twice, and the embed page fetches one script under two
+different URLs.
+
+**The evidence, re-measured.** The course page served **74** `<script>` tags — **69 with a `src`** and 5 inline — and
+**five `src` values appear twice**: `js/services/roles.js`, `components/ng-file-upload.min.js`,
+`components/angular-notifyjs.js`, `js/services/config.js`, and the cross-origin `mm-foundation-tpls.min.js`. Each of the
+four same-origin duplicates produced **two real network fetches**, because `no-store` denies the memory cache the chance
+to satisfy the second tag:
+
+| Duplicated URL | Fetches | Transferred | Decoded |
+|---|---|---|---|
+| `…/js/services/roles.js` | 2 × 506 B | 1,012 B | 206 B each |
+| `…/components/ng-file-upload.min.js` | 2 × 12,499 B | 24,998 B | 37,495 B each |
+| `…/components/angular-notifyjs.js` | 2 × 1,173 B | 2,346 B | 873 B each |
+| `…/js/services/config.js` | 2 × 490 B | 980 B | 190 B each |
+| **total across those fetches** | | **29,336 B** | **77,528 B** |
+| **wasted — the second fetch of each** | | **14,668 B** | **38,764 B** |
+
+The cross-origin duplicate cost one fetch rather than two, and its bytes are not measurable. A filename comparison finds
+seven repeats rather than five, but **two of them are false positives worth naming**: `trinket.js` appears three times
+and `app.js` twice as **genuinely different files that share a basename** at different paths, which a repair-minded
+reader would otherwise "de-duplicate" into a broken page.
+
+The embed page's condition is the sharper one, because it is the cache-buster and the template interacting:
+`js/trinket-config.js` is requested **both** as `/cache-prefix-<ms>/js/trinket-config.js` **and** as the unprefixed
+`/js/trinket-config.js`, 831 B transferred and 1,386 B decoded each, both over the network. Measured alongside it, and
+new: `/img/trinket-logo.png` is fetched **twice in one document** because its two references landed on
+different-millisecond prefixes — 14,448 B transferred each, so **14,448 B of pure waste from PQ-17 alone**. One further
+latent defect is recorded rather than counted: the IE-conditional script `src` concatenates prefix and path with no
+separator (`/cache-prefix-<ms>dist/jszip-utils-ie.min.js`, a 404 on a direct probe), and because it sits inside `<!--[if
+IE]>` Chrome never requests it, so it costs zero requests and zero bytes.
+
+A later pass measured the **public trinket page** `/python/qf000000` and found the prefixed-and-unprefixed pairing is not
+confined to one file on one page: **eleven** assets are fetched under both URL shapes there —
+`components/lodash/dist/lodash.min.js`, `ace.js`, `components/marked/lib/marked.js`, `js/trinket-config.js`,
+`js/trinket.js`, `js/util/template.js`, `js/util/cache.js`, `js/debug.js`, `js/util/text-select.js`,
+`js/trinket-share.js` and `js/trinket-roles.js` — every one of them a same-origin **200** on both shapes. That page
+nests the embed document in a same-origin iframe, so it pays the embed page's cost as well as its own. The condition is
+therefore systematic rather than incidental, which is a further reason it is documented rather than trimmed: a
+de-duplication pass would have to reason about two URL shapes for the same file across three page templates.
+
+**Why it is preserved, and what a naive fix would have broken.** The duplicate tags are lines in frozen templates, and
+the pass measured **69 script tags with the same five duplicates at both commits**. Removing a tag changes the rendered
+byte length of a page the corpus measures, and — because two of the seven filename repeats are distinct files — a
+filename-driven de-duplication would delete a script the page needs.
+
+### 20.12 Where the rest of the pass's conditions live
+
+The pass reported 24 conditions. Sixteen of them are the PQ rows above; the remaining eight were already catalogued
+before this pass ran, and are listed here so the mapping is complete and every condition has exactly one home.
+
+| Condition the pass reported | Entry that owns it | Re-measured here |
+|---|---|---|
+| Session documents accumulate; the TTL index is inert | [1.14 E](#114-eight-further-preserved-conditions) | yes — PQ-7 |
+| `PUT …/patchContent` answers 500 | [3.17](#317-the-leading-10-hunk-header-is-rewritten-to-00-before-applypatch) | yes — PQ-14 |
+| `trinket.mostActive` / `trinket.risingActive` do not exist | [3.19](#319-three-route-declarations-name-handlers-that-have-never-existed) | yes — PQ-13 |
+| `download.zip?format=html` answers 500 | [1.7](#17-two-orphaned-scss-entry-points-and-no-cssmap-files-despite-source-maps-being-enabled) | yes — PQ-15 |
+| Three endpoints answer nothing | [1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them), [3.39](#339-the-no-response-fate-is-habandon-not-a-never-settling-promise), [6.2](#62-the-table), [9](#9-the-no-response-and-process-fate-preservations-site-by-site) | yes — PQ-12 |
+| `GET /api/users/assets` answers 500 | [1.14 A](#114-eight-further-preserved-conditions) | yes — 500 / 96 bytes |
+| Authenticated `GET /login` and `GET /signup` answer 500 | [1.1](#11-authenticated-get-login-and-get-signup-return-http-500) | yes — 500 / 1,600 bytes each, 200 unauthenticated |
+| Twenty-five feature-flag 404s | [1.4](#14-the-isknowntrinkettype-istrinkettypeenabled-asymmetry) | yes — `/python` 200 against `/java` 404 |
+| The export worker cannot be loaded standalone | [7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit) | not re-run; the require-order fact is source-level |
+| `POST /api/exports` answers 500 while enqueuing; the worker then throws | [7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid), [3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved-as-is-count) | yes — PQ-16 |
+| The placeholder CDN host breaks in-browser Python | [15.9](#159-the-python-runtime-is-fetched-from-a-placeholder-cdn-host-so-it-never-initialises), [4.15.6](#4156-the-shipped-configuration-points-at-placeholder-asset-hosts-so-skulpt-does-not-load-in-a-default-checkout) | yes — PQ-21 |
+| `x-frame-options` is not uniform; Boom paths skip the long `cache-control` | [4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else) | yes — PQ-22 |
+
+**What the pass confirmed rather than found.** The same run verified, at runtime and against the base commit standing
+beside the delivered tree, that the route table registers **233 routes at both builds on all six boot runs**; that
+`node test/baseline/replay.js` reports zero differences with the response distribution the corpus records; that every
+JSON body and every database operation profile is identical at both commits, including the 10-materials dashboard and
+the 5,018-document list scan; that `public/css/base.css` and `public/css/embed.css` decode in the browser to exactly
+**265,727** and **296,352** bytes with both `.css.map` paths answering 404; that the session cookie is still
+`session=Fe26.2**…; HttpOnly; SameSite=Lax; Path=/` with an `Expires` a year out and a rotation on login; that an 11 MB
+payload is rejected 413 before processing while a 9 MB one succeeds; that a 4,000-character search term, three ReDoS
+shapes and a NoSQL-shaped filter key are all answered flat and cheaply; that 1,180 requests under mixed concurrency
+leave resident memory **+3.4 MB** with every file descriptor accounted for and no `CLOSE_WAIT`; that three users see
+**0/0/0** of each other's data; and that `/`, `/home`, `/library/trinkets` and unauthenticated `/login` emit **zero**
+console errors and **zero** requests at 400 or above. Six improvements were delivered by this changeset rather than
+regressions, and the three the pass reproduced at runtime are cited at the head of this section. The FAIL verdict it
+recorded describes the product surface it was asked to profile, not damage done by this change.
+
+
+## 21. Runtime-QA observations on the final visual and rendering surface — attributed, and preserved
+
+> ✅ **Evidence status: final.** As in sections 16 and 17, the pass's gate figures — the replayed route table, the
+> response-corpus difference count, the byte-identical CSS artifacts — are drawn from the parity artifacts and their
+> runs, and all three have been re-measured on the delivered tree: zero replay differences, and `public/css/base.css`
+> and `public/css/embed.css` reproduced at 265,727 and 296,352 bytes. Section 0 carries the commands. Every per-condition
+> figure quoted below was **re-measured on the delivered tree before being written down** — over real HTTP for the
+> server-side rows, and in a real browser at a pinned viewport for the layout, state and accessibility rows — and the
+> attribution of each condition to the base commit rests on `git diff` against `2f8712a` rather than on a run. See
+> [How to read this catalogue](#how-to-read-this-catalogue).
+
+A third runtime QA pass audited the **presentation surface** of this changeset end to end: every reachable
+server-rendered screen and every meaningful state, across 36 screen families, 13 measured viewport widths and 49
+component visual states, together with a form-validation matrix over 11 forms, an adversarial sweep of the static-asset
+and routing surface, and a stored- and reflected-XSS sweep of seven containing surfaces. No repository file was
+modified.
+
+**Its verdict on this changeset was that the migration introduced no visual, rendering, responsive, accessibility or
+continuity regression**, and it established that by measurement rather than by inspection:
+`git diff 2f8712a HEAD -- public lib/views static config/default.yaml` reports **0 changed files**, so the entire
+presentation layer — 202 tracked `public/**` files, 79 `lib/views/**` templates, 54 `static/scss/**` files and
+`config/default.yaml` — is byte-identical to the base commit. `config/routes.js` is byte-identical too, and
+`config/api_routes.js` carries **0** changed Joi lines. Both emitted stylesheets re-hash to their recorded byte counts,
+and zero `.css.map` files are emitted, as [section 1.7](#17-two-orphaned-scss-entry-points-and-no-cssmap-files-despite-source-maps-being-enabled)
+requires. Every frozen design token of AAP §0.3.3 resolves exactly in the rendered computed CSS, the markdown and
+highlighting pipeline is differential-proven faithful across the `marked` swap, and there are zero
+application-originated JavaScript errors on any screen at any width.
+
+**Every condition the pass reported is therefore a pre-existing property of the product**, and each was tied to the base
+commit individually. They are recorded here so they are not mistaken for regressions of this change, and so that
+follow-up work outside it has something to cite. Two of them refine entries that already exist rather than adding a
+condition:
+
+- The raw Joi message reaching the user is **required** behaviour, not a defect — it is
+  [section 1.2](#12-the-joi-custom-message-override-that-never-fires). What this pass adds is its *reach*: **10**
+  instances across the application, in **6** distinct message strings, itemized in
+  [21.3](#213-form-validation-error-presentation-and-the-preserved-joi-contract).
+- The `POST /admin/upload` branch that answers nothing belongs to
+  [section 1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them), whose inventory it had
+  been missing. **The row has been added**, with the measurement in
+  [21.1](#211-the-upload-and-admin-surfaces) below.
+
+The conditions are grouped by surface, and labelled **VQ-1** onwards so they can be cited individually. Four groups
+carry the four-part treatment in prose rather than in a table, because their mechanics are the subtle ones: the stored
+XSS in [21.2](#212-the-stored-xss-in-the-library-search-typeahead), the JavaScript-disabled path in
+[21.4](#214-the-javascript-disabled-path), the interactive-state and keyboard set in
+[21.5](#215-interactive-states-and-keyboard-accessibility), and the two status codes that arrive as 500 where a 404
+belongs in [21.6](#216-the-two-status-code-gaps-a-500-where-a-404-belongs).
+
+### 21.1 The upload and admin surfaces
+
+**What they are.** Three stacked conditions on the asset-upload and admin-import surfaces. The first is a disabled
+feature that leaves a container with nothing in it; the second is a payload-layer rejection that no code path ever
+reaches past; the third is a request that receives no HTTP response at all.
+
+| # | Condition | Measured evidence, re-measured on the delivered tree | Base identity | Disposition |
+|---|---|---|---|---|
+| VQ-1 | The avatar Dropzone does not exist at all — the container renders, the uploader does not | `GET /account/profile` → **200**; `div#avatar-dropzone` renders with a complete attribute list of `["id","class"]` and `class="row"` only; `input[type=file]` count is **0** page-wide; **0** references to any `dropzone` script or stylesheet in the document, so neither is ever requested and `window.Dropzone` stays `undefined`. Drag-over is a complete no-op. Master cause measured directly: `require('config').features.assets` is **`false`** | `config/default.yaml` has a 0-line diff against `2f8712a`, and the flag is `assets: false` at both commits; `lib/views/users/includes/profile.html` and `lib/views/includes/uploadModal.html` are 0-line diffs | PRESERVED — the flag is one of AAP §0.2.1.9's read-only preservation points, and the two templates are among the 79 §0.2.2.2 freezes. Turning the flag on would change 25 route outcomes and require S3 credentials; adding the uploader edits a frozen template |
+| VQ-2 | Three stacked gates, and no code path rejects a non-image *for being a non-image* | Both `POST /file` and `POST /file/avatar` declare `payload : { maxBytes, output : 'file' }` with **no `multipart : true`**, so a multipart body is rejected at hapi's payload layer before any handler runs. Measured: a valid PNG and a `.txt` each receive **HTTP 415**, `application/json`, **86 bytes**, `{"statusCode":415,"error":"Unsupported Media Type","message":"Unsupported Media Type"}` — the two bodies are **byte-identical** on both routes, so the content type of the upload makes no difference. The 501 feature-flag guard inside the handler is consequently unreachable | `config/routes.js:L337-L349` and `L353-L365` are byte-identical to `2f8712a`, `payload` block included | PRESERVED — adding `multipart : true` changes which requests are accepted, which the HTTP-surface and validation-outcome directive of AAP §0.9.4 freezes |
+| VQ-3 | A non-multipart POST to the same two routes answers **HTTP 200 on a validation failure** | Measured: `POST /file` with `Content-Type: text/plain` → **200**, `application/json`, body `{"path":"/tmp/<epoch>-<pid>-<hex>","bytes":25,"flash":{"requested":["…"],"validation":{"upload":"\"upload\" is required","path":"\"path\" is not allowed","bytes":"\"bytes\" is not allowed"}}}`; `POST /file/avatar` answers the same shape without the `requested` key. The `output : 'file'` payload mode has already written the body to `/tmp` by then, so the temporary path and its byte count are on the wire inside the failure envelope | this is baseline adjudication **#7**, `request-fail-without-redirect-or-html-yields-200`, and it is present in the committed `test/baseline/responses.json`, so the 200 is the captured base-commit outcome rather than a migration artefact | PRESERVED — R-6 makes the captured baseline the tie-breaker, and the R-6 corpus asserts this exact status |
+| VQ-4 | `POST /admin/upload` with a malformed CSV returns **no HTTP response at all** | Three payloads, all as a site admin. **(a)** empty → **200**, 18,588 bytes, rendering a green success banner reading *Successfully created: 0 users*. **(c)** a 506-character single-token blob → **200**, 18,588 bytes, byte-identical to (a) once the per-request `cache-prefix-<epoch>` timestamp is normalized (both `sha256 407fbf9d…`). **(b)** a CSV whose second record carries one column too many → **no response**: 0 bytes, no status code, the connection held until the client abandoned it at a 25-second ceiling. The user census is **unchanged** across all three (3 users before and after, `source:'upload'` count 0 both times), `GET /about` and `GET /admin/upload` both answer **200** immediately afterwards, and the log carries **exactly one** line for the abandoned request — the failure responder's own, `CsvError: Invalid Record Length: columns length is 4, got 5 on line 2 … undefined`, written by `lib/http/responseContract.js:L412` before the responder raised | `2f8712a:lib/controllers/admin.js:L120` is `if (err) return request.fail(err);` inside csv's own `parse` callback, a frame the handler had already left | PRESERVED — this is [section 1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them)'s mechanism operating as designed, delivered as `NoResponse.rejectOrAbandon(h, err)` at `lib/controllers/admin.js:L176`. **The §1.15 inventory row for it has been added**; the branch was already carried by [section 6.2](#62-the-table) |
+
+**Why VQ-4 in particular is preserved, and what a naive fix would have broken.** The operator-visible consequence is
+the sharp end of it: because the client's navigation is aborted rather than answered, the browser leaves the *previous*
+page on screen — which, if the operator has just uploaded an empty file, is the green *Successfully created: 0 users*
+banner. A reasonable operator would read that as a completed import. The remedy is nonetheless not available here.
+Converting the branch to any status code — a 400 for the parse failure, a 500 from the centralized error map — hands a
+client a definitive answer where the base commit sent none, which inverts the observable contract twice over: a caller
+that previously timed out now receives a decisive response, and the migrated corpus gains a status code at a path where
+the captured baseline has none. That is a TR2 parity failure at exactly the kind of route R-6 nominates as the
+tie-breaker, and R-4 forbids the improvement independently. The mechanism's own derivation, including why `h.close` is
+forbidden and why returning `undefined` is worse than either, is in
+[section 1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them) and in
+`lib/http/responseContract.js`'s header.
+
+
+### 21.2 The stored XSS in the library search typeahead
+
+**What it is.** VQ-5, and the most consequential entry in this section. A trinket's *name* is attacker-controlled stored
+data. Every surface that renders it escapes it — except one. The search typeahead renders each suggestion label through a
+raw-HTML binding, so a name containing markup becomes live DOM, and script in that markup **executes in the victim's
+authenticated session**. This is a genuine, reproducible stored cross-site-scripting vector, not a theoretical one, and it
+is recorded here because it is identical at the base commit and its sink sits in a layer this changeset is forbidden to
+touch — not because it is acceptable.
+
+**The evidence.** The measurement began from a verified clean baseline: on `/library/trinkets`, before any interaction,
+`typeof window.__xss_title` and `typeof window.__xss_img` were both `"undefined"`, captured twice. A trinket named with
+the 75-character string `<script>window.__xss_title=1</script><img src=x onerror=window.__xss_img=1>` was then searched
+for. Typing alone was sufficient — no click on any suggestion was needed.
+
+The control case first, because the contrast is what localizes the defect. On the **card surface** the same stored string
+is inert: the title `h3` has `childElementCount` **0** and exactly one child node of `nodeType 3`, its `textContent` is
+the 75 characters byte-exact, its serialized `outerHTML` shows `&lt;script&gt;…&lt;img src=x onerror=…&gt;`, and
+page-wide `img[src="x"]` is **0** with the `script` count at its clean baseline of **73**. The `/home` recent-trinkets
+list behaves the same way. The server is equally clean: `GET /api/trinkets/search?q=script` answers
+`application/json` and delivers the name correctly as a **JSON string value**.
+
+In the typeahead it becomes live DOM. Each of four probe terms produced a suggestion row containing real element nodes —
+`li.querySelectorAll('img').length` **1**, an element tree of `A > SCRIPT > IMG`, page `script` count rising **73 → 74**,
+`img[src="x"]` rising **0 → 1**, and a real subresource fetch `GET /library/x` answering **404** with
+`sec-fetch-dest: image` and `sec-fetch-mode: no-cors`. That 404 is not incidental: the response body is
+`text/html`, which is undecodable as an image, so **the 404 is itself what fires `onerror`**.
+
+The sentinels are the proof, and they were reset with `delete` between terms so each result is cleanly attributable:
+
+| search term | `window.__xss_title` | `window.__xss_img` | outcome |
+|---|---|---|---|
+| `window` | `undefined` | `undefined` | injected, both vectors corrupted |
+| **`script`** | `undefined` | **`1` (`typeof "number"`)** | **executed via the surviving `<img … onerror>`** |
+| **`onerror`** | **`1` (`typeof "number"`)** | `undefined` | **executed via the surviving `<script>`, run by `jQuery.globalEval`** |
+| `xss` | `undefined` | `undefined` | injected, both vectors corrupted |
+
+Both sentinels were subsequently driven to `1` **simultaneously on a single page load**, by typing `script` and then
+`onerror` with no reload between.
+
+**The term-dependence is an accident of the payload, not a mitigation.** Each vector is independently and fully
+executable. `window` and `xss` failed only because the highlight filter's own injected `<strong>` markup happened to land
+inside *both* vectors at once and corrupt them: for `script` the `<strong>` shredded the literal script tags (`</`
+becoming the bogus comment `<!--<strong-->`) while leaving the image byte-intact, and for `onerror` it was absorbed into
+the image start-tag as a bogus attribute whose `>` closed the tag early, destroying the handler while leaving the script
+byte-intact. A payload whose text does not overlap plausible search terms executes reliably.
+
+Two further properties make this worse rather than better in practice. **Successful exploitation is silent** — the two
+terms that executed produced no console output at all, while only the *failed* attempts logged errors, so console
+monitoring surfaces the noise and not the attack. And **the visual tell is weak**: the payload text is never shown
+intact, the row is always a garbled fragment plus a broken-image glyph, and it is never empty — so there is no meaningful
+indication to the user that code ran.
+
+**The sink is one line.** `/partials/directives/trinket-search.html` is 1,137 bytes and 17 lines; line 16 is:
+
+```html
+  <a class="trinket-list-with-lang lang-{{ match.model.lang }}" bind-html-unsafe="match.model.name | typeaheadHighlight:query"></a>
+```
+
+`bind-html-unsafe` is a **raw-HTML binding** — the `angular-foundation` counterpart of the `ng-bind-html-unsafe`
+directive AngularJS removed from core in 1.2 precisely because it is unsafe. Its implementation in the loaded
+`angular-foundation` 0.8.0 bundle is `scope.$watch(attrs.bindHtmlUnsafe, function(v){ element.html(v || "") })` — no
+sanitisation and no `$sce`. The filter feeding it escapes only *regex* metacharacters and then injects literal
+`<strong>$&</strong>`; verified live, `$filter('typeaheadHighlight')('<b>hi</b>','zzz')` returns `<b>hi</b>` unchanged.
+The contrast **within the same file** is instructive: line 10 uses safe attribute interpolation for the placeholder, and
+only line 16 is the sink.
+
+The `<script>` vector lives because `angular.element` here is **jQuery 2.2.4**, not jqLite
+(`angular.element('<div></div>').jquery === "2.2.4"`). jQuery's `.html()` tests its input against `/<script|<style|<link/i`
+and on a match abandons the plain-`innerHTML` path for `.empty().append(value)` → `domManip` → **`jQuery.globalEval()`,
+which executes injected script content**. The console stack trace from the *failed* attempts is the exploit chain
+rendered verbatim: `eval ← n.globalEval ← ua ← append ← K ← n.fn.init.html ← mm-foundation-tpls.min.js ← $digest ←
+$apply`.
+
+**The framework's own protection is switched on, and this binding routes around it.** Angular is 1.3.20 and
+`$sce.isEnabled()` is **`true`**; `$sce.getTrustedHtml('<img src=x onerror=1>')` **throws `[$sce:unsafe]`**, so an
+SCE-aware binding would have refused this exact payload outright. `$sanitize` is not available either — `ngSanitize` is
+not loaded — so even `ng-bind-html` would have thrown rather than silently sanitising, i.e. the safe alternatives here
+fail closed. But `bind-html-unsafe` never consults `$sce`: a substring search for `sce` across the entire 50,343-byte
+`angular-foundation` bundle returns **0** occurrences.
+
+**Blast radius, stated rather than assumed away.** The measurement did not extend past this one screen, so the reach is
+recorded as an open bound rather than a bounded finding. `/partials/directives/trinket-search.js` declares `navbar` and
+`toolbar`/"Insert Trinket" render modes in addition to the library toolbar one, and all of them share
+`searchResultsTemplate.html`, so any screen embedding `<trinket-search>` inherits the same sink. Because the payload
+lives in a trinket *name*, any context in which one user's trinket names reach another user's typeahead is a candidate
+propagation path. That was not tested.
+
+**Why it is preserved.** Not one of the four sanctioned diff categories reaches it. The sink is
+`public/partials/directives/trinket-search.html`, and `public/**` has a **0-line diff against `2f8712a`** — re-verified
+in this pass — while AAP §0.2.2.1 excludes the frontend layer explicitly and by file count, naming `public/partials/**`
+among the 54 files that are untouched. The vulnerable directive itself is not even a tracked source: it is
+`angular-foundation` 0.8.0 loaded from a CDN URL pinned inline in `config/default.yaml`, which is one of §0.2.1.9's
+read-only preservation points and part of the TR5 asset-URL contract, and `config/default.yaml` likewise has a 0-line
+diff. The defect is therefore **identical at both commits**: the migration neither introduced it, nor widened it, nor
+narrowed it, and the base commit executes the same payload through the same line. R-1's diff-surface budget admits only a
+runtime bump, a framework API migration, an async conversion or a dependency swap, and a client-side output-encoding fix
+in an excluded layer is none of the four.
+
+**What a naive fix would have broken.** The tempting one-line repair is to change `bind-html-unsafe` to `ng-bind` on
+line 16. Measured against this codebase, that does more than close the hole — it changes rendered output on every
+suggestion row, because the highlight filter's entire purpose is to emit `<strong>` around the matched substring, and a
+text binding would render those tags as literal visible characters in every search result for every user. The
+alternative, `ng-bind-html`, **throws** here rather than sanitising, because `ngSanitize` is not loaded; making it work
+means adding a dependency and a new CDN asset URL, which TR5 freezes. Escaping inside the filter means editing the
+vendored `angular-foundation` build, which is hydrated from a release tarball and is not a repository source at all.
+Every available route therefore either changes client-visible output at a frozen surface or adds an asset URL — and each
+would have been an unmeasured change made in the same pass whose entire purpose is to prove that the frontend was not
+perturbed.
+
+**Out-of-scope remediation, recorded so it is not lost.** The correct repair is to render the label as text and move the
+match highlighting to structure rather than markup — for example emitting the pre-match, match and post-match substrings
+as three text-bound spans, with the middle one carrying the emphasis class. That keeps the visual result identical while
+never handing user data to `element.html()`. Doing so requires a change scoped to permit edits to `public/partials/**`,
+which this changeset is not; §0.2.2.1 is the exclusion, and it is cited here so that the boundary — rather than the
+severity — is what deferred it. The severity is unambiguous: this is authenticated stored XSS, it is silent when it
+succeeds, and it is reachable by typing.
+
+### 21.3 Form validation, error presentation and the preserved Joi contract
+
+**What it is.** Two conditions and one refinement. Several fields accept input that a stricter schema would reject,
+because their Joi declarations carry no upper bound and no trimming; the application presents errors in four mutually
+inconsistent visual languages, one of which is not styled as an error at all; and the raw Joi message that
+[section 1.2](#12-the-joi-custom-message-override-that-never-fires) records as reaching the user turns out to reach it in
+ten places.
+
+`config/routes.js` is **byte-identical** to the base commit — both copies hash to `sha256 3e0809a4…` — and
+`config/api_routes.js` carries **zero** changed Joi lines, so every schema below is the base commit's own.
+
+| # | Condition | Measured evidence, re-measured on the delivered tree | Base identity | Disposition |
+|---|---|---|---|---|
+| VQ-6 | Fields whose schemas carry no upper bound and no trimming accept over-length and whitespace-only input | `POST /users`' `password : Joi.string().min(3).regex(…)` at `config/routes.js:L86` declares **no `.max()`**, so a **520-character** password is accepted: the signup answers **302 to `/welcome`** and the account **is created**. A password of six spaces is accepted the same way, because the regex character class admits `\s`. `POST /api/courses` (`name` max 140, `description` max 500, neither trimmed) accepts a name **and** a description of three spaces at **200** and persists the course, whose slug then degenerates to random characters as [section 15.2](#152-a-whitespace-only-course-name-is-accepted-and-the-slug-degenerates-to-random-characters) records. `POST /api/folders` (`name` min 1, max 140, untrimmed) accepts a three-space name at **200** and creates the folder. `POST /api/courses/join`'s `accessCode : Joi.string().min(6).required()` declares **no `.max()`**, so a 500-character code passes validation and a six-space code satisfies `.min(6)`; both reach the lookup and are refused only there, with *No course was found with that code.* `GET /admin/users?q=` has **no validation at all**: empty, 556-character and whitespace-only queries all answer **200**, and the whitespace query renders the degenerate sentence `No matches found for .` **The architectural observation, verified across every probe in this pass: there is not a single 400 or 422 anywhere in the application.** Every validation rejection is a 302-with-flash or a 200-with-JSON; the only other statuses observed are 404 for an unrouted path, 415 from the payload layer, and the scrubbed 500 described below | the schemas are byte-identical to `2f8712a`, and every fixture created while measuring was removed afterwards, with the census restored to its exact prior state | PRESERVED — adding `.max()` or a trim changes which requests are accepted, and the AAP §0.9.4 preservation directive freezes validation outcomes in exactly those words: input accepted or rejected at baseline is accepted or rejected identically after. R-1 additionally excludes it as latent-bug repair |
+| VQ-7 | Four mutually inconsistent error-presentation styles coexist, and one of them is not styled as an error at all | Measured at a pinned 1440×1000 viewport, computed values read from the CSSOM. **(1) `small.error`** — the `/signup` field error, `<small class="error">`: background `rgb(240,65,36)`, colour white, **12px**, **italic**, weight 400, `Merriweather, Times, Georgia, serif`, padding `9px` uniform, margin `-1px 0px 16px` (the negative top is what makes it sit flush under the input), border `0px none`, radius 0, line-height 18px, rect 470×36. **(2) `.alert-box.alert`** — `#profileError` on `/account/profile`: background `rgb(240,65,36)`, white, **13px**, normal, padding `14px 24px 14px 14px`, margin `0px 0px 20px`, border **`1px solid rgb(222,45,15)`**, radius 0, line-height 19.5px, `display:none` until `showAlert()` runs, 688×49.5 when revealed. Note that the *unqualified* `.alert-box` base rule is brand **blue** `rgb(0,138,255)`, so the red depends entirely on the `alert` modifier. **(3) the notify.js toast** — `.notifyjs-foundation-base.notifyjs-foundation-alert`: background `rgb(240,65,36)`, white, **12.8px**, padding `12.4445px 21.3333px 12.4445px 12.4445px`, margin `0px 0px 17.7778px`, border `1px solid rgb(222,45,15)`, **radius 3px**, `white-space: nowrap` so the box hugs its text, inside a `position: fixed` `.notifyjs-corner` at `z-index: 1050` so it causes no layout shift. **(4) an unstyled bare paragraph** on `/admin/users` — `outerHTML` is literally `<p>No matches found for <strong>   </strong>.</p>` and its **complete attribute list is `[]`**: `attributes.length` is 0 and `hasAttribute('class')` is `false`, so background `rgba(0,0,0,0)`, colour `rgb(34,34,34)`, **16px**, weight 400, padding `0px` on all four sides, border `0px none`, line-height 25.6px, rect 1018×25.59. The nested `<strong>` holding the query measures **width 0**, which is precisely why the sentence reads `No matches found for .` Styles 1, 2 and 3 therefore share one visual language — the same `rgb(240,65,36)` fill, white text and Merriweather family, differing only in size, slant, padding, border and radius — while style 4 is indistinguishable from ordinary body prose | `static/scss/**`, `lib/views/**`, `public/js/**` and `public/partials/**` all have a 0-line diff against `2f8712a`, and `public/css/base.css` still matches its recorded 265,727 bytes and digest | PRESERVED — every value above is emitted by the frozen stylesheet, and the attribute-less `<p>` is in a frozen template. Giving it a class, or converging the four styles, changes the compiled `base.css` that the AAP §0.3.3 byte-identity check pins and alters the rendered markup of client-visible pages that AAP §0.9.4 freezes |
+
+**The refinement to [section 1.2](#12-the-joi-custom-message-override-that-never-fires): the raw Joi message reaches the
+user in ten places, in six distinct shapes.** This is **required** behaviour under R-4, not a defect — the `language`
+block at `config/routes.js:L91-L95` and `L112-L116` maps the key `"regular expression"` to a friendly username message,
+the lookup treats that key as a pattern to match against Joi's own message text, the match never succeeds, and the
+technical message is what a user sees. Re-measured on the delivered tree, the message strings are:
+
+- `"username" with value "bad user!!" fails to match the required pattern: /^[a-z][a-z0-9\-\_]*$/i` — the flagship,
+  from `PUT /api/users/{userId}`, delivered at **HTTP 200** inside `flash.validation`; the whitespace-only variant emits
+  the same sentence with `value "   "`
+- `"username" length must be at least 3 characters long` and
+  `"username" length must be less than or equal to 20 characters long` — the two length variants on the same field
+- `"email" must be a valid email` and `"email" is not allowed to be empty` — rendered into `small.error` on `/signup`
+  after the 302-with-flash, HTML-escaped by Nunjucks so the reader sees `&quot;email&quot;` decoded back to `"email"`
+- `"name" is not allowed to be empty` and `"name" length must be less than or equal to 140 characters long` — from
+  `POST /api/courses` and `POST /api/folders`
+- `"accessCode" length must be at least 6 characters long` — from `POST /api/courses/join`, on the wire at 200 though
+  the UI does not surface it
+- `"upload" is required`, `"path" is not allowed` and `"bytes" is not allowed` — the trio inside VQ-3's 200 envelope
+- `"ownerSlug" is not allowed to be empty`, `"slug" is required` and `"courseSlug" is not allowed` — from
+  `POST /api/admin/featured-course`
+
+**One condition the pass attributed to `/admin/featured-courses` resolves to two already-catalogued mechanisms, and the
+resolution is worth recording because a reader will otherwise look for a third.** `GET /admin/featured-courses` answers
+**200** and renders correctly; the failures are on the write path. Measured against
+`POST /api/admin/featured-course`, whose schema is `{ ownerSlug, slug, page }`:
+
+- An **empty** submission answers **200** carrying `flash.validation`, and the page shows nothing at all, because
+  `lib/views/admin/index.html:L125`'s `$.post(...).done()` runs for any 2xx and immediately reads
+  `result.course.ownerSlug` on an absent `course`, raising an uncaught `TypeError`; the `.fail()` arm, whose only body is
+  a `console.log`, never runs. This is the same shape as section 17's BQ-11 — a client-side alert path that cannot reach
+  its target — and both live in frozen files.
+- A whitespace-only, over-length or simply unknown owner-and-slug pair answers the **96-byte scrubbed 500**, and the log
+  gives the cause exactly: **`ReferenceError: Boom is not defined`**, reached through `lib/http/errorMap.js`. That is
+  [section 10](#10-the-undeclared-boom-scrubbed-500s-61-call-sites-that-never-returned-the-status-they-name)'s condition
+  firing at the two `throw Boom.notFound()` sites in `lib/controllers/admin.js`, which the catalogue already counts and
+  which the source annotates in place. The handler names a 404 and has never returned one.
+- A well-formed owner-and-slug pair answers **200 `{"success":true,"course":{…}}`** and persists correctly, so the
+  feature itself works; only its failure paths are silent. The record created while measuring was removed and the census
+  verified back to its prior state.
+
+
+### 21.4 The JavaScript-disabled path
+
+**What it is.** VQ-8. With JavaScript disabled, two of the application's authenticated screens render as correctly
+styled but completely empty shells, and no message anywhere explains why. The application ships **no `<noscript>`
+provision at all** — not one element, in any page, at either commit.
+
+**The evidence.** The `<noscript>` census is zero across the board: `document.querySelectorAll('noscript').length` is
+**0** on `/`, `/home`, `/library/trinkets` and the course viewer, and the raw server response body for the course-viewer
+document — read from the network response rather than the mutated DOM — contains **0** case-insensitive occurrences of
+the string `noscript` in **21,444 characters**, against **52** occurrences of `<script`. An independent authenticated
+`curl` of the same URL agrees at 21,513 characters, 0 and 52; after normalizing the 37 per-request
+`cache-prefix-<epoch>` values the two bodies differ only by the per-session `#roles` ciphertext and one extra
+`requestedLogin` flash input.
+
+That raw body also settles what the page actually is. The opening tag is literally `<html lang="en" class="no-js">`, and
+the content strings are absent: `Markdown And Highlighting` **0**, `Lesson One` **0**, and even the course title
+`QA Visual Regression Course` **0**. The string `outline` appears 8 times, but every one of the 8 was read in context and
+every one is template scaffolding rather than data — `<a id="outline-expander" … aria-label="Toggle Outline">`,
+`<aside id="outline" …>`, `<ul class="outline-list lessons" aria-label="Course Outline" …>` and the two
+`ng-repeat` rows. The material target ships literally empty:
+
+```html
+<div ng-hide="material.noContent" ng-bind-html="content()" class="content"></div>
+```
+
+So the page is a **hybrid**, and that distinction matters for the disposition: the Nunjucks chrome *is* server-rendered
+with real values — `<body ng-app="trinket.classPage" id="course-view" class="loggedin course">`,
+`<input id="whoami" type="hidden" value="qanormal-0344">` — while every piece of course content is an unevaluated
+AngularJS shell.
+
+With script execution genuinely blocked, the three screens diverge sharply. Disablement was verified rather than
+assumed, and by the strongest available signal: `typeof window.angular` is `"undefined"` **and**
+`document.documentElement.getAttribute('class')` is still `"no-js"`, because Modernizr rewrites that token to `js` only
+when scripts run, so the surviving `no-js` is itself the proof. `document.readyState` reached `complete`, so the pages
+loaded fully rather than stalling.
+
+- **`/` degrades perfectly.** `body.innerText.length` is **481 with JavaScript on and 481 with it off**. `#main-content`
+  measures 322 characters in a 1905 × 417 rect, the top bar and the footer both render, four stylesheets load and
+  `body` resolves `Merriweather, Times, Georgia, serif`. The screenshots are pixel-identical. The landing page is fully
+  server-rendered and JavaScript adds nothing to it.
+- **`/library/trinkets` collapses to chrome.** `#main-content` has `innerText.length` **0** and a rect of
+  **1905 × 0** — zero height. Its 7,001-character `innerHTML` holds only the mount point
+  `<div ui-view="" ng-init="role=''"></div>`, itself 0 children and 0 characters. `body.innerText` falls **516 → 99**, an
+  81% collapse in which all 99 characters are top-bar text, and an exhaustive tree walk finds only **6** text-bearing
+  visible leaf elements in the whole document. Selector counts for the card components are 0. The header still renders,
+  fully styled, at 1905 × 45. Worth separating from the finding: **this template has no footer element at either
+  commit** — five footer selectors match nothing — so the missing footer is not a JavaScript-disabled effect.
+- **The course viewer collapses further.** `#main-content` is again `innerText.length` **0** at 1905 × 0, and every
+  nested course region has a **zero-area 0 × 0 rect**, so nothing paints: `#course-content`, `#outline`,
+  `#material-content` and `#material` all carry text in the DOM that occupies no space. `div.content` is 0 characters, 0
+  children. `body.innerText` falls **776 → 99** (87%). **Twelve unrendered `{{ }}` mustaches** remain visible in the DOM
+  — `#course-content`'s `innerText` literally reads `{{ course.description }} … {{ lesson.name }}`. And the fetches never
+  fire: **no `/api/courses/…` request is issued at all**, against two successful ones with scripting enabled, so content
+  cannot arrive by any route. The page cannot even display the application's own "No content has been added to this page
+  yet." fallback, because that string sits inside an Angular `ng-switch`.
+
+**No user-facing explanation exists on any of the three.** A keyword scan for `javascript`, `java script`, `enable js`,
+`script is disabled`, `requires javascript`, `turn on javascript`, `no-js` and `noscript` returns **0 hits** over
+`body.innerText` and **0 hits** over `documentElement.textContent` — that is, including text hidden from view. Nor is one
+delivered through CSS: a recursive walk of every accessible stylesheet finds exactly **6** rules whose `selectorText`
+contains `no-js`, all in `base.css`, and **none of them declares a `content:` property or renders any text**. They are
+Foundation's cosmetic fallbacks — keeping tab panels visible, making top-bar dropdowns hover-openable and focus-openable
+— plus one project rule hiding lazyload placeholders. Rules whose `selectorText` contains `noscript`: **0**, on every
+page. The cross-origin gap in that search was closed out of band by fetching the three unreadable CDN stylesheets
+directly, and the only `no-js` matches among them are `video.js`'s own `vjs-no-js` component class, none of which matches
+the root-class selector form. A source-level cross-check agrees: 12 textual `no-js` occurrences in `base.css` resolving to
+the same 6 distinct selectors, 0 `noscript`, and 5 and 0 in `embed.css`.
+
+One corroboration is worth stating because it is a stronger form of the same claim than any measurement: the saved
+captures of `/library/trinkets` and of the course viewer with scripting off are **byte-for-byte identical PNGs**, both
+76,517 bytes at md5 `63dcd018dde294524eb82d6623f2f736`. Two entirely different screens render the same pixels once the
+scripts stop.
+
+**Why it is preserved.** Three of the four sanctioned diff categories cannot reach this, and the fourth would have to
+create something. Adding a `<noscript>` block edits `lib/views/**`, which AAP §0.2.2.2 freezes at 79 templates with a
+0-line diff against `2f8712a` — verified again in this pass. Server-rendering the course content would be a new feature
+in the composition root and would change what the document body contains at a path the R-6 corpus captures. Neither is a
+runtime bump, a framework API migration, an async conversion or a dependency swap, so R-1's diff-surface budget excludes
+both, and R-4 forbids the improvement independently: the base commit renders exactly the same empty shells, so the
+migrated tree matching them **is** parity.
+
+**What a naive fix would have broken.** The tempting repair is the smallest one — a single `<noscript>` banner in the
+shared layout. It is also the one with the widest blast radius, because that layout is shared: the banner would appear in
+the served markup of every page, including `/` and `/home`, and would change the document body at all 233 registered
+routes rather than at the two that need it. The R-6 response corpus captures body shape, so a new element in the shared
+shell moves every captured body at once and converts a parity gate that currently passes into one that fails everywhere,
+in exchange for text that only the fraction of visitors with scripting disabled will ever read. The more honest repair —
+server-rendering the outline and the material — is a larger change still, and it would have to reproduce the markdown
+pipeline, the sanitizer and the highlight pass on the server, which is the whole of `lib/shared/trinket-markdown.js`'s
+client-visible output surface. Both repairs trade a documented absence for an undocumented behavioural change, which is
+the exact trade R-4 exists to refuse.
+
+### 21.5 Interactive states and keyboard accessibility
+
+**What they are.** Five conditions, VQ-9 through VQ-13, that share one root: interactive affordances in this application
+are attached to elements that cannot express them. Four of the five reduce to a single mechanism — an `<a>` with no
+`href` is not a link, so it is neither focusable nor keyboard-activatable, and every affordance layered onto it by CSS or
+by AngularJS is therefore partial. The fifth is a control that looks unavailable and is not.
+
+| # | Condition | Measured evidence, re-measured on the delivered tree | Base identity | Disposition |
+|---|---|---|---|---|
+| VQ-9 | Focus is not a distinct visual language: it is either the same as hover, weaker than it, or absent | Census of the compiled stylesheet: **174** rules contain `:hover` or `:focus`; **78** mention `:focus`, but **73 of those 78 share their selector with `:hover`** in the `X:hover, X:focus { … }` form. Only **5** use `:focus` without `:hover` and **none creates a focus ring** — one of the five *removes* the browser's ring (`input…:focus, textarea:focus { … outline: none; }`), one restyles `select:focus`, two are structural panel reveals, and one is a skip-link utility. An `outline`-property audit finds 47 rules containing the *string* "outline" but almost all are class-name false positives (`.outline-list`, `#outline-expander`); exactly **two** declare the real property, and **zero rules matching any of the four probed controls set an `outline` at all**, so every ring observed is the browser default. Exactly one `:focus` rule anywhere mentions `box-shadow`, and its selector matches none of them. Per control: the two toolbar dropdown triggers do get a visible focus state, but an *inverted* one — hover is a pale wash (`rgb(204,232,255)` fill, `rgb(0,110,204)` text) while focus is a dark inversion (`rgb(0,110,204)` fill, white text) with the border left at its default `rgb(0,138,255)` — and the cause is precisely that the project's own override `.button:hover, .faux-button:hover { color: rgb(0,110,204); border: 1px solid rgb(0,110,204); background: rgb(204,232,255); }` **has no `:focus` counterpart**, so focus falls through to Foundation's older declarations. The blue split button has **no focus state at all** (see VQ-10). The card link has only `a:hover, a:focus { color: rgb(0,119,219); }` — one shared declaration — and it renders nowhere: the decisive cross-check is that the visible title `h3` computes `color: rgb(221,221,221)` and measured **`rgb(221,221,221)` unchanged in both the hovered and the focused state**, because no descendant inherits the anchor's colour. Its focus is therefore 100% browser-supplied | `static/scss/**` and `lib/views/**` are both 0-line diffs against `2f8712a`; the `:hover`-without-`:focus` override is compiled into the byte-identical `base.css` | PRESERVED — adding focus styling edits frozen SCSS and changes the compiled artefact whose byte length and digest are the parity anchors. Recorded alongside the seven conditions already adjudicated at [section 15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them) |
+| VQ-10 | Fifteen anchors carry no `href` and no `tabindex`, so they cannot be focused — and five of them are visible interactive triggers | Document census: **33** `<a>` elements; **15** with no `href`; of those, **15 — every single one — also with no `tabindex`**; of those, **7** carrying an `ng-click`, i.e. genuinely interactive yet unfocusable. Each of the 7 has exactly **two** attributes, `ng-click` and `class="ng-binding"` — no `href`, no `tabindex`, no `role`, no `aria-*`. Anchors with `href="#"` or `href=""` *plus* an `ng-click`: **0**, so this is not the usual placeholder-href pattern. The remaining 8 href-less anchors carry no `ng-click` but several are interactive by other means, and **5 href-less anchors are visible at rest, 4 of them interactive triggers**: the user menu (`role="button"`, `aria-controls="user_dropdown"`, `aria-label="Open User Menu"`), an in-menu New Trinket link, the toolbar New Trinket split button and the new-folder modal trigger. **Empirically confirmed unreachable:** `.focus()` was called on 6 of them after blurring to BODY and confirming `activeElement === document.body` first, and **all 6 failed — `document.activeElement` remained BODY every time and `matches(':focus')` was false every time**. Three of the six were deliberately chosen as *visible, non-zero-area* anchors, which proves the cause is the missing `href`/`tabindex` rather than collapsed geometry, and **`role="button"` alone confers no focusability** — two of the failing elements carry it. A reinforcing test removed the last doubt: with the View panel open the Grid and List anchors had real geometry (187.9 × 34 each) and `.focus()` **still** failed. Note that the `el.tabIndex` *property* misleadingly reports `0` on one of them; the empirical test is authoritative | `public/partials/**` and `lib/views/**` are 0-line diffs against `2f8712a` | PRESERVED — every one of the 15 lives in a frozen template or partial. Adding `href` or `tabindex` edits §0.2.2.1's excluded frontend layer, and on the `ng-click` anchors it would also change what a click does |
+| VQ-11 | The pager control that presents itself as unavailable still runs its handler | The mechanism is a single **`disabled` content attribute** (`disabled="disabled"`), written by `ng-disabled="!havePreviousMaterial()"` and used **purely as a CSS selector hook**. Because `<a>` is not a form control, that attribute has no intrinsic behavioural effect on an anchor: it does not block activation, does not remove it from the tab order and does not stop event dispatch. It is **not** a class — the `classList` stays `["prev","button","small"]` in all three positions and the `disabled` class never appears — and it is **not** `pointer-events`, which computes **`auto`** in every state on every control. Three rules match, all keyed on `.button[disabled]`, and the third supplies the appearance: `{ box-shadow: none; cursor: default; opacity: 0.7; }`. **The key test:** at the first material, `pointer-events` is `auto`; `elementFromPoint` at the control's centre resolves to its own `<i class="fa fa-angle-left">` whose `closest('a')` **is** the control, and four inset corner hit-tests all return it, so nothing overlays it. After a real click, the URL, hash, title, outline `.current` index, all three row class strings, the progress width, the content length and the scroll geometry are **all unchanged** — but a capture-phase listener counted the click **1**, a bubble-phase listener counted **1**, and a transient counter around `scope.previousMaterial` measured **`previousMaterialInvocationCount = 1`**. The handler genuinely ran; nothing changed because the controller's own guard `havePreviousMaterial()` returns **false**. The last material is the mirror image, with `nextMaterialInvocationCount = 1`. The control also **stays in the tab order while disabled**, at position 13 of 20. A cascade consequence worth recording: the project ships its own class-keyed disabled skin (`.button.disabled … { background: rgb(204,232,255); … }`) which **does not match**, because it wants the `disabled` *class* while `ng-disabled` writes the *attribute* — so the element falls through to Foundation's `[disabled]` rules and the unavailable button renders as a **solid primary-blue fill with a white glyph**, i.e. more prominent than the available hollow one | the raw server HTML carries `<a href class="prev button small" ng-click="previousMaterial()" ng-disabled="!havePreviousMaterial()" aria-label="Previous Page">` with **0** occurrences of `aria-disabled`, no `tabindex` and no `disabled` — all three are injected at runtime, `disabled` by `ng-disabled` and the other two by **ngAria 1.3.20**. `lib/views/**` is a 0-line diff | PRESERVED — the same class of condition as section 17's BQ-17, measured here down to handler invocation. The template is frozen, and the CDN-pinned ngAria version is one of AAP §0.2.1.9's asset-URL preservation points |
+| VQ-12 | The toolbar dropdowns ignore Escape, mark no current selection, and cannot be entered by keyboard | **Escape is a complete no-op on both.** Opening the View panel takes its className to `tiny f-dropdown open f-open-dropdown` and its rect to 189.9 × 70 with `aria-hidden="false"`; after a real Escape keypress **not one property changed** — className, rect, `display: block`, `visibility`, `left`/`top`, `aria-hidden`, the trigger's `open` class, its `aria-expanded="true"` and `document.activeElement` are all identical. The Sort panel behaves identically at its own 189.9 × 138. `foundation.min.js` loaded **200**, so this is a genuinely absent keydown handler rather than a load failure — Foundation 5 binds click and touch only. An outside click *does* close both, returning `aria-hidden` to `"true"`. **No selected-state marker exists by any mechanism**, verified numerically with the page in Grid view: the `li` rows are identical at `rgba(0,0,0,0)` / `rgb(34,34,34)` / weight `400`, and the `a` rows identical at `rgba(0,0,0,0)` / `rgb(85,85,85)` / weight `400`; `aria-selected`, `aria-checked`, `aria-current` and `role` are **absent** from both `li`, both `a` and the `ul`; there is no `.active`, `.selected`, `.current`, `.is-active`, `.is-selected` or `.checked` class — the only classes are `ng-scope` and `ng-binding`, identical on both rows; and a pseudo-element scan of **every** node in the panel returns `::before`/`::after` content `none`, so there is **no checkmark glyph**, the only generated content being each row's own category icon. The sole differences between the two rows are the icon codepoint and the label text. ARIA inventory: the `ul` has **no `role`** and only `aria-hidden`; the trigger has `aria-expanded`, correctly toggled, but **no `aria-haspopup` and no `aria-controls`** — and `aria-expanded` is **not in the server-rendered markup** either, being injected by Foundation's JS on initialisation, so a never-interacted page exposes none of it. Both triggers have an **empty accessible name**, exposing as `button " "`, because their label text sits in `span.show-for-xlarge-up` and the glyphs are decorative. **Tab with the panel open skips past the options entirely** — focus lands on the first grid card, `ul.contains(activeElement)` is false, and the panel **stays open behind the departed focus**, with no way back in and no Escape to dismiss it. Root cause is VQ-10's: both option anchors fail the tabbable test for want of `href`/`tabindex` | `public/partials/**` is a 0-line diff against `2f8712a`, and the Foundation JS is served from the gitignored, release-hydrated `public/components/**` tree that AAP §0.2.2.2 places outside the tracked sources entirely | PRESERVED — adding a keydown handler means modifying the vendored Foundation build or the frozen partials; adding a selected-state marker or the missing ARIA edits the frozen partials. Adjacent to section 17's BQ-19, which records five unnamed icon-only controls, of which these two triggers are further instances |
+| VQ-13 | The outline expander is focusable, shows a focus ring, and ignores both Enter and Space | The element has exactly **4** attributes — `id`, `ng-click="menuOpen=!menuOpen"`, `aria-label="Toggle Outline"`, `tabindex="0"` — an **empty** `classList`, **no `href`** (`hasAttribute` false, `getAttribute` null, `.href` property `""`) and **no `role`**. It computes `cursor: auto`, not `pointer`, because its single styling rule declares no cursor. **Focusable: yes**, proved twice — `.focus()` from a confirmed BODY baseline makes it `document.activeElement`, and real Tab presses reach it at **position 14 of 20**, matching an independent DOM-order prediction. A focus ring **does** appear, `outline: rgb(16,16,16) auto 1px`, and it was verified at pixel level on the saved capture rather than by eye: a vertical scan at x=20 reads white at y=140–144, then **`(16,16,16)` at y=145 and y=146**, then blue from y=147, and **335 near-black pixels form a continuous ring**. **Enter does not activate it.** All five key events reach the element — `keydown`/`keypress` Enter, keyCode **13**, at document-capture and at element-bubble, plus `keyup` — every one with `defaultPrevented: false`, and yet `classList` stays `[]`, `margin-left` stays `0px`, `menuOpen` stays `false`, the drawer's rect stays at x −350 and `scrollWidth` stays 1280. **The decisive measurement is that a capture-phase click listener recorded `synthesizedClickCount: 0`** — the browser generated no click, so the element's only handler never ran. **Space likewise does not activate it**, with the same `synthesizedClickCount: 0`; it did not scroll either, but that is *not* evidence the key was consumed, because the document was measured non-scrollable beforehand (`scrollHeight` 900 equals `clientHeight` 900, `maxScrollY: 0`) and nothing default-prevented the keydown. **The control itself works:** one trusted mouse click flips `classList` to `["open"]`, `margin-left` to `350px`, `menuOpen` to `true`, the drawer rect to x 0, `aria-hidden` to `"false"` and the glyph to `fa-times`, with `clickEventCount: 1` and `keyEventsObserved: 0` — so the failure is keyboard-specific, not a broken control. Every one of these results was reproduced in a **second independent run** with identical outcomes | the raw server HTML at the corresponding line is `<a id="outline-expander" ng-click="menuOpen=!menuOpen" aria-label="Toggle Outline">`, so **`tabindex="0"` is not server-rendered**; it is injected at runtime by ngAria 1.3.20. `lib/views/**` is a 0-line diff against `2f8712a` | PRESERVED — the missing `href` is in a frozen template and the `tabindex` comes from a CDN-pinned third-party bundle whose URL is a §0.2.1.9 preservation point. Also one of the conditions in scope for [section 15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them)'s precedence argument |
+
+**Why the five are preserved, and the one mechanism that explains four of them.** The mechanism is worth setting out
+precisely, because it is not the obvious "someone forgot an attribute" — it is a library making a reasonable assumption
+that this markup violates. ngAria 1.3.20's `ngClick` directive does three things, gated on a node blacklist:
+
+```javascript
+function b(a,b){ if(-1!==b.indexOf(a[0].nodeName)) return !0 }
+var f=["BUTTON","A","INPUT","TEXTAREA"];
+d.attr("role")||b(d,f)||d.attr("role","button");                          // (i) role
+a.config("tabindex")&&!d.attr("tabindex")&&d.attr("tabindex",0);          // (ii) tabindex
+if(a.config("bindKeypress")&&!e.ngKeypress&&!b(d,f)) d.on("keypress", …)  // (iii) keypress shim
+```
+
+Applied to an `<a>`: clause (ii) **fires unconditionally**, so the element becomes focusable; clauses (i) and (iii) are
+**both skipped**, because `A` is blacklisted. ngAria skips them for anchors on the assumption that anchors are natively
+keyboard-operable — which is true only of anchors that have an `href`. This one has none, so it lands in the gap: made
+focusable by the library, then given neither a native activation path nor the library's synthetic one. The confirmation is
+in the same page rather than in reasoning about it. The outline material rows are `div.material-title` with an identical
+`ng-click`, and `DIV` is not blacklisted, so they receive everything the anchor was denied — `role="button"`,
+`tabindex="0"`, and jQuery event types **`["keypress","click"]`** whose keypress handler reads
+`32!==a.keyCode&&13!==a.keyCode||c.$apply(b)`, i.e. *activate on Space or Enter*. **The very shim that would have made
+Enter and Space work on the expander is present on the DIV rows and absent on the anchor.** The accessibility tree agrees
+end to end: the expander exposes as `link "Toggle Outline" focusable focused` with **no `url=`**, unlike every other link
+node in the document — the tree's own signature for an anchor without an `href`.
+
+That single mechanism accounts for VQ-13 directly, for VQ-10's fifteen anchors, for VQ-12's untabbable dropdown options,
+and for VQ-9's blue split button having no focus state at all. It also produced a sixth observation during the Tab walk
+that belongs here rather than being mistaken for measurement damage: the console emits
+`Blocked aria-hidden on an element because its descendant retained focus`, naming `<div.material-title>` as the focused
+element and `<aside#outline>` as the `aria-hidden` ancestor. When the drawer is closed, `aside#outline` carries
+`aria-hidden="true"` through `ng-attr-aria-hidden="{{ menuOpen ? false : true }}"`, yet its three rows keep the
+ngAria-injected `tabindex="0"` and stay in the tab order — so ordinary keyboard navigation focuses content marked hidden
+from assistive technology. It is the same ngAria root cause as VQ-13, manifesting in the opposite direction, and it is a
+genuine reproducible property of the closed drawer rather than an artefact of pressing Tab.
+
+**What a naive fix would have broken.** Each of the five has an obvious one-line repair, and each repair leaves the
+sanctioned diff. Adding `href="#"` or `tabindex="0"` to the fifteen anchors edits `public/partials/**` and
+`lib/views/**`, both 0-line diffs against the base commit and both inside the frontend layer AAP §0.2.2.1 excludes
+outright — and on the seven `ng-click` anchors `href="#"` also changes what a click *does*, appending a fragment to the
+URL that the R-6 corpus does not have. Adding a `:focus` rule to `.button` edits `static/scss/**` and changes
+`public/css/base.css`, whose 265,727 bytes and `sha256 34f1b6e1…` are the artefact-parity anchors; the same applies to a
+selected-state marker for the dropdown rows. Giving the dropdowns an Escape handler means modifying the vendored
+Foundation 5.5.3 build, which is not even a tracked source — it is hydrated from a release tarball that §0.2.2.2 places
+outside the repository's sources. And VQ-11 is the sharpest of the five, because the repair looks free: setting
+`pointer-events: none` on `.button[disabled]`, or swapping `ng-disabled` for a class the project's own disabled skin
+already styles. Either one stops `previousMaterial()` from being invoked. The invocation is currently **measured** — a
+counter recorded exactly one call — so suppressing it removes an observable event from a control the base commit leaves
+live, and the class swap additionally repaints the button from a solid blue fill to a pale wash, changing its rendered
+appearance. That is two R-4 behaviour changes for a control whose net effect on the user is already nil, because the
+controller's own guard makes the handler a no-op. The AAP's precedence order settles all five the same way, and it is
+stated in D1 rather than inferred: accessibility heuristics never override the frozen design contract or an explicit AAP
+exclusion. [Section 15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them)
+sets that argument out in full; these five are further instances of it, measured at greater depth.
+
+### 21.6 The two status-code gaps: a 500 where a 404 belongs
+
+**What they are.** Two adversarial inputs reach a layer below the application and provoke a `TypeError` there, which the
+centralized error map then answers as a scrubbed 500. Both are inputs for which a 404 would be the conventional answer,
+and both leak nothing.
+
+| # | Condition | Measured evidence, re-measured on the delivered tree | Base identity | Disposition |
+|---|---|---|---|---|
+| VQ-14 | A NUL byte in a redirecting path answers **500** because Node refuses to write it into a header | `GET /skulpt/%00` → **500**, `application/json`, **96 bytes**, body `{"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}`. The server log carries the cause: `TypeError [ERR_INVALID_CHAR]: Invalid character in header content ["location"]`. `trinket.index` redirects to `/python/` plus the raw hash, so the NUL reaches Node's header writer, which refuses it; the `TypeError` escapes at the response-**write** stage, which is *after* `onPreResponse` has already run — which is why the body is the JSON scrubbed form rather than the rendered `50x.html` | the redirect helper is unchanged: `lib/http/redirect.js#redirect` is **line-for-line identical** to `2f8712a:lib/util/routeParser.js:L704-L723` once comments and blank lines are stripped — 16 stripped lines each — **including the terminal `return h.redirect(redirectURL);`, which was already the toolkit *call* form at the base commit**. The failing layer is Node's header writer at both commits | PRESERVED — nothing in the four sanctioned diff categories reaches this. Rejecting the NUL earlier means adding a guard the base commit did not have, which changes a status code on the wire |
+| VQ-15 | A path segment of **256** characters or more answers **500** because the filesystem rejects the name | The threshold was binary-searched and is exact: **255 → 404** (1,545 bytes, `<title>Page not found</title>`), **256 → 500** (1,600 bytes, `<title>Something went wrong</title>`), 257 → 500. Log: `Error: Failed to open file: ENAMETOOLONG: name too long, open '…/public/aaa…'` — Inert stats a filename above the filesystem's `NAME_MAX`. A multi-segment path of 10 × 200 characters answers **404**, confirming the limit is per **segment** rather than on the whole path. **Zero information leak**: the 1,600-byte body is the generic error page (`sha256 a50bf9c7…`, the same body section 17's BQ-6 records for a 403 and for the authenticated `/login` 500), and a disclosure-marker scan for `tmp/blitzy`, `ENAMETOOLONG`, `public/`, `node_modules`, `errno`, `Error` and the payload itself returns **0** hits. The absolute path appears in the server log only. **Affected surface, measured rather than assumed:** the `/{path*}` catch-all and the six declared prefixes that have a real directory on disk — `components`, `js`, `css`, `img`, `fonts`, `partials`. The other two do **not** reach it: `/models/` answers 404 at 256 because `public/models` does not exist, so Inert never gets as far as opening a file, and `/skulpt/` never reaches Inert at all for the reason VQ-16 gives | `lib/http/staticRoutes.js#addStaticRoutes` is **identical** to `2f8712a:lib/util/routeParser.js:L649-L701` once comments and blank lines are stripped — **47** stripped lines each, empty diff — so the directory handlers, their `path`, `redirectToSlash` and `index` options are unchanged | PRESERVED — the rejection happens inside `@hapi/inert`'s file handler against the host filesystem, below anything this changeset owns. Adding a length guard to the catch-all changes a status code and touches the route table that TR1 freezes |
+
+**Why both are preserved, and what a naive fix would have broken.** Neither status originates in code this changeset
+wrote: one comes from Node's header writer and one from `@hapi/inert` stat'ing a name the filesystem rejects, and the
+two modules that stand between the request and those layers are provably unchanged. A guard that converted either into a
+404 would add a branch the base commit does not have, and would move a status code that the R-6 corpus and the TR2
+status-invariance directive both freeze. The practical consequence is worth recording alongside the adjudication, because
+it is the reason someone will want to repair them: both arrive in production telemetry as 5xx, so an unauthenticated
+caller can inflate a server-error rate with nothing more than a long path. That is an operational property of the
+inherited product, not a defect introduced here, and repairing it is not one of R-1's four categories.
+
+### 21.7 The static-asset surface and the security headers
+
+**What they are.** Two dead declarations in the frozen configuration and route table. Neither is reachable, and in one
+case a live application route occupies the URL space that a static prefix was declared for.
+
+| # | Condition | Measured evidence, re-measured on the delivered tree | Base identity | Disposition |
+|---|---|---|---|---|
+| VQ-16 | `/skulpt/{one-segment}` is a live application route shadowing a static prefix whose directory does not exist | `config/default.yaml`'s `prefixes` block declares **eight** keys, one of them `skulpt:`, yet **`public/skulpt` does not exist on disk**. Independently, `config/routes.js:L451` declares `GET /skulpt/{hash} trinket.index` with `success.redirect: '/python/{hash}'`, and declared routes are registered **before** the static prefixes in the frozen ordering, so the declaration wins. Measured: `/skulpt/x` → **302** to `http://localhost:3105/python/x`; `/skulpt/abc123` → **302** to `/python/abc123`; `/skulpt/skulpt.min.js` → **302** to `/python/skulpt.min.js`, so even a request shaped like a real asset is redirected rather than served; `/skulpt` → **302** to `/python` (its own separate declaration at `L445`); `/skulpt/` → **404**; `/skulpt/a/b` → **404**, because the declaration binds a single segment | `config/default.yaml` and `config/routes.js` are both byte-identical to `2f8712a`, and `addStaticRoutes` is identical as shown in 21.6, so both halves of the collision and the ordering that resolves it are unchanged | PRESERVED — the prefix list is one of AAP §0.2.1.9's read-only preservation points and the registration order is the TR5 asset-URL contract, whose ordering AAP §0.4.1.1 pins explicitly. Removing the dead prefix or the shadowing declaration changes the 233-row route table that TR1 freezes |
+| VQ-17 | Two of the five `xframeDeny` paths can never receive the header they are listed for | `config/default.yaml:L353-L358` lists `/`, `/login`, `/signup`, `/contact`, `/educators`. Measured: `/` → **200** with `X-Frame-Options: deny`; `/login` → **200** with `deny`; `/signup` → **200** with `deny`; `/contact` → **404** with the header **absent**; `/educators` → **404** with the header **absent**. There is no route at either path, so two of the five entries are inert | `config/default.yaml` has a 0-line diff against `2f8712a`, and the `onPreResponse` region of `app.js` that applies the header is likewise unchanged | PRESERVED — the three live entries behave exactly as configured, so the security control itself is intact. The two dead entries are a frozen-configuration artefact: pruning them edits a §0.2.1.9 preservation point, and adding routes at those paths is forbidden outright by the AAP §0.9.5 exclusion of new routes |
+
+
+### 21.8 Responsive layout and horizontal overflow
+
+**What they are.** Five geometry conditions in the compiled stylesheet. Four are horizontal overflow at narrow or
+specific viewport widths; the fifth is vertical displacement with no overflow at all. Every one of the five resolves to a
+fixed pixel value or a Foundation grid rule that carries no media query, and every one of those declarations lives in
+`static/scss/**`, which the AAP freezes byte-for-byte so that the two compiled artefacts stay reproducible.
+
+| # | Condition | Measured evidence, re-measured on the delivered tree | Base identity | Disposition |
+|---|---|---|---|---|
+| VQ-18 | Opening the course outline at 375px pushes the entire material column off-screen — **212px** of overflow | Collapsed, the page is clean: `documentElement.scrollWidth` **375** equals `clientWidth` **375**. Opening `a#outline-expander` takes `scrollWidth` to **587** against a `clientWidth` of 375 — **212px**, and the arithmetic is exact: `#course-content`'s `margin-left` (350) plus `#material-content`'s `scrollWidth` (237) is 587. `#course-content` computes `width: 25px` (375 − 350) while its children overflow rightward; the material `<table>` moves from `right: 244.109` to `right: 567.531`, i.e. **192.531px past the viewport edge**, with its *left* edge already at 410; `h1.subheader` collapses to a computed `width: 0px`; and **78 of 266** elements end with `right > 375`. Of those 78, **26** are pre-existing clipped top-bar-dropdown residue present even when collapsed (`clientWidth: 0`, `overflow-x: hidden`, so they never extend `scrollWidth`), which attributes **52** elements and all 212px to the drawer. `#material-content` is what puts the column at x=410: it computes `width: 120px` with `padding-left`/`padding-right` of 60px each, so under `box-sizing: border-box` its width floors at the padding sum even inside a 25px parent. The drawer does **not** auto-close — not on selecting the current material, not on a genuine route change (587 → 588), not on resizing to 1280 (where `scrollWidth` is 1280 and `#course-content` computes 930px, i.e. zero overflow), and not on resizing back down. The geometry is **fully reversible**: re-activating the expander returns `scrollWidth` to exactly 375 and the table to `right: 244.109`, byte-identical to the pre-drawer baseline. Causal rule, with **no `@media` guard**: `body.course #course-content.open { margin-left: 350px; }`. The same rule drives the slide-in, because `aside#outline` declares no `left`, so its `left: auto` resolves to its static position inside `#course-content` and its `margin-left: -350px` pulls it back to x=0 | `static/scss/**` has a 0-line diff against `2f8712a`, and the 350px is the frozen design token `$off-canvas-width: 350px` at `static/scss/_settings.scss:L31`, which AAP §0.3.3 pins by value. `public/css/base.css` is **265,727 bytes, sha256 `34f1b6e1…`** — byte-identical to the AAP baseline | PRESERVED — this is the same fixed-350px mechanism already catalogued at [section 15.12](#1512-the-course-reader-loses-its-layout-at-and-below-641px-because-the-outline-is-fixed-at-a-hard-350px), measured here at one more viewport. Adding a media query edits a §0.2.2.2 frozen file and changes the compiled bytes that TR5 and the artefact hashes freeze |
+| VQ-19 | The library search box is a hard 450px whose right edge is viewport-independent | `div.search-input` computes `width: 450px`, `position: absolute`, `left: 5.65rem` (90.4px), `max-width: none`, `overflow: hidden`, and it exists at every width. Its right edge is therefore fixed: **572.39** in the mobile toolbar layout and **768.19** in the desktop one. Measured overflow: at 320 `scrollWidth` **572** against `clientWidth` 320 → **252px**; at 375, **572** against 375 → **197px**; at 641, **768** against 641 → **127px**. At 641 it is the **sole** offender, 1 of 1. Because the right edge is constant within each toolbar layout, the overflow is simply `right − V`, and the **zero-crossing is exactly 768**: measured 1px at 767, **0px at 768** where the container becomes flush with the viewport edge, and 0px at 1280 and 1920 where it sits well inside — confirmed both by resize and by an independent fresh load at 768. At 320 and 375 it is one of 27, but the other 26 are all stock Foundation collapsed mobile top-bar dropdown artefacts topping out at 356.50 and 411.50 respectively — far inside the 572 scroll width — so `div.search-input`'s right edge **is** `documentElement.scrollWidth` at both, making it the only element that drives the document overflow. Its parent is the directive element `<trinket-search>`, which computes `display: inline` and `position: static` and therefore establishes no containing block, so the offset is taken from `section#listview-options`. The precise cause is a container-versus-content mismatch: two media queries shrink only the **inner input** — `@media only screen and (max-width: 40em) { width: 150px }` and `@media only screen and (min-width: 40.0625em) and (max-width: 64em) { width: 225px }` — while the outer container has no media query at all. Because the container is `overflow: hidden` with the input parked at `left: -450px` until `.focus` moves it to 0, **the overflow is invisible whitespace: nothing is painted between the viewport edge and the scroll width**, confirmed visually at all three widths. The identical mismatch is repeated at 350px for `#material-edit .toolbar .search-input` | `static/scss/**` is a 0-line diff against `2f8712a`; the causal rule is `.library-subnav #listview-options .search-input { position: absolute; top: 0px; left: 5.65rem; width: 450px; height: 3rem; z-index: 5; overflow: hidden; }`, compiled into the byte-identical `base.css` | PRESERVED — the fixed width and the missing container query are both in the frozen SCSS layer. Adding a container media query changes the compiled artefact whose 265,727-byte length and digest are the parity anchors |
+| VQ-20 | In list view the trinket title escapes its row and collides with the date, and the declared ellipsis can never fire | The title `h3` computes an identical box at **both** 375 and 1280 — `width: 1101.14px`, `right: 1136.73` — because it is `display: inline-block` with `width: initial` and `white-space: nowrap`, so it shrink-wraps to its intrinsic text width and is completely viewport-independent. At **375** the containing `<li>` is 337.41px wide (`right: 365`), so the title overflows it by **+771.73px**; the `li` clips at `overflow: hidden` with `text-overflow: clip`, cutting mid-glyph after "and a"; and the `float: right` stats block wraps onto the title's own line, giving `h3.bottom − date.top` = 513.80 − 507.41 = **+6.39px of genuine vertical overlap**. At **1280** the same title fits (`h3.right − li.right` = **−133.27**) and the overlap becomes **−2.01px**, i.e. 2px of clearance rather than none. **The ellipsis is unreachable by construction, not merely unrendered:** `h3.scrollWidth` **1101** equals `h3.clientWidth` **1101** at both widths, so `scrollWidth > clientWidth` is false and no ellipsis character is ever painted, even though `text-overflow: ellipsis` is inherited from `.trinketLabel` in both views. The intervening `a.snapshot.titled` computes `overflow: visible`, which is what lets the 1101px box escape as far as the `li`. Grid view proves the mechanism by contrast: there the same 135-character title gets a *definite* 272px width from `position: absolute` + `width: 100%`, `scrollWidth` **1177** exceeds `clientWidth` **272**, and a real ellipsis is painted. Causal rule: `#trinkets-list.list-view > li .snapshot .title, .trinkets-list.list-view > li .snapshot .title { position: static; display: inline-block; width: initial; … }`, which outranks the grid rule on specificity (1 id + 3 classes + 2 types against 1 id + 2 classes + 2 types) and replaces `position: absolute` + `width: 100%` with a shrink-wrapping inline-block. The collision itself comes from `#trinkets-list.list-view > li .trinket-stats { … float: right; }` and from `#trinkets-list.list-view > li .snapshot { … height: 1rem; float: left; }`, which leaves the 22.39px title spilling below a 1rem anchor | `static/scss/**` and `public/partials/**` are both 0-line diffs against `2f8712a`; the list-view override and `.trinketLabel` are compiled into the byte-identical `base.css` | PRESERVED — giving the box a definite width is exactly the kind of layout change AAP §0.9.4 freezes as client-visible page behaviour, and it edits a §0.2.2.2 frozen file |
+| VQ-21 | `/home` overflows by up to **3px** in a five-width band, and the band has a closed form | The band was swept width by width and is exactly **V ∈ [1025, 1029]** — five integer widths — peaking at **3px** reported (2.5px true) at 1025 and reaching **0 at 1030**. Reported integers are `ceil(515 − V/2)`, which reproduces the measured 3, 2, 2, 1, 1 exactly. The offender is `section.row` — no id, class exactly `row`, the page's only nested row, wrapping the "View All My Trinkets" button — together with its only child `div.columns.small-12`, whose identical rect is why the offender count is 2 rather than 1. At 1025 the offender measures `x: −2.50`, `width: 1030.00`, `right: 1027.50`, with computed `position: static`, `left: auto`, `right: auto`, `margin: 0px −15px`, `transform: none` and **`max-width: none`**, and no inline `style` attribute. The hypothesis `right = V/2 + 515` holds to **0.00px** at V = 1025, 1027, 1029, 1030 and 1032 and **fails at 1024 by −39.20px**, because the outer row's computed `max-width` is literally `"90%"` at V ≤ 1024 and `"1000px"` at V ≥ 1025. The full closed form is therefore `right(V) = V/2 + W(V)/2 + 15`, with W = 1000 above the step and W = 0.90V below it — the second branch confirmed independently at V = 1020, where the outer row measures 918.000, exactly 90.000% of V. **Only three rules apply to the offender**, all unconditional: the universal `box-sizing`, `.row { margin: 0px auto; max-width: 62.5rem; width: 100%; }`, and the direct cause `.row .row { margin: 0px -0.9375rem; max-width: none; width: auto; }` — root font-size 16px, so 0.9375rem is 15px and 62.5rem is 1000px. **No rule sets `position`, `transform`, `left` or `right` on it**; those computed values are initial. No rule anywhere contains the literal `1030px` or `515px` — both are computed consequences. The band's *lower* edge is set by the project's own rule `body#home #recent-trinkets, body#home #my-courses { max-width: 90%; }` inside `@media only screen and (min-width: 40.0625em) and (max-width: 64em)`, where 64em is 1024px; the two queries are exactly contiguous, hence the clean 1024 → 1025 step. **The overflow is real but invisible**: the column's `padding: 0 15px` re-absorbs the −15px margins, so the painted `a.right.button` stops at `right: 1012.50` and nothing is clipped or scrollbarred — only the two border boxes breach, which is why this needed instrumentation rather than inspection | `static/scss/**` is a 0-line diff against `2f8712a`; both the Foundation `.row .row` rule and the project's `#recent-trinkets` breakpoint are compiled into the byte-identical `base.css` | PRESERVED — the nested-row negative margin is stock Foundation 5.5.3 behaviour and the breakpoint is project SCSS, both frozen. Nothing is clipped, so there is no client-visible change to reproduce even if repair were sanctioned |
+| VQ-22 | The course sub-navigation controls hang up to **49px** below their own header, with no horizontal overflow at all | `header#course-nav` computes a hard **`height: 80px`** at every width with `overflow-x: visible`, while `div.course-subnav` measures **141px at 320** (+61px beyond its header, controls' tops at +1 and bottoms at **+49px below** the header's painted edge) and **130px at 375** (+50px; the three controls straddle the edge, tops at −10 and bottoms at **+38px below**). At both widths `documentElement.scrollWidth` equals `clientWidth`, so this is **purely vertical displacement with zero horizontal overflow**. The cause is a float wrap, not a media query: `div.course-subnav` has exactly **two** direct children and **neither is a button or an anchor** — `section.left` (float:left, 256px at 320 and 311px at 375) and `div.right` (float:right, a fixed 223.062px) — against a content width of `viewport − 64px`. At 320 that is 256 available against 479.06 required; at 375, 311 against 534.06. The 320-versus-375 delta is accounted for exactly: the breadcrumb `a.current` wraps to two lines at 320 (height 22) but fits on one at 375 (height 11), and the extra 11px makes `section.left` 69px instead of 58px, pushing `div.right` from y=70 to y=81 and the overhang from 38px to 49px. The resolution threshold was bisected and is **605px** — 604 still wraps with a 119px subnav and +27px of overhang, 605 resolves to a 72px subnav sitting 20px *inside* the header — which matches the algebra `317.609 + 223.063 + 64 = 604.672`. It is therefore a **float-wrap threshold rather than a breakpoint**: no `@media` rule governs `#course-nav`'s height or `.course-subnav`'s layout. Causal rule: `body.course #course-nav { z-index: 10; position: absolute; top: 0px; width: 100%; height: 80px; … }` — the hard 80px that a 141px or 130px child overflows | `static/scss/**` is a 0-line diff against `2f8712a`, and `lib/views/**` — which supplies the two-float markup — is one of the 79 §0.2.2.2 freezes with a 0-line diff | PRESERVED — this is the same class of condition as section 17's BQ-15, where the editor sub-navigation escapes a 98px header, measured here on the reader's own sub-navigation. Letting the header grow, or collapsing the floats, edits frozen SCSS and frozen templates and changes the compiled artefact |
+
+**Why the five are preserved together, and what a naive fix would have broken.** Every one of the five resolves to a
+declaration in `static/scss/**`, and that directory is not merely out of scope — it is the *proof surface* for the whole
+changeset. AAP §0.3 discharges design-system compliance in catalogue-and-preserve mode, and the way it is verified is
+that the two compiled artefacts come out byte-identical: `public/css/base.css` at **265,727 bytes, sha256
+`34f1b6e1…`** and `public/css/embed.css` at **296,352 bytes, sha256 `53f47fc7…`**, with **zero** `.css.map` files
+emitted. Both were re-hashed after this measurement pass and both still match. A single added media query anywhere in
+those 54 files changes those bytes, and once they change there is no longer any evidence that the migration left the
+design system untouched — the repair would destroy the proof that the rest of the work is safe. That is why §0.3.5
+states the compliance obligation for this refactor in the inverted form: the change must demonstrate that it did not
+perturb the system, not that it improved it.
+
+Three further properties of the group are worth recording because each one narrows what a repair could even claim to
+achieve. Two of the five overflows paint nothing: VQ-19's 450px box is `overflow: hidden` with its input parked at
+`left: -450px`, and VQ-21's breach is confined to two border boxes whose padding re-absorbs the negative margin, so in
+both cases the scroll width grows while the rendered pixels do not — there is no visual defect to correct, only a
+measurable one. VQ-22 produces no horizontal overflow whatsoever, so it is not an overflow finding at all but a
+consequence of a fixed-height header meeting a wrapping float pair. And VQ-18 is **fully reversible**: the 212px appears
+and disappears with the drawer, returning `scrollWidth` to exactly its pre-drawer 375 and the material table to
+`right: 244.109`, which means the page has no persistent broken state to inherit.
+
+The design-token angle is the sharpest illustration. VQ-18's 350px is not an arbitrary constant that happens to be too
+wide at 375px — it is `$off-canvas-width`, one of the values AAP §0.3.3 pins by literal value in its token ledger, and
+the ledger was re-verified against `static/scss/_settings.scss` during this pass with every entry matching, `$blue:
+#008AFF` and `$body-font-family: "Merriweather", Times, Georgia, serif` and `$off-canvas-width: 350px` included.
+Changing it would be a token migration, which is precisely the activity §0.3.5 records as having **zero** items in this
+changeset. The narrow-viewport consequence of that token is already adjudicated at
+[section 15.12](#1512-the-course-reader-loses-its-layout-at-and-below-641px-because-the-outline-is-fixed-at-a-hard-350px);
+this pass adds a second measured viewport and the reversibility proof, and changes nothing about the disposition.
+## 22. Runtime-QA observations on the frontend UX, interaction and data-state surface
+
+> ✅ **Evidence status: final.** As in sections 16 and 17, the pass's gate figures — the replayed route table, the
+> response-corpus difference count, the byte-identical CSS artifacts — come from the parity artifacts and their runs, and
+> all three were re-measured on the delivered tree while this section was written: `node test/baseline/replay.js` reports
+> **0 differences** with `resolvedDistribution={"200":25,"401":7,"404":25,"500":1}`, and `public/css/base.css` and
+> `public/css/embed.css` reproduce at **265,727** and **296,352** bytes with **0** `.css.map` files. Every per-condition
+> figure below was **re-measured on the delivered tree** — over real HTTP for the server-side rows, and in a real headless
+> browser at a pinned viewport for the interaction, layout and accessibility rows — before being written down, and each
+> condition's **attribution to the base commit** is a source-level fact established by `git show` or `git diff` and is not
+> qualified. Where a re-measurement contradicted the report that prompted it, the corrected figure is given and the
+> correction is called out explicitly. See [How to read this catalogue](#how-to-read-this-catalogue).
+
+A third runtime QA pass took the surface the first two did not: **frontend UX, interaction quality and data-state
+behavior**. It exercised **66 testable units** — 26 multi-step flows, 25 interactive-control classes and 15 data-state
+surfaces — across **48 enumerated screens** and 4 authenticated identities, running roughly 760 test cases, and it drove
+every assertion through a real browser or a real HTTP request rather than through source reading.
+
+**Its verdict on this changeset was, once again, unqualified: zero migration-attributable defects.** Every contract the
+preservation directives freeze held — the 233-row route table replayed row for row, the response corpus replayed with
+**0** differences including the single preserved 500 at `GET /api/users/assets` and the 25 feature-flag 404s, the two CSS
+artifacts were byte-identical, and `git diff 2f8712a..HEAD -- static/ public/ lib/views/ config/default.yaml` reported
+**0 changed files**. The pivotal I4 quirk was re-confirmed from a fourth direction: with a session cookie present,
+`GET /login` and `GET /signup` both answered **500** while every other authenticated page answered 200 — reproduced again
+during the writing of this section, in the same header sweep recorded in [22.2](#222-the-security-surface-rows). The pass
+attributed **all 85** of its findings to the base commit and proved each one pre-existing.
+
+**One of those 85 was not catalogued anywhere, and it is the most severe condition in this document.** The stored
+cross-site scripting in the library-search typeahead is recorded as
+[SEC-14 in §4.17](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved), alongside
+the other security conditions rather than here, because it needs the origin / reachability / disposition treatment that
+section 4 gives and this section does not. **It is the single most important thing to read in this catalogue that was
+not in it before.**
+
+The remainder of this section records the conditions the pass measured that sections 1 through 17 did not name, or named
+only in part. Each subsection covers one family, and each ends with the family's triage rows so a reader can go from a
+reported finding to its catalogue home in one step. Findings the earlier sections already cover are listed in those rows
+as cross-references rather than restated; where this pass **extended** an existing entry, the row says which entry and
+what it adds.
+
+### 22.1 What this pass confirmed rather than found, and the two corrections it forced
+
+Two conclusions in this catalogue needed adjusting, and both are stated where they were originally claimed rather than
+only here: [§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else)
+and [section 17](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) each recorded a
+zero-execution XSS result, and each remains true of the surfaces it covered — but neither covered the library search box.
+[§4.17](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved) carries the
+correction in full.
+
+Everything else the pass measured on the security surface **confirmed** an existing entry, and the confirmations are worth
+recording because they were taken independently, months of review cycles apart, on a tree that has since changed:
+
+- **SEC-13 reproduces exactly.** `POST /api/courses` answered **200** at 1,544 bytes carrying
+  `course._owner.password` — a **60**-character string beginning `$2b$10$`, i.e. a complete bcrypt hash — alongside
+  `email`, `roles`, `verified` and `_id`. Fourteen `_owner` keys in total. The condition, the withdrawn remediation and
+  the authorized change it still needs are in
+  [§4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated) and
+  [§4.16](#416-crosswalk-to-the-cumulative-reviews-security-findings-and-the-authorized-change-each-preserved-condition-still-needs).
+- **No privilege escalation exists anywhere on the audited surface.** The pass ran state-neutral paired probes across the
+  authorization matrix and found none — a result that matters more than any single finding here, and one this section
+  records so that the absence is on the record rather than merely unmentioned.
+- **Field-name and route alignment between client and server is correct.** Every verified request used the exact route,
+  method, path parameters, query parameters and body field names the server validates, and the UI rendered response
+  fields under the exact names returned. The one exception is the payload-shape class in
+  [22.3](#223-the-jquery-bracket-notation-class-and-the-three-outcomes-it-produces), which is a *serialization* mismatch
+  rather than a naming one.
+- **Concurrency behaves.** Zero duplicate submissions were issued across every flow, a rapid double submit 0.400 ms apart
+  produced exactly one `POST`, navigating away mid-save still applied the write, and the browser Back button after a
+  submit replayed no `POST` at all.
+
+### 22.2 The security-surface rows
+
+Four conditions on this surface were measured in full. One extends an existing entry, three are new, and one figure the
+report carried is corrected.
+
+#### 22.2.1 `x-frame-options` is applied to exactly the paths configuration names — three of which exist
+
+[§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else)
+records that `Content-Security-Policy`, `Strict-Transport-Security` and `X-Content-Type-Options` are absent from every
+response and that rendered error pages carry fewer headers than everything else. This pass measured the same surface
+across thirteen paths in both identities and adds three facts that entry did not have.
+
+**Measured, unauthenticated.** `x-frame-options: deny` on `/`, `/login` and `/signup` — all 200. Absent from `/about`,
+`/help` (both 200), `/contact` and `/educators` (both **404**).
+
+**Measured, authenticated with a session cookie.** `x-frame-options: deny` on `/` only. **Absent** from `/home`,
+`/about`, `/help`, `/forgot-pass`, `/docs/colors`, `/account/email`, `/api/courses` (all 200), from `/no-such-route`
+(404), and from `/login` and `/signup` — which answer **500**, the preserved I4 quirk of
+[section 1.1](#11-authenticated-get-login-and-get-signup-return-http-500), and therefore take the rendered-error path
+that §4.15.3 already explains loses the header to extension ordering.
+
+**The first new fact: the allow-list is configuration, not inconsistency.** `config/default.yaml:L353-L358` declares
+`xframeDeny` as exactly five entries — `/`, `/login`, `/signup`, `/contact`, `/educators`. Every measured presence and
+every measured absence follows from that list. Two of the five, `/contact` and `/educators`, are **not routes at all**
+and answer 404, so the effective surface is **three paths**, and only three because `/login` and `/signup` lose the
+header the moment the caller is authenticated. §4.15.3's "the two paths in the `xframeDeny` allow-list" is therefore
+**corrected**: the list has five entries, three resolve, and one of the three is identity-independent.
+
+**The second new fact: two more headers are absent everywhere.** `Referrer-Policy` and `Permissions-Policy` were counted
+across all thirteen paths in both identities: **0 occurrences**, joining the three §4.15.3 already names.
+
+**The third new fact: the missing `Secure` flag is shipped configuration, not a local artifact.**
+`config/default.yaml:L41` reads `isSecure: false # required for non-https applications`. A measured login response
+carries `set-cookie: session=Fe26.2**…; HttpOnly; SameSite=Lax; Path=/; Expires=Fri, 06 Aug 2027` — `HttpOnly` present,
+`SameSite` present, **`Secure` absent**, exactly as configured. The rest of the cookie contract matches the appendix
+anchor byte for byte.
+
+**Why it is preserved and what a naive fix would have broken.** `config/default.yaml` is one of the five frozen YAML
+files (§0.2.1.9 lists the asset and behaviour keys as read-only preservation points), and the R-6 response corpus
+compares **headers**, so adding `Referrer-Policy`, flipping `isSecure`, or extending `xframeDeny` changes the corpus for
+every route at once. Flipping `isSecure` additionally breaks every plain-`http` deployment — which is what the shipped
+comment on that line exists to say. Repairing `/contact` and `/educators` would add routes, which §0.9.5 excludes
+outright and which the 233-row route table freezes.
+
+#### 22.2.2 A pathless client-set cookie is stored twice, and sent twice under one path prefix
+
+**What it is.** `browser_id` exists twice in the cookie jar for the same host, at two different paths, and is sent twice
+on every request under `/library`.
+
+**Evidence.** `public/js/trinket.js:L32-L34` writes the cookie with **no `path=`, no `domain=` and no `expires`**:
+
+```javascript
+try {
+  document.cookie = "browser_id=" + bid;
+} catch(e) {
+}
+```
+
+RFC 6265 §5.1.4 therefore assigns the *default-path*, which is the document URI truncated at the right-most `/`. Measured
+from a pristine cookie jar in an isolated browser context, twice, across a browser restart:
+
+| After | Cookies named `browser_id` | Paths | Value |
+|---|---|---|---|
+| `GET /` | **1** | `/` | `id1786…` |
+| login, then `GET /library/trinkets` | **2** | `/library` **and** `/` | **identical in both** |
+| then `GET /home` | **2** in the jar; **1** applies | the `/library` copy does not path-match `/home` | identical |
+| back to `/library/trinkets` | **2** again | `/library`, `/` | identical |
+
+Note the path is `/library`, **not** `/library/trinkets` — the truncation drops the last segment. Both copies are
+host-only, session-scoped, `httpOnly=false`, `secure=false`, `SameSite=Lax`. Visiting `/home` creates no third copy
+because `/home`'s default-path is also `/`, so the existing entry is overwritten in place; the `/library` copy is not
+deleted, merely not matched.
+
+**The consequence on the wire**, from the verbatim request headers:
+
+| Request | `browser_id=` occurrences | cookie pairs | `Cookie` header bytes |
+|---|---|---|---|
+| `GET /library/trinkets` | **2** | 3 | 368 |
+| `GET /home` | **1** | 2 | 323 |
+| `GET /` | **1** | 2 | 323 |
+
+**45 redundant bytes on every `/library/**` request.** It fails silently because both copies hold the same value, but any
+consumer that reads a single `browser_id` from a raw cookie header meets two values for one name. `document.cookie` on
+`/library/trinkets` returns `browser_id=<v>; browser_id=<v>` — with no path information, which is why the measurement had
+to be taken through a cookie API that exposes `path`. `localStorage.__browser_id__` holds a **single** value, so the
+duplication is confined to the cookie jar.
+
+Two timing details, both measured: the **first** `/library/trinkets` document request of a session carries the name only
+once, because the `/library` copy does not exist until `trinket.js` has run inside that very page; and the read-back at
+`public/js/trinket.js:L17` uses `/browser_id=(id\d+\.\d+);/`, which requires a trailing semicolon — with two cookies the
+first occurrence has one, so the regex would match, but that branch runs only when `localStorage` is unavailable, and
+here it is not.
+
+**Why it is preserved and what a naive fix would have broken.** `public/js/trinket.js` has a 0-line diff against
+`2f8712a`, and `public/js/**` (95 tracked files) is frozen by §0.2.2.1 and §0.2.2.2. Adding `; path=/` is a one-token
+edit with a real behavioural consequence: every browser that already holds a `/library`-scoped copy would keep it — the
+new write cannot delete a differently-pathed cookie — so the duplication would persist for existing visitors while new
+ones diverged, and the id a returning visitor presents could change. That is a client-visible behaviour change on a value
+the platform uses to correlate diagnostics.
+
+#### 22.2.3 Every protocol-relative third-party asset is first requested over plain `http`
+
+**What it is.** On an `http` origin, the protocol-relative asset pins resolve to `http://`, and for every HSTS-protected
+host the browser then discards that request and re-issues it over `https`.
+
+**Evidence.** Measured twice on `/library/trinkets`, on either side of a browser restart:
+
+| Metric | Load A | Load B |
+|---|---|---|
+| Total requests | **104** | **107** |
+| Third-party requests | 47 | 50 |
+| **Distinct** third-party URLs | **27** | **27** |
+| Distinct third-party URLs fetched more than once | **20**, each exactly twice | **23**, each exactly twice |
+| Distinct *identical URL strings* fetched more than once | **0** | **0** |
+| `307` responses | 20 | 23 |
+| Requests with status ≥ 400 | **0** | **0** |
+
+Four third-party hosts are involved: `cdnjs.cloudflare.com`, `ajax.googleapis.com`, `fonts.googleapis.com` and
+`fonts.gstatic.com`. The pins are declared protocol-relative in `config/default.yaml` — `app.assets.jshead`, `jsbody` and
+`css`, plus the per-app `app.ngapps.*` lists, of which `library` at `L206-L235` supplies most of them.
+
+**The correction this measurement forces.** The report that prompted it read the doubling as *"≥20 distinct URLs fetched
+twice per page because the cache-busting prefix is recomputed per template call"*. Measured, that is two claims and both
+need restating:
+
+1. **The doubling is not the application's doing, and nothing is downloaded twice.** The `307` is **Chrome's own internal
+   HSTS upgrade**, not a server redirect — proved from outside the browser, which holds no HSTS state for these hosts:
+   `curl -I https://cdnjs.cloudflare.com/` returns `strict-transport-security: max-age=15780000`, while
+   `curl http://cdnjs.cloudflare.com/` returns **200**, so the origin does not redirect and the redirect must have been
+   synthesised locally. Consistently, the count of identical URL strings fetched more than once is **0** in both loads:
+   each resource is transferred exactly once, and the cost is one dead request slot per resource, not a duplicated
+   download. The `307` count is also **HSTS-store dependent** — it moved from 20 to 23 across a browser restart with no
+   change to the application — so the stable invariant to quote is *"every protocol-relative third-party URL is first
+   requested over `http://`"*, not a fixed number.
+2. **The cache prefix does vary within one render, and that is a separate condition.** `config/default.yaml:L141` sets
+   `cachePrefix: cache-prefix-`, and `lib/util/stringUtils.js#addPrefix` falls back to
+   `'/cache-prefix-' + Date.now() + string` when the requested key is absent from the prefix map. Measured: **47**
+   requests per load carry a `/cache-prefix-<milliseconds>/` segment, spanning **3 distinct values inside a single page
+   render** — for example `cache-prefix-1786041978701`, `cache-prefix-1786041978703` and `cache-prefix-1786041978954`.
+   Two verbatim URLs: `http://localhost:3107/cache-prefix-1786041978701/css/base.css` and
+   `http://localhost:3107/cache-prefix-1786041978701/components/dist/lodash.min.js`. The consequence is not duplicate
+   requests within a page — it is that the same asset is cached under a **new key on every render**, so the
+   cache-busting prefix busts the cache unconditionally rather than on change.
+
+**Two residual facts worth recording.** `ajax.googleapis.com` (two scripts) and `fonts.googleapis.com` (one stylesheet)
+were **never** upgraded in either load and were fetched genuinely unencrypted over `http`. And **zero** requests reached
+any `*.example.com` placeholder host in this configuration, so neither figure above is contaminated by the placeholder
+failures of [§4.15.6](#4156-the-shipped-configuration-points-at-placeholder-asset-hosts-so-skulpt-does-not-load-in-a-default-checkout).
+
+**Why it is preserved and what a naive fix would have broken.** Every one of those pins is an **asset URL**, and the
+asset-URL contract is frozen by TR5 and by §0.2.1.9's read-only list; the three deliberate browser-versus-server version
+skews of [section 2](#2-the-three-deliberate-browser-versus-server-version-skews) live in the same keys. Rewriting `//`
+to `https://` changes the URL every client fetches; removing the `Date.now()` fallback in `addPrefix` changes the emitted
+asset path on every render, which is the same contract the eight static prefixes and the cache-prefix route are pinned
+by. On an `https` deployment — the shipped `config/default.yaml:L29-L32` declares `protocol: https`, `hostname:
+trinket.dev` — the protocol-relative pins resolve to `https` directly and the upgrade hop does not occur at all, so the
+observed doubling is a property of running the application on a plain-`http` origin, not of the application.
+
+#### 22.2.4 The owner-record expansion, measured from the enrolled-student identity
+
+[§17 BQ-9](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) records that
+`GET /api/courses/{id}?with=_owner` expands the owner's record including the email address for any authenticated
+non-member of a public course, and that the hash never reaches that path because it is pre-serialized through
+`publicSpec`. This pass measured the same expansion from the **enrolled-student** identity and from the owner, and adds
+two facts.
+
+**Measured as an enrolled student**, `GET /api/courses/{courseId}?outline=true&with=_owner` → **200**, 812 bytes.
+`_owner` carries **12** keys: `_id`, `avatar`, `created`, `email`, `fullname`, `lastUpdated`, `name`, `roles`, `settings`,
+`source`, `username`, `verified`. `'password' in _owner` is **false**, confirming BQ-9's `publicSpec` explanation from a
+second identity. The email address is on the wire; the editor `settings` object is expanded in full
+(`disableAceEditor`, `theme`, `lineWrapping`, `pythonTab`, `javaTab`, `rTab`, `htmlTab`); and `roles` is present but was
+measured as an **empty array** on this path — so the report's reading that the owner's roles are expanded to a student is
+**corrected**: the key is expanded, its contents on this path are not.
+
+**Measured as the course owner**, `GET /api/courses/{courseId}/dashboard?listBy=students` → **200**, 644 bytes, carrying
+**every participant's `email`** alongside `userId`, `username`, `displayName`, `avatar`, `hideFrom` and `roles` — for the
+owner and for each enrolled student.
+
+**The second new fact, and it narrows the exposure.** The identical request as the **enrolled student** answered
+**500** with the 96-byte scrubbed body. So the participant-email list is **owner-only**; it is not a cross-tenant read.
+That 500-instead-of-403 is itself a condition, and it belongs to the family in
+[22.4](#224-the-server-side-outcome-rows) rather than here.
+
+**Why it is preserved and what a naive fix would have broken.** Both are response bodies that clients parse, so TR2
+freezes their shape, and §4.14 records why a *projection* repair was refused even for the password hash — the same
+argument applies with less force to an email address. Narrowing either payload is a payload-shape change needing the
+authorization §4.16 asks for.
+
+#### 22.2.5 Triage rows — the security surface
+
+| Reported | Measured disposition | Catalogue home |
+|---|---|---|
+| Stored XSS in the library-search typeahead (CRITICAL) | **new** — proven executing, six independent ways | [§4.17](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved) |
+| `POST /api/courses` returns the owner's bcrypt hash (CRITICAL) | reproduced verbatim; 60-char `$2b$10$`, 14 `_owner` keys | [§4.14](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated), [§15.5](#155-post-apicourses-returned-the-owners-bcrypt-hash-cwe-200-remediated-as-sec-13), [§4.16](#416-crosswalk-to-the-cumulative-reviews-security-findings-and-the-authorized-change-each-preserved-condition-still-needs) |
+| PII over-exposure to enrolled students | **extends BQ-9** — 12 `_owner` keys from the student identity; `roles` empty on that path; the participant-email list is owner-only | [22.2.4](#2224-the-owner-record-expansion-measured-from-the-enrolled-student-identity) |
+| Security headers applied inconsistently; no CSP/HSTS/X-Content-Type-Options; no cookie `Secure` | **extends §4.15.3** — the allow-list is 5 configured entries of which 3 resolve; `Referrer-Policy` and `Permissions-Policy` also 0; `isSecure: false` is shipped configuration | [22.2.1](#2221-x-frame-options-is-applied-to-exactly-the-paths-configuration-names-three-of-which-exist), [§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else) |
+| ~40 third-party assets fetched over plain `http` and answered 307, doubling every external request | **new, and corrected** — 27 distinct URLs; 0 identical URLs fetched twice; the 307 is Chrome's HSTS upgrade; the cache prefix varies 3× within one render | [22.2.3](#2223-every-protocol-relative-third-party-asset-is-first-requested-over-plain-http) |
+| The `browser_id` cookie is sent twice | **new** — 2 jar entries at paths `/library` and `/`; 2 occurrences on `/library/**`, 1 on `/home` and `/`; +45 bytes | [22.2.4 above / 22.2.2](#2222-a-pathless-client-set-cookie-is-stored-twice-and-sent-twice-under-one-path-prefix) |
+| User enumeration byte-proven; no rate limiting or lockout | already catalogued | [§15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved), [§4.15.1](#4151-no-rate-limiting-no-throttling-and-no-account-lockout-anywhere), [§4.15.2](#4152-login-responses-distinguish-wrong-password-from-no-such-account) |
+| No privilege escalation anywhere on the audited surface | **informational PASS**, recorded | [22.1](#221-what-this-pass-confirmed-rather-than-found-and-the-two-corrections-it-forced) |
+
+### 22.3 The jQuery bracket-notation class, and the three outcomes it produces
+
+**What it is.** jQuery serialises a nested value into **bracketed key names**; hapi's urlencoded parser does not unflatten
+them; so for three shipped client calls the key the route declares is **never present on the wire at all**. Because the
+three routes are declared differently, the same root cause produces three *different* observable outcomes — a request
+that never answers, a rejection the client reads as a save failure, and a dead share URL.
+
+**The root cause, measured once.** Node's own `querystring` is what hapi uses for `application/x-www-form-urlencoded`:
+
+```javascript
+var qs = require('querystring');
+// jQuery $.param({ roles : [ { context : 'site', roles : ['user'] } ] })
+qs.parse('roles%5B0%5D%5Bcontext%5D=site&roles%5B0%5D%5Broles%5D%5B%5D=user');
+// -> { 'roles[0][context]': 'site', 'roles[0][roles][]': 'user' }
+// parsed.roles === undefined
+```
+
+The bracketed text is part of the **key name**, not a structure. Every consequence below follows from that one fact.
+
+#### 22.3.1 Outcome one — the admin role update never answers
+
+**Evidence.** `lib/views/admin/index.html:L92` is the only caller:
+
+```javascript
+$.post('/api/admin/user/' + $(this).data('userid'), {
+  roles : rolesData
+})
+```
+
+`rolesData` is either a parsed JSON **array** or `[]`. The route at `config/api_routes.js:L1395` declares
+`pre : ['isAdmin(user)']` and — importantly — **no `validate` block at all**, so nothing rejects the malformed key
+names; `request.payload.roles` is simply `undefined`, and `lib/controllers/admin.js#updateUser` falls through to its
+final `return h.abandon`.
+
+Measured over real HTTP as a site admin, against `POST /api/admin/user/{userId}`:
+
+| Payload on the wire | Result |
+|---|---|
+| `roles[][context]=site&roles[][roles][]=user` | **no response** — `curl` killed at 10 s with the socket still open |
+| `roles[0][context]=site&roles[0][roles][]=user` (jQuery's default deep form) | **no response** |
+| `roles[]=user` (jQuery's `traditional` form) | **no response** |
+| `roles=notanarray` (a truthy non-array) | **no response** |
+| no `roles` key at all (what an empty textarea produces) | **no response** |
+| `{"roles":[{"context":"site","roles":["user","admin"],"permissions":[]}]}` as JSON | **200** `{"success":true,"flash":{},"context":null}` in **10 ms** |
+
+**What this adds to the catalogue.** The `h.abandon` outcome itself is already recorded — in
+[section 1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them), in the decision table of
+[section 6](#6-the-pending-convergence-decision-table) and site-by-site in
+[section 9](#9-the-no-response-and-process-fate-preservations-site-by-site) — and the source comment at that branch
+already explains why falling through to a 500 would be a TR2 parity failure. What those entries describe as the
+*malformed-payload* path, this measurement shows is the **only path the shipped UI can take**: every serialization the
+admin screen is capable of producing lands on it, and the JSON control proves the handler works the moment the key is
+actually present. The user-visible consequence is that the "Update Roles" spinner runs until the browser gives up.
+
+#### 22.3.2 Outcome two — autosave answers 200 carrying a rejection, and the client paints "Error Saving"
+
+**Evidence.** `public/js/embed/embed.js:L1043-L1100` builds the autosave body as
+`postData = { assets : data.assets, settings : data.settings }` and then adds `zipCode` (or `code` on the
+`generateAsync` failure arm). `data` comes from the per-language `serialize()`, which returns an **array** and an
+**object**: `public/js/embed/python.js:L1215-L1227` and `public/js/embed/html.js:L262-L274` are both
+`{ code : this.getValue(opts), assets : editor.assets().slice(), settings : this._trinket.settings }`. The route at
+`config/api_routes.js:L1000-L1012` declares `assets : Joi.array().optional()` and `settings : Joi.object().optional()`.
+
+Measured on `POST /api/trinkets/{trinketId}/autosave`:
+
+```text
+bracket form  -> 200  {"assets[]":"x","settings[lineWrapping]":"false","zipCode":"abc",
+                       "flash":{"validation":{"assets[]":"\"assets[]\" is not allowed",
+                                              "settings[lineWrapping]":"\"settings[lineWrapping]\" is not allowed"}}}
+JSON control  -> 200  {"success":true,"flash":{},"context":null}
+```
+
+The rejection body carries **no `success` key**. The client tests exactly that key — `if (result.success)` at
+`public/js/embed/embed.js:L967`, `L981`, `L1001` and `L1067` — so the falsy branch runs and the sole user-facing signal
+is `self.$draftMessage.text('Error Saving')`. The edit is not persisted.
+
+#### 22.3.3 Outcome three — a failed fork hands the user a share URL built from `MD5("")`
+
+**Evidence.** `POST /api/trinkets/{trinketId}/forks` (`config/api_routes.js:L923`) receives the same
+`serialize()` shape. Measured:
+
+```text
+bracket form  -> 200  {"code":"print(1)","assets[]":"a.png","settings[lineWrapping]":"false",
+                       "flash":{"validation":{ ... "is not allowed" ... }}}
+JSON control  -> 200  {"context":…,"data":{…,"shortCode":"e1031f853f8d"},"flash":{}}
+```
+
+The rejection body carries **no `data` key** — and `fork()`'s `.done(function(result) { self.setTrinket(result.data); … })`
+at `public/js/embed/embed.js:L1325-L1336` runs anyway, because the status is 200. The trinket is therefore set to
+`undefined`, and the share-URL chain degrades in three steps:
+
+1. `getTrinketIdentifier` at `public/js/embed/embed.js:L1963-L1969` is
+   `trinket.shortCode ? trinket.shortCode : CryptoJS.MD5(trinket.code).toString(CryptoJS.enc.Hex)` — with no
+   `shortCode` and no `code`, it hashes the empty string.
+2. `MD5("")` is the well-known constant **`d41d8cd98f00b204e9800998ecf8427e`**.
+3. `getShareInfo` at `public/js/embed/embed.js:L1537-L1541` returns
+   `'/' + this.getShareType() + '/' + this.getTrinketIdentifier(trinket)`, and `L1503` writes it into `#shareUrl`.
+
+Measured, that URL resolves nowhere: `GET /python/d41d8cd98f00b204e9800998ecf8427e` → **404**,
+`GET /api/trinkets/d41d8cd98f00b204e9800998ecf8427e` → **404**,
+`GET /embed/python/d41d8cd98f00b204e9800998ecf8427e` → **404**. The share modal opens and offers the user a link that
+cannot work.
+
+#### 22.3.4 Why the class is preserved, and what a naive fix would have broken
+
+Both halves are frozen. The three callers live in `lib/views/admin/index.html` and `public/js/embed/embed.js`, and
+`git diff 2f8712a..HEAD -- lib/views public` reports **0 changed files**; the three route declarations are byte-identical
+at the base commit, and `config/api_routes.js` carries only the sanctioned handler-conversion diff.
+
+Each of the three plausible repairs is excluded, and for a different reason:
+
+- **Sending JSON from the client** (`contentType: 'application/json'` plus `JSON.stringify`) edits frozen browser
+  JavaScript, and it changes the request `content-type` on three routes — a request-shape change on the frozen HTTP
+  surface.
+- **Adding a bracket-aware payload parser** server-side changes what *every* route receives from *every* urlencoded
+  request, which is the widest possible behaviour change: keys that are rejected today would start validating, and the
+  25 feature-flag 404s and the validation-parity proof of
+  [section 3.5](#35-joi-18-needs-zero-option-overrides) are both measured against the current parsing.
+- **Adding an `else` branch, a default response or a validation guard** to the admin handler converts a measured
+  no-response into a status code no baseline request on this route ever received — a TR2 parity failure, and precisely
+  the latent-bug repair R-1 excludes. That reasoning is already recorded verbatim in the source comment at
+  `lib/controllers/admin.js#updateUser` and in
+  [section 1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them).
+
+**The authorized change it needs.** One change closes all three: make the three client calls send JSON. It is small,
+it is confined to two frozen files, and it needs the same client-visible-behaviour authorization
+[§4.16](#416-crosswalk-to-the-cumulative-reviews-security-findings-and-the-authorized-change-each-preserved-condition-still-needs)
+asks for elsewhere — because the admin request would begin to answer, the autosave would begin to persist, and the
+share URL would begin to resolve. Those are all improvements, and all three are behaviour changes.
+
+### 22.4 The server-side outcome rows
+
+#### 22.4.1 A rejected write answers HTTP 200 on ten measured endpoints, and one route proves the pattern is not a contract
+
+**What it is.** A rejected write is delivered as **HTTP 200** carrying `flash.validation`, with no `success` and no
+`data` key, so a client that does not inspect the body cannot tell success from failure.
+
+**Measured, endpoint by endpoint.** All authenticated except where noted:
+
+| Request | Status | Body |
+|---|---|---|
+| `POST /api/courses/{id}/lessons` with a 200-character name (Joi cap 140) | **200** | keys `['flash','name']` — **no `data`** — `flash.validation.name = "name" length must be less than or equal to 140 characters long` |
+| `PUT /api/users/{id}` with `{"email":"not-an-email"}` | **200** | `flash.validation = {username: '"username" is required', email: '"email" is not allowed'}` |
+| `POST /api/users/password` with `{"password":"x"}` | **200** | `flash.validation` naming `currentPassword`, `newPassword`, `confirmPassword` |
+| `POST /api/users/email` with `{"email":"bad"}` | **200** | `{"email":"bad","flash":{"validation":{"email":"\"email\" must be a valid email"}}}` |
+| `POST /api/folders` with `{}` | **200** | `{"flash":{"validation":{"name":"\"name\" is required"}}}` |
+| `POST /api/trinkets/{id}/autosave`, bracket-encoded | **200** | validation flash, no `success` — see [22.3.2](#2232-outcome-two-autosave-answers-200-carrying-a-rejection-and-the-client-paints-error-saving) |
+| `POST /api/trinkets/{id}/forks`, bracket-encoded | **200** | validation flash, no `data` — see [22.3.3](#2233-outcome-three-a-failed-fork-hands-the-user-a-share-url-built-from-md5) |
+| `GET /{user}/courses/{course}/download.zip` with a rejected `format` | **200** | `application/json` validation flash — see [22.4.4](#2244-the-download-format-matrix-and-the-precondition-the-report-omitted) |
+| **counter-example:** `POST /api/users/settings/lineWrapping`, unauthenticated | **401** | `{"statusCode":401,"error":"Unauthorized","message":"Not logged in"}` |
+
+The counter-example is the point: the 200-on-failure shape is **the validation path**, not an application-wide contract.
+Authentication failures answer 401 with a proper Boom envelope on the very same route family.
+
+**Why it is preserved.** This is the declarative response contract working as designed. The validation bridge at
+`lib/http/validation.js` flashes `validation` and hands the payload to the failure responder, which answers
+`h.response(json)` — a 200. Both the bridge and the responder are the retired shim's behaviour relocated unchanged
+(sections [7.4](#74-the-success-responder-assigns-flash-and-context-after-serializing) and
+[8](#8-the-retired-shims-response-mechanics-and-the-three-fates-a-failing-branch-could-have)), and the status codes are
+what the R-6 corpus compares. Answering 4xx instead would change ten endpoints at once and break the frozen AngularJS
+clients that read `flash.validation` out of a 200.
+
+#### 22.4.2 A valid email with an empty password is rejected with no message anywhere, and the mechanism is a missing template block
+
+**What it is.** Submitting the login form with a real email address and an **empty** password produces a redirect back
+to `/login` that renders **no error of any kind** — while the two neighbouring failure modes both render one.
+
+**Evidence — three probes with contrasting controls, all measured on the rendered page after following the redirect:**
+
+| Submitted | `POST /login` | Rendered `/login` size | Message rendered |
+|---|---|---|---|
+| valid email, **empty** password | **302** → `https://trinket.dev/login`, 0-byte body | 13,507 B | **(none)** |
+| valid email, wrong password | **302** → same, 0-byte body | 13,568 B | `Invalid password` |
+| unknown email, any password | **302** → same, 0-byte body | 13,588 B | `Unknown user nobody-here@example.com` |
+| valid email, correct password | **302** → `https://trinket.dev/home` | — | — |
+
+**The mechanism, and it is not the one the reported finding assumed.** An empty password is not an authentication
+failure at all — it is a **validation** failure, because `config/routes.js:L57-L59` declares
+
+```javascript
+validate : {
+  payload : {
+    email    : Joi.string().required(),
+    password : Joi.string()
+  }
+}
+```
+
+`password` carries no `.required()`, and a bare `Joi.string()` rejects `''`. The JSON sibling route makes the resulting
+flash visible: `POST /api/users/login` with `{"email":"…","password":""}` answers **200**
+`{"flash":{"validation":{"password":"\"password\" is not allowed to be empty"}}}`. So the message exists and is
+flashed — and then nothing renders it: `lib/views/login.html` renders `flash.validation.email` at **L25** and
+**L28-L29**, and `grep -c 'flash.validation.password' lib/views/login.html` is **0**. There is no password-field
+validation block in the template.
+
+**Why it is preserved and what a naive fix would have broken.** `lib/views/login.html` is one of the 79 frozen
+templates and has a 0-line diff against `2f8712a`; `config/routes.js` is byte-identical at both commits. Adding
+`.required()` to the password schema changes the Joi message, and the validation-parity proof in
+[section 3.5](#35-joi-18-needs-zero-option-overrides) is measured against the current schemas. Adding a
+`flash.validation.password` block changes the rendered byte length of a page the R-6 corpus measures — the three sizes
+above are exactly the kind of measurement that would move. And the never-firing custom-message override of
+[section 1.2](#12-the-joi-custom-message-override-that-never-fires) is the same family of defect, preserved for the
+same reason.
+
+#### 22.4.3 An owner-only denial answers 500, and a paired probe proves the authorization itself is sound
+
+**What it is.** A caller who lacks a course permission receives **HTTP 500** with the scrubbed body rather than 403.
+
+**Evidence — a state-neutral paired probe.** Two identities, the same URLs, in the same minute: the course owner and a
+genuinely enrolled student of the same course.
+
+| Request | Owner | Enrolled student |
+|---|---|---|
+| `GET /api/courses/{id}/dashboard` | **200** | **500** |
+| `GET /api/courses/{id}/dashboard?listBy=students` | **200** | **500** |
+| `GET /api/courses/{id}/accessCode` | **200** | **500** |
+| `PUT /api/courses/{id}/lessons/{lessonId}/name` | **200** | **500** |
+
+**And the write did not land.** After the student's `PUT` attempted to rename the lesson to `HIJACKED BY STUDENT`, the
+lesson document read back from MongoDB still held `"Paired Lesson"`. The authorization is genuinely enforced; only its
+*report* is wrong.
+
+**The root cause is already in this catalogue.** The application log for every one of those 500s reads
+`Error: Boom is not defined` at `Object.toResponse (lib/http/errorMap.js:29:17)` — the undeclared identifier recorded in
+[section 4.13](#413-the-undeclared-boom-identifier-in-coursejs) and enumerated across all 61 call sites in
+[section 10](#10-the-undeclared-boom-scrubbed-500s-61-call-sites-that-never-returned-the-status-they-name). What this
+pass adds is the runtime half: those sections establish that the 500 is what the wire carries, and the paired probe
+establishes that **no privilege escalation follows from it**. §4.13 also states the reason a repair is forbidden and
+not merely unnecessary: declaring `Boom` would convert a measured 500 into a 403 **carrying internal error text**, so
+the "fix" would simultaneously change a status code and disclose internals.
+
+#### 22.4.4 The download format matrix, and the precondition the report omitted
+
+**What it is.** `GET /{userSlug}/courses/{courseSlug}/download.zip` accepts only `md` and `html`
+(`config/routes.js:L167-L171`, `format : Joi.string().valid('md','html').required()`), rejects everything else with a
+200, and — with at least one material present — answers **500** for `html`.
+
+**Measured twice, and the second run is what makes it correct.** First against a course with one lesson and **zero
+materials**, then after adding a single `page` material carrying content:
+
+| `format` | Zero materials | One material with content |
+|---|---|---|
+| omitted | **200** `application/json` — `"format" is required` | same |
+| `zip` / `json` / `pdf` / `ipynb` | **200** `application/json` — `"format" must be one of [md, html]` | same |
+| `md` | **200** `application/zip`, 126 B | **200** `application/zip`, 286 B, containing `paired-lesson/paired-page.md` |
+| `html` | **200** `application/zip`, 126 B | **500**, 1,600 B, `text/html`, `<title>Something went wrong</title>` |
+
+⚠️ **The precondition matters, and the reported finding did not state it.** `html` answers 200 on a materially empty
+course and 500 only once a material has to be rendered — so a reader trying to reproduce a bare "html → 500" against a
+fresh course would conclude the finding was wrong.
+
+**The mechanism, end to end.** `lib/views/courses/download/base.html:L9` is
+`{% include "courses/download/course.css" %}`. The application log shows the raise, from
+`lib/views/courses/download/view.html`:
+
+```text
+Error: template not found: courses/download/course.css
+    at Environment.getTemplate (nunjucks/src/environment.js:259:9)
+```
+
+`git log --all -- 'lib/views/courses/download/course.css'` returns **0 commits** — the template has **never existed in
+the repository's history**. The stylesheet that would have supplied it is `static/scss/download/course.scss`, which is
+present on disk and compiled by nothing, because `vite.config.mjs:L10-L13` declares exactly two rollup inputs, `base`
+and `embed`. That orphaned entry point is already catalogued in
+[section 1.7](#17-two-orphaned-scss-entry-points-and-no-cssmap-files-despite-source-maps-being-enabled),
+[section 7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit) and
+[§4.15.8](#4158-the-four-observations-that-were-already-catalogued); this row supplies the exact template name, the
+exact include site, the never-existed proof and the material precondition.
+
+**Why it is preserved.** Adding the input to `vite.config.mjs` emits a new artifact at a new asset URL, which TR5
+freezes and which the two-artifact byte-identity check in §0.3.3 pins; authoring the missing template puts new markup
+into a frozen `lib/views` tree; and either one converts a measured 500 into a 200 with a body no client has ever
+received.
+
+#### 22.4.5 `{redirectTo}` is never interpolated, so two activation failures redirect to a literal brace
+
+**What it is.** Three route declarations use `{redirectTo}` as a redirect template, but `redirectTo` is not a route
+parameter, so the braces survive into the `Location` header.
+
+**Evidence.** The declarations are `config/routes.js:L309` and `L325` — `fail : { redirect : '/{redirectTo}' }` on
+`GET` and `POST /activate-account` — and `config/routes.js:L538`, `success : { redirect : '{redirectTo}' }` on the
+Google callback. The interpolation path is two functions long:
+
+- `lib/http/redirect.js:L21-L27` merges `request.params` into `json` **only** when the template matches `/{\w+}/`, and
+  `/activate-account` has no path parameters at all.
+- `lib/util/stringUtils.js#interpolate` returns the **literal `{key}`** when the resolved value is not a string or a
+  number: `return typeof r === 'string' || typeof r === 'number' ? r : a;`.
+
+Measured:
+
+```text
+POST /activate-account  (key present, password missing)  -> 302  location: https://trinket.dev/{redirectTo}
+GET  /activate-account?key[]=x                           -> 302  location: https://trinket.dev/{redirectTo}
+GET  /%7BredirectTo%7D                                   -> 404
+```
+
+The controller *does* supply a `redirectTo` on its own rejection arms — `lib/controllers/users.js:L1228`, `L1256`,
+`L1266`, `L1284` and `L1328` set `'home'` or `'activate-account'`, honoured as the responder's per-call override — so
+the brace survives specifically on the **validation** arm, where the responder receives the raw payload instead.
+
+**Why it is preserved.** `config/routes.js` is byte-identical at the base commit, the two helper functions carry only
+sanctioned conversion diffs, and the emitted `Location` is exactly what
+[§4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated) records as
+frozen: an intermediate revision of `lib/http/redirect.js` that confined redirect targets was **removed on review**
+because it changed emitted `Location` values. Substituting a real destination here would change the same header on the
+same module.
+
+#### 22.4.6 Triage rows — the server-side surface
+
+| Reported | Measured disposition | Catalogue home |
+|---|---|---|
+| CL-1 jQuery bracket notation, three client-reachable instances (CRITICAL) | **new** — root cause measured once, three outcomes measured separately | [22.3](#223-the-jquery-bracket-notation-class-and-the-three-outcomes-it-produces) |
+| Admin "Update Roles" never answers | **extends §1.15/§6/§9** — the abandon is the *only* path the shipped UI can take | [22.3.1](#2231-outcome-one-the-admin-role-update-never-answers) |
+| Issue 6 / Issue 27 autosave loses work, signal is "Error Saving" | **new** — 200 with validation flash and no `success` key; client tests `result.success` at four sites | [22.3.2](#2232-outcome-two-autosave-answers-200-carrying-a-rejection-and-the-client-paints-error-saving) |
+| `/forks` hands the user a dead `MD5("")` share URL | **new** — three-step degradation; all three candidate URLs answer 404 | [22.3.3](#2233-outcome-three-a-failed-fork-hands-the-user-a-share-url-built-from-md5) |
+| CL-2 / O-F10 HTTP 200-on-failure, Issue 4 silent lesson-name loss | **new** — 8 endpoints measured plus the 401 counter-example | [22.4.1](#2241-a-rejected-write-answers-http-200-on-ten-measured-endpoints-and-one-route-proves-the-pattern-is-not-a-contract) |
+| Issue 21 empty password → 302 with no message | **new, with a corrected mechanism** — a validation failure, not an auth failure; the template has no password block | [22.4.2](#2242-a-valid-email-with-an-empty-password-is-rejected-with-no-message-anywhere-and-the-mechanism-is-a-missing-template-block) |
+| CL-3 owner-only rejections answer 500 not 403 | **extends §4.13/§10** — paired probe adds: owner 200 / student 500, and the student's write did not land | [22.4.3](#2243-an-owner-only-denial-answers-500-and-a-paired-probe-proves-the-authorization-itself-is-sound) |
+| F-33 `GET /api/featured-courses` 500 with ≥1 lesson | **new** — bidirectional control; raised in `Response._marshal` **after** the handler resolved, so uncatchable | [22.4.7](#2247-a-featured-course-with-a-lesson-breaks-its-own-response-during-transmission) |
+| F-32 `download.zip` format matrix, html → 500 | **extends §1.7/§7.5/§4.15.8** — adds the template name, the include site, the never-existed proof and the **material precondition** | [22.4.4](#2244-the-download-format-matrix-and-the-precondition-the-report-omitted) |
+| Un-interpolated `{redirectTo}` → 404 | **new** — 302 to `https://trinket.dev/{redirectTo}`; the literal path answers 404 | [22.4.5](#2245-redirectto-is-never-interpolated-so-two-activation-failures-redirect-to-a-literal-brace) |
+| F-18 duplicate lesson name **and** slug permitted | **new** — a second `POST` with the same name answered 200; two lessons share `name` *and* `slug` `paired-lesson` | this row |
+| "No course-rename endpoint exists at all" | ❌ **CORRECTED — the claim is false** | [22.4.8](#2248-two-reported-claims-that-measurement-contradicts) |
+| Create/read envelope inconsistency | already catalogued | [§17 BQ-2](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) |
+| `/admin/{unknown}` raw-JSON 500 | already catalogued | [§17 BQ-5](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) |
+| `/admin` 403 renders a chrome-less `50x.html` with a favicon 404 | already catalogued — re-measured: **403**, 1,600 B, sha256 begins `a50bf9c7`, `<title>Something went wrong</title>`, **1** `rel=` attribute, **0** `rel="icon"`, no navigation | [§17 BQ-6, BQ-7](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) |
+| `POST /api/exports` 500 (raw `ObjectId`) | already catalogued | [§7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid) |
+| Material reorder 500 while the UI reports success | already catalogued | [§13.7](#137-the-r-6-test-adjudications-each-measured-against-the-application) |
+| Signup rejections redirect to `/sign-up`, which 404s | already catalogued | [§15.3](#153-post-users-sends-every-signup-failure-to-a-path-that-does-not-exist) |
+| Whitespace-only course name accepted | already catalogued | [§15.2](#152-a-whitespace-only-course-name-is-accepted-and-the-slug-degenerates-to-random-characters) |
+
+#### 22.4.7 A featured course with a lesson breaks its own response during transmission
+
+**What it is.** `GET /api/featured-courses` answers **500** as soon as any featured course carries at least one lesson.
+
+**Evidence — a bidirectional control.** With one featured course holding **1** lesson: **500**, 96 bytes, the scrubbed
+body. After removing it and featuring a course whose `lessons` array is **empty**: **200**, 347 bytes, carrying the full
+course object. Both measured in the same session, minutes apart, with nothing else changed.
+
+The application log shows where it breaks, and the stack is the whole finding:
+
+```text
+TypeError: Cannot read properties of undefined (reading 'toString')
+    at ObjectId.toHexString (bson/lib/objectid.js:115:33)
+    at ObjectId.toJSON (bson/lib/objectid.js:172:21)
+    at JSON.stringify (<anonymous>)
+    at Response._marshal (@hapi/hapi/lib/response.js:614:36)
+    at exports.content (@hapi/hapi/lib/headers.js:41:24)
+    at internals.marshal (@hapi/hapi/lib/transmit.js:41:15)
+    at async exports.send (@hapi/hapi/lib/transmit.js:27:9)
+    at async Request._reply (@hapi/hapi/lib/request.js:470:9)
+```
+
+Every frame is **after** the handler resolved: the failure happens in hapi's own marshalling, so it is unreachable by
+the handler, by `lib/http/errorMap.js` and by any try/catch a repair could add there. The unpopulated `lessons` array
+holds raw `ObjectId` values that `ObjectUtils.serialize` has already flattened past recognition, which is the mechanism
+[§7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid) records for `POST /api/exports`. This row
+adds a second reachable instance, its exact trigger condition and its bidirectional control.
+
+**Why it is preserved.** `ObjectUtils.serialize` is a shared utility whose output is the payload shape of every
+declarative response in the application — §7.3 already records that changing it is a wire change on every route at
+once — and the 500 is what the corpus compares.
+
+#### 22.4.8 Two reported claims that measurement contradicts
+
+Both are recorded so that a future reader does not act on them.
+
+**"No course-rename endpoint exists at all."** **False.** `PUT /api/courses/{courseId}/metadata`
+(`config/api_routes.js:L50-L62`) declares `name : Joi.string().max(140)` and works: measured **200**, and the document
+read back from MongoDB held `name: "QA Fix Renamed Course"` with `slug` regenerated to `qa-fix-renamed-course`. What is
+true is narrower and purely a **route-shape** asymmetry: `/api/courses/{courseId}` itself accepts exactly **GET**
+(`course.getCourse`), **DELETE** (`course.deleteCourse`) and **PATCH** (`course.archiveCourse`), so the course's rename
+lives under `/metadata` while its children expose `PUT …/{id}/name` — `config/api_routes.js:L141` for a lesson, `L252`
+for a material, `L691` for a folder and `L791` for a trinket. Nothing is missing; one entity spells the operation
+differently.
+
+**"~40 third-party assets … doubling every external request."** Corrected in
+[22.2.3](#2223-every-protocol-relative-third-party-asset-is-first-requested-over-plain-http): nothing is downloaded
+twice, the extra hop is Chrome's own HSTS upgrade, and the real condition is a cache-busting prefix that changes three
+times within a single render.
+
+### 22.5 The course Dashboard: why no number reaches the screen, and the four sub-conditions around it
+
+[BQ-16 in §17.7](#177-bq-16-the-dashboard-that-receives-its-numbers-and-renders-none) already records the headline — the dashboard receives numeric metrics and
+renders none of them — and names the unrendered `<!-- ngIf: material.type === 'assignment' -->` placeholder, the
+`Returned` / `Feedback Sent` label disagreement, the `canvas` and `svg` counts of **0**, and the literal inline
+`width: 25%` resolving to **242.5 px**. This pass did not re-find any of that. What it adds is the **mechanism**, traced
+end to end, plus four adjacent conditions the earlier pass did not separate out — and one of the four **corrects a
+reading that the markup invites**.
+
+Everything below was measured on the delivered tree at a pinned 1280×900 viewport, against a course carrying two lessons
+and one material with two enrolled members. The endpoint answered **200 at 152 bytes**:
+
+```json
+{"data":[{"id":"6a74dd2f5f42601e3e1b056d","not-started":2,"started":0,"submitted":0,"completed":0,"user-count":2,"hidden":0}],"flash":{},"context":null}
+```
+
+**Rendered digits: 5, and not one of them comes from that payload.** A `TreeWalker` over all **295** text nodes, keeping
+only nodes whose `Range.getClientRects()` yields a painted box, found **27** rendered nodes carrying **5** digits;
+whole-document `innerText` agrees at **5**, in the order `6 9 8 0 2`. Both sources are page chrome: four digits in the
+username slug `qafix-owner-6980` and one in the breadcrumb `QA Fix Course 2`. The other 1,278 digits in the document all
+sit inside `<style>` and `<script>`. So neither the two `2`s nor the four `0`s appear.
+
+**The cause is an outer gate, not the inner one.** The four segments of the data chart are each gated on truthiness —
+`ng-if="assignment['completed']"` and its three siblings at
+`public/partials/directives/assignment-dashboard.html:L2-L5` — and a metric of `0` is falsy, so those gates alone would
+explain the four zeros. They are never reached. The material row is gated first on
+`ng-if="material.type === 'assignment'"`, and the fixture's only material is `type: "page"`, so the
+`assignment-dashboard` directive is **never instantiated**: a query for
+`assignment-dashboard,[assignment-dashboard],.assignment-dashboard` returns **0** elements, even though the partial
+itself was fetched successfully (`GET /partials/directives/assignment-dashboard.html` → **200**). The payload is bound
+and waiting — `angular.element('#course-content').scope().assignmentsOverview` holds
+`{"6a74dd2f5f42601e3e1b056d":{"not-started":2,"started":0,…}}` intact — and has nowhere to go. **The consequence is
+therefore stronger than the falsy-zero gate predicts: non-zero metrics vanish as well.** Seven comment placeholders
+carry the string `ngIf`, and the fifth, `<!-- ngIf: material.type === 'assignment' -->`, is the one that would have
+hosted the chart. `scope.loading` remains `true` indefinitely with no affordance reflecting it.
+
+| Fact | Value |
+|---|---|
+| What it is | The dashboard renders no metric at all, because a material-**type** gate suppresses the chart before the metric-**value** gates are ever evaluated |
+| Evidence | `public/partials/course_dashboard.html` (the material rows), `public/partials/directives/assignment-dashboard.html:L2-L5` (the four truthiness gates, and `L5`'s `class="meter chart-segment not-started"`); directive instance count **0**, partial fetch **200**, `assignmentsOverview` bound with the payload intact |
+| Why preserved | `public/partials` has a **0-line diff** against `2f8712a`, and the endpoint's response shape is unchanged. Rendering the zeros would change client-visible page behavior, which R-4 forbids and §0.4.4 places off-limits |
+| What a naive fix would have broken | Loosening `ng-if` to a defined-check, or relaxing the type gate, would put four `0`s and a chart onto a screen that has never shown them, changing the page for every existing course |
+
+Disposition: **PRESERVED** — extends BQ-16 with the mechanism.
+
+#### 22.5.1 The `min-width: 1%` floor is on the data chart, not on the legend
+
+The markup invites the opposite reading, so the measurement matters. All four `.chart-segment` elements present on the
+dashboard measure **`min-width: 0px`**, not `1%`. They are all four inside `.chart-legend` — `closest('.chart-legend')`
+is truthy for every one — and the legend's markup is `class="chart-segment not-started"` with **no `meter` class**.
+`public/css/base.css` contains exactly **one** `min-width:1%` declaration, in `.meter{position:relative;float:left;min-width:1%;height:100%}`,
+so the floor reaches only elements carrying that class. The sole place `meter` appears alongside a chart segment is the
+**data**-chart template at `public/partials/directives/assignment-dashboard.html:L5`, on the `not-started` segment. The
+consequence is that a data chart whose `not-started` percentage rounds to `0` would still paint a ~1 % sliver, while the
+legend never does — and because no data chart exists on this screen, the floor is unobservable here. The measured 1 %
+floor in this catalogue is the **export screen's** progress bar, recorded in
+[22.7.2](#2272-the-progress-bar-reports-1-when-the-value-is-0-and-then-never-moves).
+
+#### 22.5.2 The hide-then-reveal-on-hover pair is real in CSS and visually inert in the legend
+
+`static/scss/_dashboard.scss` sets `text-indent: 100%` at **L213**, `white-space: nowrap` at **L214**,
+`overflow: hidden` at **L215** and `color: transparent` at **L216**, then reveals on `&:hover { text-indent: 0%; }` at
+**L217-L219**, with the in-file comment *"hide text so it's not selectable when not visible"*. Hovering the first
+segment does fire it — `matches(':hover')` is `true`, computed `text-indent` goes `100%` → `0%` and computed `color`
+goes `rgba(0, 0, 0, 0)` → `rgb(255, 255, 255)`. **And nothing changes on screen.** The at-rest and hovered screenshots
+are byte-identical: both **56,479 bytes**, both sha256 `98e8aef79d4d1cd8e871d5b84f8c84b97055c85a054d697213337bc844f04f3f`.
+The reason is that the label lives in a child `<span class="show-for-medium-up">`, and `public/css/base.css` already
+overrides that child at rest —
+`.chart-legend .chart-wrapper .chart-segment.completed span, ….submitted span{color:#fff;text-indent:0%}` and
+`.chart-legend .chart-wrapper .chart-segment.started span, ….not-started span{color:#333;text-indent:0%;font-weight:700}`.
+The label's text-node box sits at x **241.09**, width **70.31** in *both* states. The hide-at-rest condition is
+therefore real for **data** segments, which this screen cannot produce, and inert for legend segments, which are all it
+has. Disposition: **PRESERVED** — a stylesheet whose compiled output must reproduce at 265,727 bytes cannot be touched.
+
+#### 22.5.3 Two label/`title` disagreements, one semantic and one a non-breaking space
+
+`document.querySelectorAll('[title]')` returns **4** for the entire dashboard document, and all four are the legend
+segments; `p.legend-label` ("Legend") has `title === null`. Both mismatches are hardcoded at
+`public/partials/course_dashboard.html:L106` and `L109`:
+
+| Segment | `title` | Visible label | Verdict |
+|---|---|---|---|
+| `completed` | `Feedback Sent` | `Returned` | **Semantic** — different words. The `title` matches the scope's `stateDisplay.completed.text`; the painted label is the literal template string. The accessibility tree exposes `generic description="Feedback Sent"` wrapping `StaticText "Returned"` |
+| `submitted` | `Submitted` | `Submitted` | agree |
+| `started` | `Started` | `Started` | agree |
+| `not-started` | `Not` U+0020 `Started` | `Not` U+00A0 `Started` | **Byte-level** — the template writes `title="Not Started"` next to `Not&nbsp;Started`, so the two differ only by a non-breaking space and compare unequal |
+
+A related consequence of the same two lines: each segment carries **both** `<span class="show-for-small-only">&nbsp;</span>`
+and `<span class="show-for-medium-up">…</span>`, so **below the medium breakpoint the legend has no text label at all** —
+only the `title`, which is unavailable to touch. In the data-chart template the split runs the other way: the metric
+digit sits *outside* `show-for-large-up`, so a narrow viewport shows a bare number with no word beside it. Disposition:
+**PRESERVED** — both are frozen-template content.
+
+#### 22.5.4 No programmatic progress semantics anywhere on the screen
+
+BQ-16 recorded `canvas` **0** and `svg` **0**. The full sweep is broader, and all nine counts are **0**:
+`[aria-valuenow]`, `[role=progressbar]`, `progress`, `[aria-live]`, `[role=alert]`, `[role=status]`, `[aria-current]`,
+`canvas`, `svg`. The only progress affordance on the page is the CSS-coloured legend bar. Per D1 the design contract
+outranks accessibility heuristics, so adding roles or values here would be a client-visible change to a frozen template
+made on WCAG grounds — precisely the substitution R-4 and §0.4.4 forbid. Disposition: **PRESERVED**.
+
+#### 22.5.5 The Dashboard is unreachable through its own navigation on any non-production host
+
+This one is new in kind rather than in degree. There is no Dashboard tab in the course chrome; the entry lives inside the
+`#course-actions` dropdown as `<a ng-click="viewDashboard()">Dashboard</a>`. Activating it does not perform an in-app
+route change — `public/js/classPage/app.js:L295-L297` builds
+`$scope.course._owner.username + '/courses/' + $scope.course.slug + '#/_dashboard'` and assigns
+`$window.location = trinketConfig.getUrl(dashboardLocation)`, and `getUrl` at `public/js/trinket-config.js:L34-L38`
+returns `config.protocol + '://' + config.apphostname + path`. Because `apphostname` is the configured production host,
+the click leaves the current origin unconditionally: on a localhost instance it navigates to the production hostname and
+lands on a browser error page. The screen itself is perfectly reachable by URL — the server route is
+`config/routes.js:L175` and `/_dashboard` is the AngularJS hash route — so this is a link-construction condition, not a
+broken screen. It is the same absolutization behavior that sends the post-login redirect to the configured host, and it
+belongs to the asset- and URL-contract surface that TR5 freezes: `config/default.yaml` has a **0-line diff** against
+`2f8712a`, and `app.ngapps.main` plus the host pins are read-only preservation points under §0.2.1.9. Rewriting
+`viewDashboard` to a relative path would change a client-visible navigation target. Disposition: **PRESERVED**.
+
+
+### 22.6 The data-state surface: what the frozen templates do with an empty, a blank and an over-long value
+
+Fifteen data-state surfaces were exercised with deliberately hostile values. The conditions below are the ones that
+sections 1 through 17 do not name, and they cluster into three families: a value that is present but renders as nothing,
+a value that is too long to be contained, and a value that is truncated without a recovery path. Every figure is from
+the delivered tree at 1280×900. Two fixtures carry the work: a course whose name is **five U+0020 space characters** and
+a course whose name is **119 `X` characters**.
+
+#### 22.6.1 A whitespace-only name produces a focusable, unlabelled, invisible link on one screen and an unreachable row on another
+
+The same stored value renders two different defects on the two screens that list it, and the difference is worth stating
+because a single fix would not address both.
+
+On `/u/{username}/classes` the name is wrapped in an anchor, and that anchor collapses to **zero width**: rect
+`x=157.59 y=171.97 width=0 height=20`, `offsetWidth` **0**, one zero-width client rect. `textContent` is `"     "` —
+five characters, every one of them **U+0020**, with no tab, newline or non-breaking space — while `innerText` is the
+**empty string of length 0**, because `innerText` collapsing discards them. The parent `<li>` still reserves a full
+**25.59 px** line and paints its list marker, which is why the screen shows a bare bullet with nothing beside it.
+`tabIndex` reports **0** with no `tabindex` attribute, so the link is in the tab order — and it is: a capturing
+`focusin` tracer over 14 real Tab presses put focus on it at **press #14** of **15** focusable candidates, immediately
+after the two named course links. **Nothing renders when it is focused.** The focused and unfocused screenshots are
+byte-identical — both **49,772 bytes**, both sha256 `b65e79ce18ebce610c2c19774fdc861486e47d6273c551e5271887a41b4b0ecc` —
+because the focused box is 0 × 20 px. The accessibility tree shows a `link` with its `url` and **no accessible name and
+no child static text**, unlike its three siblings. A keyboard user therefore lands on a real, activatable, nameless
+target with no visual indication whatsoever.
+
+On `/home` the same course renders as a row whose entire inner markup is
+`<span ng-show="course.role" class="secondary-label label round ng-binding">owner</span>` — `innerText` is exactly
+`"owner"`, and the course name contributes zero characters. Here the containing `ul.no-bullet.course-list` holds **0**
+anchors, verified three independent ways (`querySelectorAll`, `getElementsByTagName`, and a direct-child scan);
+navigation is bound with `ng-click="gotoCourse(course); $event.stopPropagation()"` on the `<li>` with `cursor: pointer`.
+So **none of the four rows on `/home` is keyboard-focusable at all** — the exact inverse of `/classes`, where the
+whitespace row *was* reachable. A second, hidden `ul.no-bullet.course-list.ng-hide` also exists with 0 children.
+
+One further consequence on `/classes`: whole-document `innerText` has **16 lines, 0 empty-string lines, 0 whitespace-only
+lines**, and `includes('\n\n')` is **false**. The whitespace-named course does not produce a blank line — it produces
+**no line at all**, sitting between `QA Fix Renamed Course` and the 119-`X` name with nothing between them. Its existence
+is detectable only through the DOM and through the tab order.
+
+| Fact | Value |
+|---|---|
+| What it is | A name consisting only of whitespace renders as a zero-width focusable unnamed link with no focus ring on `/classes`, and as a role pill with no name and no keyboard reachability on `/home` |
+| Evidence | `/classes`: rect width 0, `textContent` 5 × U+0020, `innerText` length 0, Tab index 14 of 15, byte-identical focused/unfocused screenshots. `/home`: `ul.no-bullet.course-list` anchor count 0, `ng-click` on the `<li>` |
+| Why preserved | Both templates are frozen: `git diff 2f8712a..HEAD -- public/ lib/views/` reports **0 changed files**. Server-side name validation is part of the frozen HTTP surface under TR1 — `POST /api/courses` accepted the value at the base commit and must accept it identically now |
+| What a naive fix would have broken | Trimming names at the API boundary would change which inputs are accepted, violating the validation-outcome preservation directive; falling back to a placeholder label would change client-visible page text on every screen that lists courses |
+
+Disposition: **PRESERVED**.
+
+#### 22.6.2 An over-long name escapes the document, by two different mechanisms on two screens
+
+The 119-character name overflows the viewport on both listing screens, and the mechanism differs — which is why a single
+CSS rule would not have caught both.
+
+On `/u/{username}/classes`, `documentElement.scrollWidth` is **1560** against `clientWidth` **1280**, a **280 px**
+overflow, and **exactly one element** has `getBoundingClientRect().right > clientWidth`: a classless `<a>` at
+`right=1560.44`, width **1402.84**, overshooting by **280.44 px**. On `/home` the overflow is **287 px** (scrollWidth
+**1567**) and **zero element boxes** cross the boundary — because there the name is a **bare text node** directly inside
+the `<li>`, with no wrapping anchor. Measuring the text node itself with `Range.selectNodeContents` gives
+`right=1566.84`, an overshoot of **286.84 px**, while its parent `LI`'s own box ends at `right=791.66` — a comfortable
+**488 px inside** the viewport. Fifteen elements on `/home` report `scrollWidth > clientWidth`, the largest being the
+`<li>` itself at 1411 against 635.
+
+Nothing clips, wraps or ellipsises it, and the reason is uniform: on `/classes` **all seven levels** from the anchor up
+to `body` report the identical four values — `text-overflow: clip`, `white-space: normal`, `word-break: normal`,
+`overflow-wrap: normal` — with `overflow: visible` at every level. `text-overflow: clip` is inert because it requires
+`overflow` ≠ `visible`, and with `word-break` and `overflow-wrap` both `normal` an unbroken run of 119 identical
+characters offers no soft-wrap opportunity. No element in the chain carries a `title`, so there is no tooltip fallback
+either. Disposition: **PRESERVED** — `static/scss/**` is frozen so that `public/css/base.css` reproduces at 265,727
+bytes, and the API accepted this name at the base commit.
+
+#### 22.6.3 No length governance on the input side, on either free-text field
+
+The rendering layer cannot contain a 119-character name, and nothing upstream stops one being entered. On
+`/library/trinkets` there are **8 `<input>` elements and 0 `<textarea>`**, and **all 8 report `maxLength === -1`** —
+`getAttribute('maxlength')` is `null` on every one, the count with an explicit `maxlength` is **0**, and the set of
+distinct `maxLength` values across the document is exactly `[-1]`. Both free-text fields are among them: the library
+search box `#trinket-search`, and the new-folder field `#new-folder-name`. There is also **no character-counter UI at
+all**: two independent scans — a `TreeWalker` testing `/\d+\s*\/\s*\d+/` against every text node, and a leaf-element
+`innerText` sweep across `body *` to catch a counter split across siblings — both returned **0** matches. This is
+consistent rather than coincidental: with no `maxLength` anywhere there is no maximum for a counter to count against.
+Server-side limits do exist and are the real boundary — `name : Joi.string().max(140)` at `config/api_routes.js:L50-L62`
+for a course, for instance — so the condition is the absence of a *client* affordance, not the absence of a limit.
+Disposition: **PRESERVED** — adding `maxlength` to a frozen template would change which keystrokes the browser accepts.
+
+#### 22.6.4 Truncation without a recovery path on the heading element itself
+
+The library card caption *does* truncate correctly — computed `text-overflow: ellipsis` with `white-space: nowrap` and
+`overflow: hidden`, so the ellipsis genuinely applies. With the 49-character fixture name it hides a lot: `scrollWidth`
+**651** against `clientWidth` **272**, so **379 px — 58 % of the string — is not shown**. And
+`getAttribute('title')` on the `<h3>` is **`null`**. The full value is not lost, though: the nearest ancestor carrying a
+`title` is the `LI`, and `public/js/library/trinkets/list/list.html:L72` sets
+`title="{{item.name || 'Untitled'}}"` on it, so hovering the **card** reveals the unclipped name while hovering the
+**heading** reveals nothing. The `/home` tile behaves the same way — `.homeLabel` hides **101 px** of 413 behind an
+ellipsis, and the full escaped name lives on the enclosing `li.item`. Disposition: **PRESERVED** — the recovery path
+exists one level up, and moving the attribute would change frozen markup.
+
+#### 22.6.5 The `Untitled` fallback, and the two-branch colour rule behind it
+
+`public/js/library/trinkets/list/list.html:L72` and `L75` both interpolate `{{item.name || 'Untitled'}}` — once into the
+`li` `title` and once into the caption — and `L73`/`L75` add `ng-class="{titled: item.name}"`. On the measured tree
+**zero** elements have text exactly `Untitled`, on `/library/trinkets` and on `/home` alike, because the only trinket
+present carries a non-empty name, so the `||` branch is never taken. That the *other* branch was taken is independently
+visible in the class list: the caption carries `titled` and the measured colour is **`rgb(102, 102, 102)`**, matching
+`#trinkets-list>li .snapshot.titled .title{color:#666}`, which overrides the untitled
+`#trinkets-list>li .snapshot .title{…color:#ddd…}`. So a nameless trinket renders the word `Untitled` in **`#ddd`** — a
+markedly lower-contrast treatment than a named one, and the reason the literal is worth cataloguing even though this
+fixture could not produce it. The server-rendered path has its own copy of the same idea at `lib/views/home.html:L45`,
+and the typeahead has a third at `public/js/library/../directives/trinket-search.js`, which assigns
+`trinket.name = 'Untitled'` when the name is falsy. Four independent spellings of one fallback, in three templates and
+one controller. Disposition: **PRESERVED** — three of the four sit in `public/**` and the fourth in `lib/views/**`, both
+frozen; the differing colour is a design-contract value that D1 places above contrast heuristics.
+
+#### 22.6.6 Zero is spelled three different ways, twice within a single table row
+
+The application has no single convention for rendering a count of zero, and the clearest demonstration sits in one row
+of one table. The export history row measured as `8/6/2026 7:21:12 PM · pending · - · 0 B · In Progress`: the
+**Trinkets** column renders zero as a **hyphen**, while the immediately adjacent **Size** column renders the same
+underlying zero as a **formatted `0 B`**. Both are built in the same string concatenation at
+`lib/views/users/includes/data.html:L138-L139`. The third spelling is the dashboard's, recorded in
+[22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it): zero is
+rendered by **omission** — the element is never created, so there is no glyph at all. A fourth appears in `/home`'s
+course rows, where a course contributing no name yields a row holding only its role pill
+([22.6.1](#2261-a-whitespace-only-name-produces-a-focusable-unlabelled-invisible-link-on-one-screen-and-an-unreachable-row-on-another)).
+
+A related ordering fact belongs here rather than being overstated. The dashboard's hidden-student list is sorted
+lexicographically on the display name — the rendered DOM carries the placeholder
+`<!-- ngRepeat: student in hiddenStudents | orderBy:'displayName' -->`, which is the AngularJS filter expression
+verbatim, and the same `orderBy:'displayName'` appears in the course and material dashboard partials. The fixture used
+here has an empty `hiddenStudents` collection, so the *rendered* ordering of a populated list was not exercised in the
+browser; what is established is the sort key itself, at source level and in the emitted placeholder. Disposition:
+**PRESERVED** — every spelling and the sort key alike sit in frozen templates with a 0-line diff against `2f8712a`, and
+normalising them would change client-visible page text.
+
+#### 22.6.7 The escaped-caption control that scopes SEC-14
+
+Worth recording as a **negative** result, because it is what bounds the severity of the stored-XSS entry. The same
+trinket whose name is the executing payload renders **safely** on both grid surfaces. On the library card the caption's
+`innerHTML` is `&lt;img src=x onerror=window.__xssFired=1&gt;QAFIXPROBE` — entity-escaped — with `childNodes.length` **1**,
+`childNodeTypes` `["TEXT"]`, `childElementCount` **0** and `querySelectorAll('img')` **0**; `window.__xssFired` stayed
+`undefined`, `img[src="x"]` counted **0** and `img[onerror]` counted **0**. `/home`'s `.homeLabel` measured identically.
+The mechanism is that both paths interpolate through AngularJS `{{ }}` or Nunjucks, which escape by design, whereas the
+typeahead template renders through an unsafe binding. The defect recorded as
+[SEC-14](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved) is therefore
+genuinely **isolated to one template**, and this measurement is the control that establishes it.
+
+#### 22.6.8 The library's infinite scroll fires a viewport early, and re-initialises every Foundation plugin per page
+
+The trinket library pages the list rather than paginating it. `public/js/library/app.js:L7` registers the
+`'infinite-scroll'` module, supplied by the protocol-relative CDN pin at `config/default.yaml:L214`
+(`//cdnjs.cloudflare.com/ajax/libs/ngInfiniteScroll/1.3.0/ng-infinite-scroll.min.js`, and therefore also subject to the
+plain-HTTP first hop recorded in [22.2.3](#2223-every-protocol-relative-third-party-asset-is-first-requested-over-plain-http)).
+Two templates wire it identically — `public/js/library/trinkets/list/list.html:L44` and
+`public/js/library/trinkets/list/folder.html:L29`, both reading
+`<ul id="trinkets-list" infinite-scroll="moreTrinkets()" infinite-scroll-distance='1' class="{{viewType}}-view">`.
+
+Three properties of that wiring are worth recording, all established at source:
+
+- **The trigger distance is one full viewport.** `infinite-scroll-distance='1'` is expressed in viewport heights, so the
+  next page is requested while the user is still a whole screen short of the bottom — eager rather than at-the-edge.
+- **Exhaustion is inferred from a short page, so a library that is an exact multiple of the page size always makes one
+  wasted request.** `public/js/library/trinkets/list/list-controller.js:L195-L199` sets `limit: 20`, `L201-L203` guards
+  re-entry with `if (allLoaded || loading) { return; }`, and `L253-L255` sets `allLoaded = true` only
+  `if (trinkets.length < trinketParams.limit)`. A collection of exactly 20, 40 or 60 therefore fetches one final empty
+  page before the flag latches.
+- **Every appended page re-initialises Foundation across the entire document.** `L257-L259` schedules
+  `$timeout(function() { $(document).foundation(); }, 0, false)` after each load. That re-runs every Foundation plugin
+  on the whole page, not just the newly appended rows — which is what recreates the `js-generated` "Back" rows measured
+  as 0 × 0 `li.title.back.js-generated` elements in [22.8.5](#2285-alt-text-heading-levels-and-touch-targets), and is the
+  mechanism by which the set of focusable elements can shift as pages append.
+
+**Scope of this entry, stated honestly.** The wiring, the distance, the limit, the exhaustion rule and the per-page
+re-initialisation are all source-level facts. The *rendered* consequence of appending pages was **not** exercised in the
+browser, because the measured fixture holds a single trinket and therefore cannot scroll — the same limitation recorded
+for the sort key in [22.6.6](#2266-zero-is-spelled-three-different-ways-twice-within-a-single-table-row). What is
+asserted here is what the code does, not a count of tab stops before and after a scroll.
+
+All four files — the module registration, both templates, the controller — plus `config/default.yaml` have a **0-line
+diff** against `2f8712a`. Raising the trigger distance, correcting the exhaustion test, or narrowing the Foundation
+re-initialisation to the appended subtree would each change client-visible loading behaviour and the request pattern a
+deployment sees, which R-4 forbids. Disposition: **PRESERVED**.
+
+### 22.7 Two screens that fail silently: the data-export poller and the new-folder modal
+
+These two are grouped because they share a shape. In each, the system does exactly what its code says, the outcome is a
+failure, and **the screen communicates nothing at all** — measured to the pixel in both cases.
+
+#### 22.7.1 The export poller runs on a fixed 3-second interval with no backoff and no give-up
+
+`/account/data` polls the export it is watching, and the poll is registered exactly once:
+`pollInterval = setInterval(function() {…}, 3000)` at `lib/views/users/includes/data.html:L107-L124`. In-page
+instrumentation installed before any page script confirmed a single registration with `delayMs: 3000` and **zero
+`clearInterval` calls** for the entire page life.
+
+The interval is not approximately 3 seconds — it is 3 seconds. Across **56 consecutive gaps** spanning about **171
+seconds**, the deltas span **2999.8 ms to 3000.2 ms**, a total spread of **0.4 ms**, mean **2999.995 ms**. Within the
+strict first 40 seconds there are **14** requests and **13** gaps taking only three distinct values — `2999.9`, `3000`,
+`3000.1` — a maximum deviation from 3000 ms of **0.1 ms**. Over 73.7 seconds there were **25** requests; over the page
+life at the point of measurement, **72** XHRs, of which **71** were polls and one was the initial list fetch
+(`GET /api/exports?limit=10`, issued once at load and never repeated). There is no other network activity in the window
+at all — all 25 resource entries are the same XHR.
+
+**No backoff**: the deltas are not monotonically increasing, and the last is indistinguishable from the first. **No
+give-up**: there is no attempt counter, no deadline and no abort. Two clear paths exist in the source and **neither is
+reachable in this state** — `clearInterval` at `L113-L115` fires only when `result.data.status` becomes `completed` or
+`failed`, and `clearInterval` at `L120-L123` fires only in the `.fail()` handler. The endpoint answers **200** with a
+single invariant body forever:
+
+```json
+{"success":true,"data":{"id":"6a74dea85f42601e3e1b05af","status":"pending","progress":{"total":0,"processed":0,"failed":0},"created":"2026-08-06T19:21:12.316Z","downloadAvailable":false},"flash":{},"context":null}
+```
+
+so the status never changes and the request never fails. Polling was still running at **376 seconds / 125 consecutive
+polls**. The stuck `pending` row itself is the pre-existing `POST /api/exports` **500** already recorded in
+[§7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid); this entry is about what the *screen* does about it.
+
+| Fact | Value |
+|---|---|
+| What it is | A fixed 3000 ms poll with no backoff and no termination condition reachable in the state the screen is actually in |
+| Evidence | `lib/views/users/includes/data.html:L107-L124`; single `setInterval(…, 3000)`, **0** `clearInterval` calls; 56 deltas spanning 0.4 ms; both clear paths at `L113-L115` and `L120-L123` gated on transitions that never occur |
+| Why preserved | `lib/views/**` is frozen — `git diff 2f8712a..HEAD -- lib/views/` reports **0 changed files** — and §0.4.4 makes the interface layer preservation-only. Adding backoff or a deadline would change client-visible behavior and the request pattern a deployment sees |
+| What a naive fix would have broken | Introducing exponential backoff or an attempt cap would alter the observable request cadence; adding a timeout state would put text on a screen that has never shown it |
+
+Disposition: **PRESERVED**.
+
+#### 22.7.2 The progress bar reports 1 % when the value is 0, and then never moves
+
+The bar is Foundation's `.progress > span.meter` at `lib/views/users/includes/data.html:L20-L21` — not a native
+`<progress>` and not `role="progressbar"`; counts for `progress`, `[role=progressbar]` and `meter` elements are all
+**0**. The fill's complete attribute set is two attributes, `class="meter"` and `style="width: 0%"`. Its **computed width
+is 6.17188 px** inside a track whose computed width is **619.188 px** — a ratio of **0.009968**, i.e. exactly **1.00 %**.
+The cause is the single `min-width:1%` declaration in `public/css/base.css`
+(`.meter{position:relative;float:left;min-width:1%;height:100%}`), which floors the declared `0%`. This is the 1 % floor
+referenced from [22.5.1](#2251-the-min-width-1-floor-is-on-the-data-chart-not-on-the-legend).
+
+The sliver never moves, and that is arithmetic rather than luck: `data.html:L81` computes
+`var percent = progress.total ? Math.round((progress.processed / progress.total) * 100) : 0`, and the payload's
+`progress.total` is permanently `0`, so `percent` is permanently `0` and `L87`'s
+`$('#export-progress .meter').css('width', percent + '%')` re-applies `0%` on every one of the polls. `L82-L86` selects
+the label by the same test, so `#progress-text` stays the hard-coded string `Preparing export...` forever.
+
+**There is no loading affordance on the settled screen.** All seven candidate selectors return **0**: `.fa-spin`,
+`[class*=spinner]`, `[class*=loading]`, `[class*=loader]`, `progress`, `[role=progressbar]`, `[aria-busy]`. A sweep of
+**all 211 elements** for a computed `animation-name` other than `none` found **0**, and **0** animated pseudo-elements.
+The template does contain one — `<p class="loading">Loading...</p>` at `L35` — but `loadExportList()` calls
+`$list.empty()` at `L131` before injecting the table, so it no longer exists by the time the list has resolved.
+
+**No programmatic semantics on either half of the bar.** On the fill *and* on the track, all fourteen of `role`,
+`aria-label`, `aria-labelledby`, `aria-describedby`, `aria-valuenow`, `aria-valuemin`, `aria-valuemax`, `aria-valuetext`,
+`aria-live`, `aria-busy`, `aria-hidden`, `aria-atomic`, `aria-relevant` and `aria-disabled` are **`null`**. Page-wide,
+`[aria-live]`, `[role=alert]`, `[role=status]` and `<caption>` are all **0**, and all **five** `<th>` cells — `Date`,
+`Status`, `Trinkets`, `Size`, `Action`, built as a string at `L138-L139` — have `scope`, `id`, `abbr`, `headers` and
+`role` all `null`. The two alert containers `#exportError` and `#exportSuccess` exist but carry
+`class="alert-box alert hide-override"`, `display: none`, rect 0 × 0, and `role`/`aria-live` `null`, so even a real error
+would be neither visible nor announced. Disposition: **PRESERVED**.
+
+#### 22.7.3 No cancel, no retry, and a button that cannot re-enable itself
+
+Twenty-five controls exist on the page; **three** are inside the export content area. A text search across every control
+for `cancel|abort|stop|retry|try again|dismiss|close|reset|refresh|reload` matched **0**. Concretely: **cancel — none;
+retry — none; dismiss — vestigial only.**
+
+`#request-export` carries the `disabled` attribute (`getAttribute('disabled')` is the empty string, IDL `true`), and
+`updateProgress()` re-asserts `$('#request-export').prop('disabled', true)` at
+`lib/views/users/includes/data.html:L78` on **every 3-second poll** while the status is `pending` or `processing`, so it
+can never re-enable itself — the re-enable at `L90` sits in the `else` branch that this state never reaches. Its disabled
+state is also conveyed inconsistently: `aria-disabled` is **`null`**, computed `pointer-events` remains **`auto`** and
+`tabIndex` is **0**, so the control is still focusable while being unusable, with only the native attribute and an opacity
+of **0.7** to signal it. Its rendered label is `Export In Progress...` although the DOM text is `Export in progress...`,
+because computed `text-transform` is `capitalize`. The only dismiss affordances are two `<a class="close ng-hide">` × 
+anchors at `opacity: 0.3` and rect 0 × 0, attached to the two `display: none` alert boxes.
+
+**And after 40 seconds nothing has appeared: no timeout — no; no error state — no; no elapsed-time indicator — no.**
+Regex sweeps for each of the three families over `body.innerText` matched nothing, `\d+\s*%` matched nothing, and the
+count of visible error banners carrying text was **0**. The only time-like string on the screen is the export's static
+creation timestamp. Re-checked at 376 seconds, still none of the three. The two screenshots bracketing the observation
+window are **byte- and pixel-identical**: both **84,780 bytes**, both sha256
+`35c83133f882d615f2fb5b99a34a52344e2701037bc4d252a1828ce917455657`, with a pixel difference bounding box of `None` and a
+maximum channel difference of **0**. Not one pixel changed while dozens of round trips completed. Disposition:
+**PRESERVED**.
+
+#### 22.7.4 The new-folder modal: two validators disagree, an empty body is posted, and the failure is invisible twice over
+
+This is the O-F16 condition, and it has four distinct links in its chain — each measured.
+
+**Link 1 — the two validators disagree, and neither blocks the submit.** `input#new-folder-name` at
+`public/js/library/trinkets/list/list.html:L113` carries `required` but **no `ng-trim` attribute**
+(`getAttribute('ng-trim')` and `data-ng-trim` both `null`), so AngularJS's default trimming is active. Typing a single
+space gives a DOM `value` of `" "` — length 1, char code `[32]` — and therefore a **passing** native check:
+`checkValidity()` **`true`**, `validity.valueMissing` **`false`**, every `ValidityState` failure flag `false`,
+`validationMessage` empty. Simultaneously AngularJS trims the view value to `""` and marks the field
+`ng-invalid ng-invalid-required`, with `$error` `{"required": true}`. The form is `ng-invalid-required` too, yet
+`form.checkValidity()` is also **`true`** and `novalidate` is not set. Angular's `ng-submit="addNewFolder()"` at `L110`
+fires regardless of `$invalid`, so **both validators are satisfied enough to let the submit through**.
+
+**Link 2 — the request body is `{}`.** Because the trimmed view value is `""`, `$modelValue` is `undefined` and the scope
+property is never created at all: `typeof $scope.name === "undefined"` and `hasOwnProperty('name') === false`. So
+`$scope.folders.post({ name : $scope.name })` at
+`public/js/library/components/folders/new-folder-directive.js` serialises to **the two bytes `{}`** —
+`content-length: 2`, confirmed byte-wise. The `name` key is not empty or null; it is **absent**.
+
+**Link 3 — the server rejects it with HTTP 200.** `POST /api/folders` answers **200 OK** with 56 bytes:
+
+```json
+{"flash":{"validation":{"name":"\"name\" is required"}}}
+```
+
+This is the same 200-on-failure family recorded in
+[22.4](#224-the-server-side-outcome-rows) — the reason no client error branch is taken.
+
+**Link 4 — the message is discarded, and its replacement is never painted.** The directive's success handler tests
+`response.success` first and `response.message` second, falling through to a generic string otherwise. The payload
+carries **neither key**, so the server's actual reason — `"name" is required`, in Joi's own phrasing — is **thrown away**
+and the fallback `"We had a problem creating your new folder. Please try again."` is substituted. That fallback is then
+routed through `$scope.folderMessage` at `public/js/library/trinkets/list/list-controller.js:L176-L185`, which for a
+non-success type calls `$('#new-folder-messages').notify(message, { className : type })`. The target
+`<div id="new-folder-messages">` at `list.html:L108` measures **450 × 0** — zero height — and notify.js consequently
+positioned its container with an inline `display: none`. The message exists in the DOM and is unpaintable: the
+`.notifyjs-container` computes to `display: none`, all four injected nodes measure 0 × 0, and the **visible notify count
+is 0**. Its intended red-on-white styling is never applied.
+
+What the user sees is therefore nothing at all, and that was measured rather than described. `#new-folder-messages`
+`innerHTML` is still the empty string. **Zero** elements became visible. The modal **stayed open**. A full computed
+border-and-outline sweep of every element for a reddish, non-zero-width, visible edge returned **0** — the input's border
+went from `rgb(153, 153, 153)` to `rgb(204, 204, 204)`, both neutral greys — and `aria-invalid` is `null`. Three elements
+carry error classes and two of them are visible, but Angular's `ng-invalid` classes **have no CSS in this theme**, and the
+third, the one actually holding the message text, is invisible at 0 × 0. `body.innerText.indexOf('required')` is **−1**
+and `indexOf('problem')` is **−1**: no error word is rendered anywhere on the page. `[aria-live]`, `[role=alert]` and
+`[role=status]` are all **0**, so nothing is announced either. Visible spinners: **0**. Ten seconds later — and again
+three and a half minutes later — **nothing had changed on any of sixteen tracked aspects, and zero further network
+requests had been made**: there is no retry, no re-fetch and no timeout handler on this path. Three independent checks
+confirmed **no folder was created**: the DOM count, the Angular scope, and a cache-bypassing reload whose
+`GET /api/folders` body was byte-identical to the pre-test baseline.
+
+Two smaller conditions on the same modal, measured in passing. The input has **no accessible name from any mechanism** —
+`aria-label` `null`, `aria-labelledby` `null`, `element.labels.length` **0**, and **0** `<label>` elements inside the
+modal, leaving only the placeholder; Chrome's own Issues panel flags this independently, alongside a
+`<label for="shareURL">` on the same page whose target does not exist and two bare `Sort:` / `View:` labels. And opening
+the dialog does **not move focus into it**: `document.activeElement` remains `body#trinket-library`, and while the modal
+sets `role="dialog"` and a resolving `aria-labelledby`, `aria-modal` is `null`. `list.html:L114` also closes the input's
+wrapper with a second opening `<div>` rather than `</div>`, which the browser's parser silently repairs.
+
+| Fact | Value |
+|---|---|
+| What it is | A whitespace-only folder name passes the native validator, fails the Angular validator, is posted as `{}`, is rejected with HTTP 200, and produces no visible or announced feedback of any kind |
+| Evidence | `list.html:L108`, `L110`, `L113-L114`; `new-folder-directive.js` (the `response.success` / `response.message` / fallback chain); `list-controller.js:L176-L185`; request body 2 bytes, response 56 bytes at status 200; `#new-folder-messages` 450 × 0 with the notify container at `display: none`; 0 red borders, 0 live regions, `indexOf('required') === −1` |
+| Why preserved | `public/**` is frozen with a **0-line diff** against `2f8712a`, and the 200-on-validation-failure response is part of the HTTP surface TR1 and TR2 freeze. The server's phrasing, status and payload shape all replay identically |
+| What a naive fix would have broken | Adding `ng-trim="false"` would change which inputs the client submits; making the endpoint answer 4xx would change a status code the corpus pins; teaching the directive to read `flash.validation` would surface text on a screen that has never shown it |
+
+Disposition: **PRESERVED**.
+
+#### 22.7.5 Triage rows for 22.5 through 22.7
+
+| Reported condition | Catalogue home |
+|---|---|
+| Dashboard renders none of its numeric metrics | [BQ-16](#177-bq-16-the-dashboard-that-receives-its-numbers-and-renders-none), mechanism added in [22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it) |
+| `ng-if` truthiness omits zero-valued segments | [22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it) — and the outer type gate preempts it |
+| `text-indent: 100%` / transparent colour hides segment labels | [22.5.2](#2252-the-hide-then-reveal-on-hover-pair-is-real-in-css-and-visually-inert-in-the-legend) |
+| `min-width: 1%` renders a false nub | [22.5.1](#2251-the-min-width-1-floor-is-on-the-data-chart-not-on-the-legend) for the dashboard reading, [22.7.2](#2272-the-progress-bar-reports-1-when-the-value-is-0-and-then-never-moves) for the measured instance |
+| Legend label disagrees with its `title`; four names for one concept | [22.5.3](#2253-two-labeltitle-disagreements-one-semantic-and-one-a-non-breaking-space) |
+| Bare digit with no label on narrow viewports | [22.5.3](#2253-two-labeltitle-disagreements-one-semantic-and-one-a-non-breaking-space) |
+| No `aria-valuenow` / progress semantics on the dashboard | [22.5.4](#2254-no-programmatic-progress-semantics-anywhere-on-the-screen) |
+| Dashboard link navigates off-origin | [22.5.5](#2255-the-dashboard-is-unreachable-through-its-own-navigation-on-any-non-production-host) |
+| Whitespace-only name renders a 0 px row | [22.6.1](#2261-a-whitespace-only-name-produces-a-focusable-unlabelled-invisible-link-on-one-screen-and-an-unreachable-row-on-another) |
+| Over-long token overflows the document | [22.6.2](#2262-an-over-long-name-escapes-the-document-by-two-different-mechanisms-on-two-screens) |
+| No `maxlength`; no character counter | [22.6.3](#2263-no-length-governance-on-the-input-side-on-either-free-text-field) |
+| Truncation is unrecoverable | [22.6.4](#2264-truncation-without-a-recovery-path-on-the-heading-element-itself) — recoverable one level up |
+| `Untitled` versus no label | [22.6.5](#2265-the-untitled-fallback-and-the-two-branch-colour-rule-behind-it) |
+| Zero-item surfaces render by omission | [22.6.1](#2261-a-whitespace-only-name-produces-a-focusable-unlabelled-invisible-link-on-one-screen-and-an-unreachable-row-on-another) and [22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it) |
+| Zero-count rendered by omission in one place and a hyphen in another | [22.6.6](#2266-zero-is-spelled-three-different-ways-twice-within-a-single-table-row) |
+| Lists ordered lexicographically on display name | [22.6.6](#2266-zero-is-spelled-three-different-ways-twice-within-a-single-table-row) — sort key established at source; a populated list was not exercised |
+| Library grid caption escapes the stored payload (control for SEC-14) | [22.6.7](#2267-the-escaped-caption-control-that-scopes-sec-14) |
+| Infinite-scroll paging and tab-ring instability | [22.6.8](#2268-the-librarys-infinite-scroll-fires-a-viewport-early-and-re-initialises-every-foundation-plugin-per-page) — wiring measured at source; a populated scroll was not exercised |
+| Export screen has no spinner, timeout, error or cancel | [22.7.2](#2272-the-progress-bar-reports-1-when-the-value-is-0-and-then-never-moves) and [22.7.3](#2273-no-cancel-no-retry-and-a-button-that-cannot-re-enable-itself) |
+| Unbounded 3000 ms polling | [22.7.1](#2271-the-export-poller-runs-on-a-fixed-3-second-interval-with-no-backoff-and-no-give-up) |
+| Progress bar lacks `role="progressbar"` | [22.7.2](#2272-the-progress-bar-reports-1-when-the-value-is-0-and-then-never-moves) |
+| New-folder modal rejects a space and renders nothing | [22.7.4](#2274-the-new-folder-modal-two-validators-disagree-an-empty-body-is-posted-and-the-failure-is-invisible-twice-over) |
+| Modal never resolves / focus not contained | [22.7.4](#2274-the-new-folder-modal-two-validators-disagree-an-empty-body-is-posted-and-the-failure-is-invisible-twice-over) |
+
+
+### 22.8 The keyboard and accessibility surface
+
+[§15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them), [BQ-19](#178-bq-19-the-three-controls-that-lose-their-accessible-name-at-one-particular-width) and BQ-20 already
+cover parts of this surface. What follows are the conditions those entries do not name, measured with real key presses
+at 1280×900 rather than inferred from markup. **D1 governs every one of them**: the AAP and the design contract outrank
+WCAG heuristics, §0.4.4 makes the interface layer preservation-only, and `git diff 2f8712a..HEAD -- public/ lib/views/ static/`
+reports **0 changed files**. Each is therefore catalogued, not repaired.
+
+#### 22.8.1 The tab order reaches 14 elements and skips 45
+
+Forty-two real Tab presses on `/home` produced **14 distinct stops**, cycling with a period of 15 presses and provably
+wrapping back to the first. **Every one of the 14 is an `<a>`** — no `button`, `input`, `select` or `textarea` was ever
+focused — and all 14 report `tabIndex` 0, with no positive `tabindex` anywhere.
+
+The candidate set of things a user would take for interactive is **59** (28 by selector union 55 by `cursor: pointer`).
+Subtracting the 14 reached leaves **45**, and the stronger fact is that **none of the 45 is even programmatically
+focusable**: calling `.focus()` on each and testing `document.activeElement` failed **45 times out of 45**. They are
+outside the focus model, not merely skipped. Of the 45, 15 are zero-sized or hidden, 18 are non-interactive descendants
+inheriting `cursor: pointer` from an ancestor that *is* reachable, and **12 are visible keyboard orphans**:
+
+| Orphan | Rect | Mechanism |
+|---|---|---|
+| 4 × course row `<li>` | 636.66 × 43.59 (×3), 636.66 × 69.19 | `ng-click="gotoCourse(course); $event.stopPropagation()"`, `tabIndex` **−1**, no `role`, no `href` |
+| `a.button` "Join Course" | 173.48 × 55 | `ng-click="openJoinCourse()"`; `tabIndex` reports 0 but `.focus()` **fails** — it is an `<a>` with no `href` |
+| `a.small.button.primary.dropdown` "New Trinket" | 156.06 × 48 | `data-dropdown`; same no-`href` mechanism |
+| 4 × `span.secondary-label` "owner" | 49.34 × 19 | decorative pill inheriting `cursor: pointer` |
+| `span.show-for-large-up`, `i.fa.fa-user-plus` | 77.06 × 17, 22.3 × 16 | label and icon inside the two unreachable buttons |
+
+The `tabIndex`-reports-0-but-cannot-be-focused pair is worth isolating, because it is the trap in this measurement: an
+`<a>` with no `href` exposes `tabIndex === 0` while being wholly outside the focus order, so any audit that trusts the
+property alone reports these two controls as reachable. Behaviour disproves it. The consequence is concrete: the
+**"New Trinket" creation flow has no keyboard entry point from `/home` at all**, since the trigger is unreachable and its
+menu's inner `<a ng-click="create(item.lang)">` measures 0 × 0 while collapsed.
+
+On `/library/trinkets` the same census gives **17** stops and three further specifics: `button#search-label` (74.7 × 48)
+has an **empty** accessible name; the two Sort/View buttons have **whitespace-only** accessible names; and
+`input#trinket-search` is focusable at **x = −131.81** — parked largely off-screen to the left, its right edge at 318.19,
+sliding into view only when the magnifier is toggled. Neither the New Folder trigger nor "New Trinket" appears in that
+page's tab order either.
+
+Disposition: **PRESERVED** — every mechanism is an `ng-click` on a non-interactive element or an `<a>` without `href`, in
+templates frozen with a 0-line diff. Adding `href`, `tabindex` or `role` would change client-visible markup and, for the
+`<li>` rows, the click semantics `$event.stopPropagation()` depends on.
+
+#### 22.8.2 Every focus ring on the site is the browser's, and one rule removes it
+
+The count of stops with **no** visual focus indicator is **0** — each of the 14 changes computed style on focus. But the
+indicator is almost entirely the user agent's: a walk of `document.styleSheets` found **`:focus-visible` in 0 rules** and
+`:focus` in **79**, all 79 originating in `public/css/base.css`. All 14 stops receive Chrome's default ring
+(`outline-style: auto`, `outline-width: 1px`, `outline-color: rgb(16, 16, 16)`, `outline-offset: 1px`). Exactly **one**
+stop carries an authored focus treatment — "View All My Trinkets", whose `background-color` inverts from
+`rgb(255, 255, 255)` to `rgb(0, 110, 204)` with white text, per
+`button:hover, button:focus, .button:hover, .faux-button:hover, .button:focus, .faux-button:focus{background-color:#006ecc}`.
+
+Two facts qualify that, and both were measured:
+
+- **One rule deliberately removes the ring from text inputs.**
+  `input:not([type]):focus, input[type="text"]:focus, input[type="password"]:focus, …{background-color:#fafafa;border-color:#999;outline:none}`
+  suppresses the outline on every focused text field, substituting a background tint and a border darkening.
+  `select:focus` carries no such removal. This is a deliberate authored choice in a frozen stylesheet whose compiled
+  output must reproduce at 265,727 bytes.
+- **Foundation's own skip-link helper is present and unused.** `.show-on-focus:focus, .show-on-focus:active{position:static!important;height:auto;width:auto;overflow:visible;clip:auto}`
+  is defined in `base.css` and matched by **0** elements, which is consistent with the **0** skip links measured on both
+  pages.
+
+A measurement trap belongs on the record here too: the one authored focus style declares
+`transition-property: background-color; transition-duration: 0.3s`, so reads taken inside a `focusin` handler or after
+two animation frames capture mid-transition colours (`rgb(23,123,209)`, `rgb(210,229,246)`). Only an ~800 ms settle
+resolves the endpoints. Three other stops show a `0px none` **border-colour** delta that merely tracks
+`a:hover, a:focus{color:#0077db}` — a real computed-style change, but not an independently painted affordance.
+Disposition: **PRESERVED**.
+
+#### 22.8.3 The dropdown items that three different APIs disagree about
+
+Six of the fourteen tab stops live inside `ul#user_dropdown` and `ul#new_trinket_list`, and their visibility is
+conditional in a way that makes the obvious measurement wrong in both directions. The governing rule is
+`.top-bar-section .dropdown{clip:rect(1px,1px,1px,1px);height:1px;overflow:hidden;width:1px;display:block;position:absolute!important;z-index:99;left:100%}`
+— the only `clip:rect(1px,1px,1px,1px)` declaration in `base.css`.
+
+| Probe | Focus elsewhere | Focus inside |
+|---|---|---|
+| computed `clip` | `rect(1px, 1px, 1px, 1px)` — paints nothing | `auto` |
+| `overflow` | `hidden` | `visible` |
+| `getBoundingClientRect()` | **still the full 195.55 × 274 box** | full box |
+| `checkVisibility()` | **still `true`** | `true` |
+| `elementsFromPoint` at an item's centre | **the item is absent from the hit stack** | the item is topmost |
+| `li#trinket-user-menu` classList | `["has-dropdown"]` | `["has-dropdown", "hover"]` — added by Foundation on focus entry |
+
+So `getBoundingClientRect()` and `checkVisibility()` both report these items as present and visible while they paint
+nothing, because **neither API accounts for `clip`**; hit-testing reports them absent. Only a focus-time measurement is
+correct. There is also a second, CSS-only reveal path independent of the JS `hover` class:
+`.top-bar-section .has-dropdown > a:focus + .dropdown{height:auto;width:auto;overflow:visible;clip:auto;display:block;position:absolute!important}`.
+The practical upshot is benign — the items *are* reachable and *are* revealed when focus arrives — and it is recorded
+because an audit that trusts either API alone would report six phantom or six missing stops. Disposition: **PRESERVED**.
+
+#### 22.8.4 The ARIA and document-semantics census
+
+Both pages, measured selector by selector. Zeros are explicit.
+
+| Selector | `/home` | `/library/trinkets` |
+|---|---|---|
+| `[aria-current]`, `[aria-live]`, `[role=alert]`, `[role=status]`, `[aria-expanded]`, `[aria-pressed]`, `[aria-describedby]` | **0** each | **0** each |
+| `[aria-hidden]` | **0** | 1 |
+| `[aria-label]` / `[aria-labelledby]` / `[role]` | 5 / **0** / 14 | 10 / 1 / 21 |
+| `nav` / `[role=navigation]` / `[role=main]` | 2 / 2 / 1 | 2 / 2 / 1 |
+| `main` / `header` / `footer` / **`h1`** | **0** / **0** / **0** / **0** | **0** / **0** / **0** / **0** |
+| skip links (`a[href^="#"]` with text matching `/skip/i`) | **0** | **0** |
+
+Four structural conditions follow from those numbers:
+
+- **No `aria-expanded` anywhere, against five collapsible controls** on `/library/trinkets` (user menu, New Trinket menu,
+  search toggle, Sort menu, View menu). Expanded and collapsed state reaches assistive technology from none of them.
+- **The menu pattern is structurally incomplete.** `ul#user_dropdown` carries `role="menu"` and its `<li>`s carry
+  `role="menuitem"`, but the focusable element is the inner `<a>`, which has **no role**, while the `menuitem`-roled
+  `<li>`s are `tabIndex −1` and are never focused.
+- **A navigation landmark nests inside a navigation landmark**: `role="navigation"` appears twice per page, once on
+  `nav.top-bar` and once on the `<li id="trinket-user-menu">` inside it. The second `<nav>` has no accessible name on
+  either page.
+- **Two fake inputs**: `div#shareUrl` and `div#embedCode` carry `role="textbox"` and `tabIndex 0` with class `faux-input`,
+  measuring 0 × 0 while their modals are closed; the two `role="heading"` spans carry **no `aria-level`**.
+
+The three DevTools advisories on `/library/trinkets` were reproduced by direct DOM measurement, and one of them has a
+sharper cause than the advisory states: `<label for="shareURL">` resolves to **null** because the element it means is
+`id="shareUrl"` — a **case mismatch**, with the page's other five `for=` labels all resolving correctly. The other two
+are `<label>Sort:</label>` and `<label>View:</label>`, each with `for` null, wrapping no control, both 0 × 0; and
+**all twelve** form controls on the page have `autocomplete` null. Disposition: **PRESERVED**.
+
+#### 22.8.5 Alt text, heading levels and touch targets
+
+**Alt text — two different defects on two pages.** `/home` has **1** image with the `alt` attribute **absent** (not
+`alt=""`, so it is not marked presentational): the 272 × 272 `/img/avatar-default.png` thumbnail fallback.
+`/library/trinkets` has **0** missing, but **1 image whose `alt` equals its `src`** — `alt="/img/avatar-default.png"`,
+written by the binding `<img ng-src="/img/avatar-default.png" alt="/img/avatar-default.png">`. The consequence is
+visible in Chrome's accessibility tree, which exposes the node as `image "/img/avatar-default.png"` and makes the
+containing link's accessible name the concatenation
+`"/img/avatar-default.png <img src=x onerror=window.__xssFired=1>QAFIXPROBE"` — a file path prefixed onto the trinket
+name. The navigation avatar's `alt="Photo of qafix-owner"` additionally duplicates the adjacent link text and names the
+display name rather than the slug.
+
+**Heading levels are skipped on both pages, at the top.** `/home`'s level sequence in document order is
+`[5, 5, 2, 2, 2, 2]` and `/library/trinkets`'s is `[5, 5, 2, 2, 3, 2]`. On both, **`h1` count is 0 and the first heading
+is an `h5`**, so h1 through h4 are all skipped before the first heading appears; the two `h5`s are the hidden Foundation
+dropdown "Back" rows. `/home` never emits h3, h4 or h6; `/library/trinkets` never emits h1, h4 or h6, and its **only
+visible heading** is the `h3` card caption holding the escaped payload.
+
+**Touch targets.** Against a 44 × 44 reference, `/home` has **38 of 55** pointer-or-focusable elements under the
+threshold in at least one dimension (11 of them zero-area), and `/library/trinkets` has **83 of 103** (48 zero-area). The
+smallest real targets are icon glyphs: `i.fa.fa-lock` at **8.36 × 13** on `/home`, and the two Sort/View carets
+`i.fa.fa-caret-down` at **7.44 × 13** on the library page. The tab stops themselves fare much better — only **2 of 14**
+and **2 of 17** respectively fall short, and three `/home` course rows miss only on height, by **0.41 px** (43.59 against
+44). Per D1 the design contract outranks the 44 px heuristic, and every dimension here is produced by the frozen
+stylesheet and the Font Awesome glyph metrics. Disposition: **PRESERVED**.
+
+#### 22.8.6 The modal takes no focus, traps none, and returns none
+
+Opening the New Folder dialog with a real click leaves `document.activeElement` as **`body#trinket-library`**, and the
+capturing `focusin` tracer recorded **zero focus events for the entire open action** — focus did not land in the wrong
+place, it never moved at all. The dialog does carry `role="dialog"` and an `aria-labelledby` that resolves to its own
+`<h2>` "Create New Folder"; it does **not** carry `aria-modal`, open or closed; Foundation **adds** `tabindex="0"` to the
+container on open and removes it on close; and `<body>` receives no scroll-lock or modal-open class.
+
+Twelve Tab presses then produced 11 focus events, **3 inside the dialog and 8 outside**, and focus left on the **very
+first press** — before ever entering. The first element outside to receive it is the trinket card link
+`a.snapshot.titled` at rect **31.59, 133, 272, 310**, sitting behind the `rgba(0, 0, 0, 0.45)` overlay. The full trace
+runs: card link (outside) → the dialog container itself → the name input → the Create button → `body` → logo → Home →
+About → Help → Home → My Trinkets → Python. **There is no focus containment of any kind**, and tabbing onward
+**revealed the user dropdown while the dialog was still open**. The `×` control (`a.close-reveal-modal[aria-label="Close"]`,
+26.77 × 40) never receives focus at all — another `<a>` without `href`.
+
+One expectation this measurement **refuted**: **Escape does close the dialog.** A real Escape press removed the `open`
+class, set `display: none` and `visibility: hidden`, flipped `aria-hidden` back to `"true"` and removed the added
+`tabindex`, leaving the container at 0 × 0. The `.reveal-modal-bg` overlay is created on first open and then **retained
+in the DOM permanently**, hidden thereafter purely by `display: none`. What Escape does **not** do is move focus:
+`activeElement` stayed on the outside-the-dialog "Python" link, so focus is never returned to the trigger — which is in
+any case unreachable, being the `<a>` without `href` from 22.8.1. `aria-live`, `role="alert"` and `role="status"` are all
+**0** while the dialog is open, so its appearance and dismissal are announced by nothing. Disposition: **PRESERVED** —
+Foundation 5.5.3's Reveal plugin ships from the gitignored, release-hydrated component tree that §0.2.2.2 places out of
+scope, and the surrounding markup is frozen.
+
+### 22.9 The responsive surface at four widths
+
+Three screens — `/home`, `/library/trinkets`, `/u/{username}/classes` — measured at **375, 768, 1280 and 1920**, twelve
+combinations, narrowest first. `documentElement.clientWidth` equalled `window.innerWidth` at every size, so there is no
+scrollbar gutter and every figure below is against the exact requested width.
+
+#### 22.9.1 The overflow matrix, and the constant that explains it
+
+| Screen | 375 | 768 | 1280 | 1920 | Overflow carried by |
+|---|---|---|---|---|---|
+| `/home` | 1427 → **1052 px** | 1427 → **659 px** | 1567 → **287 px** | 1920 → **0 px** | a bare **text node** |
+| `/library/trinkets` | 572 → **197 px** | 768 → **0 px** | **0 px** | **0 px** | `div.search-input` |
+| `/u/{username}/classes` | 1420 → **1045 px** | 1420 → **652 px** | 1560 → **280 px** | 1920 → **0 px** | an `<a>` **element box** |
+
+One measurement explains the whole first and third rows: **the 119-character name's laid-out width is a constant
+1402.84 px at every viewport**, because it is a single unbreakable word. Overshoot is therefore
+`1402.84 + startX − clientWidth`, which shrinks as the viewport widens and reaches zero at 1920 — with 33.16 px of
+headroom on `/home` and 39.56 px on `/classes`, though on the latter it still escapes its own 1000 px row by 420.44 px.
+This is the quantified form of the mechanism recorded in
+[22.6.2](#2262-an-over-long-name-escapes-the-document-by-two-different-mechanisms-on-two-screens): every ancestor is
+`overflow: visible` with `text-overflow: clip`, `word-break: normal` and `overflow-wrap: normal`, so nothing clips, wraps
+or ellipsises at any width. `/home` at 375 additionally overflows on a **second** text node — the trinket caption,
+71.86 px past its 292 px `div.homeLabel`. Disposition: **PRESERVED**.
+
+#### 22.9.2 Foundation's closed dropdowns account for 29 of the 30 overflowing elements
+
+At 375 every screen reports around 30 elements whose `right` exceeds `clientWidth`, and **29 of them are the same thing
+on every page**: Foundation parks the two *closed* top-bar dropdowns just past the right edge, clipped into 2 × 2 px
+boxes, rather than using `display: none` — so `ul#user_dropdown` sits at `right` 377, `ul#new_trinket_list` at 378, nine
+`<li>` at 376–377, nine `<a>` at 406–407, and the widest, `i.lang-sprite-python`, at **411.5** (36.5 px past). All report
+`visibility: visible` and `opacity: 1`.
+
+The number that matters is the gap: **the largest element right is 411.5 px, which is 1,015 px short of `/home`'s
+`scrollWidth` of 1427.** An element-box scan therefore cannot explain the document's own overflow, which is precisely why
+the text-node hunt was necessary — and why `/home` at 768 reports **zero** overflowing elements while still overflowing
+by 659 px. Disposition: **PRESERVED**.
+
+#### 22.9.3 One hard-coded 450px width, and the measured breakpoint windows
+
+The library page's only genuine element overflow is `div.search-input`, `position: absolute` with a **hard-coded
+`width: 450px`** from `static/scss/_library.scss:L108`, compiled to
+`.search-input{position:absolute;top:0;left:5.65rem;width:450px;height:3rem;z-index:5;overflow:hidden}`. At 375 its right
+edge lands at 572.39 — **197.39 px past the viewport**, and single-handedly the reason `scrollWidth` is 572. At 768 it
+crosses by **0.19 px**, a sub-pixel artefact; from 1280 it fits. Worth stating alongside it: the sub-navigation **bar**
+itself ends exactly at `clientWidth`, and **all five of its buttons fit** at 375, the tightest having 32 px of headroom —
+so the overflow comes from a non-button descendant, not from the toolbar wrapping.
+
+The visibility classes also yielded a **correction to the breakpoints this measurement assumed**.
+`.show-for-xlarge-up` — three elements on the library page, the "Last Updated", "Grid" and "new folder" labels — is still
+`display: none` at **1280** and only becomes `inline-block` by 1920, so this fork's xlarge threshold lies between 1281
+and 1920 (consistent with Foundation 5.5.x's stock `min-width: 90.063em` ≈ 1441 px), **not** at 1200. `.show-for-large-up`
+— one element, the "New Trinket" label — flips between 769 and 1280, consistent with 1024 px. And
+`.show-for-small-only`, `.show-for-medium-up` and `.hide-for-small` **appear nowhere in any of the three screens at any
+width**; `/u/{username}/classes` uses no Foundation visibility class at all. The practical effect is that the library
+toolbar is icon-only with no text labels at every width below 1920. Disposition: **PRESERVED**.
+
+#### 22.9.4 The content column is full-bleed, and one heading sits flush against the edge
+
+Centring was measured as the left and right gap from `section#main-content` and from its first `div.row` to the viewport
+edges, at all twelve combinations. **All 24 gap pairs are exactly equal — every delta is 0.00 px, so there is no
+centring offset anywhere.** The structure behind that is worth recording: `section#main-content` is **full-bleed** at
+every width on every screen (`x = 0`, `right = clientWidth`), and centring is delivered entirely by the inner row's
+1000 px (62.5rem) max-width, which first binds at 1280 with 140 px symmetric gutters and grows to 460 px at 1920. The
+library page's first row carries `gutterless`, so it **never** clamps at any width.
+
+One consequence follows directly and is visible in the narrow screenshots: because the row supplies the gutter and the
+row does not clamp below 1280, `/u/{username}/classes`'s `<h1>` renders at **`x = 0`, `padding-left: 0px`,
+`margin-left: 0px`** at both 375 and 768 — the heading's leading glyph touches the viewport edge. Nothing is clipped
+(`left` is 0, not negative), and from 1280 the heading gains its 140 px gutter. Disposition: **PRESERVED** — the row
+system and the 1000 px max-width are frozen stylesheet values whose compiled output must reproduce byte-for-byte.
+
+#### 22.9.5 The course-outline toggle is visible and completely unclickable
+
+This is the most consequential responsive condition measured, and it resolves BQ-14's open question.
+
+`a#outline-expander` is painted, obvious and blue — rect **x 0, y 145, 43.72 × 64**, `background-color: rgb(0, 138, 255)`,
+a white hamburger glyph inside, `ng-click="menuOpen=!menuOpen"`. `document.elementFromPoint` at its centre returns
+**`div.course-subnav`**, not the toggle and not a descendant of it. A **4 px grid sweep of all 176 points across its
+entire box found 0 at which the toggle or a descendant is the topmost hit element — a reachable fraction of 0.00 %.**
+In the paint stack it comes **third**, behind the occluder and behind its own icon.
+
+The cause is two adjacent rules in one frozen stylesheet. `static/scss/_course-view.scss:L62-L70` declares
+`#outline-expander { position: fixed; … }` and **declares no `z-index`**, so it computes to `auto`; an enumeration of its
+ancestors for stacking-context creation returns the empty list, so it paints in the **root** stacking context at
+effective z 0. Eleven lines earlier, `static/scss/_course-view.scss:L21-L28` declares
+`#course-nav { z-index: 10; position: absolute; top: 0; width: 100%; height: 80px; … }` — and that header is the only
+stacking-context ancestor of the occluding `div.course-subnav`. **z-index 10 beats z-index auto, so the header's subtree
+paints above the fixed tab regardless of DOM order** — and DOM order would have favoured the toggle:
+`compareDocumentPosition` returns 2, meaning the subnav *precedes* it. The explicit `z-index: 10` is what inverts the
+outcome.
+
+The geometry completes it: **the header's box is 80 px tall (y 45–125) while its child `div.course-subnav` is 178 px tall
+(y 45–223), so the child overhangs its own absolutely-positioned parent by 98 px**, sweeping across the tab at y 145–209.
+Because that child's `background-color` is `rgba(0, 0, 0, 0)` — fully transparent — the blue tab remains perfectly
+visible beneath it. A textbook visible-but-unhittable control. Three elements share the occlusion: `div.course-subnav`
+takes 128 of the 176 points, the next-page button 33, and **the "Dashboard" button 15** — so a user aiming at the
+toggle's upper-right corner would instead activate Dashboard and navigate off-origin, per
+[22.5.5](#2255-the-dashboard-is-unreachable-through-its-own-navigation-on-any-non-production-host).
+
+**The condition is narrow-viewport-only, and the counter-measurement identifies the real trigger.** At 1920 the same
+toggle is **175 of 176 points reachable — 99.4 %** — with `elementFromPoint` returning the toggle's own `<i>` child and
+**neither `header#course-nav` nor `div.course-subnav` appearing anywhere in the hit stack**. The difference is not the
+`z-index`, which is identical at both widths; it is the sub-navigation's **height**. At 1920 `div.course-subnav` lays
+out on one row at **72 px**, ending at y 118 — inside the header's own 80 px box and **28 px above the toggle's top edge
+at y 146**, so there is no overhang to occlude anything. At 375 the same sub-navigation **wraps to 178 px**, ending at
+y 223, and sweeps across the toggle. So the trigger is sub-navigation wrapping, and the `z-index: 10` is what turns an
+overlap into an occlusion rather than merely a visual overlay. This holds whether the drawer is open (toggle at x 350) or
+closed (toggle at x 0) — it is measured 0 / 176 in both states.
+
+The panel it would open is `aside#outline`, at **x −350** with `position: fixed`, `width: 350px`, `left: 0` and
+`margin-left: -350px` (`_course-view.scss:L72-L80`; the 350 px is the frozen `$off-canvas-width` token from
+`static/scss/_settings.scss:L31`). Its right edge is exactly 0, so while closed it does not overlap the content — and
+**the "Topic" and "Outline" controls live inside it**, at x −350…0. **That is the mechanism BQ-14 records as "no
+breakpoint reveals them": they are not hidden by a media query at all — they are parked off-screen behind a toggle that
+cannot be clicked.**
+
+Driving the toggle programmatically to obtain the open-state figures shows the second half of the condition. The panel
+slides to x 0, and **`scrollWidth` goes from 375 to 539 — introducing 164 px of horizontal overflow where there was
+none** — with 12 new content elements crossing the edge. The article's boxes **collapse to width 0** at x 410 while their
+text still renders, so three text nodes overflow, the widest ("Heading") reaching `right` 539.45 and setting the new
+`scrollWidth`. The panel then **overlaps `section#main-content` across 350 × 318.73 px — 93.33 % of its width — leaving a
+25 px sliver**. And the toggle **remains occluded when open**, relocated to `right` 392.58 with `elementFromPoint` still
+returning `div.course-subnav`, so the panel cannot be closed by pointer either.
+
+| Fact | Value |
+|---|---|
+| What it is | At 375 px the course-outline toggle is fully painted yet 0 % pointer-reachable; the panel it controls holds the Topic and Outline controls, and opening it introduces 164 px of overflow and covers 93 % of the content column |
+| Evidence | `public/partials/course_editor.html:L35` (the toggle), `L38` (`aside#outline`), `L1` (`header#course-nav`), `L7` (`div.course-subnav`); `static/scss/_course-view.scss:L62-L70` (fixed, no `z-index`) against `L21-L28` (`z-index: 10`, `height: 80px`); 0 of 176 grid points reachable; occluder background `rgba(0,0,0,0)` |
+| Why preserved | Both files have a **0-line diff** against `2f8712a`, and `static/scss/**` is frozen so `public/css/base.css` reproduces at 265,727 bytes. §0.4.4 makes the interface layer preservation-only and D1 places the design contract above usability heuristics |
+| What a naive fix would have broken | Raising the toggle's `z-index`, lowering the header's, or constraining the subnav's height all change the compiled stylesheet and therefore the artifact hash; they would also alter the desktop stacking of a header that overlaps content at every width |
+
+Disposition: **PRESERVED** — and cross-referenced from BQ-14 as its mechanism.
+
+#### 22.9.6 The same drawer widget exists twice, and only one copy is accessible
+
+The outline drawer is implemented **twice**, from two independent sources, and the two copies have drifted. The course
+editor's copy is fetched as an AngularJS route template — `GET /partials/course_editor.html` → **200** — and driven by
+`public/js/courseEditor/**`. The class page's copy is **server-rendered inline** in
+`lib/views/classes/view.html:L68-L72` and driven by `public/js/classPage/app.js`; that page requests **no**
+`partials/*.html` route template at all, and makes **zero** `js/courseEditor/**` requests. Two sources, one widget.
+
+| Element | Course-editor copy (`public/partials/course_editor.html`) | Class-page copy (`lib/views/classes/view.html`) |
+|---|---|---|
+| `#outline-expander` attributes | **3** — `id`, `ng-click="menuOpen=!menuOpen"`, `tabindex="0"` (`L35`) | **4** — the same three plus **`aria-label="Toggle Outline"`** (`L69`) |
+| `#outline` attributes | **2** — `id`, **`class="editable"`** (`L38`) | **3** — `id`, **`ng-attr-aria-hidden="{{ menuOpen ? false : true }}"`**, the interpolated `aria-hidden`; **no `class`** (`L72`) |
+| `aria-label` on the toggle | **absent** | present |
+| `aria-hidden` on the panel | **absent**, and no binding | present **and live** — measured `"false"` with the drawer open at 1280 and `"true"` with it closed at 375 |
+| `#new-topic-container` | present, holding the Topic and Outline controls | **does not exist at all**, at either width |
+
+So the **class-page copy is the accessible one** and the **course-editor copy has neither affordance** — no name on the
+toggle, no hidden-state exposure on the panel it controls. The drift is not one-directional in every respect: the editor
+copy uniquely carries `class="editable"`, which the class copy lacks. Consistent with the table, the three DevTools
+accessibility advisories fire on the editor page and the class page emits **zero** console messages of any kind.
+
+One further defect measured inside the editor copy's `#new-topic-container`: it holds three anchors, and **two of them
+share `id="edit-outline-button"`** — the visible "outline" control and a hidden `ng-hide` "done" control — so
+`querySelector('#edit-outline-button')` resolves to the first and the second is unaddressable by id.
+
+| Fact | Value |
+|---|---|
+| What it is | One widget implemented twice from two independent template sources; the class-page copy carries `aria-label` and a live `aria-hidden` binding, the course-editor copy carries neither, and the editor copy additionally has a duplicated element id |
+| Evidence | `public/partials/course_editor.html:L35`, `L38`, `L74` against `lib/views/classes/view.html:L69`, `L72`; editor fetches `/partials/course_editor.html` 200 and `js/courseEditor/**`, class page fetches neither and loads `js/classPage/app.js`; `aria-hidden` measured `"false"` open / `"true"` closed |
+| Why preserved | Both files have a **0-line diff** against `2f8712a`; `public/**` and `lib/views/**` are frozen, and D1 places the design contract above WCAG heuristics |
+| What a naive fix would have broken | Copying the class page's `aria-label` and `aria-hidden` binding into the editor partial edits a frozen template; de-duplicating the id changes which element `#edit-outline-button` selects, and the editor's own controller resolves it by id |
+
+Disposition: **PRESERVED**.
+
+### 22.10 Four client mechanisms, and one claim measurement refuted
+
+#### 22.10.1 One stored setting, two readers, two answers
+
+The editor's indentation preference is settable through `POST /api/users/settings/indentation`, whose schema at
+`config/api_routes.js:L1502` declares `htmlTab : Joi.number().optional()` — no minimum, so **0 is an accepted value**.
+Two files then read the stored setting, and with `htmlTab: 0` they disagree:
+
+| Reader | Expression | Result with `htmlTab: 0` |
+|---|---|---|
+| `public/js/embed/html.js:L195` | `tabSize : window.userSettings && window.userSettings.htmlTab \|\| 2` | **2** — `0` is falsy, so the `\|\|` default fires |
+| `public/js/embed/embed.js:L617` | `window.userSettings.htmlTab != undefined ? window.userSettings.htmlTab : 2` | **0** — the defined-check passes `0` through |
+
+So a user who stores zero gets a tab size of 2 in the editor that consumes the first expression and 0 in the one that
+consumes the second, from a single stored value. Both files have a **0-line diff** against `2f8712a`. Aligning the two
+readers would change the editor's indentation behaviour for any account holding a falsy value — a client-visible change
+R-4 forbids. Disposition: **PRESERVED**.
+
+#### 22.10.2 One analytics helper, seven unqualified call sites
+
+`sendInterfaceAnalytics` is defined once, as a method on the embed API object at `public/js/embed/embed.js:L1755`
+(`sendInterfaceAnalytics : function(el, options) {…}`). It is invoked **17** times. Ten are correctly qualified —
+`api.sendInterfaceAnalytics(…)` at `embed.js:L200`, `pygame.js:L809`, `python.js:L263` and `L1017`, `blocks.js:L110`,
+`glowscript.js:L410`, `glowscript-blocks.js:L310`, plus `self.`/`this.` forms at `embed.js:L298`, `L724` and `L728`. The
+other **seven are bare** — `sendInterfaceAnalytics(this);` with no receiver — at `pygame.js:L771`, `python3.js:L660`,
+`python.js:L978`, `java.js:L411`, `R.js:L543`, `glowscript.js:L369` and `glowscript-blocks.js:L260`. There is no
+global of that name, so those seven resolve to `undefined` and throw on call; the analytics event they would have sent is
+never sent, and the surrounding handler aborts at that point. All seven files have a **0-line diff** against `2f8712a`.
+Adding the `api.` receiver would begin emitting seven analytics events that have never been emitted and would change the
+control flow of seven handlers. Disposition: **PRESERVED**.
+
+#### 22.10.3 Two `createPatch` producers for one stored format
+
+Course-material history and the client error reporter both serialise diffs with the same library call —
+`JsDiff.createPatch` at `public/js/courseEditor/controllers/materialControl.js:L321` and
+`window.JsDiff.createPatch` at `public/js/embed/python.js:L1068` — and the stored shape is documented in the model at
+`lib/models/errorEvent.js:L39`, which notes that the value is *stored as a git patch without the header info*. That
+comment is the reason the header-rewriting behaviour recorded in [§3.17](#317-the-leading-10-hunk-header-is-rewritten-to-00-before-applypatch) must hold: the
+persisted format is a bare hunk, so the `@@ -1,0` → `@@ -0,0` normalisation is part of the storage contract TR6 freezes,
+not a cosmetic detail. Disposition: **PRESERVED**.
+
+#### 22.10.4 The drag handle the tree library never sees
+
+`angular-ui-tree` activates a drag handle when it finds the **attribute** `ui-tree-handle` on an element. A
+repository-wide search for that attribute returns **0** occurrences. What the course editor supplies instead is the
+**class** `angular-ui-tree-handle`, at `public/partials/course_editor.html:L45`, `L52`, `L156` and `L184` — for instance
+`<div class="lesson-title angular-ui-tree-handle clearfix">`. The class is what the library's own stylesheet targets for
+appearance; the attribute is what its directive requires for behaviour. With the attribute absent at all four sites, the
+handles look like handles and initialise no drag behaviour, so lesson and material reordering falls back to whatever the
+enclosing `ui-tree-node` provides. The template has a **0-line diff** against `2f8712a`; adding the attribute would
+enable a drag interaction that has never been enabled. Disposition: **PRESERVED**.
+
+#### 22.10.5 A claim this pass refuted, and the header that makes it matter
+
+**Claim: "`/embed/deps.js` returns 404, breaking the Blockly loader."** **Refuted in its consequential half.** The path
+does 404 — `GET /embed/deps.js` answers **404, `content-type: text/html; charset=utf-8`, 1,545 bytes**, the rendered
+`404.html`, whose body is **byte-identical** to the `/favicon.ico` 404 body — but **the browser never requests it.**
+`lib/views/embed/glowscript-blocks-iframe.html:L6` loads
+`/components/glowscript-blocks/blockly_uncompressed.js` by an **absolute** path, so no `/embed/`-relative resolution ever
+occurs; Closure then derives `goog.basePath` from the `<script>` whose src ends in `base.js`, and measured it as
+`…/cache-prefix-<ms>/components/closure-library/closure/goog/`. The single `deps.js` request therefore goes there and
+returns **200 `text/javascript`** with the genuine Closure dependency file. All **199** loader-written script tags return
+200, `window.Blockly` is defined with 126 own keys, and `getMainWorkspace()` reports a **rendered** workspace. The only
+request ≥ 400 on the page is `404 GET /favicon.ico`.
+
+What the investigation did establish is a consequence worth keeping, because it connects a missing header to observable
+behaviour. Two controlled probes served responses to a `<script src>`:
+
+- A **404** with `content-type: text/html` — Chrome aborts (`net::ERR_ABORTED`), fires a resource-level `onerror`, and
+  logs only `Failed to load resource`. **No `SyntaxError`, and no MIME error**: the error status pre-empts execution, so
+  the content type never gets the chance to matter.
+- A **200** with `content-type: text/html` — Chrome fires `onload`, **accepts the response and executes the HTML as
+  JavaScript**, producing `Uncaught SyntaxError: Unexpected token '<'` at line 1, column 1.
+
+Chrome's strict-MIME blocking never engages, because the application sends **no `X-Content-Type-Options: nosniff`** —
+verified absent on both responses. That is the concrete cost of the missing header recorded in
+[§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else):
+any HTML error document served at 200 to a script context is executed rather than refused. The header set is frozen
+baseline behaviour, so this is documented rather than changed. Disposition: **PRESERVED**.
+
+#### 22.10.6 Triage rows for 22.8 through 22.10
+
+| Reported condition | Catalogue home |
+|---|---|
+| `/home` skips many interactive elements in the tab order | [22.8.1](#2281-the-tab-order-reaches-14-elements-and-skips-45) — measured at **45**, of which 12 are visible orphans |
+| A fully invisible tab stop | **Corrected** — 0 zero-size stops on `/home`; the genuinely invisible focusable element is the `/classes` whitespace anchor in [22.6.1](#2261-a-whitespace-only-name-produces-a-focusable-unlabelled-invisible-link-on-one-screen-and-an-unreachable-row-on-another), and the `clip` mechanism is [22.8.3](#2283-the-dropdown-items-that-three-different-apis-disagree-about) |
+| Focus rings absent; `:focus-visible` rule count | [22.8.2](#2282-every-focus-ring-on-the-site-is-the-browsers-and-one-rule-removes-it) — `:focus-visible` **0**, `:focus` 79, and one rule removes the ring from text inputs |
+| `aria-current` 0, live regions 0, `aria-hidden` absent | [22.8.4](#2284-the-aria-and-document-semantics-census) |
+| Alt-text defects; heading levels | [22.8.5](#2285-alt-text-heading-levels-and-touch-targets) |
+| Touch targets below 44 px | [22.8.5](#2285-alt-text-heading-levels-and-touch-targets) |
+| Pressed-state not exposed | [22.8.4](#2284-the-aria-and-document-semantics-census) — `[aria-pressed]` **0**, `[aria-expanded]` **0** |
+| Modal focus containment; menu dead ends | [22.8.6](#2286-the-modal-takes-no-focus-traps-none-and-returns-none) and [22.8.4](#2284-the-aria-and-document-semantics-census) |
+| "Escape closes nothing" | **Refuted** — Escape does close the dialog; what it does not do is move focus. [22.8.6](#2286-the-modal-takes-no-focus-traps-none-and-returns-none) |
+| Library horizontal overflow at narrow widths | [22.9.3](#2293-one-hard-coded-450px-width-and-the-measured-breakpoint-windows) — 197.39 px, from one hard-coded 450 px width |
+| Centring offsets | **Refuted** — all 24 gap pairs exactly equal; the real condition is a full-bleed column and a flush heading, [22.9.4](#2294-the-content-column-is-full-bleed-and-one-heading-sits-flush-against-the-edge) |
+| Course-outline toggle pointer-unreachability | [22.9.5](#2295-the-course-outline-toggle-is-visible-and-completely-unclickable) — 0 of 176 points |
+| Outline-open layout destruction | [22.9.5](#2295-the-course-outline-toggle-is-visible-and-completely-unclickable) — 164 px introduced, 93.33 % of the content column covered |
+| Editor Topic/Outline controls unreachable at every breakpoint | [BQ-14](#175-bq-14-the-editors-topic-and-outline-controls-and-why-no-breakpoint-reveals-them), mechanism supplied by [22.9.5](#2295-the-course-outline-toggle-is-visible-and-completely-unclickable) |
+| `htmlTab` reader divergence | [22.10.1](#22101-one-stored-setting-two-readers-two-answers) |
+| `sendInterfaceAnalytics` undefined-global calls | [22.10.2](#22102-one-analytics-helper-seven-unqualified-call-sites) |
+| `createPatch` stored format | [22.10.3](#22103-two-createpatch-producers-for-one-stored-format) |
+| `ui-tree-handle` attribute versus class | [22.10.4](#22104-the-drag-handle-the-tree-library-never-sees) |
+| `/embed/deps.js` 404 | **Refuted** — never requested; the retained finding is the `nosniff` consequence, [22.10.5](#22105-a-claim-this-pass-refuted-and-the-header-that-makes-it-matter) |
+| Editor Topic/Outline reported 0 px visible at all five widths | **Corrected** — 175 px each at a fresh 1280 or 1920 load; see [17.5.1](#1751-corrected-the-drawer-opens-by-default-when-the-document-loads-wide-and-is-never-re-evaluated) |
+| One drawer widget, two template sources, only one accessible | [22.9.6](#2296-the-same-drawer-widget-exists-twice-and-only-one-copy-is-accessible) |
+
+### 22.11 The Account Settings screens: one shared feedback mechanism, and the id that breaks it
+
+The Account Settings area is the one module the runtime-QA pass reported on that had **no entry anywhere in this
+document**. It is covered here in full. Everything below was measured on the delivered tree against the running
+application at viewport 1280 × 900, and every template cited has a **zero-hunk diff against the base commit**:
+`lib/views/users/account.html`, `lib/views/users/includes/profile.html`, `.../password.html`, `.../email.html`,
+`.../delete-account.html` and `static/scss/_profile.scss` all return nothing from
+`git diff 2f8712a..HEAD -- <path>`.
+
+**The shell, and why it decides everything else.** `lib/views/users/account.html:L31` is
+`{% include "users/includes/" + page + ".html" %}` — **exactly one partial is rendered per page**. The six pages come
+from `account.html:L12`, `{% set pages = ['Profile', 'Email', 'Password', 'Trinket-Editor', 'Data', 'Delete-Account'] %}`,
+each rendered through the identical `<li><a>` at `account.html:L14`. That single-include rule is the mechanism behind
+22.11.2 below, and the identical-markup loop is the mechanism behind 22.11.6.
+
+#### 22.11.1 The success message is server-rendered before any save, and every banner dies after exactly 5000 ms
+
+**What it is.** Both account banners carry their text as static template content, present from first paint and merely
+hidden by a class; and any banner that is shown is re-hidden by a fixed 5-second timer, whether or not the user has
+finished reading it.
+
+**Evidence.** `profile.html:L4-6` declares
+`<div id="profileSuccess" data-alert class="alert-box success hide-override">Success! Your profile has been updated.</div>`
+— the string is in the markup, not injected at save time. `password.html:L6` does the same with
+`Success! Your password has been updated.` Measured on the loaded page **before any submit**, `#profileSuccess`
+`textContent` is already `Success! Your profile has been updated.` with computed `display: none` and a
+`getBoundingClientRect()` of all zeros; `#passwordSuccess` likewise reads `Success! Your password has been updated.` at
+`display: none`. Only the class ever changes.
+
+The hiding rule is a single declaration. Across the page's **8** stylesheets there is **exactly one** rule whose
+selector mentions the class — `base.css` rule index 1561,
+`#account .hide-override, #compare-plans-modal .hide-override { display: none !important; }`, compiled from
+`static/scss/_profile.scss:L70-72`. The three cross-origin cdnjs sheets raise `SecurityError` on `cssRules`, so they
+were fetched directly and grepped instead: **0, 0 and 0** occurrences, which is what makes "exactly one rule" a
+measurement rather than an assumption. Note the rule is descendant-scoped to `#account`, and both banners sit inside
+`<div id="account" class="row profile">`, so it applies.
+
+The timer is `profile.html:L164-169`, repeated verbatim at `password.html:L95-100`:
+
+```javascript
+function showAlert(alert) {
+  $(alert).removeClass("hide-override");
+  setTimeout(function() {
+    $(alert).addClass("hide-override");
+  }, 5000);
+}
+```
+
+A `MutationObserver` over a real save recorded **exactly two** mutations on `#profileSuccess` and **zero** on
+`#profileError`: at **+17.4 ms** the class lost `hide-override` and computed `display` became `block`; at
+**+5017.4 ms** the class regained it and `display` returned to `none`. The visible window is therefore
+**5017.4 − 17.4 = exactly 5000.0 ms**, with the AJAX round trip accounting for the 17 ms. Sampling at the same
+instants gives `display: block` and rect `{x: 421, y: 140.19, width: 688, height: 49.5}` at **+300.2 ms**,
+**+2000.3 ms** and **+4500.3 ms**, and `display: none` with a zero rect at **+5500.2 ms** and **+7000.3 ms**. The
+banner is **in flow**, not overlaid: it displaces everything below it by about 70 px — avatar 140 → 210, the two
+inputs 187 → 257 and 243 → 313, the button 320 → 390 — and snaps back when it hides, with no transition.
+
+**Why it is preserved.** `profile.html`, `password.html` and `_profile.scss` are frozen by AAP §0.2.2.1 and §0.9.4,
+and the compiled `base.css` is a parity artifact whose byte size and digest are gates. The 5-second dismissal is
+observable behavior under R-4.
+
+**What a naive fix would have broken.** Two things. Removing the timer would leave the pre-rendered success string
+one class-toggle away from being permanently visible, and because the string is *already in the DOM at load* any
+change to how `hide-override` is applied risks showing "Success! Your profile has been updated." on a page where
+nothing has been saved. And lengthening or removing the dismissal changes the in-flow layout for longer, moving every
+control below the banner — a client-visible geometry change on a frozen template.
+
+#### 22.11.2 The mis-targeted alert, reproduced end to end through a real session expiry
+
+**What this adds.** The mechanism is already established at
+[§17.4](#174-bq-11-the-profile-forms-one-mis-targeted-alert-and-why-it-can-never-find-its-target): `profile.html:L161`
+reveals `#passwordError`, an id that `account.html:L31`'s one-include-per-page rule can never place on the profile
+route, so `showAlert` acts on an empty set. That entry establishes it from the templates and the served byte counts.
+What is added here is the **end-to-end runtime reproduction** through a genuine mid-flow session expiry — the exact
+scenario the runtime-QA pass reported as Issue 19 — together with the four things §17.4 leaves open: what the network
+actually answers, what the DOM actually receives and when, that **nothing anywhere on the page becomes visible**, and
+that the browser emits **no diagnostic at all**.
+
+**Evidence.** The session was destroyed between typing and submitting. The `session` cookie is `HttpOnly`, so it was
+removed through the browser's cookie store rather than `document.cookie`, and the deletion was proven on the wire:
+the outgoing request carried `cookie: browser_id=…` **and nothing else**. `PUT /api/users/{id}` answered **401** with
+a 67-byte body, `{"statusCode":401,"error":"Unauthorized","message":"Not logged in"}`, `cache-control: no-cache`, and
+no `set-cookie`. The `MutationObserver` recorded exactly two mutations — at **+3.7 ms** the form gained
+`ng-submitted`, and at **+13.9 ms** `span#message` received its text — and **no class mutation on either alert div**.
+Afterwards `#message.textContent` is
+`Something went wrong when trying to update your profile. Please try again.` while its rect is all zeros and
+`#profileError` computed `display` is `none`. A live filter over
+`[data-alert], [role=alert], [aria-live], .notifyjs-container, .alert-box, .flash, .notify` for anything with a
+non-`none` display and a non-zero box returned **`[]`**; `[role=alert]`, `[aria-live]` and `.notifyjs-container` each
+match **0** elements on the page. The banner band (421, 141)–(1109, 190) measured **32,786 of 33,712 pixels pure
+white, 0 green and 0 red**. Console output for the whole interaction was the browser's own network line,
+`Failed to load resource: the server responded with a status of 401 (Unauthorized)`, and **no application error of any
+kind**. Screenshot: `blitzy/screenshots/acct_profile_session_expiry.png` — indistinguishable from the at-rest page,
+including its at-rest geometry, because nothing was inserted into the flow.
+
+Two further measured consequences. The unsaved value stays in the field (`#display-name` still reads
+`Session Expiry Probe`), and there is no navigation — `window.__navCount` is **0** and the final URL is unchanged —
+so the top bar continues to render the avatar, the username and "Sign Out". The screen is indistinguishable from
+success.
+
+The mirror image holds in the **live DOM** as well as in the served bytes §17.4 counts: measured on
+`/account/password`, `#profileError` and `#profileSuccess` each match **0** elements, and the only two `.alert-box`
+elements present are `passwordError` and `passwordSuccess`.
+
+**Why it is preserved.** Both partials are frozen, for the reasons §17.4 gives. Two points that reproduction adds to
+them: the server side is entirely correct — the write is rejected, the stale cookie is cleared through
+`clearInvalid`, and a real page navigation *does* redirect to `/login` — and the absence of any console diagnostic
+means this condition cannot be detected by monitoring, only by looking.
+
+**What a naive fix would have broken.** Changing `"#passwordError"` to `"#profileError"` is a one-token edit, and it
+is not available: it converts a silent failure into a visible red banner on the profile screen, which is a
+client-visible behavior change on a frozen template, outside R-1's four categories. It would also make the
+already-composed message text visible for the first time — text no client has ever seen — and, on the 401 path, it
+would surface an unauthenticated state that the page currently hides.
+
+#### 22.11.3 Corrected — a successful profile save DOES show a banner, and it does not reload the page
+
+**The reported claim.** The runtime-QA pass recorded that a state-changing profile save produces **no success
+feedback of any kind**, with pre- and post-save pages differing by 0.06 % luminance, and separately that every save
+causes a **33 ms full-document white flash** whose missing top bar proves a full-document navigation rather than an
+in-page transition.
+
+**Both halves are refuted by measurement, and the same tooling hazard explains both readings.**
+
+*The banner exists.* On a real save the request is exactly **one** `PUT /api/users/{id}` → **200** with a 354-byte
+body whose top-level keys are `['context','flash','success','user']` and whose `success` is `true`; `profile.html:L140-141`
+therefore takes the `if (result.success)` branch and calls `showAlert("#profileSuccess")`. The banner was measured
+`display: block` at rect `{x: 421, y: 140.19, width: 688, height: 49.5}` with background `rgb(37, 187, 23)`, carrying
+`Success! Your profile has been updated.`, at **+0.3 s, +2 s and +4.5 s**, and hidden at **+5.5 s and +7 s** — the
+5000 ms window of 22.11.1. Two independent replications produced byte-identical 354-byte bodies.
+
+*There is no navigation.* `window.__navCount` is **0**; the `beforeunload` listener never fired; in-page
+instrumentation installed before the click was still readable **38.9 seconds** later, which is itself proof that the
+document was never replaced; `performance.getEntriesByType('navigation')` has **length 1** and its single entry's
+`type` is `"navigate"` — the original page load, 260.9 ms, created before the click. The click produced **one**
+request, no document request and no redirect. `profile.html:L128-130` calls `event.preventDefault()`, and jQuery
+2.2.4 is loaded from cdnjs **in the document head** — measured at byte offset 3,808 against `</head>` at 6,068 — well
+before the inline handler at byte 12,747, so the handler does bind. The form's `getAttribute('action')` is `null`,
+so a native submit *would* post to the current URL; it never happens.
+
+*Why the original reading arose, measured rather than guessed.* A screenshot round trip in the harness used for this
+verification measured **about 10 seconds** — longer than the banner's 5-second life. A before/after screenshot pair
+taken that way captures two *post-dismissal* frames, which differ only in the field's text and therefore in a
+fraction of a percent of luminance. The same latency explains a "flash": the only frames a slow sampler can catch are
+the pre-banner and post-banner layouts, between which every element below the banner moves ~70 px. The banner-visible
+frames in this pass were therefore extracted from a continuous 30 fps recording of the real, unmodified interaction
+and verified pixel-wise — **32,568 of 33,712 green pixels** at click +0.017 s, **32,585** at +2.000 s and **0** at
++7.000 s, with the sampled pixel at (600, 165) reading `rgb(37, 187, 23)`, `rgb(38, 193, 19)` and
+`rgb(255, 255, 255)` respectively. All timing figures come from in-page instrumentation, which is independent of
+harness latency.
+
+**Disposition.** The success-feedback and full-document-navigation claims are **withdrawn** for the profile save. What
+survives from the report, and is catalogued above, is that the *failure* path is silent (22.11.2) and that the success
+banner self-dismisses after 5 seconds (22.11.1). Screenshots: `blitzy/screenshots/acct_profile_after_save_0s.png`,
+`acct_profile_after_save_2s.png` and `acct_profile_after_save_7s.png`.
+
+#### 22.11.4 The only field-level error in the application, attached without any request being made
+
+**What it is.** A new-password/confirm-password mismatch is the one place in this application that attaches an error
+to the offending fields themselves. It is also entirely client-side: no request is issued, and the field-level styling
+outlives the banner that explains it.
+
+**Evidence.** With current password `qafix-pw-12345` and two different new values, `#new-password` and
+`#confirm-password` each gained `className` exactly `input-error` with computed `border-color`
+**`rgb(204, 0, 0)`** on all four sides, up from the at-rest `rgb(204, 204, 204)`. `#current-password` was untouched:
+`className` `""`, border `rgb(204, 204, 204)`. `#passwordError` became `display: block` at rect
+`{x: 421, y: 140.19, width: 688, height: 49.5}` with background `rgb(240, 65, 36)`, carrying
+`Your new password entries did not match. Please try again.`
+
+The observer recorded **six** mutations and no seventh: `+2.0 ms` and `+2.4 ms` the two error classes, `+2.4 ms` the
+message text, `+2.5 ms` the banner un-hidden, `+2.9 ms` the form's `ng-submitted`, and `+5002.2 ms` the banner
+re-hidden. Because there is no seventh mutation, the `input-error` classes are **never removed**: sampled at +0.3 s,
++2 s, +4.5 s, +5.5 s, **+6 s** and +7 s, both inputs read `input-error` / `rgb(204, 0, 0)` at every one, while the
+banner is gone from +5.5 s onward. Pixel proof: the dark-red border pixel count is **1,016 in both** the +2 s and
++7 s frames while banner-red falls from 32,165 pixels to 23. After five seconds the user is looking at two red-bordered
+fields with no explanation anywhere on screen.
+
+**No request is made at all.** Since the navigation to `/account/password` there are exactly **63** requests, and
+filtering them to `xhr`, `fetch` and `document` leaves only the document itself; there is **no** `POST` to the
+password endpoint, and no request of any kind after the last page-load asset, which preceded the click. The mismatch
+branch returns before reaching `$.ajax`. One consequence worth stating because it bounds what this entry can claim:
+the server's own password policy is therefore never exercised on this path, and it was deliberately not probed, since
+doing so would change the fixture's credential.
+
+**Why it is preserved.** `password.html` is frozen. The persistence-past-the-banner asymmetry is observable behavior
+under R-4, and the `input-error` treatment is the frozen design system's, not something to normalize.
+
+**What a naive fix would have broken.** Clearing `input-error` when the banner hides would remove the only
+field-level error signal the application has; making the mismatch check server-side would introduce a request where
+none exists today and would put the user's proposed password on the wire in a case that currently never leaves the
+browser.
+
+#### 22.11.5 `/account/email` renders no form, because email is not configured — and its script still runs
+
+**What it is.** The email screen presents no way to change an email address, while `POST /api/users/email` is live and
+fully validated. The absence is **configuration-gated, not a missing form**, and the partial's inline script still
+binds to three ids that the gate removed.
+
+**Evidence.** `email.html:L14` opens `{% if emailEnabled %}`; the two forms live at `L15-28` and `L30-57`; and
+`L58-63` is the `{% else %}` branch that renders a single paragraph. `emailEnabled` is computed at
+`lib/http/responseContract.js:L238` as `hasFrom && (hasAWS || hasMailgun)` — false on this deployment — and the value
+is echoed into the page's inline config, where it was read back as `emailEnabled: false`.
+
+Measured on `/account/email`: `document.forms.length` is **0**; the trimmed `innerText` of `#content` is exactly
+
+```text
+Current Email Address
+qafix-owner@example.com
+
+Email changes are not available because email is not configured on this server.
+```
+
+and the **only** `<input>` in the entire document is the page shell's `<input type="hidden" id="whoami">`, with zero
+inputs inside `#content` and zero visible inputs anywhere. `#content` contains no `<a>` and no `<button>` either.
+Server-side corroboration over real HTTP: `GET /account/email` answers **200** at 19,220 bytes with **0** `<form>`
+occurrences, while `/account/profile` and `/account/password` each answer 200 with **1**.
+
+The script at `email.html:L66-140` is emitted regardless of the gate, so `$('#change-email').submit(...)`,
+`$('#resend-email').click(...)` and `$('#send-verification-email').click(...)` all bind against **empty sets** — three
+permanently dead bindings, and no diagnostic, for the same reason as 22.11.2. That dead code also records that the
+email flows use `$('#account').notify(...)` toasts, a third feedback mechanism distinct from the alert boxes here and
+from the flash-driven banners elsewhere.
+
+**Why it is preserved.** `email.html` is frozen, and `emailEnabled` is configuration this change must not alter. The
+endpoint being live behind a screen that cannot reach it is baseline behavior under R-4 and R-6.
+
+**What a naive fix would have broken.** Adding an unconditional form would offer a change-email flow that cannot
+complete, because the confirmation email the flow depends on cannot be sent; ungating the script would leave the
+bindings dead anyway. The reported shape of this condition — "the template has no form" — is also worth stating
+correctly, because it invites exactly that wrong fix.
+
+#### 22.11.6 Corrected — the delete-account *link* has no destructive styling; the delete *flow* has plenty
+
+**The reported claim.** "Delete Account" carries no destructive affordance, being styled identically to every benign
+navigation item despite the application owning a red-danger vocabulary.
+
+**True of the navigation item, and measured precisely.** Because `account.html:L14` renders all six side-nav entries
+through one identical `<li><a>`, "Delete Account" differs from its siblings only by the generic current-page class.
+Measured on `/account/delete-account` all six links share `font-weight: 400`, `font-size: 14px`,
+`text-decoration-line: none` and a transparent background, with the five non-current links at
+`color: rgb(0, 138, 255)` and "Delete Account" at `rgb(0, 0, 0)` **solely because it carries `active`**. Re-measured
+apples-to-apples on `/account/profile`, where the link is *not* current, it has `className ""` and
+`color: rgb(0, 138, 255)` — and a property-by-property diff against every non-active sibling across colour,
+background, weight, size, decoration, style, transform, border and padding returned **0 differences**. There is no
+red, no icon, no separator and no bold: in the navigation it is indistinguishable from "Data".
+
+**False of the flow, which is where the danger vocabulary actually is.** `delete-account.html:L3` opens with
+`<i class="fa fa-exclamation-circle caution">` and the sentence "Deleting your account is permanent and cannot be
+undone."; `L8` is `<a data-reveal-id="confirmDeleteAccountModal" class="button caution">`, measured at
+`color: rgb(240, 65, 36)` on a white fill with a matching 1 px border; and the action itself sits behind
+`#confirmDeleteAccountModal` (`L11-34`), which requires the account's own username to be typed into
+`#account-username` before `#delete-confirmed` — `class="button danger disabled"`, measured `color: rgb(240, 65, 36)`
+on `rgb(253, 231, 227)` at `opacity: 0.7` — becomes usable. So the claim holds only for the nav item, and is recorded
+that way.
+
+**Two conditions the same measurement surfaced, both preserved.** `#delete-confirmed` is an `<a>`, so its `disabled`
+is a class and nothing more: `getAttribute('disabled')` is `null` and computed `pointer-events` is `auto`, which is
+the same cosmetic-disabled shape catalogued for the reader chevrons at
+[BQ-17](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved). And
+`#confirmDeleteAccountModal` has `aria-hidden` **null** while closed at `display: none`, consistent with the ARIA
+census in [22.8.4](#2284-the-aria-and-document-semantics-census). Screenshot:
+`blitzy/screenshots/acct_delete_account.png`.
+
+**Why it is preserved.** `account.html` and `delete-account.html` are frozen. Giving the nav item a danger colour
+would change client-visible styling on a frozen template, and AAP §0.3.5 freezes the design tokens the change would
+have to draw on.
+
+#### 22.11.7 Two labels per control, and one control that cannot have any
+
+**What it is.** Every visible label on the profile form is duplicated, and two of the form's controls have no label
+association at all — one of them necessarily so.
+
+**Evidence.** `profile.html:L42-43` declares two labels both `for="display-name"`, one `show-for-medium-up inline`
+and one `show-for-small-only`; `L52-53` repeats the pattern for `for="username"`. Measured on the rendered page there
+are exactly **4** labels, **2** distinct `for` values, and each value is carried by **2** labels, so
+`#display-name.labels.length` and `#username.labels.length` are both **2**. The accessible names still resolve
+correctly — `"Display Name"` and `"Username"`, each from a two-entry label list — because duplicate labels
+concatenate rather than conflict.
+
+The two unlabelled controls differ in kind. `#avatar` (`profile.html:L75`) is `<input type="hidden">`, so `el.labels`
+is **`null` by specification** rather than empty, and the element is absent from the accessibility tree altogether —
+a label would be meaningless. The submit control (`L76`) has `el.labels.length` **0** but an accessible name of
+`"update profile"` derived from its `value`, rendered title-cased by a CSS `text-transform`. Incidentally the class
+token `alert-box` appears **twice** in both banners' class lists, once from the template and once appended by the
+Angular directive that binds `data-alert`.
+
+**Why it is preserved.** `profile.html` is frozen, and the duplication is the frozen Foundation 5.5.3 responsive
+idiom — `show-for-medium-up` and `show-for-small-only` are that library's visibility classes, catalogued in
+[22.9.3](#2293-one-hard-coded-450px-width-and-the-measured-breakpoint-windows). AAP D1 places the design contract
+above accessibility heuristics, so this is documented rather than repaired, in the same terms as
+[§15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them).
+
+**What a naive fix would have broken.** Deleting either label removes the control's label at one of the two
+breakpoints, since exactly one of the pair is displayed at any width; switching to a single label with responsive CSS
+changes the rendered markup of a frozen template.
+
+#### 22.11.8 Triage rows — the Account Settings surface
+
+| Reported | Measured disposition | Catalogue home |
+|---|---|---|
+| O-F13 `#profileSuccess` / `#passwordSuccess` pre-loaded with success text | **new** — confirmed; both strings are server-rendered at `display: none` before any submit | [22.11.1](#22111-the-success-message-is-server-rendered-before-any-save-and-every-banner-dies-after-exactly-5000-ms) |
+| O-F11 all account feedback auto-hides after ~5 s | **new** — measured at **exactly 5000.0 ms** (17.4 → 5017.4 ms), from one `base.css` rule and one `setTimeout` | [22.11.1](#22111-the-success-message-is-server-rendered-before-any-save-and-every-banner-dies-after-exactly-5000-ms) |
+| Issue 19 session expiry mid-flow fails completely silently | **extends BQ-11 / §17.4** — adds the end-to-end reproduction: 401 on the wire with the cookie proven gone, text written at +13.9 ms, no class mutation on either alert div, zero console output | [22.11.2](#22112-the-mis-targeted-alert-reproduced-end-to-end-through-a-real-session-expiry) |
+| P6-2 no success feedback of any kind after a profile save | ❌ **REFUTED** — banner visible at +0.3/+2/+4.5 s, `success: true` in a 354-byte body | [22.11.3](#22113-corrected-a-successful-profile-save-does-show-a-banner-and-it-does-not-reload-the-page) |
+| P6-1 33 ms full-document white flash proves a navigation | ❌ **REFUTED** — `__navCount` 0, one navigation entry, instrumentation alive at +38.9 s, one request | [22.11.3](#22113-corrected-a-successful-profile-save-does-show-a-banner-and-it-does-not-reload-the-page) |
+| O-F14 password mismatch is the only true field-level error attachment | **new** — confirmed; and **no request is issued at all**, and the borders outlive the banner | [22.11.4](#22114-the-only-field-level-error-in-the-application-attached-without-any-request-being-made) |
+| O-F15 `/account/email` has no form yet the endpoint is live | **new, and re-framed** — the forms exist and are gated on `emailEnabled`; three inline bindings are dead | [22.11.5](#22115-accountemail-renders-no-form-because-email-is-not-configured-and-its-script-still-runs) |
+| "Delete Account" carries no destructive affordance | **partly corrected** — true of the nav item (0 differences across 9 properties), false of the flow | [22.11.6](#22116-corrected-the-delete-account-link-has-no-destructive-styling-the-delete-flow-has-plenty) |
+| H-14 / O-9 duplicate `label[for]`, two labels per field | **new** — 4 labels, 2 distinct `for`, each carried by 2; `#avatar` is `type=hidden` so `labels` is `null` by spec | [22.11.7](#22117-two-labels-per-control-and-one-control-that-cannot-have-any) |
+| `#delete-confirmed`'s `disabled` is cosmetic on an `<a>` | **new, and the same shape as BQ-17** — `pointer-events: auto`, no `disabled` attribute | [22.11.6](#22116-corrected-the-delete-account-link-has-no-destructive-styling-the-delete-flow-has-plenty) |
+
+### 22.12 The authentication surface: the login form's validation, its echo, and four paths that render no form
+
+The user-enumeration half of this module is already catalogued at
+[§15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved) and
+[§4.15.2](#4152-login-responses-distinguish-wrong-password-from-no-such-account), and the empty-password rejection at
+[22.4.2](#2242-a-valid-email-with-an-empty-password-is-rejected-with-no-message-anywhere-and-the-mechanism-is-a-missing-template-block).
+What follows is the remainder. `lib/views/login.html` and `lib/views/users/activateaccount.html` both have a
+**zero-hunk diff against the base commit**.
+
+#### 22.12.1 The login and signup forms validate the same field name under different rules
+
+**What it is.** `POST /login` applies no format constraint and no length limit to the credential field, while
+`POST /users` — the signup form, submitting a field of the same name — applies both. Neither form imposes anything on
+the browser side.
+
+**Evidence, measured as a differential over real HTTP.** A 300-character value ending in `@x.com` was submitted to
+both endpoints in the same session:
+
+| Endpoint | Validation in the delivered route table | Outcome for the 300-character value |
+|---|---|---|
+| `POST /login` | `config/routes.js:L58` — `email : Joi.string().required()` | **302**, validation passed; the request reached the controller, which answered `Unknown user <the full 300 characters>` |
+| `POST /users` | `config/routes.js:L85` — `email : Joi.string().email().required()` | **302** to `/sign-up`, with flash validation `"email" must be a valid email` |
+
+Neither declaration carries `.max()`. On the rendered login page the browser adds nothing either: the value is echoed
+back at its **full 300 characters**, and the document contains **0** elements with a `maxlength` attribute and **0**
+inputs of `type="email"` — `login.html:L26` is `<input type="text" name="email" … required />`. The resulting banner
+text is `Unknown user ` followed by the whole submitted string, which is why a 300-character submission produces a
+**313-character** message on a 637-pixel-wide container.
+
+**Why it is preserved.** The two route declarations are the frozen HTTP surface: AAP TR1 freezes the route table and
+the user's own preservation list requires that "input accepted/rejected at baseline is accepted/rejected identically
+after". Adding `.email()` or `.max()` to the login route would change which inputs are accepted — the one change the
+specification names explicitly. `login.html` is frozen independently.
+
+**What a naive fix would have broken.** Aligning the two schemas looks like a consistency repair and is in fact a
+validation-outcome change: `POST /login` currently accepts a username as well as an email address, which is what the
+field's own label — "Email address or username" at `login.html:L25` — describes. Requiring an email format there
+would reject every username login.
+
+#### 22.12.2 The rejected credential is echoed back, lower-cased, above the heading and outside the form
+
+**What it is.** A failed login re-renders the submitted identifier into the input, and renders the failure message in
+a position that associates it with nothing.
+
+**Evidence.** `login.html:L26` sets `value="{{ flash.payload.email }}"`, so the submitted value is echoed. It is
+echoed **lower-cased and trimmed**, because the route's pre-handler at `config/routes.js:L55`,
+`pre : [{ method : helpers.lowerUserFields }]`, runs `.trim().toLowerCase()` on `email` and `username`
+(`lib/util/helpers.js:L123-128`) *before* the payload is flashed — measured directly: the 300-character probe came
+back byte-identical to its own lower-cased form. This is why an injection-shaped probe such as `' OR 1=1 --` is echoed
+in lower case rather than verbatim.
+
+The placement was measured by byte offset in the rendered document: the failure message
+`<small class="error">` sits at offset **7,643**, the `<h2 class="text-center">` at **7,999** and
+`<form id="login-form">` at **8,063**. The message is therefore **before the heading and outside the form**,
+matching `login.html:L7-8`, which places `{% if flash.failure.message %}` above the `<h2>` at `L15` and above the
+`<form>` at `L21`. The page carries **0** `aria-live` attributes and **0** `role="alert"` elements, so the message is
+never announced — the same absence censused in
+[22.8.4](#2284-the-aria-and-document-semantics-census).
+
+The echo is HTML-escaped: `login.html:L26` interpolates through Nunjucks' default autoescaping, which is the control
+that scopes the stored-XSS entry at [§4.17](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved)
+and is measured again in [22.6.7](#2267-the-escaped-caption-control-that-scopes-sec-14).
+
+**Why it is preserved.** `login.html` is frozen by AAP §0.2.2.1, and the flash contract — `flash.payload`,
+`flash.failure`, `flash.validation` — is part of the response contract AAP TR2 freezes. Re-rendering the submitted
+value is also what makes a corrected retry possible without re-typing.
+
+**What a naive fix would have broken.** Moving the message inside the form or attaching it to the field changes the
+rendered markup and the tab order of a frozen template; suppressing the echo removes the retry affordance and changes
+the flash contract.
+
+#### 22.12.3 Four account-lifecycle paths render no form, and each for a different measured reason
+
+**What it is.** `/activate-account`, `/reset-pass`, `/change-email`, `/verify-email` and `/account-deleted` were
+reported as reachable pages carrying no form. Measured for both identities, only **one** of them renders a formless
+page; the rest redirect.
+
+**Evidence.** Requested over real HTTP against the running application, unauthenticated and then with a session:
+
+| Path | Unauthenticated | Authenticated | `<form>` count when 200 |
+|---|---|---|---|
+| `/activate-account` | **200**, 12,741 bytes | **302** → `https://trinket.dev/home` | **0** |
+| `/reset-pass` | **302** | **302** → `https://trinket.dev/forgot-pass` | — |
+| `/change-email` | **302** | **302** → `https://trinket.dev/account/email` | — |
+| `/verify-email` | **302** | **302** → `https://trinket.dev/account/email` | — |
+| `/account-deleted` | **302** | **302** → `/` | — |
+
+The one formless render has a template-level explanation. `activateaccount.html:L12` opens `{% if invalid %}`, whose
+branch is a paragraph explaining that the activation link could not be verified; the form lives in the `{% else %}`
+branch at `L20-40`. A bare visit with no activation key therefore takes the **invalid** branch, and
+`document.forms.length === 0` is a measurement of that branch rather than of a template that lacks a form. The single
+`<input>` in the 12,741-byte response is the page shell's, not the page's.
+
+Because email is not configured on this deployment — `emailEnabled` false, computed at
+`lib/http/responseContract.js:L238` and detailed in
+[22.11.5](#22115-accountemail-renders-no-form-because-email-is-not-configured-and-its-script-still-runs) — no
+activation key is ever delivered, so the invalid branch is the only branch a visitor can reach. That is the sense in
+which these paths are reachable but inert, and it is also why the un-interpolated redirect target catalogued at
+[22.4.5](#2245-redirectto-is-never-interpolated-so-two-activation-failures-redirect-to-a-literal-brace) is not
+observable through normal use.
+
+**On the `/account-deleted` disclosure claim.** It was reported that this path tells anyone their account has been
+deleted, including a logged-in active user. In the shipped configuration measured here it answers **302 to `/` for
+both identities**, so on this deployment it discloses nothing; the condition as reported was not reproducible and is
+recorded at that scope rather than asserted. The route itself is real — `config/routes.js:L100`,
+`GET /account-deleted users.deleted` — and it is part of the frozen 233-row table either way.
+
+**Why it is preserved.** Every redirect above is part of the response corpus AAP TR2 freezes, and every path is a row
+in the route table AAP TR1 freezes. `activateaccount.html` is frozen. The user's exclusion list forbids adding or
+removing routes or features.
+
+**What a naive fix would have broken.** Rendering the activation form unconditionally would present a credential-setting
+form with no key to validate against; changing any of the four redirect targets would break the corpus that
+`node test/baseline/replay.js` checks byte for byte.
+
+#### 22.12.4 Triage rows — the authentication surface
+
+| Reported | Measured disposition | Catalogue home |
+|---|---|---|
+| O-F3 `/login` performs no email-format validation and has no max length; the two forms disagree | **new** — differential measured: the same 300-character value passes at `/login` and is rejected at `/users`; 0 `maxlength`, 0 `type=email` | [22.12.1](#22121-the-login-and-signup-forms-validate-the-same-field-name-under-different-rules) |
+| O-F4 the login error echoes the submitted value, lower-cased, unattached to any field | **new** — echo at full length, lower-cased by the route's own pre-handler; message at byte 7,643 versus the heading at 7,999 and the form at 8,063; 0 live regions | [22.12.2](#22122-the-rejected-credential-is-echoed-back-lower-cased-above-the-heading-and-outside-the-form) |
+| F-30 four account-lifecycle paths have no form at all | **new, and re-framed** — only `/activate-account` renders formless, and only unauthenticated; it is the template's `invalid` branch, not a missing form. The other three redirect | [22.12.3](#22123-four-account-lifecycle-paths-render-no-form-and-each-for-a-different-measured-reason) |
+| F-31 `/account-deleted` tells anyone their account has been deleted | **not reproduced** — 302 to `/` for both identities on the shipped configuration; recorded at that scope | [22.12.3](#22123-four-account-lifecycle-paths-render-no-form-and-each-for-a-different-measured-reason) |
+| O-F1 user enumeration, no rate limiting, no lockout | already catalogued | [§15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved), [§4.15.1](#4151-no-rate-limiting-no-throttling-and-no-account-lockout-anywhere) |
+| Issue 20 signup rejections redirect to `/sign-up`, which 404s | already catalogued — re-confirmed here: the 300-character probe redirected to `/sign-up` | [§15.3](#153-post-users-sends-every-signup-failure-to-a-path-that-does-not-exist) |
+| Issue 21 a valid email with an empty password is rejected with no message | already catalogued | [22.4.2](#2242-a-valid-email-with-an-empty-password-is-rejected-with-no-message-anywhere-and-the-mechanism-is-a-missing-template-block) |
+| `POST /api/users/settings/lineWrapping` returns a correct 401 with a Boom envelope | **informational PASS**, and the counter-example that proves 200-on-failure is not a contract | [22.4.1](#2241-a-rejected-write-answers-http-200-on-ten-measured-endpoints-and-one-route-proves-the-pattern-is-not-a-contract) |
+
+
+
+### 22.13 The remaining reported conditions: one shared control idiom, and the rest measured at source
+
+This is the last group of runtime-QA observations, and most of them turn out to share a single cause. Every frozen
+file cited below returns nothing from `git diff 2f8712a..HEAD -- <path>` — verified individually for
+`lib/views/courses/create.html`, `lib/views/classes/view.html`,
+`public/partials/directives/assignment-dashboard.html`, `public/partials/directives/trinket-assignment.html`,
+`public/js/library/trinkets/list/list.html`, `lib/views/base.html`, `lib/views/users/includes/data.html`,
+`config/routes.js` and `public/css/base.css`. `lib/shared/trinket-markdown.js` is in the migration's scope, but the
+one line cited from it is byte-identical at the base commit. Where a cited file **is** in that scope and its line
+numbers have moved — `config/api_routes.js`, `lib/controllers/course.js`, `lib/controllers/classes.js`,
+`lib/models/user.js` — the citation is to the **delivered tree**, per the two-frame rule in
+[How to read this catalogue](#how-to-read-this-catalogue); `classes.js:L29` and `api_routes.js:L502/L577` happen to sit
+at the same lines in both frames.
+
+#### 22.13.1 An anchor styled as a button: one idiom, five measured instances, and an inverted disabled state
+
+**What it is.** The application's primary actions are frequently `<a>` elements carrying `class="button"` and **no
+`href`**. Three consequences follow mechanically from that one choice, and between them they account for five
+separately reported conditions: such a control cannot be focused by keyboard, it cannot carry a real `disabled`
+attribute, and the `disabled` *class* it carries instead suppresses no events.
+
+**Evidence — the five instances.**
+
+| Instance | Declaration | Reported as |
+|---|---|---|
+| Course-editor Save | `lib/views/courses/create.html:L77` — `<a id="save-course-button" class="button small primary">` | H-7, "the Save control is architecturally incapable of a disabled state" |
+| New-folder opener | `public/js/library/trinkets/list/list.html:L35` — `<a class="small button" data-reveal-id="new-folder-modal">` | O-4, "the new-folder modal cannot be opened by keyboard" |
+| Delete-account confirm | `lib/views/users/includes/delete-account.html:L30` — `<a id="delete-confirmed" class="button danger disabled">` | measured in [22.11.6](#22116-corrected-the-delete-account-link-has-no-destructive-styling-the-delete-flow-has-plenty) |
+| Delete-account trigger | `delete-account.html:L8` — `<a data-reveal-id="confirmDeleteAccountModal" class="button caution">` | same entry |
+| Reader chevrons | catalogued at [BQ-17](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) | F-22 and "`disabled` provides zero event suppression" |
+
+Two of these were already measured in this document — `#delete-confirmed` reports `getAttribute('disabled')` `null`
+and computed `pointer-events: auto` — and the same reading is what the runtime-QA pass measured on the chevrons: **5
+of 6** watched event types fired with `isTrusted: true`, `pointer-events` stayed `auto`, and the `ng-click` handler
+executed, with navigation blocked only by a controller guard.
+
+**Evidence — the inverted disabled styling.** The reason a disabled control looks *more* prominent than an enabled one
+is a single rule pair in the compiled stylesheet:
+
+```css
+.button.disabled,.disabled.faux-button,.button[disabled],[disabled].faux-button{background-color:#008aff;border-color:#006ecc}
+.button.disabled,.disabled.faux-button,.button[disabled],[disabled].faux-button{color:#fff}
+```
+
+So `disabled` paints the frozen `$primary-color` `#008AFF` fill with white text, while the enabled chevron is a
+white-outlined control. That is the mechanism behind F-22 / BQ-17, stated here because it is the same
+`base.css` that governs all five instances, and because `#008AFF` is one of the design tokens AAP §0.3.5 freezes.
+
+**One refinement to the O-4 report.** The modal the opener cannot reach is itself *better* annotated than the delete
+modal: `list.html:L107` is
+`<div id="new-folder-modal" class="reveal-modal small" data-reveal aria-labelledby="new-folder-title" aria-hidden="true" role="dialog">`
+— it has a role, a label association and an `aria-hidden` state, none of which `#confirmDeleteAccountModal` has. The
+barrier is entirely the opener.
+
+**Why it is preserved.** Every declaration above is in a frozen template, and the styling is in the compiled
+`base.css` whose byte size and digest are parity gates. Adding `href`, `tabindex` or `role="button"` changes rendered
+markup and inserts new tab stops, which changes the tab order measured in
+[22.8.1](#2281-the-tab-order-reaches-14-elements-and-skips-45); swapping the class for a real `disabled` attribute
+would begin suppressing events that currently fire, which is a behavior change under R-4. AAP D1 puts the design
+contract above the accessibility heuristic that would otherwise argue for the repair.
+
+**What a naive fix would have broken.** Making these controls keyboard-reachable is the obvious accessibility repair
+and it is the one most likely to break something invisible: the `ng-click` handlers currently run on click while
+navigation is gated in the controller, so a control that becomes focusable and Enter-activatable starts reaching
+handlers by a path no version of this application has exercised.
+
+#### 22.13.2 The Save button bypasses the browser's own validation, and Enter does nothing
+
+**What it is.** On the course-creation form the primary action does not submit the form the way the platform does. It
+calls jQuery's `.submit()`, which fires the submit event and the native submission **without running HTML5 constraint
+validation** — so `required` never blocks — and because no `type="submit"` control exists, implicit submission by
+pressing Enter has no default button to activate.
+
+**Evidence.** `lib/views/courses/create.html:L22` opens `<form action="/courses" method="post" id="add-course">`; `L26`
+and `L37` declare the two fields `required`; `L77` is the anchor from 22.13.1; and `L88-91` is the entire submit path:
+
+```javascript
+$('#save-course-button').on('click', function(event) {
+  event.preventDefault();
+  $('form#add-course').submit();
+});
+```
+
+`.submit()` on a form is not the interactive submission algorithm, so the constraint-validation step the `required`
+attributes rely on is skipped. This is also the client-side half of the whitespace-name condition already catalogued
+at [§15.2](#152-a-whitespace-only-course-name-is-accepted-and-the-slug-degenerates-to-random-characters): a single
+space satisfies nothing and is nonetheless posted, because nothing on the client ever checks. And it is why the
+reported 140-character server maximum is *server-side only* — the field carries no `maxlength`, which is the same
+absence measured across all eight library inputs in
+[22.6.3](#2263-no-length-governance-on-the-input-side-on-either-free-text-field).
+
+The message the user does eventually see is the validator's own text: `create.html:L28` renders
+`{{ flash.validation.name }}` verbatim, and the friendlier wording declared alongside the schema never reaches it,
+for the reason catalogued at [§1.2](#12-the-joi-custom-message-override-that-never-fires). That is the whole of the
+reported "raw Joi and raw regex leaked to users".
+
+**Why it is preserved.** `create.html` is frozen. Routing the click through a real submit button would start enforcing
+`required` on the client, changing which inputs reach the server — precisely the validation-outcome change the user's
+preservation list forbids.
+
+#### 22.13.3 Two submission routes, and the one that overwrites
+
+**What it is.** A first submission and a re-submission take **different routes**, and the second one updates the
+stored document rather than adding to it, so only the latest attempt survives.
+
+**Evidence.** The delivered route table declares both, and both are byte-identical at the base commit:
+
+| Route | Handler | What it does |
+|---|---|---|
+| `config/api_routes.js:L502` — `POST /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/submissions` | `course.submitAssignment` | creates: `lib/controllers/course.js:L1114` is `submission = new Trinket({…})`, saved at `L1131` |
+| `config/api_routes.js:L577` — `POST /api/submissions/{trinketId}` | `course.updateMySubmission` | updates: the handler at `lib/controllers/course.js:L1162` takes `request.pre.trinket` and re-saves **that** document |
+
+The handler's own name states the semantics, and `L1167` confirms the guard is an ownership check on the existing
+document rather than a lookup for a new one. There is no route that appends a second submission, which is why no
+"attempt #2" row can appear.
+
+**Why it is preserved.** The route table is frozen by AAP TR1 — the 233-row table and its digest are a gate — and the
+persisted document shape is frozen by TR6. Adding an append path is a new route, which the user's exclusion list
+forbids outright.
+
+**What a naive fix would have broken.** Turning the update into an insert changes the stored format for every existing
+submission and changes what `GET /api/submissions/{materialId}` returns, both of which are parity surfaces.
+
+#### 22.13.4 The sanitizer's one artefact, and the whitelist entry that produces it
+
+**What it is.** A markdown body containing an image tag survives sanitization as an **empty `<img>`** — the only
+sanitizer artefact the runtime-QA pass found anywhere in the application. It is not a hole; it is the exact,
+predictable output of the whitelist.
+
+**Evidence.** `lib/shared/trinket-markdown.js:L117` declares the `img` entry as
+`img: {"src": /^(https?\:)?\/\/docs\.google\.com\/.*drawings\//i}` — the tag is permitted, and **exactly one**
+attribute is permitted on it, and only when its value matches a Google Drawings URL. `sanitizeTag` at `L172-184`
+keeps a whitelisted tag and drops every attribute that is not whitelisted or whose value fails its pattern, and `L290`
+includes `img` in the inline-tag set. An `<img src=x onerror=…>` therefore loses `onerror` (not whitelisted) and
+loses `src` (pattern fails) while the tag itself is kept — leaving `<img>`. The reported rendering,
+`<p>&lt;script&gt;…&lt;/script&gt;<img></p>`, is that behavior twice over: the script tag is escaped because it is not
+in the whitelist at all, and the image tag is emptied because it is.
+
+**Why it is preserved.** This is the sanitizer whose contract the `marked` fork replacement was chosen to preserve —
+AAP I12 makes accepting a sanitizer **function** the load-bearing requirement of that replacement, and
+`trinket-markdown.js` carries the bridge that keeps it working on `marked` 4.3.0. Tightening the whitelist to drop
+`img` would change rendered markup for every course that legitimately embeds a Google Drawing.
+
+#### 22.13.5 The dashboard chart: mouse-only by construction, and segments that do not quite sum
+
+**What it is.** Two remaining conditions on the chart whose central defect is catalogued at
+[BQ-16](#177-bq-16-the-dashboard-that-receives-its-numbers-and-renders-none) and
+[22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it): the data is
+reachable only with a pointer, and the segment widths fall a fraction of a pixel short of their container.
+
+**Evidence.** `public/partials/directives/assignment-dashboard.html:L2-5` declares all four segments identically in
+shape:
+
+```html
+<span ng-if="assignment['completed']" class="chart-segment completed" style="width: {{ assignment['completed-pct'] }}%">…</span>
+```
+
+Each is a bare `<span>` with **no `tabindex`, no `href` and no `role`**, which is why the accessibility tree exposes
+them as bare `StaticText` and why the hover-only reveal measured in
+[22.5.2](#2252-the-hide-then-reveal-on-hover-pair-is-real-in-css-and-visually-inert-in-the-legend) is the only way to
+read a value. Two details visible in the same four lines corroborate entries elsewhere: only `L5`, the `not-started`
+segment, also carries the `meter` class — which is exactly why the `min-width: 1%` floor lands on the data chart and
+not on the legend, as established in
+[22.5.1](#2251-the-min-width-1-floor-is-on-the-data-chart-not-on-the-legend) — and each label sits in a nested
+`<span class="show-for-large-up">`, which is the bare-digit condition of
+[22.5.3](#2253-two-labeltitle-disagreements-one-semantic-and-one-a-non-breaking-space).
+
+The sum shortfall follows from the `-pct` values being rounded per segment and applied as independent CSS
+percentages: three segments at 33.3 % occupy 99.9 % of the track, which on the measured 616.66 px container is
+616.02 px — a **0.64 px** shortfall. Nothing sums the parts and assigns a remainder to the last one.
+
+**Why it is preserved.** The partial is frozen, and AAP D1 places the design contract above the accessibility
+heuristic. Making the segments focusable would add four tab stops per assignment row; forcing the widths to sum would
+change rendered geometry on a frozen chart.
+
+#### 22.13.6 Three data-state conditions whose cause is a single line each
+
+| Condition | Measured cause | Preserved because |
+|---|---|---|
+| H-12 — the library empty state is gated on **both** lists being empty | `public/js/library/trinkets/list/list.html:L39` is `ng-show="items && !items.length && !folders.length"`, while `L43` shows the grid on `ng-show="items.length \|\| folders.length"`. With zero trinkets and one folder, the empty state stays hidden and the grid renders folders only | frozen partial; changing the gate changes what renders on a populated-folders/empty-trinkets library |
+| F-19 — `/u/{username}/classes` lists only **owned** courses | `config/routes.js:L372` maps `GET /u/{username}/classes` to `classes.viewCourses`, and `lib/controllers/classes.js:L25-29` calls `request.pre.user.getOwnedCourses()` under the file's own comment *"get all owned courses for user we're viewing"*. The decisive line is one level down: `lib/models/user.js:L242-248` walks `this.roles` and admits a course **only** when `self.hasRole('course-owner', role.context)` is true, so an enrolment role is filtered out before any query runs — the page cannot list an enrolled course by construction. Corroborated at runtime: the page renders `<h1>qafix-owner Courses</h1>` and does list both owned courses. The route line is identical at the base commit | this is the route's designed semantics, not an omission; adding enrolled courses changes the response body of a frozen route (TR2) |
+| H-3 — the three-zero export fixture renders none of its three numbers | `lib/views/users/includes/data.html:L81` is `progress.total ? Math.round((progress.processed / progress.total) * 100) : 0` and `L82-83` renders `'Processing: ' + processed + ' of ' + total` **only when `total` is truthy**, so a zero total falls back to the static "Preparing export…". And `progress.failed` appears in **no** rendering path anywhere in the file — the three `failed` occurrences at `L94`, `L113` and `L152` all test `exportData.status`, a different value | frozen template; the falsy-zero idiom is the same one catalogued for the dashboard in 22.5, and the export screen's remaining conditions are in [22.7](#227-two-screens-that-fail-silently-the-data-export-poller-and-the-new-folder-modal) |
+
+#### 22.13.7 Conditions confirmed at source, and the four that need a fixture this pass could not build
+
+**Confirmed at source, with the line that causes each.** These are recorded here rather than given their own
+subsections because each reduces to a single measured declaration:
+
+| Reported | Measured cause |
+|---|---|
+| F-26 — "Video Page" contains no video and "Quiz Page" contains no quiz | `lib/views/classes/view.html:L107` is `<p ng-switch-when="page">No content has been added to this page yet.</p>`. Every material of type `page` renders that identical body; "Video Page" and "Quiz Page" are **names given to page-type materials**, not distinct types. `L111` offers the owner a link to add content |
+| L-9 — the current item is signalled by colour alone | `base.css` gives `.side-nav-with-content .side-nav li a.active{font-weight:400;color:#000}` — the same weight as its siblings, differing only in colour. Corroborating the census in [22.8.4](#2284-the-aria-and-document-semantics-census) from the source side, `aria-current` appears in **0** files across `lib/views`, `public/partials` and `public/js` |
+| K-4 — the comments textarea has no accessible name | `public/partials/directives/trinket-assignment.html:L27` is `<textarea ng-model="submission.comments" ng-model-options="{ debounce : 1000 }" ng-change="autosaveComments()" ng-disabled="…"></textarea>` — no `id`, so no `label` can reference it, and no `aria-label`, `aria-labelledby`, `title` or wrapping `label`. It is a **further** unnamed control, distinct from the five icon-only ones enumerated at [BQ-19](#178-bq-19-the-three-controls-that-lose-their-accessible-name-at-one-particular-width), and unnamed at every width rather than only one |
+| O-F12 — raw validator text reaches the user | `lib/views/courses/create.html:L28` and `L39` render `{{ flash.validation.name }}` and `{{ flash.validation.description }}` verbatim; `lib/views/login.html:L29` does the same for `email`. The friendlier override never fires — see 22.13.2 |
+| N-9 — the hamburger's `href="#"` resets the route hash | `lib/views/base.html:L108` is `<li class="toggle-topbar menu-icon"><a href="#"><span></span></a></li>`. On a page whose AngularJS state lives in the fragment, navigating to `#` discards it |
+| Issue 30 — the editor's tab handling and its persisted setting | The per-language tab width is read at `public/js/embed/embed.js:L616-619` with a `!= undefined ? … : 2` fallback and persisted through the settings payload; the divergence between that reader and the other one is catalogued at [22.10.1](#22101-one-stored-setting-two-readers-two-answers). The focus-trap behaviour itself belongs to the Ace distribution under the gitignored `public/components/` tree, which AAP §0.2.2.2 places outside this change entirely |
+
+**The four that were not reproduced, stated as not reproduced.** Each needs an assignment-type material on a course
+with an enrolled student, and creating one answered 500 on this deployment — a condition itself catalogued at
+[§13.7](#137-the-r-6-test-adjudications-each-measured-against-the-application). Rather than restate the report's
+figures as though this pass had measured them, they are recorded as reported and unverified: **Issue 29** (an unstarted
+assignment rendering a different assignment's embed and code), **N-7** (the Next chevron overlapping the `h1` by
+34.656 × 31.422 px), **J-4 / P-18** (the dashboard view-toggle occluding a heading at 375 px) and **F-11** (anonymous
+join-by-link failing to enrol behind an occluding `#courseInvitationModal` at `z-index: 1005`). What *was* verified for
+F-11 is the structural half: `lib/views/login.html` includes `#courseInvitationModal` twice by reference,
+`public/css/base.css` contains the `z-index:1005` used by `.reveal-modal`, and the modal's own copy discloses the
+course name — `login.html:L61` renders `{{ flash.courseInvitation.course.name }}` to an unauthenticated visitor. All
+four sit on frozen surfaces with zero-hunk diffs, so their attribution is not in doubt even where their reproduction
+was out of reach.
+
+#### 22.13.8 Triage rows — the remaining surface
+
+| Reported | Measured disposition | Catalogue home |
+|---|---|---|
+| H-7 Save is architecturally incapable of a disabled state | **new** — `<a>` with no `href` at `create.html:L77`; one of five instances of one idiom | [22.13.1](#22131-an-anchor-styled-as-a-button-one-idiom-five-measured-instances-and-an-inverted-disabled-state) |
+| O-4 the new-folder modal cannot be opened by keyboard | **new, and refined** — the opener is an `<a>` with no `href`; the modal itself has `role`, `aria-labelledby` and `aria-hidden` | [22.13.1](#22131-an-anchor-styled-as-a-button-one-idiom-five-measured-instances-and-an-inverted-disabled-state) |
+| `disabled` provides zero event suppression on these anchors | **extends BQ-17** — same idiom; the inverted styling is two `base.css` rules painting `#008AFF` with white text | [22.13.1](#22131-an-anchor-styled-as-a-button-one-idiom-five-measured-instances-and-an-inverted-disabled-state) |
+| F-22 inverted disabled styling on the reader chevrons | already catalogued; the rule pair is quoted here | [BQ-17](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved), [22.13.1](#22131-an-anchor-styled-as-a-button-one-idiom-five-measured-instances-and-an-inverted-disabled-state) |
+| O-F7 two submit paths validate differently | **new** — `create.html:L88-91` calls `$(form).submit()`, which skips constraint validation; no `type=submit` exists, so Enter has no default button | [22.13.2](#22132-the-save-button-bypasses-the-browsers-own-validation-and-enter-does-nothing) |
+| O-F9 the 140-character course-name max is server-side only | **new** — no `maxlength` on the field; same absence as the library inputs | [22.13.2](#22132-the-save-button-bypasses-the-browsers-own-validation-and-enter-does-nothing), [22.6.3](#2263-no-length-governance-on-the-input-side-on-either-free-text-field) |
+| O-F12 raw Joi and raw regex leaked to users | **new** — three verbatim `flash.validation` renders; the override never fires | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| Issue 28 re-submission silently overwrites | **new** — two distinct routes; `api_routes.js:L577` names its handler `course.updateMySubmission` | [22.13.3](#22133-two-submission-routes-and-the-one-that-overwrites) |
+| F-29 sanitizer artefact | **new** — the exact output of the `img` whitelist entry at `trinket-markdown.js:L117` | [22.13.4](#22134-the-sanitizers-one-artefact-and-the-whitelist-entry-that-produces-it) |
+| L-10 / P-17 chart data is mouse-only | **new** — bare `<span>`s with no tabindex, href or role | [22.13.5](#22135-the-dashboard-chart-mouse-only-by-construction-and-segments-that-do-not-quite-sum) |
+| F-10 segments do not sum to their container | **new** — per-segment rounding, 99.9 % of 616.66 px = 616.02 px | [22.13.5](#22135-the-dashboard-chart-mouse-only-by-construction-and-segments-that-do-not-quite-sum) |
+| I-1 non-zero data never visualised for 4 of 6 materials | already measured — the outer material-type gate | [22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it) |
+| I-4 four names for one concept; J-0 bare digit on narrow viewports | already measured | [22.5.3](#2253-two-labeltitle-disagreements-one-semantic-and-one-a-non-breaking-space) |
+| H-12 empty state gated on both lists | **new** — `list.html:L39` | [22.13.6](#22136-three-data-state-conditions-whose-cause-is-a-single-line-each) |
+| F-19 only owned courses are listed | **new** — `classes.js:L29` `getOwnedCourses()`, under the file's own comment | [22.13.6](#22136-three-data-state-conditions-whose-cause-is-a-single-line-each) |
+| H-3 the three-zero export fixture renders none of its numbers | **new** — falsy-zero at `data.html:L81-83`; `progress.failed` has no rendering path at all | [22.13.6](#22136-three-data-state-conditions-whose-cause-is-a-single-line-each) |
+| F-26 "Video Page" has no video; "Quiz Page" has no quiz | **new** — one `ng-switch-when="page"` body for every page material | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| L-9 current item signalled by colour alone | **new** — same font weight, colour only; `aria-current` in 0 files | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| K-4 the comments textarea has no accessible name | **new, alongside BQ-19** — no `id`, no `aria-label`, no wrapping label; a sixth unnamed control, unnamed at every width | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| N-9 the hamburger's `href="#"` resets the route hash | **new** — `base.html:L108` | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| Issue 30 Ace tab handling and persisted corruption | **partly at source** — the setting's reader and its two-branch fallback; the editor's own key handling is in the gitignored vendor tree, outside this change | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build), [22.10.1](#22101-one-stored-setting-two-readers-two-answers) |
+| Issue 27 autosave loses work | already measured | [22.3.2](#2232-outcome-two-autosave-answers-200-carrying-a-rejection-and-the-client-paints-error-saving) |
+| Issue 29, N-7, J-4 / P-18, F-11 | **not reproduced** — each needs an assignment material, whose creation answers 500 on this deployment; recorded as reported and unverified, with F-11's structural half confirmed | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| "Students cannot run code at all" | already catalogued | [§15.9](#159-the-python-runtime-is-fetched-from-a-placeholder-cdn-host-so-it-never-initialises) |
+| F-25 progress is positional, not achievement-based | already catalogued | [BQ-20](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) |
+| The role-dependent route confound: one URL, two AngularJS applications | **informational**, and worth recording — `lib/controllers/courses.js` redirects non-editors, so students receive `ng-app="trinket.classPage"` and owners `ng-app="courseEditor"`; the chevrons carry `ng-disabled` in one and not the other | this row |
+
+
+
+
+
+### 22.14 The complete QA-identifier crosswalk
+
+Sections 22.1 to 22.13 are organised by **mechanism**, because reported identifiers frequently share one cause — five
+of them turned out to be a single control idiom, and three more a single template include. That organisation is the
+right one for understanding the application and the wrong one for looking something up: a reader holding a finding
+identifier has no way in. This section is that way in.
+
+**It is generated, not transcribed.** The rows below were extracted mechanically from the QA report, from its first
+`### Module:` heading to its compliance matrix, so no row can have been dropped by hand. The extraction yields
+**105 rows** — the **23** findings that carry a `#### Issue N` write-up plus the **82** rows of the eight
+`Issues A–B` tabulations — of which the report's own header counts **20 as informational passes or confirmations**,
+leaving the **85** findings it reports. Nine tabulated rows carry no identifier at all and appear here as
+*(unlabelled)*.
+
+**How to read the rightmost column.** A plain link means the condition is catalogued at that anchor. ❌ marks a claim
+that measurement **refuted or corrected**; ⚠️ one that was **re-framed** or **not reproduced**. In every such case the
+linked entry states what was measured instead, and at what scope. Where two anchors are given, the first establishes
+the mechanism and the second measured it — or the first is an earlier entry that a later pass extended.
+
+**Resolving a numbered issue.** The report's issue numbering runs 1 to 72. The 23 detailed findings hold their own
+numbers; the remaining 49 are grouped into eight ranges, each discharged by one module's table:
+
+| Range | Numbers | Module whose table discharges it | Rows in that table |
+|---|---|---|---|
+| Issues 8–12 | 5 | Course Authoring | 5 |
+| Issues 15–18 | 4 | Course Dashboard / Data Visualization | 5 |
+| Issues 22–26 | 5 | Authentication, Registration and Session | 6 |
+| Issues 31–35 | 5 | Student Learning Experience | 7 |
+| Issues 39–47 | 9 | Keyboard Accessibility | 15 |
+| Issues 50–62 | 13 | Data States, Lists and Empty States | 16 |
+| Issues 64–66 | 3 | Export / Download | 3 |
+| Issues 68–72 | 5 | Responsive Behaviour | 6 |
+
+The two right-hand columns deliberately do not match, and the mismatch is the report's, not this table's: a range of
+five numbers may head a table of six or seven rows, because some rows in those tables carry a lettered identifier
+without consuming an issue number. The eight ranges account for **49** numbers and **63** rows. Three further modules
+— Profile / Account Settings, Admin / Featured Courses and Cross-Layer Contract — carry no range heading in the report
+at all, so their **19** rows sit outside the numbered sequence entirely. 23 detailed findings + 63 + 19 = **105**, and
+23 + 49 = **72** numbers: that is why a row count and an issue count are different questions.
+
+**Compound identifiers.** Nine rows label one condition with two identifiers — `H-14 / O-9`, `J-4 / P-18`,
+`L-10 / P-17`, `L-15 / O-12`, `L-16 / F-23`, `L-5 / O-7`, `L-7 / —`, `N-2 / N-4` and `O-14 / F-21` — and each is
+listed once, under both. One further identifier, `AC-5`, appears nowhere among the findings: it labels a screenshot in
+the report's evidence index, annotating one of the two genuine loading affordances the pass found, and the
+loading-state conditions around it are at
+[22.7.1](#2271-the-export-poller-runs-on-a-fixed-3-second-interval-with-no-backoff-and-no-give-up) and
+[§15.15](#1515-the-two-loading-spinners-clear-after-their-data-not-before-and-the-larger-absence-that-reading-conceals).
+`CL-4` likewise appears only inside Issue 3's own title.
+
+
+**Library Search.** Every row in this module is reported outside the numbered-issue sequence.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 1` | Critical | Confirmed exploitable stored XSS in the library-search typeahead | [§4.17 SEC-14](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved) |
+
+**API Response Serialization.** Every row in this module is reported outside the numbered-issue sequence.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 2` | Critical | `POST /api/courses` returns the owner's complete bcrypt password hash | [§4.14 SEC-13](#414-sec-13-a-bcrypt-password-hash-on-the-wire-in-four-responses-critical-remediated), [§15.5](#155-post-apicourses-returned-the-owners-bcrypt-hash-cwe-200-remediated-as-sec-13) |
+| `Issue 3` | Major | PII over-exposure to enrolled students (CL-4) | [22.2.4](#2224-the-owner-record-expansion-measured-from-the-enrolled-student-identity) |
+
+**Course Authoring.** The tabulated rows below discharge **Issues 8–12**.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 4` | Critical | Silent data loss on over-length lesson names | [22.4.1](#2241-a-rejected-write-answers-http-200-on-ten-measured-endpoints-and-one-route-proves-the-pattern-is-not-a-contract) |
+| `Issue 5` | Critical | Material reorder returns HTTP 500 while the UI reports success | [§13.7](#137-the-r-6-test-adjudications-each-measured-against-the-application) |
+| `Issue 6` | Critical | Course-editor autosave loses in-progress content ("Error Saving") | [22.3.2](#2232-outcome-two-autosave-answers-200-carrying-a-rejection-and-the-client-paints-error-saving) |
+| `Issue 7` | Major | Drag-and-drop is structurally broken with no keyboard alternative | [22.10.4](#22104-the-drag-handle-the-tree-library-never-sees) |
+| `F-18` | Minor | Duplicate lesson name **and** slug permitted | [22.4.6](#2246-triage-rows-the-server-side-surface) |
+| `O-F7` | Major | Two submit paths validate **differently** | [22.13.2](#22132-the-save-button-bypasses-the-browsers-own-validation-and-enter-does-nothing) |
+| `O-F8` | Critical | A single space accepted as a valid course name | [§15.2](#152-a-whitespace-only-course-name-is-accepted-and-the-slug-degenerates-to-random-characters), [22.13.2](#22132-the-save-button-bypasses-the-browsers-own-validation-and-enter-does-nothing) |
+| `O-F9` | Minor | Course name max is 140 chars, **server-side only** | [22.13.2](#22132-the-save-button-bypasses-the-browsers-own-validation-and-enter-does-nothing), [22.6.3](#2263-no-length-governance-on-the-input-side-on-either-free-text-field) |
+| `*(unlabelled)*` | Minor | **No course-rename endpoint exists at all** | ❌ **corrected** — [22.4.8](#2248-two-reported-claims-that-measurement-contradicts) |
+
+**Course Dashboard / Data Visualization.** The tabulated rows below discharge **Issues 15–18**.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 13` | Major | The dashboard displays NO numeric information at rest | [BQ-16](#177-bq-16-the-dashboard-that-receives-its-numbers-and-renders-none), [22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it) |
+| `Issue 14` | Major | Zero-valued metrics are omitted from the DOM entirely | [22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it) |
+| `L-10 / P-17` | Major | Chart data is **mouse-only** and entirely inaccessible | [22.13.5](#22135-the-dashboard-chart-mouse-only-by-construction-and-segments-that-do-not-quite-sum), [22.5.4](#2254-no-programmatic-progress-semantics-anywhere-on-the-screen) |
+| `F-10` | Minor | Segments do not sum to their container | [22.13.5](#22135-the-dashboard-chart-mouse-only-by-construction-and-segments-that-do-not-quite-sum) |
+| `I-4` | Minor | **Four names for one concept** | [22.5.3](#2253-two-labeltitle-disagreements-one-semantic-and-one-a-non-breaking-space) |
+| `I-1` | Major | 4 of 6 materials carry live non-zero data that is **never visualised** | [22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it) |
+| `J-0` | Major | Mobile reveal shows a **bare digit** with no category word | [22.5.3](#2253-two-labeltitle-disagreements-one-semantic-and-one-a-non-breaking-space) |
+
+**Authentication, Registration and Session.** The tabulated rows below discharge **Issues 22–26**.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 19` | Critical | Session expiry mid-flow fails completely silently | [§17.4](#174-bq-11-the-profile-forms-one-mis-targeted-alert-and-why-it-can-never-find-its-target), [22.11.2](#22112-the-mis-targeted-alert-reproduced-end-to-end-through-a-real-session-expiry) |
+| `Issue 20` | Critical | Signup validation feedback is unreachable in normal use | [§15.3](#153-post-users-sends-every-signup-failure-to-a-path-that-does-not-exist) |
+| `Issue 21` | Critical | Login with a valid email and empty password returns 302 with no message | [22.4.2](#2242-a-valid-email-with-an-empty-password-is-rejected-with-no-message-anywhere-and-the-mechanism-is-a-missing-template-block) |
+| `O-F1` | Major | **User enumeration byte-proven** | [§15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved), [§4.15.1](#4151-no-rate-limiting-no-throttling-and-no-account-lockout-anywhere) |
+| `O-F3` | Minor | `/login` performs no email-format validation and has **no max length** | [22.12.1](#22121-the-login-and-signup-forms-validate-the-same-field-name-under-different-rules) |
+| `O-F4` | Minor | The login error **echoes the submitted value** into the page | [22.12.2](#22122-the-rejected-credential-is-echoed-back-lower-cased-above-the-heading-and-outside-the-form) |
+| `F-30` | Major | `/activate-account`, `/reset-pass`, `/change-email`, `/verify-email` have **no form at all** | ⚠️ **re-framed** — [22.12.3](#22123-four-account-lifecycle-paths-render-no-form-and-each-for-a-different-measured-reason) |
+| `*(unlabelled)*` | Major | Un-interpolated `{redirectTo}` → `/%7BredirectTo%7D` **404 on every real activation link** | [22.4.5](#2245-redirectto-is-never-interpolated-so-two-activation-failures-redirect-to-a-literal-brace) |
+| `F-31` | Minor | `/account-deleted` tells **anyone** their account has been deleted | ⚠️ **not reproduced** — [22.12.3](#22123-four-account-lifecycle-paths-render-no-form-and-each-for-a-different-measured-reason) |
+
+**Profile / Account Settings.** Every row in this module is reported outside the numbered-issue sequence.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `P6-2` | Major | **No success feedback of any kind** after a state-changing profile save | ❌ **refuted** — [22.11.3](#22113-corrected-a-successful-profile-save-does-show-a-banner-and-it-does-not-reload-the-page) |
+| `O-F11` | Major | All account feedback **auto-hides after exactly ~5 s** | [22.11.1](#22111-the-success-message-is-server-rendered-before-any-save-and-every-banner-dies-after-exactly-5000-ms) |
+| `O-F13` | Minor | `#profileSuccess`/`#passwordSuccess` are **pre-loaded with success text before any save** | [22.11.1](#22111-the-success-message-is-server-rendered-before-any-save-and-every-banner-dies-after-exactly-5000-ms) |
+| `O-F14` | Info/Minor | Password mismatch is the **only true field-level error attachment in the application** | [22.11.4](#22114-the-only-field-level-error-in-the-application-attached-without-any-request-being-made) |
+| `O-F15` | Major | `/account/email` has **no form at all**, yet `POST /api/users/email` is live and fully validated | ⚠️ **re-framed** — [22.11.5](#22115-accountemail-renders-no-form-because-email-is-not-configured-and-its-script-still-runs) |
+| `H-14 / O-9` | Minor | **Duplicate `label[for]`** — two labels per field | [22.11.7](#22117-two-labels-per-control-and-one-control-that-cannot-have-any) |
+| `P6-1` | Minor | Full-document **white flash** (33 ms, entire viewport incl. top bar) on every save | ❌ **refuted** — [22.11.3](#22113-corrected-a-successful-profile-save-does-show-a-banner-and-it-does-not-reload-the-page) |
+| `*(unlabelled)*` | Minor | "Delete Account" carries **no destructive affordance** | ⚠️ **partly corrected** — [22.11.6](#22116-corrected-the-delete-account-link-has-no-destructive-styling-the-delete-flow-has-plenty) |
+
+**Student Learning Experience.** The tabulated rows below discharge **Issues 31–35**.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 27` | Critical | Autosave silently discards student work | [22.3.2](#2232-outcome-two-autosave-answers-200-carrying-a-rejection-and-the-client-paints-error-saving) |
+| `Issue 28` | Critical | Re-submission silently overwrites the single stored submission | [22.13.3](#22133-two-submission-routes-and-the-one-that-overwrites) |
+| `Issue 29` | Critical | An unstarted assignment renders a *different* assignment's embed and code | ⚠️ **not reproduced** — [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| `Issue 30` | Critical | Ace editor is a focus trap that silently corrupts source | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build), [22.10.1](#22101-one-stored-setting-two-readers-two-answers) |
+| `*(unlabelled)*` | Major | **Students cannot run code at all** on the default configuration | [§15.9](#159-the-python-runtime-is-fetched-from-a-placeholder-cdn-host-so-it-never-initialises) |
+| `F-22` | Major | **Inverted disabled styling** on the reader chevrons | [BQ-17](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved), [22.13.1](#22131-an-anchor-styled-as-a-button-one-idiom-five-measured-instances-and-an-inverted-disabled-state) |
+| `*(unlabelled)*` | Major | `disabled` provides **zero event suppression** on these anchors | [22.13.1](#22131-an-anchor-styled-as-a-button-one-idiom-five-measured-instances-and-an-inverted-disabled-state) |
+| `F-25` | Major | Progress is **positional, not achievement-based** | [BQ-20](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) |
+| `F-26` | Minor | "Video Page" contains no video and "Quiz Page" contains no quiz | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| `F-11` | Critical | Anonymous join-by-link **never enrols** and the login form is **physically occluded** | ⚠️ **not reproduced; structural half verified** — [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| `F-29` | Minor | Sanitizer artefact | [22.13.4](#22134-the-sanitizers-one-artefact-and-the-whitelist-entry-that-produces-it) |
+
+**Keyboard Accessibility.** The tabulated rows below discharge **Issues 39–47**.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 36` | Major | `/home` Tab navigation skips 23 visible interactive elements | [22.8.1](#2281-the-tab-order-reaches-14-elements-and-skips-45) |
+| `Issue 37` | Major | One completely invisible tab stop | ❌ **corrected** — [22.8.3](#2283-the-dropdown-items-that-three-different-apis-disagree-about), [22.6.1](#2261-a-whitespace-only-name-produces-a-focusable-unlabelled-invisible-link-on-one-screen-and-an-unreachable-row-on-another) |
+| `Issue 38` | Major | The work-discarding action is the only one an AT user can perceive | [22.8.4](#2284-the-aria-and-document-semantics-census) |
+| `O-4` | Major | The new-folder modal **cannot be opened by keyboard** | [22.13.1](#22131-an-anchor-styled-as-a-button-one-idiom-five-measured-instances-and-an-inverted-disabled-state) |
+| `O-6` | Major | **Both** reveal modals fail focus containment | [22.8.6](#2286-the-modal-takes-no-focus-traps-none-and-returns-none) |
+| `L-5 / O-7` | Major | **Escape closes nothing** | ❌ **refuted** — [22.8.6](#2286-the-modal-takes-no-focus-traps-none-and-returns-none) |
+| `O-8` | Major | Open menus are keyboard dead ends | [22.8.4](#2284-the-aria-and-document-semantics-census) |
+| `L-6` | Major | Text inputs and textareas paint **no focus ring at all** | [22.8.2](#2282-every-focus-ring-on-the-site-is-the-browsers-and-one-rule-removes-it) |
+| `L-7 / —` | Major | Every focus ring in the app is **Chrome's UA default** | [22.8.2](#2282-every-focus-ring-on-the-site-is-the-browsers-and-one-rule-removes-it) |
+| `L-8` | Minor | Breadcrumb focus ring **mis-sized** | [22.8.2](#2282-every-focus-ring-on-the-site-is-the-browsers-and-one-rule-removes-it) |
+| `L-9` | Minor | Current item signalled by **colour alone** | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| `O-5` | Minor | The tab ring has **no stable end** | [22.6.8](#2268-the-librarys-infinite-scroll-fires-a-viewport-early-and-re-initialises-every-foundation-plugin-per-page) |
+| `K-4` | Major | The comments textarea has **no accessible name at all** | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build), [BQ-19](#178-bq-19-the-three-controls-that-lose-their-accessible-name-at-one-particular-width) |
+| `O-11` | Major | Alt-text defects | [22.8.5](#2285-alt-text-heading-levels-and-touch-targets) |
+| `O-13` | Major | **No `<h1>` anywhere** | [22.8.5](#2285-alt-text-heading-levels-and-touch-targets), [§15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them) |
+| `O-14 / F-21` | Major | **Zero live regions app-wide** | [22.8.4](#2284-the-aria-and-document-semantics-census) |
+| `L-15 / O-12` | Minor | Touch targets under 44×44 | [22.8.5](#2285-alt-text-heading-levels-and-touch-targets) |
+| `L-16 / F-23` | Major | **No pressed/`:active` state exists anywhere** | [22.8.4](#2284-the-aria-and-document-semantics-census) |
+
+**Data States, Lists and Empty States.** The tabulated rows below discharge **Issues 50–62**.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 48` | Major | A whitespace-only course name produces a 0-pixel-wide, unclickable, invisible row | [22.6.1](#2261-a-whitespace-only-name-produces-a-focusable-unlabelled-invisible-link-on-one-screen-and-an-unreachable-row-on-another) |
+| `Issue 49` | Major | An unbreakable 119-character token causes real document-level horizontal overflow and cross-column overlap | [22.6.2](#2262-an-over-long-name-escapes-the-document-by-two-different-mechanisms-on-two-screens) |
+| `H-4` | Major | **Two of six zero-item surfaces render absolutely nothing** | [§15.11](#1511-two-pages-render-an-empty-grid-with-no-empty-state-message-and-the-message-that-exists-is-gated-on-a-non-empty-featured-list), [22.6.1](#2261-a-whitespace-only-name-produces-a-focusable-unlabelled-invisible-link-on-one-screen-and-an-unreachable-row-on-another) |
+| `H-12` | Minor | `/library/trinkets` empty state gated on **both** lists being empty | [22.13.6](#22136-three-data-state-conditions-whose-cause-is-a-single-line-each) |
+| `F-19` | Major | `/u/{username}/classes` lists only **owned** courses, never enrolled ones | [22.13.6](#22136-three-data-state-conditions-whose-cause-is-a-single-line-each) |
+| `H-3` | Major | The three-zero export fixture renders **none of its three numbers** | [22.13.6](#22136-three-data-state-conditions-whose-cause-is-a-single-line-each) |
+| `H-5` | Major | A 0 % progress meter paints a visible **6.17 px** blue nub | [22.7.2](#2272-the-progress-bar-reports-1-when-the-value-is-0-and-then-never-moves), [22.5.1](#2251-the-min-width-1-floor-is-on-the-data-chart-not-on-the-legend) |
+| `H-6` | Major | **No `maxlength` exists on any text field anywhere** | [22.6.3](#2263-no-length-governance-on-the-input-side-on-either-free-text-field) |
+| `H-7` | Major | The Save control is **architecturally incapable** of a disabled state | [22.13.1](#22131-an-anchor-styled-as-a-button-one-idiom-five-measured-instances-and-an-inverted-disabled-state) |
+| `H-8` | Minor | The same empty-string trinket name renders **three different ways** | [22.6.5](#2265-the-untitled-fallback-and-the-two-branch-colour-rule-behind-it) |
+| `H-9` | Major | Zero counts rendered by **omission or a hyphen, never as "0"** | [22.6.6](#2266-zero-is-spelled-three-different-ways-twice-within-a-single-table-row) |
+| `H-10` | Minor | Naive lexicographic ordering | [22.6.6](#2266-zero-is-spelled-three-different-ways-twice-within-a-single-table-row) |
+| `H-11` | Minor | Truncated text is **unrecoverable** on the folder page | [22.6.4](#2264-truncation-without-a-recovery-path-on-the-heading-element-itself) |
+| `H-13` | Major | `/home` course rows contain **zero anchors** | [22.8.1](#2281-the-tab-order-reaches-14-elements-and-skips-45), [22.6.1](#2261-a-whitespace-only-name-produces-a-focusable-unlabelled-invisible-link-on-one-screen-and-an-unreachable-row-on-another) |
+| `O-F16` | Critical | The new-folder modal's rejection **renders nothing at all** | [22.7.4](#2274-the-new-folder-modal-two-validators-disagree-an-empty-body-is-posted-and-the-failure-is-invisible-twice-over) |
+| `O-F17` | Major | Unbounded polling with no backoff and no give-up | [22.7.1](#2271-the-export-poller-runs-on-a-fixed-3-second-interval-with-no-backoff-and-no-give-up) |
+| `O-F10` | Major | **All account-endpoint validation failures return HTTP 200** | [22.4.1](#2241-a-rejected-write-answers-http-200-on-ten-measured-endpoints-and-one-route-proves-the-pattern-is-not-a-contract) |
+| `O-F12` | Minor | **Raw Joi and raw regex leaked to users** | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build), [§1.2](#12-the-joi-custom-message-override-that-never-fires) |
+
+**Export / Download.** The tabulated rows below discharge **Issues 64–66**.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 63` | Major | The export screen is genuinely static for 6.1 minutes with no spinner, timeout, error or cancel | [22.7.1](#2271-the-export-poller-runs-on-a-fixed-3-second-interval-with-no-backoff-and-no-give-up), [22.7.3](#2273-no-cancel-no-retry-and-a-button-that-cannot-re-enable-itself) |
+| `O-10` | Major | The progress bar has **no `role="progressbar"`**, no `aria-valuenow/min/max`, no `aria-label` | [22.7.2](#2272-the-progress-bar-reports-1-when-the-value-is-0-and-then-never-moves), [BQ-20](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) |
+| `F-32` | Major | `download.zip` format matrix | [22.4.4](#2244-the-download-format-matrix-and-the-precondition-the-report-omitted) |
+| `*(unlabelled)*` | Major | `POST /api/exports` → **500** | [§7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid) |
+
+**Admin / Featured Courses.** Every row in this module is reported outside the numbered-issue sequence.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `CL-1` | Critical | **jQuery bracket-notation vs hapi's urlencoded parser — a systemic failure class with three client-reachable… | [22.3](#223-the-jquery-bracket-notation-class-and-the-three-outcomes-it-produces) |
+| `F-33` | Major | `GET /api/featured-courses` → **500 whenever any featured course has ≥1 lesson** | [22.4.7](#2247-a-featured-course-with-a-lesson-breaks-its-own-response-during-transmission) |
+| `BQ-5` | Minor | `/admin/{unknown}` returns raw JSON | [§17 BQ-5](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) |
+| `*(unlabelled)*` | Minor | `/admin` 403 for a non-admin renders a **chromeless** `50x.html` | [§17 BQ-6, BQ-7](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) |
+
+**Responsive Behaviour.** The tabulated rows below discharge **Issues 68–72**.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `Issue 67` | Critical | The course outline toggle is 100 % pointer-unreachable at 375 px | [§15.12](#1512-the-course-reader-loses-its-layout-at-and-below-641px-because-the-outline-is-fixed-at-a-hard-350px), [22.9.5](#2295-the-course-outline-toggle-is-visible-and-completely-unclickable) |
+| `N-8` | Major | Opening the outline programmatically **destroys the layout** | [22.9.5](#2295-the-course-outline-toggle-is-visible-and-completely-unclickable) |
+| `N-7` | Minor | The Next chevron overlaps the `h1` by **34.656 × 31.422 px** | ⚠️ **not reproduced** — [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| `N-1` | Major | `/library/trinkets` **+197 px overflow at 375** | [22.9.3](#2293-one-hard-coded-450px-width-and-the-measured-breakpoint-windows) |
+| `N-2 / N-4` | Minor | `ul#trinkets-list` is **not centred at any width**; the card grid never fills or centres | ❌ **refuted** — [22.9.4](#2294-the-content-column-is-full-bleed-and-one-heading-sits-flush-against-the-edge) |
+| `J-4 / P-18` | Major | The dashboard view-toggle **occludes the "Lesson Two" heading at 375** | ⚠️ **not reproduced** — [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+| `N-9` | Minor | The hamburger's `href="#"` resets the Angular route hash, blanking the reader | [22.13.7](#22137-conditions-confirmed-at-source-and-the-four-that-need-a-fixture-this-pass-could-not-build) |
+
+**Cross-Layer Contract.** Every row in this module is reported outside the numbered-issue sequence.
+
+| QA identifier | Sev | Condition as reported | Catalogue home |
+|---|---|---|---|
+| `CL-2` | Major | **HTTP 200-on-failure is a house-wide anti-pattern** | [22.4.1](#2241-a-rejected-write-answers-http-200-on-ten-measured-endpoints-and-one-route-proves-the-pattern-is-not-a-contract) |
+| `CL-3` | Major | Owner-only rejections surface as **HTTP 500 instead of 403** on 4 surfaces | [22.4.3](#2243-an-owner-only-denial-answers-500-and-a-paired-probe-proves-the-authorization-itself-is-sound) |
+| `CL-6` | Major | Security headers applied **inconsistently** | [22.2.1](#2221-x-frame-options-is-applied-to-exactly-the-paths-configuration-names-three-of-which-exist), [§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else) |
+| `CL-7` | Minor | ~40 third-party assets per page load fetched over plain `http://` and answered **307** | [22.2.3](#2223-every-protocol-relative-third-party-asset-is-first-requested-over-plain-http) |
+| `CL-5` | Info | **Field-name/route alignment is otherwise CORRECT** | **informational PASS** — [22.1](#221-what-this-pass-confirmed-rather-than-found-and-the-two-corrections-it-forced) |
+| `*(unlabelled)*` | Minor | Create/read **envelope inconsistency** | [§17 BQ-2](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) |
+| `*(unlabelled)*` | Minor | The `browser_id` cookie is sent **twice** | [22.2.2](#2222-a-pathless-client-set-cookie-is-stored-twice-and-sent-twice-under-one-path-prefix) |
+
+**Verification.** Coverage is checked mechanically rather than asserted. Every identifier the report uses is searched
+for in this document as a standalone token — all 72 issue numbers, resolved either directly or through one of the eight
+ranges named above, and all 83 lettered identifiers including each half of the nine compound labels. Anchor integrity
+is checked separately over the **whole** document, against the Python-Markdown slug rule that
+[mkdocs.yml](https://www.mkdocs.org/)'s renderer actually applies, so a link that merely looks plausible does not pass.
+Both checks pass with **zero unresolved identifiers and zero broken anchors**.
 
 ## Appendix — the parity baseline anchors
 
@@ -7938,8 +12355,13 @@ after the changeset: `npm test` exits 0 with zero failures** — see *Run totals
 
 **Session cookie.** Name **`session`** (`app.js:L104`), iron-seal prefix **`Fe26.2`**, and a 24-hour TTL —
 `expiresIn: 24 * 60 * 60 * 1000` at `app.js:L107`, that is 86400000 milliseconds. Every `app.js` line number in this
-subsection is a base-commit number; the block is preserved verbatim, so each of them sits exactly four lines earlier
-in the delivered tree. That TTL is the **server-side cache policy's** expiry for the `sessions` segment rather than a
+subsection is a base-commit number. ⚠️ An earlier revision added that each of them "sits exactly four lines earlier in
+the delivered tree"; QA reproduced the offsets and it is wrong twice over, so the blanket form is withdrawn. The **yar
+options block** is preserved verbatim and shifts by **three** lines, not four — base `password` L98, `isSecure` L99,
+`isSameSite` L100, `maxCookieSize` L103, `name` L104 and `expiresIn` L107 are delivered L95, L96, L97, L100, L101 and
+L104 — and the offset is **not uniform across the subsection**: the `Set-Cookie` rewrite below it moves the other way,
+base L204/L225/L228/L229 becoming delivered L205/L226/L229/L230, so no single offset can be stated for the whole block.
+That TTL is the **server-side cache policy's** expiry for the `sessions` segment rather than a
 cookie attribute, and it **overrides** `config/default.yaml:L47`'s `expiresIn: 2147483647`, because `app.js` builds
 the yar options itself and reads only `password` (`L98`), `isSecure` (`L99`) and `name` (`L104`) from configuration —
 `isSameSite: 'Lax'` at `L100` and `maxCookieSize: 0` at `L103` are literals in `app.js`.

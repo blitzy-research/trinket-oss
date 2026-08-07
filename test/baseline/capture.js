@@ -78,7 +78,11 @@
  *   6. CLONE-SAFE PORT AND A DISPOSABLE, VALIDATED DATABASE. /tmp/blitzy is a shared workspace;
  *      sibling clones hold other ports and other databases. The bind port defaults to
  *      30112 + CLONE_INDEX (BASELINE_PORT overrides) and the database is forced to
- *      `test_baseline[_<CLONE_INDEX>]` (BASELINE_MONGO_DATABASE overrides). This harness creates and
+ *      `test_baseline[_<CLONE_INDEX>]` (BASELINE_MONGO_DATABASE overrides). Every one of those three
+ *      environment inputs is checked WHOLE and refused by name rather than coerced, because both
+ *      coercions available here — `parseInt`'s prefix parse and stripping the illegal characters out
+ *      of a database suffix — silently map two distinct clone identifiers onto one socket or one
+ *      datastore, which is the collision the namespaces exist to prevent. This harness creates and
  *      DELETES two throwaway identities, so before every query and every delete it fails closed
  *      exactly the way test/helpers/db.js does — NODE_ENV must be `test`, the connection must be open,
  *      mongoose and the driver must agree on the name, and the name must match the disposable
@@ -226,6 +230,21 @@ var RUNTIME = {
 var DISPOSABLE_DATABASE = /^test([_-][A-Za-z0-9][A-Za-z0-9_-]*)?$/;
 
 /**
+ * The shape a CLONE_INDEX must ALREADY have to be usable as a database-name suffix — deliberately the
+ * suffix half of DISPOSABLE_DATABASE above, and character-for-character the pattern test/setup.js:L67
+ * applies to the same variable, so a value one accepts is a value the other accepts.
+ */
+var CLONE_SUFFIX = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/**
+ * The shape a port — or a port offset — must ALREADY have. `parseInt` is a PREFIX parser, so it answers
+ * a malformed value instead of refusing it, and every answer it gives for a port is a socket some other
+ * process on this shared host may already own. Digits only, checked whole, is what makes a refusal
+ * possible; the range check lives in resolvePort() because it applies to the sum, not to the input.
+ */
+var DECIMAL_DIGITS = /^[0-9]+$/;
+
+/**
  * The database configureRuntime() forced, or null when this module was required rather than run (which
  * is what happens inside `npm test`, where test/setup.js owns the database instead). Recorded so the
  * guard below can demand the exact forced name in a harness process while still admitting the mocha
@@ -346,26 +365,88 @@ function deepMerge(target, source) {
  * The port is not part of the corpus: config.url is https://trinket.dev regardless of the bind port,
  * and normalizationContract.mayBeNormalized explicitly permits "the ephemeral port inside any
  * self-referential URL".
+ *
+ * BOTH INPUTS ARE CHECKED WHOLE AND REFUSED BY NAME RATHER THAN COERCED ONTO A PORT (QA finding
+ * INFO-8), which is the contract docs/PRESERVED-QUIRKS.md section 13.1 already publishes for this
+ * function: "BASELINE_PORT must be digits-only and in range 1-65535, and CLONE_INDEX must be
+ * digits-only to be usable as a port offset, or each is rejected by name rather than coerced onto a
+ * port two clones would then race for." An earlier revision handed both straight to `parseInt`, which
+ * is a prefix parser, and measured three ways for that to end badly on this shared host:
+ *   - BASELINE_PORT=notanumber parsed to NaN, which JSON.stringify writes into the NODE_CONFIG
+ *     override as `null`; node-config then resolved app.port to null and app.js:L67's
+ *     `config.app.port || 3000` bound 3000 — the one port a developer's own `node app.js` and every
+ *     sibling clone's app is most likely to be holding — so the operator's request was discarded in
+ *     silence and the harness aimed itself at somebody else's socket;
+ *   - BASELINE_PORT=3000abc parsed to 3000 outright, succeeding on a port nobody asked for;
+ *   - a non-numeric CLONE_INDEX was coerced to the offset 0, which is the port the no-CLONE_INDEX case
+ *     already takes, so two clones holding DISTINCT identifiers raced for one socket.
+ * A violation throws, and main()'s catch turns a throw into the exit-2 "UNABLE TO RUN" every other
+ * unusable input gets — before anything binds a socket or opens a connection. BASELINE_PORT is the
+ * escape hatch for a clone whose identifier is not numeric.
  */
 function resolvePort() {
-  if (process.env.BASELINE_PORT) {
-    return parseInt(process.env.BASELINE_PORT, 10);
+  var explicit = process.env.BASELINE_PORT,
+      port;
+
+  if (explicit) {
+    if (!DECIMAL_DIGITS.test(explicit)) {
+      throw new Error('capture.js: BASELINE_PORT=' + JSON.stringify(explicit) + ' is not a decimal port ' +
+                      'number, so it is REFUSED rather than parsed. `parseInt` is a prefix parser: it ' +
+                      'answers 3000 for "3000abc" and NaN for "notanumber", and NaN reaches the ' +
+                      'NODE_CONFIG override as null, which hands this harness the application default ' +
+                      'port 3000 (app.js:L67) that a live app or a sibling clone is likely to own. Use ' +
+                      'digits only, 1 to 65535, or leave BASELINE_PORT unset to bind ' +
+                      RUNTIME.defaultPort + ' + CLONE_INDEX.');
+    }
+
+    port = parseInt(explicit, 10);
+  }
+  else if (!process.env.CLONE_INDEX) {
+    port = RUNTIME.defaultPort;
+  }
+  else {
+    if (!DECIMAL_DIGITS.test(process.env.CLONE_INDEX)) {
+      throw new Error('capture.js: CLONE_INDEX=' + JSON.stringify(process.env.CLONE_INDEX) + ' is not ' +
+                      'digits only, so it cannot be the offset from ' + RUNTIME.defaultPort + ' and it is ' +
+                      'REFUSED rather than coerced to 0 — which is the offset the no-CLONE_INDEX case ' +
+                      'already takes, so two clones holding distinct identifiers would race for one ' +
+                      'socket. Use a digits-only CLONE_INDEX, or name the port outright with ' +
+                      'BASELINE_PORT.');
+    }
+
+    port = RUNTIME.defaultPort + parseInt(process.env.CLONE_INDEX, 10);
   }
 
-  var cloneIndex = parseInt(process.env.CLONE_INDEX || '0', 10);
-
-  if (isNaN(cloneIndex)) {
-    cloneIndex = 0;
+  if (port < 1 || port > 65535) {
+    throw new Error('capture.js: the requested bind port ' + port + ' is outside the bindable range ' +
+                    '1-65535, so no socket could ever be opened on it. It came from ' + (explicit ?
+                    'BASELINE_PORT=' + JSON.stringify(explicit) : RUNTIME.defaultPort + ' + CLONE_INDEX=' +
+                    JSON.stringify(process.env.CLONE_INDEX)) + '.');
   }
 
-  return RUNTIME.defaultPort + cloneIndex;
+  return port;
 }
 
 /**
  * The disposable database this run owns. BASELINE_MONGO_DATABASE wins; otherwise
- * `test_baseline[_<CLONE_INDEX>]`, sanitized the way test/setup.js sanitizes CLONE_INDEX. The result is
- * validated against DISPOSABLE_DATABASE here, at the point it is chosen, so a bad value fails loudly at
- * configuration time instead of much later from inside a delete.
+ * `test_baseline[_<CLONE_INDEX>]`, with CLONE_INDEX validated WHOLE the way test/setup.js:L67 and L143-L157
+ * validates it — never normalized. The result is validated against DISPOSABLE_DATABASE here, at the
+ * point it is chosen, so a bad value fails loudly at configuration time instead of much later from
+ * inside a delete.
+ *
+ * NOTHING IS STRIPPED FROM CLONE_INDEX, AND THAT IS THE WHOLE POINT (QA finding INFO-7). An earlier
+ * revision sanitized first — `String(CLONE_INDEX).replace(/[^A-Za-z0-9_-]/g, '')` — and validated only
+ * what survived, which is a lossy canonicalization, and lossy canonicalization is how a guard against
+ * destructive collisions becomes the collision. Measured on that revision: `../evil` and `evil` both
+ * reduced to `evil` and both selected `test_baseline_evil` on the same port 30112, and `0 06` reduced to
+ * `006` and selected `test_baseline_006` — clone 006's database — while `parseInt` gave it a DIFFERENT
+ * port, so the two clones never collided on the socket and nothing announced that each was deleting the
+ * other's documents mid-run. The allow-list below could not have caught either one: `test_baseline_evil`
+ * and `test_baseline_006` are both perfectly disposable names. Refusing instead makes the mapping from
+ * CLONE_INDEX to database name the identity plus a fixed prefix, so two distinct accepted values can
+ * never select one database. `CLONE_INDEX=../evil npm test` already aborts inside test/setup.js for this
+ * exact reason (docs/PRESERVED-QUIRKS.md section 13.1); this harness accepting it was the inconsistent
+ * half, and BASELINE_MONGO_DATABASE remains the way to name a database outright.
  *
  * Forcing a name at all is mandatory: without it the capture inherits whatever node-config finally
  * resolved — for a developer who followed docs/setup.md that is the `trinket` DEVELOPMENT database — and
@@ -388,15 +469,18 @@ function resolveDatabase() {
     return RUNTIME.databasePrefix;
   }
 
-  var suffix = String(process.env.CLONE_INDEX).replace(/[^A-Za-z0-9_-]/g, ''),
+  var suffix = String(process.env.CLONE_INDEX),
       name   = RUNTIME.databasePrefix + '_' + suffix;
 
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(suffix) || !DISPOSABLE_DATABASE.test(name)) {
-    throw new Error('capture.js: CLONE_INDEX=' + JSON.stringify(process.env.CLONE_INDEX) + ' reduces ' +
-                    'to ' + JSON.stringify(suffix) + ' once the characters a database name may not ' +
-                    'carry are stripped, which would select ' + JSON.stringify(name) + ' — not a name ' +
-                    'this harness treats as disposable. Use a value starting with a letter or digit, ' +
-                    'or set BASELINE_MONGO_DATABASE explicitly.');
+  if (!CLONE_SUFFIX.test(suffix) || !DISPOSABLE_DATABASE.test(name)) {
+    throw new Error('capture.js: CLONE_INDEX=' + JSON.stringify(process.env.CLONE_INDEX) + ' is not a ' +
+                    'usable database-name suffix, so it is REFUSED rather than reduced to one: stripping ' +
+                    'the characters a database name may not carry would let two DISTINCT CLONE_INDEX ' +
+                    'values select one database and delete each other\'s documents mid-run — "../evil" ' +
+                    'and "evil" both reduce to ' + JSON.stringify(RUNTIME.databasePrefix + '_evil') + ', ' +
+                    'a name this harness does treat as disposable. Use a value that starts with a letter ' +
+                    'or a digit and contains only letters, digits, "_" or "-" — test/setup.js:L67 refuses ' +
+                    'the same shapes for the same reason — or set BASELINE_MONGO_DATABASE explicitly.');
   }
 
   return name;

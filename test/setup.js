@@ -51,10 +51,36 @@ process.env.NODE_CONFIG_PERSIST_ON_CHANGE = 'N';
 //    `../app.js` below would kill the process before a single test ran. The literal below is a tracked,
 //    non-secret, test-only value sealing cookies that live for one `npm test`, which is what keeps a fresh
 //    clone green without any ignored file.
+// 3. THE CLIENT-FACING `app.url` ORIGIN - the same landmine as 2, in a second place. `config/app.config.js`
+//    computes `config.url` from `app.url`, and `lib/models/courseInvitation.js` composes an invitation's
+//    `acceptUrl` from `app.url.protocol` + `app.url.hostname` alone. `config/default.yaml` declares
+//    `https` + `trinket.dev` + no port, `config/test.yaml` declares NO `app.url`, and the only layer that
+//    supplies `http` + `localhost` + 3000 is the gitignored `config/local.yaml` the documented setup flow
+//    creates. So the origin an assertion saw was decided by an untracked file: with it present the suite
+//    passed, and on the state `git clean -xfd` leaves it failed. G6 asks for a green run from a fresh
+//    clone, so the three keys are forced here. The forced values are `config/local.example.yaml`'s, so this
+//    layer measures the configuration a developer following the documentation already runs rather than
+//    inventing a third origin, and no `config/*.yaml` was edited. `app.url.port` is the CLIENT-FACING port
+//    that `config/app.config.js` appends to `config.url`; it is a different key from `app.port`, the bind
+//    port a parallel clone overrides, so forcing it leaves that channel untouched.
+//
+//    `test/lib/models/courseInvitation.js` independently derives its expected origin from the same two
+//    keys, so the two mechanisms agree rather than compete: this layer fixes which origin the suite is
+//    measured against, and that derivation keeps the assertion correct under whichever origin is in force.
+//
+//    Deliberately NOT affected: `test/baseline/capture.js` and `test/baseline/replay.js`, which are
+//    standalone (`require.main === module`) and never require this file. The R-6 corpus was captured under
+//    `config/default.yaml`'s `https://trinket.dev` origin, and `capture.js#originPrecondition` REFUSES a
+//    replay whose live origin differs rather than adapting to it, so `node test/baseline/replay.js` still
+//    needs that origin - from an absent `app.url` layer or from its own documented `$NODE_CONFIG`. Forcing
+//    an origin here would have broken that gate had this file been in its require graph; it is not.
 var TEST_DATABASE         = 'test';
 var TEST_MONGO_HOST       = 'localhost';
 var TEST_MONGO_PORT       = 27017;
 var TEST_SESSION_PASSWORD = 'trinket-oss-test-only-session-cookie-password';
+var TEST_APP_URL_PROTOCOL = 'http';
+var TEST_APP_URL_HOSTNAME = 'localhost';
+var TEST_APP_URL_PORT     = 3000;
 
 // MongoDB refuses a database name of 64 characters or more, so 63 is the maximum a namespaced test
 // database may reach. Bounded here rather than left to the server, because the server's refusal would
@@ -66,7 +92,38 @@ var MONGO_DATABASE_NAME_LIMIT = 63;
 // that helper is willing to clear.
 var CLONE_SUFFIX = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
-var forcedConfig = process.env.NODE_CONFIG ? JSON.parse(process.env.NODE_CONFIG) : {};
+// A MALFORMED `$NODE_CONFIG` FAILS BY NAME, and this try/catch is the only reason it does.
+//
+// The parse itself is unchanged and still fail-closed: a broken override kills the process here, before
+// `config` is ever read and long before test/helpers/db.js can point a `dropDatabase()` anywhere. What the
+// bare `JSON.parse` did NOT do is say whose fault it was. Measured with `NODE_CONFIG='{not json'`, the
+// headline was `SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)` and
+// only a stack frame named this file - so the two CLONE_INDEX refusals below, which announce themselves as
+// `test/setup.js: ...`, were the only ones actually keeping the "loudly and by name" promise their own
+// comment makes about this one. The rethrow closes that gap: the parser's own text is preserved verbatim
+// inside the message (it is the only thing that says WHERE in the JSON the fault is), the offending value is
+// quoted so a shell-quoting mistake is visible, and `cause` keeps the original SyntaxError reachable for
+// anything that inspects it. Nothing about the accepted path changes - a valid `$NODE_CONFIG` is parsed and
+// merged exactly as before, which is what keeps the parallel-clone port and database overrides in the setup
+// notes working.
+var forcedConfig;
+
+if (process.env.NODE_CONFIG) {
+  try {
+    forcedConfig = JSON.parse(process.env.NODE_CONFIG);
+  }
+  catch (err) {
+    throw new Error('test/setup.js: $NODE_CONFIG is not valid JSON (' + err.message + '), so the test ' +
+      'bootstrap cannot resolve the configuration it must force. The value received was ' +
+      JSON.stringify(process.env.NODE_CONFIG) + '. It is deliberately NOT ignored: falling back to the ' +
+      'file layers would silently discard the override - which for a parallel clone is the port and the ' +
+      'database name that keep it out of another clone\'s way. Fix the JSON, or unset NODE_CONFIG to run ' +
+      'against the file layers on purpose.', { cause : err });
+  }
+}
+else {
+  forcedConfig = {};
+}
 
 forcedConfig.db = forcedConfig.db || {};
 
@@ -106,7 +163,9 @@ forcedConfig.db.mongoread = {
 // later, from a timer during module load, and it advises the reader to "Set CLONE_INDEX" — which they did.
 // Silently falling back to the shared `test` database would be worse still: it would hand two parallel
 // clones the same database to drop, which is the hazard this namespace exists to prevent. So a bad value
-// fails the bootstrap loudly and by name, the same treatment the malformed `$NODE_CONFIG` below gets.
+// fails the bootstrap loudly and by name, the same treatment the malformed `$NODE_CONFIG` above now gets.
+// "By name" is literal in both places: every refusal in this file opens with `test/setup.js: `, so the
+// message alone identifies the bootstrap without the reader having to read a stack.
 if (process.env.CLONE_INDEX) {
   var cloneSuffix       = String(process.env.CLONE_INDEX);
   var cloneDatabaseName = TEST_DATABASE + '_' + cloneSuffix;
@@ -136,12 +195,24 @@ forcedConfig.app.plugins.session                        = forcedConfig.app.plugi
 forcedConfig.app.plugins.session.cookieOptions          = forcedConfig.app.plugins.session.cookieOptions || {};
 forcedConfig.app.plugins.session.cookieOptions.password = TEST_SESSION_PASSWORD;
 
+// ASSIGNED, NOT MERGED, for reason 3 at the top of this file. All three keys `config/app.config.js` and
+// `lib/models/courseInvitation.js` read are listed, so neither the gitignored `config/local.yaml` nor an
+// incoming `$NODE_CONFIG` can decide which origin an assertion sees. `app.url.port` is the CLIENT-FACING
+// port that `config/app.config.js:L17` appends to `config.url`; it is a different key from `app.port`, the
+// bind port a parallel clone overrides, so forcing it here leaves that channel untouched.
+forcedConfig.app.url = {
+  protocol : TEST_APP_URL_PROTOCOL,
+  hostname : TEST_APP_URL_HOSTNAME,
+  port     : TEST_APP_URL_PORT
+};
+
 // Any pre-existing `$NODE_CONFIG` is merged rather than discarded - the setup notes use it to give parallel
-// clones their own port - and a malformed one is left to throw at the `JSON.parse` above rather than being
-// swallowed, so a broken override fails the bootstrap loudly instead of silently reverting to the file
-// layers. The two EXCEPTIONS to that merge are `db.mongo` and `db.mongoread`, which are assigned outright
-// for the reason given at the top of this file: no incoming field may contribute to the endpoint the suite
-// drops.
+// clones their own port - and a malformed one still throws at the guarded `JSON.parse` above rather than
+// being swallowed, now naming this file and quoting the value it could not read, so a broken override fails
+// the bootstrap loudly instead of silently reverting to the file layers. The three EXCEPTIONS to that merge
+// are `db.mongo`, `db.mongoread` and `app.url`, which are assigned outright for the reasons given at the top
+// of this file: no incoming field may contribute to the endpoint the suite drops, or to the origin an
+// assertion is measured against.
 process.env.NODE_CONFIG = JSON.stringify(forcedConfig);
 var chai           = require('chai'),
     chaiAsPromised = require('chai-as-promised'),
@@ -188,12 +259,27 @@ var REDIS_V4_TO_MOCK_COMMAND = {
   set       : 'set'
 };
 
-// node_redis v3 answers SISMEMBER with 0/1 while v4 answers with a boolean, so this one reply is coerced to
-// match the real v4 client. `lib/util/store.js`, the in-memory twin of this double, likewise answers with a
-// boolean, and the reply reaches a caller unwrapped: `lib/util/store/emailStore.js` returns it straight out
-// of `blockListLookup`, which `lib/controllers/users.js` reads as `isBlocked`. Every other reply shape is
-// identical between the two versions.
-var REDIS_V4_BOOLEAN_REPLIES = ['sIsMember'];
+// node_redis v3 answers SISMEMBER and EXPIRE with 0/1 while v4 answers both with a boolean, so those two
+// replies — and only those two — are coerced to match the real v4 client.
+//
+// The list is a census rather than a guess: of the twelve commands mapped above, exactly two bind
+// `transformBooleanReply` in the `@redis/client` that `redis` 4.7.1 ships, SISMEMBER and EXPIRE. The other
+// ten bind no reply transformer at all, so redis-mock's raw reply is already the v4 reply for each of them.
+// Both coercions were measured against the real client on a live redis server rather than read off the
+// source: `sIsMember` answers `false` for an absent member, and `expire` answers `true` for a key that
+// exists and `false` for one that does not, where redis-mock, being a v3 double, answers `1` and `0`.
+//
+// SISMEMBER's reply reaches a caller unwrapped, which is what makes its shape load-bearing:
+// `lib/util/store/emailStore.js` returns it straight out of `blockListLookup`, which
+// `lib/controllers/users.js` reads as `isBlocked`. EXPIRE's does not — `lib/util/store.js` returns it to a
+// caller that discards it — so `expire` is coerced for fidelity rather than to satisfy a consumer: a future
+// call site that tests the reply must see what production sees.
+//
+// The in-memory twin is deliberately not the reference here. `lib/util/store.js` answers with a boolean for
+// `sIsMember` but with `1` for `expire`, and that is application code this change may not alter. This
+// adapter stands in for `redis.createClient`, so the client it impersonates is the reference, and the
+// divergence from the twin is recorded rather than propagated.
+var REDIS_V4_BOOLEAN_REPLIES = ['sIsMember', 'expire'];
 
 // The number of arguments each mapped command cannot do without, so that a call which is short of one is
 // REJECTED rather than left unanswered. The adapter below appends its own callback as the next positional

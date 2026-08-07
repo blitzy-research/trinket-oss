@@ -51,9 +51,13 @@ per-package tables, the measurements and the adjudications live there and only t
 - **`npm run build` now hydrates its own prerequisite.** A `prebuild` script runs
   `scripts/hydrate-components.js`, which fetches the pinned `v1.1.0` `public-components.tgz` asset the stylesheets
   import, verifies it against a recorded byte length **and** a recorded SHA-256 before unpacking, and no-ops when the
-  tree is already present. That is what makes `git clean -xfd && npm ci && npm run build && npm test` succeed
-  unattended on a fresh clone; `TRINKET_COMPONENTS_TARBALL` hydrates from a local copy with no network. Both emitted
-  stylesheets remain byte-identical to the recorded baseline.
+  tree is already present. That is what removes the manual vendor step from
+  `git clean -xfd && npm ci && npm run build && npm test`; `TRINKET_COMPONENTS_TARBALL` hydrates from a local copy with
+  no network. Both emitted stylesheets remain byte-identical to the recorded baseline. The chain's two remaining
+  conditions are documented in `docs/setup.md` and are not this hook's: `npm ci` needs **npm 10**, because
+  `engine-strict` is on and `engines` caps npm below 11, and `node app.js` needs the gitignored `config/local.yaml`
+  for its session secret. `npm test` needs neither, and was measured exit 0 with zero failures on a fresh clone with
+  no `config/local.yaml` present.
 - **Promise and resource ownership completed across the converted paths** — a wire-neutral follow-through on the
   conversion above. The no-response parity outcome is now `h.abandon` rather than a promise that never settles, so
   hapi no longer retains the request lifecycle on the 38 branches that deliberately answer nothing; the model copy
@@ -159,7 +163,7 @@ are final rather than provisional:**
 |------|--------|
 | `npm ci` | exit 0 from the committed lockfile |
 | `npm run build` | exit 0; `public/css/base.css` 265,727 bytes and `public/css/embed.css` 296,352 bytes, both byte-identical to the recorded baseline; no `.css.map` |
-| `npm test` | exit 0 with zero failures, `--check-leaks` active, process terminates on its own |
+| `npm test` | exit 0 with zero failures, `--check-leaks` active, process terminates on its own — measured **both** with `config/local.yaml` present and with it absent, since `test/setup.js` forces the session password and the `app.url` origin through `$NODE_CONFIG` rather than inheriting them from a gitignored file. The run is also order- and load-independent: the test-database-guard probe sweeps its own probe database to convergence instead of from a single snapshot, so a mongoose index build that materializes a collection late cannot leave one behind on a cold first run — see [Preserved Quirks](docs/PRESERVED-QUIRKS.md) |
 | `node --pending-deprecation` boot | zero process warnings |
 | `node test/baseline/replay.js` | exit 0, **zero differences**; 58 unauthenticated, 7 authenticated and 8 assignment-`next` entries replayed; the documented route-table anchor enforced as all **eleven** clauses of `gates.documentedAnchorGate` |
 | `npm audit --omit=dev` | 0 critical, 0 high, 3 accepted moderate |
@@ -175,6 +179,17 @@ failures is the claim, and the authoritative total is whatever the run in front 
 - **No route or feature was added or removed**, and no TypeScript conversion, framework swap or frontend rewrite was
   made. The templates, the AngularJS partials and the SCSS design-token layer are untouched, and the build tooling is
   held on purpose so the same two CSS artifacts land at the same paths.
+- **Nothing was tuned for performance, and a profiling pass confirmed nothing needed to be.** That pass built the base
+  commit and ran it beside this tree against the same MongoDB, the same Redis and the same host, interleaving every
+  measurement: HTTP statuses, response bodies, database operation counts and `docsExamined` came back identical, the
+  registered route table was the same at both builds on every boot, and startup time, resident memory and boot-time
+  deprecation warnings all moved in this tree's favour. The costs it did measure — unbounded result sets, N+1 query
+  fan-out, surfaces that grow without bound, and the browser's per-render asset and DOM cost — are **base-commit
+  behaviour**, and the governing rules make them preserved-and-documented rather than fixable: no change may be
+  justified on performance grounds, and query patterns, index definitions and caching behaviour are frozen explicitly.
+  All of them are catalogued instead, each attributed to the base commit by `git show` or `git diff`, in
+  [Preserved Quirks §18](docs/PRESERVED-QUIRKS.md) — including the two the pass rated most serious, an unbounded
+  `?limit` on the primary list route and a list query that examines the whole owner set to serve one page.
 
 ### Deviations and unresolved conflicts
 

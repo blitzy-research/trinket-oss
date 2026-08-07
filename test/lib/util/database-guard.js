@@ -128,15 +128,47 @@ describe('Test database fail-closed gate', function() {
       // Only the sentinel document and the collections that appeared inside this process's own lifetime
       // are removed, one at a time. `dropDatabase()` is never called anywhere in this probe, so no
       // invocation of it can ever be pointed at the wrong name.
-      '      .then(function() { return check.db.collections(); })',
-      '      .then(function(collections) {',
-      '        return collections.reduce(function(chain, collection) {',
-      '          return chain.then(function() {',
-      '            return collection.drop().then(function() {',
-      '              out.droppedCollections.push(collection.collectionName);',
+      //
+      // The removal is a CONVERGENT SWEEP rather than a single `collections()` snapshot, and that is
+      // load-bearing rather than defensive. Requiring the db helper above also requires app.js, which
+      // registers every model on the default mongoose connection; mongoose then builds each schema's
+      // declared indexes, and an index build CREATES the collection it indexes. Measured against an empty
+      // probe database on this tree: requiring the helper materializes fifteen collections the probe
+      // never seeded - `files`, `snippets`, `drafts`, `exports`, `folders`, `errorevents`,
+      // `clientmetrics`, `featuredcourses` and the rest - asynchronously, from eight index-bearing models.
+      // A one-shot snapshot taken after a fixed wait therefore races those builds: on a cold first run in
+      // a fresh checkout one build landed after the snapshot and survived it, and the spec failed with
+      // `expected [ "files" ] to deeply equal []` while passing on every warm run and in isolation.
+      // Listing and dropping until the database comes back empty twice in a row removes the race without
+      // relaxing anything - every assertion below is unchanged, `dropDatabase()` is still never called,
+      // and a sweep that cannot converge inside its deadline still reports what is left so the spec fails
+      // loudly rather than quietly tolerating a leftover.
+      '      .then(function() {',
+      '        var sweepDeadline = Date.now() + 20000;',
+      '        function sweep(emptyStreak) {',
+      '          return check.db.collections().then(function(collections) {',
+      '            if (!collections.length) {',
+      // Two consecutive empty listings, 750ms apart, so a build still in flight has a window to reappear
+      // and be swept rather than to surface only in the assertion below.
+      '              if (emptyStreak >= 1 || Date.now() > sweepDeadline) { return null; }',
+      '              return new Promise(function(resolve) { setTimeout(resolve, 750); })',
+      '                .then(function() { return sweep(emptyStreak + 1); });',
+      '            }',
+      '            return collections.reduce(function(chain, collection) {',
+      '              return chain.then(function() {',
+      // A drop that loses a race with a concurrent index build simply reappears in the next listing and
+      // is dropped there, so a single rejection must not abort the probe; anything that genuinely cannot
+      // be removed still shows up in `remaining` and fails the assertion by name.
+      '                return collection.drop().then(function() {',
+      '                  out.droppedCollections.push(collection.collectionName);',
+      '                }, function() { return null; });',
+      '              });',
+      '            }, Promise.resolve()).then(function() {',
+      '              return Date.now() > sweepDeadline ? null : sweep(0);',
       '            });',
       '          });',
-      '        }, Promise.resolve());',
+      '        }',
+      '        return sweep(0);',
       '      })',
       '      .then(function() { return check.db.listCollections().toArray(); })',
       '      .then(function(remaining) {',

@@ -2,7 +2,10 @@ var _        = require('underscore'),
     sinon    = require('sinon'),
     should   = require('chai').should(),
     crypto   = require('crypto'),
-    Interaction = require('../../../lib/models/interaction');
+    Interaction = require('../../../lib/models/interaction'),
+    // The same module instance lib/models/trinket.js holds, so stubbing `removeSnapshot` on it is seen by
+    // the post-remove hook, which reads the property at call time.
+    snapshotUtil = require('../../../lib/workers/util/snapshot');
 
 describe('Trinket model', function(){
   describe('pre save hooks', function() {
@@ -359,4 +362,174 @@ describe('Trinket model', function(){
       });
     });
   });
+
+  /**
+   * The post-remove snapshot cleanup, and its 404 exemption (runtime-QA finding QA-13).
+   *
+   * WHY THIS BLOCK EXISTS
+   * ---------------------
+   * `postRemove` had no coverage at all, and the one thing in it that carries a decision - the 404
+   * exemption on its `console.error` - was silently disabled by the `aws-sdk` v2 ->
+   * `@aws-sdk/client-s3` v3 replacement. v2's `AWSError` carried a top-level `statusCode`; a v3
+   * rejection carries the status under `$metadata.httpStatusCode` and leaves `statusCode` undefined, so
+   * the original `err.statusCode !== 404` could never be false and the 404s the base commit swallowed
+   * were logged. The guard's SOURCE was byte-identical to the base commit throughout, which is exactly
+   * why nothing caught it: the regression lived in the error shape reaching the guard, not in the guard.
+   * These tests pin the BEHAVIOUR rather than the expression, so the same class of shape change fails
+   * here next time. The adjudication is docs/PRESERVED-QUIRKS.md section 3.47.
+   *
+   * HOW THE SEAM IS CHOSEN
+   * ----------------------
+   * `snapshot.removeSnapshot` is stubbed on the module the production code holds - the model calls it as
+   * a property access at call time, so the stub is seen - and `console.error` is stubbed to count. That
+   * is the lowest seam that still exercises the real hook: the real `postRemove` runs, attaches its real
+   * `.catch`, and evaluates the real guard against error objects whose shapes were MEASURED against the
+   * real SDK (own keys `$fault, $metadata, $retryable, Code, HostId, RequestId, message, name`, with
+   * `statusCode` absent). Nothing about the fire-and-forget contract is faked, which is why the return
+   * value is asserted too: the hook must stay unawaitable, because awaiting it would move a best-effort
+   * cleanup failure onto the caller.
+   */
+  describe('post remove hooks', function() {
+    describe('postRemove', function() {
+      var SNAPSHOT_URL = 'https://snapshots.example.com/abc123def456-1700000000000.png';
+
+      var removeSnapshot = null,
+          errorLog       = null;
+
+      /**
+       * Builds a rejection shaped the way `@aws-sdk/client-s3` v3 actually rejects.
+       *
+       * @param   {string} name    The S3 error name, e.g. 'NoSuchKey'.
+       * @param   {string} message The SDK's message, which is what the log line would carry.
+       * @param   {number} status  The HTTP status, which v3 publishes under `$metadata`.
+       * @returns {Error} The error object, with no top-level `statusCode` - deliberately.
+       */
+      function v3Error(name, message, status) {
+        var err = new Error(message);
+
+        err.name       = name;
+        err.$fault     = 'client';
+        err.$retryable = undefined;
+        err.$metadata  = { httpStatusCode : status, requestId : 'QA13REQ', attempts : 1, totalRetryDelay : 0 };
+
+        return err;
+      }
+
+      /**
+       * Lets the rejection handler `postRemove` attached synchronously run to completion.
+       *
+       * The hook returns `undefined` by design, so there is no promise to await. Two turns of the
+       * timer queue are used rather than a fixed delay so the wait is deterministic rather than timed.
+       *
+       * @returns {Promise} Resolves once the handler has had the chance to run.
+       */
+      function settle() {
+        return new Promise(function(resolve) {
+          setImmediate(function() { setImmediate(resolve); });
+        });
+      }
+
+      beforeEach(function() {
+        removeSnapshot = sinon.stub(snapshotUtil, 'removeSnapshot');
+        errorLog       = sinon.stub(console, 'error');
+      });
+
+      afterEach(function() {
+        // Restored unconditionally, and `console.error` first, so a failing expectation cannot leave the
+        // rest of the suite running with a swallowed error channel.
+        errorLog.restore();
+        removeSnapshot.restore();
+        errorLog       = null;
+        removeSnapshot = null;
+      });
+
+      it('asks the snapshot util to remove the snapshot the removed document carried', function() {
+        removeSnapshot.returns(Promise.resolve());
+
+        var returned = Trinket.hooks.post.remove.postRemove({ snapshot : SNAPSHOT_URL });
+
+        removeSnapshot.calledOnce.should.be.true;
+        removeSnapshot.calledWithExactly(SNAPSHOT_URL).should.be.true;
+        // Fire-and-forget: the hook hands back nothing, so a cleanup failure can never reach the caller.
+        should.not.exist(returned);
+
+        return settle().then(function() {
+          errorLog.called.should.be.false;
+        });
+      });
+
+      it('does nothing at all when the removed document carried no snapshot', function() {
+        var returned = Trinket.hooks.post.remove.postRemove({});
+
+        removeSnapshot.called.should.be.false;
+        should.not.exist(returned);
+
+        return settle().then(function() {
+          errorLog.called.should.be.false;
+        });
+      });
+
+      it('stays silent when the delete fails with a v3-shaped 404 NoSuchKey', function() {
+        // The exact shape and message measured from the real SDK against a genuine S3 404 response.
+        removeSnapshot.returns(Promise.reject(v3Error('NoSuchKey', 'The specified key does not exist.', 404)));
+
+        Trinket.hooks.post.remove.postRemove({ snapshot : SNAPSHOT_URL });
+
+        return settle().then(function() {
+          errorLog.called.should.be.false;
+        });
+      });
+
+      it('stays silent when the whole bucket is gone, which S3 also reports as 404', function() {
+        removeSnapshot.returns(Promise.reject(v3Error('NoSuchBucket', 'The specified bucket does not exist', 404)));
+
+        Trinket.hooks.post.remove.postRemove({ snapshot : SNAPSHOT_URL });
+
+        return settle().then(function() {
+          errorLog.called.should.be.false;
+        });
+      });
+
+      it('stays silent for a legacy top-level statusCode of 404, so the v2 read is not dropped', function() {
+        var legacy = new Error('The specified key does not exist.');
+
+        legacy.name       = 'NoSuchKey';
+        legacy.statusCode = 404;
+
+        removeSnapshot.returns(Promise.reject(legacy));
+
+        Trinket.hooks.post.remove.postRemove({ snapshot : SNAPSHOT_URL });
+
+        return settle().then(function() {
+          errorLog.called.should.be.false;
+        });
+      });
+
+      it('logs a v3-shaped 403, with the message text unchanged', function() {
+        removeSnapshot.returns(Promise.reject(v3Error('AccessDenied', 'Access Denied', 403)));
+
+        Trinket.hooks.post.remove.postRemove({ snapshot : SNAPSHOT_URL });
+
+        return settle().then(function() {
+          errorLog.calledOnce.should.be.true;
+          // The log line is byte-identical to the base commit's: the same prefix, and `err.message`.
+          errorLog.calledWithExactly('Failed to remove snapshot:', 'Access Denied').should.be.true;
+        });
+      });
+
+      it('logs a failure that carries no status at all, such as the usage-count rejection', function() {
+        // `snapshot.removeSnapshot` also rejects from `isSnapshotUsed`, whose countDocuments failure is a
+        // plain Error. That has never been suppressible, and must not become so.
+        removeSnapshot.returns(Promise.reject(new Error('count unavailable')));
+
+        Trinket.hooks.post.remove.postRemove({ snapshot : SNAPSHOT_URL });
+
+        return settle().then(function() {
+          errorLog.calledOnce.should.be.true;
+          errorLog.calledWithExactly('Failed to remove snapshot:', 'count unavailable').should.be.true;
+        });
+      });
+    });
+  });
+
 });

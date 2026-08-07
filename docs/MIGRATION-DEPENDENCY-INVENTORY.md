@@ -409,12 +409,12 @@ this codebase calls, so each is a **manifest-only edit with zero call-site chang
 | Package | Original (installed) | Target | Reason | Verification and notes |
 |---|---|---|---|---|
 | `accepts` | 1.1.4 | **1.3.8** | `security` | Clears high findings in `accepts` and in `negotiator`. Verified still callable as a factory whose `.types` function returns `html` and `json`. **Bumped, never dropped**: `accepts(request).types(['html','json'])` — `lib/util/routeParser.js:L325` at the base commit, `L131` in the delivered tree after the shim was retired — is what selects the HTML-versus-JSON response branch, so dropping it would change content negotiation |
-| `js-yaml` | 3.0.2 | **3.15.0** | `security` | Clears two critical findings, including the `argparse` advisory. **Deliberately stays on the 3.x line**: `safeLoad` is still present, so `config/routes.js:L7` needs no edit at all. Advancing to 4.x or 5.x would force the `safeLoad` to `load` rename for **zero** additional security benefit |
+| `js-yaml` | 3.0.2 | **3.15.1** | `security` | Clears two critical findings, including the `argparse` advisory, and — at the `.1` patch — one further high published later; see *The advisory that moved the `js-yaml` pin* below. **Deliberately stays on the 3.x line**: `safeLoad` is still present, so `config/routes.js:L7` needs no edit at all. Advancing to 4.x or 5.x would force the `safeLoad` to `load` rename for **zero** additional security benefit |
 | `mime` | 1.2.11 | **1.6.0** | `security` | `lookup`, `extension` and `charsets` all verified present. **Chosen over a swap to a differently named package precisely because it touches zero call sites — R-1 was the recorded tie-breaker.** See [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.3 |
 | `lodash` | 4.17.23 | **4.18.1** | `security` | The advisory targets `_.template`, which is unreachable here — only `_.extend`, `_.find` and `lodash.escape` are used — but the bump costs nothing and closes the finding |
 | `@hapi/inert` | 7.1.0 | **7.1.2** | `security` | Clears a moderate finding. Verified in the real deployment shape, alongside `@hapi/hapi` 21.4.10, `@hapi/vision` 7.0.3 and `@hapi/yar` 11.0.3 |
 | `jszip` | 3.6.0 | **3.10.1** | `security` | Clears a moderate finding. **This package is live**, required at `lib/controllers/trinket.js:L23`; `new JSZip()` plus `file`, `folder` and `generateAsync` all verified |
-| `mongoose` | 6.13.9 | **6.13.10** | `security` | Clears a moderate finding **while staying inside the 6.x line**. `Schema.extend` verified present after the extend plugin is loaded. The reason 6.x is a ceiling rather than a waypoint is in Rubric 5 |
+| `mongoose` | 6.13.9 | **6.13.10** | `security` | Clears a moderate finding **while staying inside the 6.x line**. `Schema.extend` is present after the extend plugin is loaded — `typeof` reports a function — but **present is not functional**: it throws when called, and it throws identically on 6.13.9 and 6.13.10, so the bump is behaviour-neutral for it in the strongest available sense. Rubric 5 carries the measurement, and the reason 6.x is a ceiling rather than a waypoint is there too |
 | `brace-expansion` *(transitive)* | 1.1.12 as resolved | **2.1.4, pinned via `overrides`** | `security` | **One override collapses seven high findings**, and the pinned literal is *not* the projected `5.0.9`: forced in, 5.0.9 breaks `minimatch` outright. *The `brace-expansion` pin in full* below |
 | `uuid` *(transitive)* | 8.3.2 as resolved | **8.3.2 — no override; the pin an earlier revision added was removed** | `security` | **Removed in response to review finding F-01.** The frozen plan accepts the two `uuid` findings by name on measured unreachability, and does not pin them; the pin took the audit from the plan's projected 3 moderate findings to 1, which is a decision the plan does not make. The unreachability measurement is kept below because it is what licenses the acceptance. *The `uuid` finding in full* below |
 | `serialize-javascript` *(transitive, development)* | 6.0.2 as resolved | **7.0.7, pinned via `overrides`** | `security` | **Closes the HIGH advisory the test runner carried.** `mocha` 11.7.6 asks for `^6.0.2` and the advisory range is `<=7.0.4`, so only an override can move it. *The development-tree pins in full* below |
@@ -470,6 +470,21 @@ reporter renders an actual-versus-expected diff correctly with the pin in place.
 
 Both pins were validated together against the real suite, not only in a scratch resolution: `npm ci` exits 0 and
 `npm test` reports zero failures, exit 0.
+
+**Both resolutions are deliberately OUTSIDE the range `mocha` declares, and that is the point of an override rather
+than an accident of resolution.** Recorded here so that a future reader inspecting `npm ls` does not read it as
+drift: `mocha` 11.7.6 declares `diff: ^7.0.0` and `serialize-javascript: ^6.0.2`, the committed lockfile hoists
+`diff` 9.0.0 and `serialize-javascript` 7.0.7, and there is **no nested copy of either under
+`node_modules/mocha`** — so `mocha`'s own `require("diff")` at `node_modules/mocha/lib/reporters/base.js:L16`
+resolves to 9.0.0, and its `require("serialize-javascript")` at
+`node_modules/mocha/lib/nodejs/buffered-worker-pool.js:L16` resolves to 7.0.7. Each was verified against the
+*only* API mocha uses, from mocha's own module path: `diff.createPatch` — the single call site, `base.js:L521`, which
+renders the `+ expected - actual` block — is present and produced a correct unified diff for a deliberately failing
+spec; and `serialize-javascript` is callable and accepts mocha's exact `{unsafe: true, ignoreFunction: true}` option
+shape, though that path only runs under `--parallel`, which this suite never enables. The residual risk is stated
+rather than hidden: a future `mocha` patch that adopted a newer `diff` or `serialize-javascript` API would break the
+reporter with no change to this manifest, so a `mocha` bump should re-check those two call sites — or drop the
+corresponding override if the advisory ranges have moved on by then.
 
 ## Rubric 2 — Same-package major bump
 
@@ -703,7 +718,7 @@ correspond to a manifest removal.
 
 | Original package | Version at base commit | Replacement | Target | Reason | Verification and notes |
 |---|---|---|---|---|---|
-| `aws-sdk` | 2.1693.0 | **`@aws-sdk/client-s3`** plus **`@aws-sdk/s3-request-presigner`** | **3.1098.0** both, pinned exact | `incompatible` | **Gate-mandated, not discretionary** — requiring the v2 SDK on Node 22 fires a real `process.on('warning')` event with `name === "NOTE"`, which the zero-warning boot gate forbids. v2's global-singleton configuration has no v3 equivalent. **One original, two replacements**, because v3 is modular and presigning is a separate package: `@aws-sdk/client-s3`'s **707** exports contain **zero** presign symbols. *The AWS client replacement in full* below, and *Presigned download URLs: the second AWS package* |
+| `aws-sdk` | 2.1693.0 | **`@aws-sdk/client-s3`** plus **`@aws-sdk/s3-request-presigner`** | **3.1098.0** both, pinned exact | `incompatible` | **Gate-mandated, not discretionary** — requiring the v2 SDK on Node 22 fires a real `process.on('warning')` event with `name === "NOTE"`, which the zero-warning boot gate forbids. v2's global-singleton configuration has no v3 equivalent. **One original, two replacements**, because v3 is modular and presigning is a separate package: `@aws-sdk/client-s3`'s **707** exports contain **zero** presign symbols. One measured log-content consequence: a failed S3 write now logs the AWS **access key ID** (never the secret), because v3 hydrates its errors from the service's error document. *The AWS client replacement in full* below, *Presigned download URLs: the second AWS package*, and [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 19.2 |
 | `request` | 2.88.2 | the global **`fetch`** built into Node 22 | *(no package added)* | `dead` | Formally deprecated upstream and unmaintained. Affects `lib/controllers/auth.js`, `lib/controllers/users.js` and `lib/util/recaptcha.js`, all of which were being converted to async/await anyway. The one place the swap needed more than an await is the OAuth token exchange, where `request`'s `form` option serialized through `qs`: see *The `request` replacement's one serializer detail* below |
 | `q` | 1.0.1 | native **`Promise`**, `Promise.all`, `Promise.allSettled` | *(no package added)* | `dead` | Classified `dead` **not because it is vulnerable, but because the language subsumed it.** The async conversion removes its last consumer as a side effect: the four `Q.defer()` sites plus the `Q.all` and `Q.allSettled` calls in `lib/workers/exports.js`, and the usage in `test/helpers/mail.js` |
 | `node-uuid` | 1.4.8 | **removed — no replacement required** | *(no package added)* | `dead` | Deprecated by its own author in favour of the `uuid` package, but **no package was needed**: the base commit never read the binding it imported. *The `node-uuid` removal in full* below |
@@ -736,6 +751,22 @@ five delta characters with `null` fields, `~ - . _` with unicode and reserved se
 **The AWS client replacement in full.**
 
 **Gate-mandated, not discretionary.** Requiring the v2 SDK on Node 22 fires a **real `process.on('warning')` event with `name === "NOTE"`** — not a plain console write — which the zero-deprecation-warning boot gate forbids. v2's `AWS.config.update` global singleton has **no v3 equivalent**, so `config/aws.js` moves to per-client `S3Client` configuration. The v2 SDK was constructed at **7 call sites in 3 files** — `lib/util/file.js` (4), `lib/workers/exports.js` (2) and `lib/controllers/users.js` (1) — covering `PutObjectCommand`, `GetObjectCommand` and `DeleteObjectCommand`. **Per-client configuration is not per-call construction:** v2's clients carried no agent of their own and every send resolved the same process-global agent singleton, and a v2 client had no `destroy` method at all, so those 7 constructions shared **one** socket pool for the life of the process. Each v3 client owns its own pool, so `config/aws.js` holds **one** lazily-built shared `S3Client`, reached through `getS3Client()` at the 6 surviving command call sites and by the presigner, and released by `destroyS3Client()` on the hapi server's `stop` event in `app.js`. Both halves were measured against the installed SDKs; the reasoning is recorded in that file's `RESOURCE LIFECYCLE` section. Presigning is **not** in this package and is served by a second scoped one, `@aws-sdk/s3-request-presigner`, which is handed this same shared client — see *Presigned download URLs: the second AWS package* below
+
+**The one measured log-content consequence of this swap, recorded because it is the only observable difference the
+replacement produces outside the wire.** v3 error objects are hydrated from the service's own error document, so a
+failed S3 write now logs **more fields than v2 did — including the AWS access key ID**. The emitting statement is the
+base commit's (`2f8712a:lib/util/file.js:L49` `err && console.log(err)`, delivered at `lib/util/file.js:L132` with the
+identifier renamed by the async conversion); only the object handed to it changed. Measured on both SDKs against an
+identical `InvalidAccessKeyId` response from a local stand-in: `aws-sdk` 2.1693.0 produced
+`["message","code","region","time","requestId","extendedRequestId","cfId","statusCode","retryable","retryDelay"]` with
+`hasOwnProperty('AWSAccessKeyId')` **false**, while `@aws-sdk/client-s3` 3.1098.0 produced `$fault`, `$retryable`,
+`$metadata`, `Code`, **`AWSAccessKeyId`**, `RequestId` and `HostId`. The **secret** access key appears in neither —
+measured at **0** occurrences in stdout and stderr, with `AWS4-HMAC` and `Credential=` likewise at 0 in the application
+log — and the key ID is an identifier that already travels in clear in the `Authorization` header of every signed
+request and in every presigned URL this application issues. The line is **not** narrowed here, because log-hygiene
+repair is not one of R-1's four sanctioned diff categories; the condition is catalogued as **F-OBS-2** in
+[PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 19.2, which carries the full measurement, the provenance proof that
+the value is echoed from the response rather than read from the local credential, and the operator guidance
 
 **The `url.parse()` replacement in full, because it is the one row where the replacement is a language feature rather
 than a package.** Measured under `--pending-deprecation`: a single `url.parse()` call fires a real
@@ -796,14 +827,24 @@ scoped `@hapi/catbox-redis` that *was* declared is a separate row in Rubric 4. S
 not anticipate.** AAP §0.5.2.1 maps `optimist` onto `node:util`'s `parseArgs` and `tab` onto "a local column
 formatter". Neither was needed. Their sole consumer was the argv parsing and column formatting for the `-R`
 route-table dumper in `lib/util/routeParser.js`; that dumper is pure Hapi-4 compatibility machinery, so it was
-**deleted outright**. Verified across `app.js`, `config/`, `lib/`, `scripts/` and `test/`: zero `emitTable`
-references, no formatting helper of any kind, and no surviving `argv` handling in the 241-line shipped
-`routeParser.js`, which carries zero `parseArgs` and zero `node:util` references of its own. The **only**
-`parseArgs` and `node:util` references in the tree are in the two baseline CLIs — `test/baseline/capture.js:L126`
-and `L3755`, `test/baseline/replay.js:L92` and `L1023` — which parse their own flags with `node:util.parseArgs` in
-strict mode, so an unknown flag is refused rather than absorbed; that is a property of the parity harness, not a
-survival of the deleted dumper. Had any argv path survived here, the built-in would have been the choice rather
-than another package, because `optimist`'s obvious modern successor is unusable from CommonJS for the reason given
+**deleted outright**. Verified across `app.js`, `config/`, `lib/` and `scripts/`: zero `emitTable` references,
+no formatting helper of any kind, and no surviving `argv` handling in the **241-line** shipped
+`lib/util/routeParser.js`, which has no shebang and carries zero `parseArgs` and zero `node:util` references of its
+own. Two narrower readings, because an earlier revision claimed more than it could:
+
+- `node:util` **is** required under `test/`, at `test/baseline/capture.js:L130` and `test/baseline/replay.js:L92`, and
+  `parseArgs` **is** called, at `test/baseline/capture.js:L3839` and `test/baseline/replay.js:L1023`. Both parse their
+  own flags in strict mode, so an unknown flag is refused rather than absorbed. That is the built-in doing exactly the
+  job this row says it would have done had an argv path survived — a point in favour of the reasoning, not against it,
+  and a property of the parity harness rather than a survival of the deleted dumper.
+- `tab.emitTable` appears once under `test/`, at `test/baseline/route-table.json`, inside a **provenance string** that
+  records where the committed table came from: hapi's own `server.table()`, *not* the deleted dumper. It is
+  documentation of the removal, not a surviving call.
+
+The one `argv` reader in those four scopes is `scripts/make-admin.js`'s `process.argv`, behind its
+`require.main === module` CLI guard — the pre-existing `npm run make-admin <email>` entry point, unrelated to the
+deleted dumper. Had any argv path survived in `routeParser.js`, the built-in would have been the choice rather than
+another package, because `optimist`'s obvious modern successor is unusable from CommonJS for the reason given
 above.
 
 ### Presigned download URLs: the second AWS package
@@ -1090,8 +1131,8 @@ rows as claiming otherwise. What is durable, and what a reader can verify, is th
 | `numeral` | **1.5.6** | Formats template-rendered text at `lib/util/nunjucks.js:L6` and `L131`; a formatting change is a visible page change |
 | `escape-string-regexp` | **1.0.5** | Version 4 changes which characters are escaped, and version 5 is ESM-only. The consumer at `lib/models/trinket.js:L5` and `L269` builds search patterns, so a change in escaping changes which records match |
 | `config` | **0.4.37** | 43 require sites, and the test harness depends on this version's `NODE_CONFIG_*` environment-variable semantics, including `NODE_CONFIG_PERSIST_ON_CHANGE` |
-| `mongoose` | **inside the 6.x line** | Version 7 and above remove the discriminator-adjacent behavior that `Model.extend` at `lib/models/model.js:L190-L192` depends on. The patch bump to 6.13.10 in Rubric 1 is the whole of the movement permitted here |
-| `mongoose-schema-extend` | **0.2.2** | The sole provider of `Schema.extend`, and **no maintained successor exists**. It is the reason the mongoose 6.x ceiling exists at all |
+| `mongoose` | **inside the 6.x line** | **Mongoose 7 removes callback support wholesale, and this tree hands a callback straight to mongoose at eleven sites.** Measured on a real `mongoose@7.8.11` install: `Model.find(query, cb)`, `Model.find(query, fields, cb)`, `Model.findOne(query, cb)` and `Model.findByIdAndUpdate(id, update, options, cb)` each throw `MongooseError: <method>() no longer accepts a callback`, and `Query#exec(cb)` returns a promise that **rejects** with `MongooseError: Query.prototype.exec() no longer accepts a callback` while the callback never fires at all — a silent break, not a loud one. The eleven sites are `lib/models/model.js:L110`, `L111`, `L163` and `L170`, `lib/models/plugins/paginate.js:L94`, `lib/models/trinket.js:L219`, `L311` and `L581`, and `lib/models/course.js:L277`, `L281` and `L285`; four of them are inside the model factory's own generated finders, so the callback half of the dual callback-and-promise contract would break for every model at once. Mongoose 7 also removes `Document.prototype.remove()` — measured `typeof doc.remove === 'undefined'`, with `deleteOne()` in its place — which is four delivered call sites (`lib/controllers/users.js:L287`, `lib/controllers/course.js:L402`, `L642` and `L900`), and it still **accepts** `schema.post('remove', …)` registration, so the User model's `markAsDeleted` post-remove hook would stop firing with no error at all and the `Course.userDeleted` membership cascade would quietly disappear. A **second** ceiling sits one major further out: the deliberately retained `count()` at `lib/workers/exports.js:L166` still executes on 7.8.11 and is **gone on 8.24.2**, per the corrected [PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 3.24. The patch bump to 6.13.10 in Rubric 1 is the whole of the movement permitted here. **`Model.extend` is not the reason for this hold** — see the next row and the correction note below the table |
+| `mongoose-schema-extend` | **0.2.2** | The sole provider of `Schema.extend`, and **no maintained successor exists** — but it is **inert scaffolding, not a version ceiling**. `Schema.prototype.extend` is *present* once the package is required (`typeof` reports `undefined` before the require at `config/db.js:L4` and `function` after it, measured) and **non-functional when called**, and has been since mongoose 5 / kareem 2: it throws the identical `TypeError: Method Map.prototype.get called on incompatible receiver [object Map]` on **6.13.9**, **6.13.10** and **7.8.11** alike, and on **5.13.23** (kareem 2.3.2) it throws the sibling `TypeError: Method Map.prototype.has called on incompatible receiver [object Map]` from the same clone — measured on four majors, so the break predates this migration by two of them. Its only consumer, `Model.extend` at `lib/models/model.js:L190-L192`, has **zero call sites** across `app.js`, `config/`, `lib/`, `scripts/` and `test/`. It is nevertheless held rather than deleted, for two independent reasons: `config/db.js:L4` requires it at module load, and with the package made unresolvable that require was measured to throw `MODULE_NOT_FOUND: Cannot find module 'mongoose-schema-extend'` before the connection is ever opened — so removing it is a boot failure, not a cleanup — and R-1 admits no diff for deleting an unreachable branch |
 | `underscore` | **1.13.8** | Already above the vulnerable range, and 31 require sites depend on its exact semantics |
 | `moment` | **2.30.1** | Already current at migration time; 6 require sites |
 | `nunjucks` | **3.2.4** | The template engine for 79 server-rendered views. It is also the package whose **optional peer dependency** on `chokidar` `^3.3.0` is why `chokidar` 3.6.0 is a declared devDependency rather than a Rubric 4 removal — npm does not install an optional peer on the dependent's behalf, measured on both resolver majors, so the declaration is what keeps non-production boots working; the measurement is in *Reconciliation with the plan's projected figures* above |
@@ -1109,6 +1150,32 @@ Three groups among these holds exist specifically to protect **client-visible ou
 cases in the whole inventory where a routine-looking upgrade would have been a behavior change: `highlight.js`, whose
 emitted CSS class names appear in rendered markup; `limax` with `transliteration`, whose output is public URL slugs;
 and `sass` with `vite`, whose output is the two byte-comparable CSS artifacts.
+
+**A correction, because an earlier revision of the two `mongoose` rows above stated a rationale that measurement
+contradicts.** They read *"Version 7 and above remove the discriminator-adjacent behavior that `Model.extend` at
+`lib/models/model.js:L190-L192` depends on"* and *"[`mongoose-schema-extend`] is the reason the mongoose 6.x ceiling
+exists at all"* — the same framing as the base commit's own comment at `config/db.js:L2-L3`, which calls the package
+deprecated and files a `TODO` about migrating to native discriminators. A runtime-QA pass over the database layer
+reported both sentences as false, and re-measurement confirms it: `Model.extend` does not work on mongoose **6** at
+all. Calling `Model.extend(name, obj)` raises
+`TypeError: Method Map.prototype.get called on incompatible receiver [object Map]` through `Model.extend`
+(`lib/models/model.js:L191`) → `Schema.extend` (`node_modules/mongoose-schema-extend/index.js:L92`) → `Schema.pre`
+(`node_modules/mongoose/lib/schema.js:L1785`) → `Kareem.pre` (`node_modules/kareem/index.js:L525`), where the
+prototype-only `owl.deepCopy` clone the extend plugin makes of the schema meets kareem 2.5.1's `Map`-backed `_pres` and
+the clone has no `Map` internal slots. It fails **identically on 6.13.9** — the base commit's resolved version,
+installed into an isolated tree for the comparison — **on 6.13.10** and **on 7.8.11**, with and without a pre-save
+hook, because mongoose's default `discriminatorKey: '__t'` guarantees the failing `newSchema.pre('save', …)` line is
+reached on every call. The break is older still: on **mongoose 5.13.23** with kareem 2.3.2 the same clone throws the
+sibling `Method Map.prototype.has called on incompatible receiver [object Map]`, so four majors were measured and the
+mechanism is unchanged across all of them. Two consequences follow, and they point in opposite directions. The
+behavioral one is benign: identical failure before and after the bump is **zero** behavior change, so R-4 is satisfied
+and the row in Rubric 1 stands. The
+documentation one is not: R-3 obliges this artifact to state reasons that are *true of this codebase*, because a future
+maintainer deciding whether the mongoose ceiling can be lifted will read exactly these two rows. They now state the
+ceiling measurement establishes — callbacks and `Document.prototype.remove()` on 7, `count()` on 8 — rather than an
+extension mechanism that has been broken since before this migration began. **The decision itself is unchanged:
+mongoose stays inside 6.x, and `mongoose-schema-extend` stays declared.** The condition is catalogued as `DB-16` in
+[PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 18.
 
 ## The audit gate — measured, not asserted
 
@@ -1188,6 +1255,60 @@ the addition and is byte-for-byte the block above — same three advisories, sam
 load-bearing fact for the escalation in Item 6: the third package buys a supported presigner at **zero** cost against
 the one dependency gate AAP §0.6.1.7 sets, because all six of its own dependencies were already resolved in the tree
 by `@aws-sdk/client-s3`.
+### The advisory that moved the `js-yaml` pin from 3.15.0 to 3.15.1
+
+The paragraph above says that an advisory database is a moving target. It moved, and it moved **against a package this
+change had already pinned**, so the movement is recorded here rather than absorbed silently.
+
+**What happened.** A later re-measurement of the same gate, on the same committed tree, reported
+`{critical: 0, high: 1, moderate: 3}` instead of the `{critical: 0, high: 0, moderate: 3}` published above. The single
+high was **GHSA-5p4m-2wfm-xmqj**, *"JS-YAML: Quadratic CPU consumption in `!!omap` resolution (3.x and 4.x)"*, charged
+against the direct production dependency `js-yaml` at the pinned **3.15.0**. Nothing in the manifest, the lockfile or
+the source tree had changed between the two measurements; the advisory had simply been published in the interval. The
+gate AAP G4 sets — *zero critical and zero high on `npm audit --omit=dev`* — was therefore no longer met by a pin that
+had met it when it was chosen.
+
+**Why the pin moved rather than the finding being accepted.** The three residual moderates are accepted because AAP
+§0.6.1.7 names them and because each has a measured reason: an unreachable API, or a fix that changes client-visible
+markup. **A high finding has no such licence.** AAP §0.8.7 resolves the R-4-versus-audit tension explicitly and it
+resolves it for *moderates* only — "three moderate findings are accepted and documented rather than repaired" — while
+G4 and §0.9.6 both state the target as zero critical **and zero high** without qualification. The remedy npm offered
+was `js-yaml@3.15.1`, which is a **patch on the 3.x line**, so taking it satisfies the audit gate and AAP I6
+("`js-yaml` must stay on the 3.x line") at the same time. This is the same decision, with the same reason code and the
+same rationale, that put this package in Rubric 1 in the first place — one patch further along.
+
+**Why it is a manifest-only edit, verified rather than assumed.** Three measurements, all on the delivered tree:
+
+| Question | Method | Result |
+|---|---|---|
+| Is `safeLoad` — the only method this codebase calls — still present? | `typeof require('js-yaml').safeLoad` on both versions, installed side by side | `function` on both. `config/routes.js:L7` needs no edit |
+| Is the module's export surface identical? | Sorted `Object.keys` comparison of both modules | **Identical, 21 keys.** `safeDump` and `load` both still present |
+| Does any YAML this repository owns parse differently? | Every one of the **9** YAML documents in the tree — `config/default.yaml` (14,409 bytes), `config/local.example.yaml`, `config/local.yaml`, `config/production.yaml.dist`, `config/reserved.yaml`, `config/test.yaml`, `docker-compose.yml`, `mkdocs.yml`, `catalog-info.yaml` — parsed with `safeLoad` under both versions and the results compared as canonical JSON | **9 of 9 identical, 0 differing.** `config/default.yaml` resolves to the same 10,788-character document under both |
+
+The transitive resolution is unchanged as well: 3.15.1 declares the same two dependencies at the same ranges as 3.15.0
+(`argparse ^1.0.7`, `esprima ^4.0.0`), and the regenerated lockfile still resolves `argparse` at 1.0.10, `esprima` at
+4.0.1 and `sprintf-js` at 1.0.3. The whole change is **5 insertions and 5 deletions across exactly two files** —
+`package.json` and `package-lock.json` — and `npx -y npm@10.9.9 ci` against the regenerated lockfile still exits 0 at
+**426 packages**, leaving every package count in this document unchanged.
+
+**The gate figures after the bump, re-measured.** `npm audit --omit=dev` reports
+`{info: 0, low: 0, moderate: 3, high: 0, critical: 0, total: 3}` — the production table above is correct again, package
+for package, and `js-yaml` is no longer flagged anywhere in the tree at any severity, including `mocha`'s nested
+`js-yaml` 4.3.1, which the advisory's 4.x range does not reach. The full-tree reading is
+`{moderate: 4, high: 1, critical: 0, total: 5}`, which is exactly the figure the following subsections publish. Every
+behavioural gate was re-run **after** the bump, not before it: `npm test` exits 0 at 569 passing with `--check-leaks`
+active, `node test/baseline/replay.js` reports **0 differences** with the 233-row route table and all ten clauses of the
+documented anchor gate satisfied, `npm run build` reproduces `public/css/base.css` at 265,727 bytes and
+`public/css/embed.css` at 296,352 bytes byte-for-byte, and a boot under `node --pending-deprecation` with a
+`process.on('warning')` collector emits zero warnings while serving seven routes over real HTTP.
+
+**What a naive response would have broken.** Two of them. Taking npm's `--force` path without reading it would have
+installed a 4.x or 5.x `js-yaml`, whose `safeLoad` no longer exists — breaking `config/routes.js:L7` and the reserved
+username list it builds, and violating AAP I6 for zero additional security benefit. Accepting the high as a fourth
+"documented" finding would have left the delivered gate in contradiction with G4 while this document asserted the gate
+was met, which is precisely the class of stale-figure defect that review findings F-12 and F-13 created the delivery
+status section to prevent.
+
 
 ### The three accepted moderate findings
 
@@ -1343,11 +1464,10 @@ notes record that static method as added in **22.1.0**; it is a function on this
 on a 22.0.x runtime, where **every** site that replaced a `url.parse()` call would raise a `TypeError` at first use.
 
 The census below is regenerated from the delivered tree, and it names the **enclosing symbol** rather than a line
-number on purpose: an earlier revision of this paragraph carried fourteen line locators of which the majority had
-already drifted, two pointed at `lib/http/redirect.js` — a 69-line file with no `URL.parse` site at all — and one
-pointed at `test/lib/api/route-parity.js`, which likewise has none. A symbol name cannot drift the same way, and the
-whole census is reproducible at any commit with `git ls-files '*.js' | xargs grep -n 'URL\.parse('` (19 hits: the 14
-call sites below plus 5 prose mentions inside comments).
+number on purpose: earlier revisions of this paragraph carried line locators of which the majority had already
+drifted, and each named at least one file whose site count had since changed. A symbol name cannot drift the same
+way, and the whole census is reproducible at any commit with `git ls-files '*.js' | xargs grep -n 'URL\.parse('`,
+filtered to genuine call sites — comment and JSON prose mentions excluded.
 
 | Layer | Enclosing symbol | What it parses |
 |---|---|---|
@@ -1356,18 +1476,23 @@ call sites below plus 5 prose mentions inside comments).
 | production | `lib/controllers/users.js#downloadRemoteAsset` → inner `attempt` | the redirect target, **twice**: the absolute form, then the `Location`-relative form |
 | production | `lib/controllers/trinket.js#assetPathname` | an asset URL, for its `pathname` |
 | production | `lib/workers/exports.js#assetPathBasename` | an asset URL, for its last path segment |
+| production | `lib/http/redirect.js#normalizeHost` | a configured host or full origin, reduced to its `host` |
+| production | `lib/http/redirect.js#internalDestination` | a candidate redirect target, to reject anything not `http:`/`https:` |
 | harness | `test/helpers/flow.js#setLastResponse` | every response's `Location`, resolved against `config.url` |
 | harness | `test/lib/api/registration.js`, the course-copy redirect assertion | one **absolute** `Location`, where the base is therefore ignored |
-| harness | `test/baseline/capture.js#classifyHopTarget` | a hop `Location`, and the candidate origin it is compared against |
+| harness | `test/baseline/capture.js#classifyHopTarget` | a hop `Location`, **twice**, and the candidate origin it is compared against |
 | harness | `test/baseline/capture.js#sameOrigin` | both sides of an origin comparison |
 | harness | `test/baseline/replay.js#locationKind` | a `Location`, **twice**, to classify it absolute / relative-reference / unparseable |
 
-That is **14 call sites across 7 files** — 6 in production code, 8 in the harness. `test/baseline/replay.js` carries
-two of its own again: the remediation that restored its verification layer reinstated `locationKind`. What that file
-still does **not** have is an origin-**rewriting** helper; `rebaseOrigin` was deleted and stays deleted, asserted by
+That is **16 call sites across 8 files** — 8 in production code, 8 in the harness. The two in `lib/http/redirect.js`
+arrived with the SEC-4 open-redirect remediation and are why an earlier revision, which described that file as
+carrying no site at all, no longer holds. `test/baseline/replay.js` carries two of its own because the remediation
+that restored its verification layer reinstated `locationKind`. What that file still does **not** have is an
+origin-**rewriting** helper; `rebaseOrigin` was deleted and stays deleted, asserted by
 `test/lib/util/baseline-harness-integrity.js` and recorded in
-[PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 14.4. A floor of `>=22.0.0` would therefore admit a
-runtime on which the application does not work — the opposite of what **AAP G1** asks the `engines` block to
+[PRESERVED-QUIRKS.md](PRESERVED-QUIRKS.md) section 14.4. None of that changes the conclusion — 16 sites on a 22.0.x
+runtime is still 16 `TypeError`s — so a floor of `>=22.0.0` would admit a
+runtime on which the application does not work, the opposite of what **AAP G1** asks the `engines` block to
 guarantee. `22.12.0` sits well above 22.1.0 and is also the release from which `require(esm)` is unflagged —
 `process.features.require_module` measures `true` on v22.23.2 — while `.nvmrc`'s bare `22` resolves to the newest
 22.x on any current distribution, which satisfies the floor with no pinning of its own.

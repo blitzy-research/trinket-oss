@@ -196,6 +196,17 @@ artifacts themselves live in `test/baseline/`. Suite pass totals are deliberatel
 in either companion document, because the total moves whenever a spec is added — `npm test` exiting 0 with zero
 failures is the claim, and the authoritative total is whatever the run in front of you prints.
 
+A final-acceptance QA pass then drove all 233 routes in both authentication states, 18 screen families, 15 entity
+groups and 12 integrations, and raised **50** findings. Every gate above held under it, and it changed nothing itself.
+Forty-nine of the fifty are inherited conditions or explicitly frozen surfaces, and each is answered individually — with
+its catalogue entry and the governing clause — in [Preserved Quirks §23](docs/PRESERVED-QUIRKS.md). Six of those needed
+a write-up they did not have, and now have one. **One finding was this release's own**: twelve in-page links inside
+`docs/PRESERVED-QUIRKS.md` named fragment anchors the rendered site does not have, because they were written in the
+GitHub slug form for headings containing an em-dash while the other 185 anchors in the same document used the
+python-markdown form the renderer applies. All twelve were corrected; `mkdocs build --strict` now reports zero missing
+anchors, and a sweep of all 1,389 in-page anchors on the rendered page finds none dangling. No behavior changed — the
+repair is confined to link fragments in one Markdown file.
+
 ### Unchanged
 
 - **No route or feature was added or removed**, and no TypeScript conversion, framework swap or frontend rewrite was

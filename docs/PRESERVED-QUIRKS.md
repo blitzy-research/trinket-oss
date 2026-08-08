@@ -308,7 +308,7 @@ Nothing is skipped, `.only`-ed, `xit`-ed or relaxed anywhere in `test/`, and `--
 |---|---|---|
 | R-1 | **CLOSED.** `.mocharc.json` carries exactly the four specified keys. The load order the fifth key used to buy is supplied outside the config file — `--file ./test/setup.js` in the `test` script plus an explicit `require('../setup')` in the three helpers that reach `config` or `app.js` first. `test/setup.js` still carries a redis-v4 adapter, scoped by census to the fifteen members the application calls, and a guarded root-suite `before()` | `test/setup.js` header comment; §13.1, §13.2 |
 | R-2 / R-3 | `chokidar` is retained and `brace-expansion` is pinned at 2.1.4 rather than the projected 5.0.9; both literal instructions were measured to break `npm test` | [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) *Reconciliation with the plan's projected figures*, rows 2 and 4 |
-| R-4 | **CLOSED. The three security remediations are DELIVERED, and R-4 does not reach them.** SEC-1 (path traversal through the cache-prefix `{assetType}` segment), SEC-4 (open redirect and cross-request `next` poisoning) and SEC-13 (a bcrypt hash — plus a live Google OAuth token — in four HTTP 200 bodies) are **remediated in the delivered tree**. R-4 preserves "a 2013-era quirk **clients may depend on**"; no client depends on reading `config/local.yaml`, on an attacker-controlled off-origin `Location`, or on another user's password hash, and none of the three is on the AAP's **closed list of thirteen** mandated quirks. Parity is measured, not asserted: `node test/baseline/replay.js` reports **0 differences** and **0 report-back findings** with all three guards in place. **Still open:** the AWS presigned-URL shape moved from SignatureV2 to SigV4, which is forced by the SDK replacement R-2 mandates | §4.1, §4.4, §4.14, §12.4 and §4.16 |
+| R-4 | **CLOSED. The three security remediations are DELIVERED, and R-4 does not reach them.** SEC-1 (path traversal through the cache-prefix `{assetType}` segment), SEC-4 (open redirect and cross-request `next` poisoning) and SEC-13 (a bcrypt hash — plus a live Google OAuth token — in four HTTP 200 bodies) are **remediated in the delivered tree**. R-4 preserves "a 2013-era quirk **clients may depend on**"; no client depends on reading `config/local.yaml`, on an attacker-controlled off-origin `Location`, or on another user's password hash, and none of the three is on the AAP's **closed list of thirteen** mandated quirks. Parity is measured, not asserted: `node test/baseline/replay.js` reports **0 differences** and **0 report-back findings** with all three guards in place. **Still open:** the AWS presigned-URL shape moved from SignatureV2 to SigV4, which is forced by the SDK replacement R-2 mandates | §4.1, §4.4, §4.14 and §4.16 |
 | R-6 | **CLOSED.** The documented 32-character route-table digest is not recomputable by any verifier — 32 characters where a sha256 is 64, with no serialization published — so the anchor is enforced over the 233-row table it names: `gates.documentedAnchorGate`, **eleven** clauses recomputed live and asserted on every `npm test`. Clause 1 retains the 32-character literal verbatim and detects an edit to it; clause 11 **recomputes a sha256 over the live route table** under the published canonical serialization and asserts it equals `gates.measuredSha256`, so the gate computes something rather than comparing a literal to itself | §3.22, §0.1 |
 | G6 / G7 | **CLOSED.** `npm test` exits 0 with zero failures and no assertion weakened, by asserting both readings at every contradicted site | §0.1, §13.7 |
 
@@ -957,6 +957,12 @@ is declared at **L37** and mounted by no service. The `links:` keys at **L14-L16
 `links` has been a no-op in Compose v2 and later for years — service discovery happens over the shared
 `trinket` network. Both are **preserved**: removing them is cleanup, and the file's in-scope change is confined to
 the service images that the runtime bump requires.
+
+⚠️ **Extended.** The dead volume has a consequence this entry did not state: the `redis` service declares no volume of
+its own either, so `docker compose down` followed by `up` discards every Redis key and every queued Bull job.
+[Section 23.6](#236-the-redis-service-persists-nothing-and-the-volume-that-looks-like-its-cache-is-mounted-by-nobody)
+records that measurement, the base-commit attribution for both halves, and what an operator running this file outside
+development should do about it.
 
 **E. The session cache's TTL index is inert, and lazy per-read expiry is what actually works.**
 `lib/util/catbox-mongoose.js:L19-L22` declares `sessionSchema.index({ stored: 1 }, { expireAfterSeconds: 0,
@@ -2190,7 +2196,7 @@ correction note explaining why its own earlier rationale for the hold was withdr
 this file's async conversion grew `lib/workers/exports.js`; they were re-derived from the committed source rather than
 adjusted by arithmetic, and the base-commit citations `2f8712a:L215` and `2f8712a:L122` were checked with
 `git show` and are unchanged. The condition is catalogued as `DB-16` in
-[section 18](#18-runtime-qa-observations-on-the-database-surface--attributed-and-preserved).
+[section 18](#18-runtime-qa-observations-on-the-database-surface-attributed-and-preserved).
 
 ### 3.25 `validator` 13 silently changed a PERSISTED field, and the old verdict is restored by a shim
 
@@ -4741,7 +4747,7 @@ on an authorization this changeset does not carry.
 | SEC-15 | Stored XSS in the admin user-detail JSON dump — `{{ data \| json("pretty") \| safe }}` writes any user's display name into an admin's HTML as markup | CWE-79, CWE-116 | baseline | **yes** — authored by any account, fires in an **admin's** session at parse time with no interaction | **PRESERVED** | Remove `\| safe` from `lib/views/admin/includes/users.html:L104` and review `L145`. The correct behavior is already demonstrated by the Profile tab in the same template, so the change is provably local — but it edits a frozen `lib/views/**` template and changes what that pane renders. Mechanism and browser-measured execution in [§4.18](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved) |
 | — | A failed validation answers 200 and echoes the submitted payload, plaintext password included | CWE-200 | baseline | **yes**, every validated route | **PRESERVED** | Return a 4xx and re-render forms from a payload copy with secret-bearing fields removed, reusing `lib/http/responseContract.js#isSecretField`. A status-code and payload-shape change under TR2. [§4.19](#419-a-failed-validation-answers-http-200-and-echoes-the-whole-submitted-payload-including-the-plaintext-password) |
 | — | The archive filename sanitizer's `\s` class admits CR and LF | CWE-113 | baseline | **yes, unauthenticated** — but **not exploitable**: Node's own header validation rejects the character | **PRESERVED** | Exclude control characters explicitly and emit `Content-Disposition` with RFC 6266 encoding. Changes a client-visible downloaded filename. [§4.20](#420-the-archive-filename-sanitizer-lets-cr-and-lf-through-because-its-own-character-class-admits-them) |
-| F-10 | AWS presigned download URLs moved from SignatureV2 to SigV4 with the SDK migration | — | migration-driven | yes | **DEVIATION, reported open** | Either an authorized acceptance of the SigV4 shape or a re-implementation of SigV2 query signing on top of the v3 client. `aws-sdk` v2 defaulted `signatureVersion` to `'s3'`; v3 has no SigV2 path at all, and v2 could not stay because requiring it emits a real process warning that the zero-warning gate forbids. Recorded in [§12.4](#12-streaming-ssrf-and-three-inherited-risks-one-overridden-two-accepted) and in the inventory |
+| F-10 | AWS presigned download URLs moved from SignatureV2 to SigV4 with the SDK migration | — | migration-driven | yes | **DEVIATION, reported open** | Either an authorized acceptance of the SigV4 shape or a re-implementation of SigV2 query signing on top of the v3 client. `aws-sdk` v2 defaulted `signatureVersion` to `'s3'`; v3 has no SigV2 path at all, and v2 could not stay because requiring it emits a real process warning that the zero-warning gate forbids. Recorded in [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) *Presigned download URLs: the second AWS package*, and in the changelog's *Deviations and unresolved conflicts* |
 
 #### 4.16.1 The final security gate's findings (SV-nn), and why each remaining one is deferred
 
@@ -4804,7 +4810,7 @@ was measured to change nothing a legitimate client observes, which is the test e
 
 **Provenance, and why this entry arrived late.** SEC-1 through SEC-12 came from a static security review; SEC-13 came
 from a runtime-security checkpoint. **SEC-14 came from neither.** It was found by the frontend UX / interaction /
-data-state checkpoint catalogued in [section 18](#22-runtime-qa-observations-on-the-frontend-ux-interaction-and-data-state-surface),
+data-state checkpoint catalogued in [section 22](#22-runtime-qa-observations-on-the-frontend-ux-interaction-and-data-state-surface),
 by typing into a search box — a surface a source review does not exercise and an API-level probe cannot reach. It is the
 **one execution** that two earlier browser sweeps missed, and both of their conclusions are **corrected here**:
 [§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else)'s
@@ -4879,7 +4885,7 @@ rendered correctly escaped everywhere else it appears, measured on the same page
 
 So one template is wrong and the platform's default is right. Two independent QA passes agree on that default: the
 sixteen-payload sweep behind §4.15.3 and the adversarial suite behind
-[section 18](#22-runtime-qa-observations-on-the-frontend-ux-interaction-and-data-state-surface), which measured payloads
+[section 22](#22-runtime-qa-observations-on-the-frontend-ux-interaction-and-data-state-surface), which measured payloads
 in course names, descriptions, material names, material bodies, admin user rows, two sinks in one reader view, and an
 82-character entity-and-quote mixture — all inert, several **double**-escaped.
 
@@ -7923,8 +7929,8 @@ through the double serialization in
 [section 7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid). So `featuredCourses.length` is
 `0` while the list is empty and the request fails once it is not, which means the 71-character guidance sentence has
 **no reachable path to the screen in either state** — the gate is stricter than it looks. See
-[18.3](#203-pq-3-the-three-n1-fan-outs-and-the-one-that-turns-into-a-500) and row PQ-4 of
-[section 18](#20-runtime-qa-observations-on-the-performance-surface-attributed-and-preserved). Both readings are
+[20.3](#203-pq-3-the-three-n1-fan-outs-and-the-one-that-turns-into-a-500) and row PQ-4 of
+[section 20](#20-runtime-qa-observations-on-the-performance-surface-attributed-and-preserved). Both readings are
 base-commit behavior, measured at both builds, and neither may be repaired here.
 
 **Why it is preserved.** Both gates live in the frozen frontend: `lib/views/home.html` and
@@ -8550,7 +8556,7 @@ that paints a red banner. That is a client-visible page behaviour change on a fo
 preservation directive and R-4 prohibits outright. It is worth stating plainly what is **not** wrong here: the server
 answers correctly, the failure is real and is logged, and nothing is silently succeeding — only the notification is
 lost. **Extended by a later pass:**
-[18.11.2](#22112-the-mis-targeted-alert-reproduced-end-to-end-through-a-real-session-expiry) reproduces this end to
+[22.11.2](#22112-the-mis-targeted-alert-reproduced-end-to-end-through-a-real-session-expiry) reproduces this end to
 end through a genuine mid-flow session expiry and adds what this entry leaves open — the 401 on the wire, the
 mutation timeline showing the text arrive at +13.9 ms with no class change on either alert div, a pixel-level proof
 that nothing becomes visible, and the fact that the browser emits **no diagnostic at all**. A related consequence of
@@ -8633,7 +8639,7 @@ detail settles it — the fresh-375 control frame captured during the re-measure
 its wider frames simply carried the stale flag forward.
 
 None of this weakens the entry's disposition. Below ~1025 px the controls really are unreachable, and
-[18.9.5](#2295-the-course-outline-toggle-is-visible-and-completely-unclickable) shows the toggle that would open the
+[22.9.5](#2295-the-course-outline-toggle-is-visible-and-completely-unclickable) shows the toggle that would open the
 drawer is itself 0 % pointer-reachable at 375 — so at narrow widths there is no route to them at all. `static/scss` and
 `public/partials` both still have a 0-line diff against the base commit. Disposition: **PRESERVED**, with the corrected
 figures on the record.
@@ -8691,7 +8697,7 @@ a metrics regression introduced by the migration.
 
 **Extended by a later pass.** A third runtime QA pass traced the mechanism behind this entry to its root and separated
 out four adjacent conditions; see
-[18.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it). The decisive
+[22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it). The decisive
 addition is that the `ng-if` placeholder noted above is the **outer** gate: the `assignment-dashboard` directive is never
 instantiated at all — instance count **0**, even though its partial is fetched **200** — while the payload sits bound and
 intact in `scope.assignmentsOverview`. The consequence is stronger than "zero-valued metrics are omitted": **non-zero
@@ -8774,12 +8780,12 @@ emitted an unhandled rejection.
 dependency inventory gave for holding `mongoose` inside 6.x. It is `DB-16` below, and it is the only row here whose
 disposition is `CORRECTED` rather than `PRESERVED` or `ACCEPTED`; the correction is in
 [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) Rubric 5 and in [section
-3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved--as-is-count).
+3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved-as-is-count).
 
 Everything else the pass surfaced was informational and **pre-existing**, and each was attributed to the base commit
 by direct comparison rather than by inspection. One was already catalogued and is cross-referenced rather than
 restated: `npm ci` refusing to run under npm 11 with `EBADENGINE`, which is the runtime pin doing its job and is
-recorded in [section 0](#0-current-delivery-status--the-single-source-of-truth-for-every-measured-figure)'s gate
+recorded in [section 0](#0-current-delivery-status-the-single-source-of-truth-for-every-measured-figure)'s gate
 table, with the `corepack` and `npx -y npm@10.9.9 ci` remedies spelled out in `.npmrc`'s own comment block. The
 specification asks for **npm 10** by name, so widening `engines.npm` to admit 11 would depart from the plan rather
 than comply with it, and the pin is unchanged.
@@ -8810,7 +8816,7 @@ explicit-marking rule in *How to read this catalogue*.
 | DB-13 | `grant()` persists on its own, so a caller that *also* calls `save()` **duplicates** the role entry — and `revokeAll()` then leaves a survivor | Measured on one user: after `grant('course-owner', 'course', { id })` the persisted contexts are `["site","course:<id>"]`, and a following `user.save()` makes them `["site","course:<id>","course:<id>"]`, because `grant()` pushes onto the in-memory array at `lib/models/plugins/roles.js:L86` *and* writes the whole array with `$set` at `L125-L131`, so `save()` replays the push as an atomic `$push` on top of what was already stored. `revokeAll('course', { id })` then splices **one** index, leaving exactly one survivor. **No caller does this**: sixteen `.grant(` occurrences — nine in `lib/`, of which seven are live calls, one is commented out at `lib/controllers/course.js:L58` and one is the internal delegation at `lib/models/plugins/roles.js:L143`, plus six live calls and one comment in the suite — and **none** is followed by a `save()` on the same document | `lib/models/plugins/roles.js` is byte-identical to `2f8712a` | PRESERVED — the duplication is only reachable through a call sequence nothing performs |
 | DB-14 | `ClientMetric.addMetric` buckets with `Math.round`, so anything past `:30` seconds is filed under the **next** minute | Measured with the clock pinned to `2026-08-05T12:34:31.000Z`: the persisted `timestamp_minute` is `2026-08-05T12:35:00.000Z`, **29 s in the future**, where `Math.floor` would have produced `12:34:00.000Z`. The arithmetic is `lib/models/clientMetric.js:L27` | byte-identical to `2f8712a` | PRESERVED — `timestamp_minute` is both a **persisted value** and the collection's unique index, so re-bucketing changes stored data and which writes collide (TR6) |
 | DB-15 | A 5000-character name yields a 5000-character slug | Measured: a `Folder` named with 5000 `x`s persists `slug.length === 5000`; the `slug` path declares no `maxlength` and no `match` | `lib/models/plugins/slug.js` is byte-identical to `2f8712a` | PRESERVED — slug output **is** public URLs, which is why `limax` and `transliteration` are held in Rubric 5 of the inventory; a length constraint changes URLs that already exist |
-| DB-16 | The delivered dependency inventory stated a rationale for the `mongoose` 6.x hold that measurement contradicts: that mongoose 7 removes behavior `Model.extend` depends on, and that `mongoose-schema-extend` is why the ceiling exists | `Model.extend` does not work on mongoose **6** at all. Measured: `Model.extend(name, obj)` raises `TypeError: Method Map.prototype.get called on incompatible receiver [object Map]` through `lib/models/model.js:L191` → `mongoose-schema-extend/index.js:L92` → `mongoose/lib/schema.js:L1785` → `kareem/index.js:L525`, identically on **6.13.9**, **6.13.10** and **7.8.11**, with and without a pre-save hook, and as the sibling `Map.prototype.has` message on **5.13.23**. `Model.extend` has **zero call sites**. The ceiling that measurement does establish at 7 is the wholesale removal of callback support — eleven sites in this tree hand a callback straight to mongoose — and the removal of `Document.prototype.remove()`, four sites; `count()` survives 7.8.11 and is gone on 8.24.2 | identical failure on the base commit's own resolved mongoose ⇒ **zero** behavior change, so R-4 is satisfied and only the documentation was wrong | **CORRECTED** — the rows and the correction note are in [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) Rubric 5, and [section 3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved--as-is-count) carries the version correction and its two re-derived line numbers |
+| DB-16 | The delivered dependency inventory stated a rationale for the `mongoose` 6.x hold that measurement contradicts: that mongoose 7 removes behavior `Model.extend` depends on, and that `mongoose-schema-extend` is why the ceiling exists | `Model.extend` does not work on mongoose **6** at all. Measured: `Model.extend(name, obj)` raises `TypeError: Method Map.prototype.get called on incompatible receiver [object Map]` through `lib/models/model.js:L191` → `mongoose-schema-extend/index.js:L92` → `mongoose/lib/schema.js:L1785` → `kareem/index.js:L525`, identically on **6.13.9**, **6.13.10** and **7.8.11**, with and without a pre-save hook, and as the sibling `Map.prototype.has` message on **5.13.23**. `Model.extend` has **zero call sites**. The ceiling that measurement does establish at 7 is the wholesale removal of callback support — eleven sites in this tree hand a callback straight to mongoose — and the removal of `Document.prototype.remove()`, four sites; `count()` survives 7.8.11 and is gone on 8.24.2 | identical failure on the base commit's own resolved mongoose ⇒ **zero** behavior change, so R-4 is satisfied and only the documentation was wrong | **CORRECTED** — the rows and the correction note are in [MIGRATION-DEPENDENCY-INVENTORY.md](MIGRATION-DEPENDENCY-INVENTORY.md) Rubric 5, and [section 3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved-as-is-count) carries the version correction and its two re-derived line numbers |
 | DB-17 | The model factory's generated finders pass their argument straight into a mongoose query, so a **Mongo operator object** is executed as an operator rather than compared as a value | Measured with one document seeded per probed collection, so that an empty result would mean refusal rather than emptiness: **8 of the 9** finders probed with `{ $ne: null }` returned rows — `Trinket.findById`, `Trinket.findByHash`, `User.findById`, `Course.findById`, `File.findById`, `Folder.findById` and `CourseInvitation.findByToken` one row each, and `Trinket.findForUser` **all three** of the owner's trinkets. `User.findByLogin` is immune outright: `TypeError: login.toLowerCase is not a function` before any query is built. **Unreachable over HTTP**, measured live against a running instance: an object, an array and a number in a field declared `Joi.string()` are each answered `{"validation":{"lang":"\"lang\" must be a string"}}` and persist **nothing** — the `snippets` count stayed **0** across all three, while the identical request with `"lang":"python"` created exactly one — operator-shaped path segments answer **404** in all three spellings (`$ne`, `%24ne`, a URL-encoded `{"$ne":null}`), and a bracket-syntax query key answers exactly what the same route answers with the parameter simply absent, because hapi does not nest bracket keys into an object | `git show 2f8712a:lib/models/model.js` and the delivered file are **identical across the entire generated-finder region, lines 100-205**; the file's `+44/-1` diff is the appended `silentOutcome` helper and nothing else | ACCEPTED — pre-existing and gated. See 18.2 |
 | DB-18 | A form submission that fails validation **persists the submitted plaintext password** into the Mongo `sessions` collection | Measured live end to end. A `POST /users` whose `username` fails its pattern answers **302** to `/signup` and leaves one 450-byte session document whose `_flash` keys are exactly `validation`, `failure`, `payload`, `query`: `_flash.validation` carries only the field message, `_flash.query` is `{}`, and **both** `_flash.failure` and `_flash.payload` carry `"password":"<the submitted secret>"` verbatim. A failed `POST /login` for an unknown address leaves `_flash.failure` as `{"message":"Unknown user …"}` — no secret — while `_flash.payload` again carries the password. Both documents show `ttl = 86400000` and a numeric `stored`, i.e. server-side storage rather than a cookie. No template ever reads it back: `lib/views/signup.html:L21` and `lib/views/login.html:L26` re-render `flash.payload.email` only, and `flash.payload.password` appears in **no** view | `app.js:L100` sets `maxCookieSize: 0` and so does `2f8712a:app.js:L103`, so the flash was already server-side at the base commit; the three writes are `2f8712a:lib/util/routeParser.js:L490`, `L493` and `L494` — `flash('failure', json, true)`, `flash('payload', request.payload, true)`, `flash('query', request.query, true)` — reproduced verbatim by the delivered responder | PRESERVED — see 18.3 |
 | DB-19 | The one live Bull queue uses the fixed name `exports` with no key prefix, so two instances sharing a Redis but **not** a Mongo database share one job namespace | Measured: `lib/util/queues.js:L127` is `new Queue(name, opts)` with `opts.redis` carrying only `host`, `port` and an optional `password` from `config.db.redis[name] \|\| config.db.redis.app`, and the exported getter list is the one-element `['exports']` at `L142-L144`. The running instance logs `Queue [exports] using Bull with Redis`, and the shared Redis holds a single `bull:exports:*` keyspace — `bull:exports:failed` plus numbered job keys — with no database discriminator anywhere in the key. The consequence is in the worker: `processBulkExport` updates `Export` by id (a no-op where the record does not exist) and then throws `Error('User not found')` at `lib/workers/exports.js:L159`, so the consuming instance fails the job while the originating database's `Export` document stays `pending` for good | `git diff 2f8712a -- lib/util/queues.js` is **eight added comment lines and nothing else**; the queue construction is the base commit's | ACCEPTED — an environment and deployment concern rather than a code condition: it needs a per-deployment Redis, or a `prefix`, which is configuration this changeset does not own. Single-deployment operation is unaffected |
@@ -8827,7 +8833,7 @@ from inside a checkout. Nothing in the application writes it — the name appear
 template — so the exposure is theoretical, and the disposition is to record it rather than to act on it.
 
 The **missing index** is the sharper half, because "add the index" looks free. It is not. The delivered index topology
-is a **gate**: [section 0](#0-current-delivery-status--the-single-source-of-truth-for-every-measured-figure) records
+is a **gate**: [section 0](#0-current-delivery-status-the-single-source-of-truth-for-every-measured-figure) records
 it, and the database pass verified it as 35 declared against 49 built less the 14 automatic `_id_`, with *no extra
 index*. Adding a `slug` index to four collections adds four indexes, so the reconciliation that currently balances
 exactly would stop balancing, and the change would alter query plans on the paths that read by slug — a performance
@@ -8896,7 +8902,7 @@ The same run verified, at runtime and against raw BSON, that the `sessions` TTL 
 effective at runtime even though the `set()` executes after schema construction; that the nine sloppy-mode model
 globals function, with the User post-`remove` hook reaching `Course.userDeleted` **through the global `Course`**; that
 the bulk-export worker still fails on `Query#stream()` with `count()` retained, exactly as [section
-3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved--as-is-count) requires; that the
+3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved-as-is-count) requires; that the
 `isEmailLegacy` shim of [section
 3.25](#325-validator-13-silently-changed-a-persisted-field-and-the-old-verdict-is-restored-by-a-shim) holds the
 persisted `status` verdict at BSON level; that the `comparePassword` bridge still hands `err === undefined` per
@@ -8926,7 +8932,7 @@ the log; the failure-log redaction of
 [section 15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only)
 held against nested, array-borne, camelCase, deeply buried and injection-shaped payloads without altering a single
 response byte; the three retired shim traces were gone with every other intentional log line still firing
-([section 1.12](#112-the-leftover-consolelog-calls--64-matching-lines-at-the-base-commit-64-now)); and the R-6 replay reported **0
+([section 1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-64-now)); and the R-6 replay reported **0
 differences**.
 
 **Two conditions it measured were not catalogued anywhere, and they are the whole of its FAIL verdict.** Both are
@@ -9118,11 +9124,11 @@ re-measured on the delivered tree; the diffs quoted are against `2f8712a`.
 | # | Condition | Measured | Base identity |
 |---|---|---|---|
 | OBS-3 | **Every winston level goes to stdout, and the application's two fatal paths disagree about which stream is theirs.** `config/log.js` declares a Console transport with no `stderrLevels`, so `error` is written to stdout alongside `info`; the session-password guard uses `console.error` and therefore stderr | Unreachable-MongoDB boot: `error: Failed to start server: … MongooseServerSelectionError` on **stdout**, stderr **0 bytes**, exit **1** after **31 s**. Short session password: **437 bytes** on **stderr**, stdout only the 61-byte queue line, exit **1**, and the offending value **not** echoed (0 occurrences in either stream) | `git diff 2f8712a -- config/log.js` is **empty**; the guard block in `app.js` is unchanged |
-| OBS-4 | **`app.log.level` governs winston's console transport only** — the application's raw `console.*` calls bypass it entirely, so lowering the level hides the startup banner and the route timings while leaving the login traces at full volume | With `app.log.level: error`: `Server started on port` **0** occurrences on the console, route-timing `info:` lines **0**, while **11** `LOGIN:` traces plus `Queue [exports] using Bull with Redis` and `Redis client connected to …` still printed. The file sink, which is fixed at `level: 'debug'`, still recorded both suppressed lines as JSON | `config/log.js` empty diff; the console census this rests on is [section 1.12](#112-the-leftover-consolelog-calls--64-matching-lines-at-the-base-commit-64-now) |
+| OBS-4 | **`app.log.level` governs winston's console transport only** — the application's raw `console.*` calls bypass it entirely, so lowering the level hides the startup banner and the route timings while leaving the login traces at full volume | With `app.log.level: error`: `Server started on port` **0** occurrences on the console, route-timing `info:` lines **0**, while **11** `LOGIN:` traces plus `Queue [exports] using Bull with Redis` and `Redis client connected to …` still printed. The file sink, which is fixed at `level: 'debug'`, still recorded both suppressed lines as JSON | `config/log.js` empty diff; the console census this rests on is [section 1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-64-now) |
 | OBS-5 | **The shipped debug sink is one fixed absolute path with no rotation**, so every process on a host appends to the same file for the life of the machine | `config/default.yaml:L129` is `filename: '/tmp/debug.txt'`, and `config/log.js`'s File transport declares **no** `maxsize`, `maxFiles`, `tailable`, `zippedArchive` or rotation of any kind — 0 matches. `files`, `unauth` and `routehandlertiming` are all `true` by default, which widens what lands there | `git diff 2f8712a -- config/default.yaml` and `-- config/log.js` are both **empty** |
 | OBS-6 | **Two independent Redis clients emit a character-identical connect line**, and neither line names its client | `config/redis.js:L45` and `lib/util/store.js:L174` are the same statement. Measured against a throwaway `redis:7.4`: the first line appears at boot, the second only after a store operation (a signup) — both reading `Redis client connected to localhost:6412` | both files have **empty** diffs against `2f8712a` |
 | OBS-7 | **Under the shipped `pm2-docker` CMD, whether a fatal misconfiguration produces a visible container failure or an invisible restart loop depends on how long the process survives** — pm2's `min_uptime` is the discriminator, not the error | Fast fatal (short session password, process dies in <1 s): **16** `App [app:0] exited with code [1] via signal [SIGINT]` cycles, then pm2 stops retrying and the container ends at **`Running=false ExitCode=2`** — the orchestrator does see it. Slow fatal (unreachable MongoDB, ~31 s per attempt): **4** cycles in 150 s and still going, container reporting **`Running=true ExitCode=0 RestartCount=0`** — an unbounded loop no orchestrator signal reflects | `RUN npm install -g pm2@5` and `CMD ["pm2-docker", "start", "app.js"]` are **character-identical** to `2f8712a:Dockerfile:L12` and `L39`; only their line numbers moved, to `L33` and `L102` |
-| OBS-8 | **A successful login writes eleven `LOGIN:` console traces, two of which carry the account's e-mail address** — raw `console.log`, so [section 15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only)'s redactor never sees them; no password appears in any of them | 11 traces measured on one successful login, from `LOGIN: Starting login for <email>` to `LOGIN: About to redirect, redirect= null`; exactly **2** carry the address, and the password count is **0** | part of the 64-call census of [section 1.12](#112-the-leftover-consolelog-calls--64-matching-lines-at-the-base-commit-64-now), unchanged |
+| OBS-8 | **A successful login writes eleven `LOGIN:` console traces, two of which carry the account's e-mail address** — raw `console.log`, so [section 15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only)'s redactor never sees them; no password appears in any of them | 11 traces measured on one successful login, from `LOGIN: Starting login for <email>` to `LOGIN: About to redirect, redirect= null`; exactly **2** carry the address, and the password count is **0** | part of the 64-call census of [section 1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-64-now), unchanged |
 
 **The pass's remaining informational conditions were already catalogued, and are cross-referenced rather than
 duplicated.** Recording them twice is how a catalogue starts contradicting itself, so each is listed here with the entry
@@ -9130,8 +9136,8 @@ that owns it, plus whatever the pass *added* to that entry:
 
 | The pass's observation | Owning entry | What the pass added |
 |---|---|---|
-| The mailer's unconfigured branch logs the recipient address | [section 16](#16-runtime-qa-observations-on-the-integration-surface--attributed-and-preserved), QA-2 | nothing — re-confirmed firing |
-| Redis configured but unreachable logs the error event about twice a second, without a ceiling, while the application keeps serving | [section 16](#16-runtime-qa-observations-on-the-integration-surface--attributed-and-preserved), QA-4 | a volume figure: 3,313 lines in 25 minutes, ≈20.6 MB/day/instance, into an unrotated sink (see OBS-5), and Bull's own queue-`error` listener as a second channel for the same outage |
+| The mailer's unconfigured branch logs the recipient address | [section 16](#16-runtime-qa-observations-on-the-integration-surface-attributed-and-preserved), QA-2 | nothing — re-confirmed firing |
+| Redis configured but unreachable logs the error event about twice a second, without a ceiling, while the application keeps serving | [section 16](#16-runtime-qa-observations-on-the-integration-surface-attributed-and-preserved), QA-4 | a volume figure: 3,313 lines in 25 minutes, ≈20.6 MB/day/instance, into an unrotated sink (see OBS-5), and Bull's own queue-`error` listener as a second channel for the same outage |
 | A rejected reCAPTCHA verification logs nothing at all, so a bot signup that was correctly refused leaves no trace | the mechanism is the argument-less `h.reject()` meeting the responder's inherited `if (json)` guard — `lib/http/responseContract.js:L408-L413`, whose guard is verbatim from `2f8712a:lib/util/routeParser.js:L484-L486` — and the destination it redirects to is [section 15.3](#153-post-users-sends-every-signup-failure-to-a-path-that-does-not-exist) | confirmation over a real network with a bogus secret: 302 to the un-interpolated `/{formName}`, user count 0, log output 0 |
 | A reCAPTCHA **transport** failure is process-fatal | [section 1.10](#110-the-unchecked-err-crash-path-in-recaptcha-verification) | container `ExitCode=1` with a diagnostic naming `lib/util/recaptcha.js` |
 | When the failure e-mail also fails, the export's root cause is overwritten in the log and in `Export.errorMessage` | the ordering is `lib/workers/exports.js`'s own documented shape — the failed-status write and `errorMessage: err.message` are persisted first, then `await sendFailureEmail(…)`, whose rejection "surfaces instead of this one" and reaches the queue's `'failed'` listener, which logs it and re-writes `errorMessage` at `L95`. The fire-and-forget half is [section 3.43](#343-fire-and-forget-mail-owns-its-rejection-and-still-reports-nothing) | the end-to-end confirmation, including the persisted field |
@@ -9156,7 +9162,7 @@ look-alikes `monkey` and `keystone` preserved verbatim, no response byte altered
 that the retired shim's own traces — the three per-request `ROUTE:` lines at `2f8712a:lib/util/routeParser.js:L311, L544,
 L550` and the `still going after 1s` watchdog at `L546` — are gone with **0** occurrences across 71 captured streams
 while every other intentional log line still fires, which is
-[section 1.12](#112-the-leftover-consolelog-calls--64-matching-lines-at-the-base-commit-64-now)'s census holding. And it re-ran the
+[section 1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-64-now)'s census holding. And it re-ran the
 R-6 harness, which reported **0 differences** against the committed corpus and reproduced both CSS artifacts at their
 recorded byte lengths.
 
@@ -9197,7 +9203,7 @@ on 15 of them, **identical** HTTP statuses, byte-identical response bodies, iden
 boot runs**, startup and resident memory both lower, and boot-time deprecation warnings **2 → 0**. It also confirmed at
 runtime three defects this changeset repaired rather than introduced: the write-stream leak on a failed export job
 ([section 3.41](#341-archive-failures-release-their-peers-and-queue-promises-are-owned)), the unbounded heap buffering
-in the remote-asset importer ([section 4.2a](#42-sec-2-assetuploadfromurl-unbounded-buffering-high-remediated-and-ssrf-high-preserved)),
+in the remote-asset importer ([section 4.2a](#42a-unbounded-heap-buffering-a-migration-regression-remediated)),
 and the **one-request full-process denial of service** a duplicate folder name triggered at the base commit, which the
 delivered tree survives — the residual divergence
 [section 8.3](#83-the-three-fates-and-what-may-be-reproduced) prices and
@@ -10227,8 +10233,9 @@ and disappears with the drawer, returning `scrollWidth` to exactly its pre-drawe
 
 The design-token angle is the sharpest illustration. VQ-18's 350px is not an arbitrary constant that happens to be too
 wide at 375px — it is `$off-canvas-width`, one of the values AAP §0.3.3 pins by literal value in its token ledger, and
-the ledger was re-verified against `static/scss/_settings.scss` during this pass with every entry matching, `$blue:
-#008AFF` and `$body-font-family: "Merriweather", Times, Georgia, serif` and `$off-canvas-width: 350px` included.
+the ledger was re-verified against `static/scss/_settings.scss` during this pass with every entry matching —
+`$blue: #008AFF` and `$body-font-family: "Merriweather", Times, Georgia, serif` and `$off-canvas-width: 350px`
+included.
 Changing it would be a token migration, which is precisely the activity §0.3.5 records as having **zero** items in this
 changeset. The narrow-viewport consequence of that token is already adjudicated at
 [section 15.12](#1512-the-course-reader-loses-its-layout-at-and-below-641px-because-the-outline-is-fixed-at-a-hard-350px);
@@ -10500,7 +10507,7 @@ authorization §4.16 asks for.
 | PII over-exposure to enrolled students | **extends BQ-9** — 12 `_owner` keys from the student identity; `roles` empty on that path; the participant-email list is owner-only | [22.2.4](#2224-the-owner-record-expansion-measured-from-the-enrolled-student-identity) |
 | Security headers applied inconsistently; no CSP/HSTS/X-Content-Type-Options; no cookie `Secure` | **extends §4.15.3** — the allow-list is 5 configured entries of which 3 resolve; `Referrer-Policy` and `Permissions-Policy` also 0; `isSecure: false` is shipped configuration | [22.2.1](#2221-x-frame-options-is-applied-to-exactly-the-paths-configuration-names-three-of-which-exist), [§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else) |
 | ~40 third-party assets fetched over plain `http` and answered 307, doubling every external request | **new, and corrected** — 27 distinct URLs; 0 identical URLs fetched twice; the 307 is Chrome's HSTS upgrade; the cache prefix varies 3× within one render | [22.2.3](#2223-every-protocol-relative-third-party-asset-is-first-requested-over-plain-http) |
-| The `browser_id` cookie is sent twice | **new** — 2 jar entries at paths `/library` and `/`; 2 occurrences on `/library/**`, 1 on `/home` and `/`; +45 bytes | [22.2.4 above / 22.2.2](#2222-a-pathless-client-set-cookie-is-stored-twice-and-sent-twice-under-one-path-prefix) |
+| The `browser_id` cookie is sent twice | **new** — 2 jar entries at paths `/library` and `/`; 2 occurrences on `/library/**`, 1 on `/home` and `/`; +45 bytes | [22.2.2](#2222-a-pathless-client-set-cookie-is-stored-twice-and-sent-twice-under-one-path-prefix) |
 | User enumeration byte-proven; no rate limiting or lockout | already catalogued | [§15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved), [§4.15.1](#4151-no-rate-limiting-no-throttling-and-no-account-lockout-anywhere), [§4.15.2](#4152-login-responses-distinguish-wrong-password-from-no-such-account) |
 | No privilege escalation anywhere on the audited surface | **informational PASS**, recorded | [22.1](#221-what-this-pass-confirmed-rather-than-found-and-the-two-corrections-it-forced) |
 
@@ -12746,6 +12753,352 @@ ranges named above, and all 83 lettered identifiers including each half of the n
 is checked separately over the **whole** document, against the Python-Markdown slug rule that
 [mkdocs.yml](https://www.mkdocs.org/)'s renderer actually applies, so a link that merely looks plausible does not pass.
 Both checks pass with **zero unresolved identifiers and zero broken anchors**.
+
+## 23. The final-acceptance QA pass: one repair, six newly catalogued conditions, and the complete crosswalk
+
+> ✅ **Evidence status: final.** Every figure below was measured on the delivered tree while this section was written —
+> over real HTTP against `node app.js` on port 30140, in a real headless Chrome at a pinned 1280×900 viewport, and
+> against a `mkdocs build --strict` of this repository's own `docs/` directory. Every attribution to the base commit is
+> a source-level fact established by `git show 2f8712a:<path>` or `git diff 2f8712a HEAD -- <path>` and is not
+> qualified. See [How to read this catalogue](#how-to-read-this-catalogue).
+
+A final-acceptance QA pass drove **283 primary surfaces** — 233 routes in both authentication states, 18 screen
+families, 15 entity groups, 12 integrations and 5 delivery/runtime surfaces — across roughly **2,527** counted
+executions, and recorded **50** findings: 5 Critical, 34 Major, 8 Minor and 3 Informational.
+
+**Its parity verdict was, for the fourth consecutive pass, unqualified.** The 233-row route table replayed row for row
+with the canonical digests unchanged, `node test/baseline/replay.js` reported **0 differences** across 87 gates, the two
+stylesheet artifacts reproduced at **265,727** and **296,352** bytes, `npm test` passed **670 / 0** twice, and
+`npm audit --omit=dev` held at **0 critical / 0 high**. Its own integrity check recorded `git status --porcelain` as
+`?? blitzy/` before and after, with an empty `git diff` — it changed nothing. TR1 through TR8 all held as parity.
+
+**Forty-nine of the fifty findings are conditions this catalogue already governs or that the plan explicitly freezes.**
+Section [23.7](#237-the-complete-crosswalk-all-fifty-identifiers) answers every one of them individually, with the
+catalogue entry that holds it and the AAP clause that decides it. Nothing in that table is closed on judgement: each
+row cites either an existing measured entry or a named AAP section.
+
+**One was a defect in this changeset's own delivered work, and it is repaired.** Twelve in-page links inside this
+document pointed at anchors that do not exist in the rendered site. Section
+[23.1](#231-what-this-pass-changed-twelve-in-page-links-and-nothing-else) records the repair.
+
+**Six conditions were preserved but not catalogued, and R-4 requires a preserved defect to be documented.** That is the
+same disposition [§4.23](#423-crosswalk-to-the-final-runtime-security-assessments-findings) applied to SEC-15: the
+reported gap was the documentation, and it is closed here. Sections 23.2 through 23.6 are those six.
+
+### 23.1 What this pass changed: twelve in-page links, and nothing else
+
+**What it was.** Twelve in-page hrefs in this document named fragment anchors that the rendered documentation site does
+not have, so twelve cross-references in the R-4 deliverable were dead links for any reader of the MkDocs site.
+
+**The mechanism, measured rather than inferred.** Five headings in this document contain an em-dash surrounded by
+spaces. A GitHub-flavoured slugger deletes the dash and converts each remaining space to a hyphen, yielding `--`;
+python-markdown — the renderer MkDocs actually applies — deletes the dash and then collapses the run of whitespace to a
+**single** hyphen. The twelve hrefs were written in the GitHub form while the other **185** distinct anchors in the same
+document were already written in the python-markdown form, so the document disagreed with itself.
+
+`mkdocs build --strict` named all five before the repair and none after:
+
+```text
+INFO - Doc file 'PRESERVED-QUIRKS.md' contains a link '#18-runtime-qa-observations-on-the-database-surface--attributed-and-preserved',
+       but there is no such anchor on this page.
+    … four more, one per heading …
+```
+
+| Heading | Referenced as | Actual rendered id | Refs |
+|---|---|---|---|
+| `## 0. Current delivery status — the single source of truth for every measured figure` | `…status--the-single…` | `0-current-delivery-status-the-single-source-of-truth-for-every-measured-figure` | 2 |
+| `### 1.12 The leftover console.log calls — 64 matching lines at the base commit, 64 now` | `…calls--64-matching…` | `112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-64-now` | 4 |
+| `### 3.24 Query#stream() has thrown since mongoose 5, and the throw is preserved — as is count()` | `…preserved--as-is-count` | `324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved-as-is-count` | 3 |
+| `## 16. Runtime-QA observations on the integration surface — attributed, and preserved` | `…surface--attributed…` | `16-runtime-qa-observations-on-the-integration-surface-attributed-and-preserved` | 2 |
+| `## 18. Runtime-QA observations on the database surface — attributed, and preserved` | `…surface--attributed…` | `18-runtime-qa-observations-on-the-database-surface-attributed-and-preserved` | 1 |
+
+**The repair, and its exact blast radius.** Twelve fragments were rewritten to the single-hyphen form, at L2193, L8777,
+L8782, L8813, L8830, L8899, L8929, L9121, L9125, L9133 (twice) and L9159. Nothing else changed: `git diff --stat` for
+this file is **12 insertions, 12 deletions**, and a word-level diff shows the edit confined to the fragment text — no
+link label, no prose and no heading was touched. A guard ran before the write: for each of the five fragment strings,
+the number of bare occurrences equalled the number that appeared wrapped in an anchor-href position, proving every
+occurrence sat inside a link rather than in prose.
+
+**Verified after the repair, statically and at runtime.** `mkdocs build --strict` exits **0** with **0** anchor notices
+and **0** WARNING or ERROR lines. An independent checker over all five delivered documents reports **0** dangling
+fragments out of **659** same-file links. In a real browser against the built site, all five ids resolve
+(`getElementById` non-null, each declared exactly once) and each genuinely scrolls the viewport from a verified
+`scrollY === 0` — `rect.top` lands at 68.38 / 68.44 / 68.16 / 68.06 / 67.97 px, that constant being the Material
+theme's sticky-header `scroll-margin-top` — over real scroll distances of 8,426 to 297,724 px in a 470,397 px document,
+and the same holds on a cold cache-bypassing reload at a hash URL. A full sweep of **all 1,389** in-page anchors on the
+rendered page finds **0** whose target is missing, across **305** unique fragments and 305 headings — a clean 1:1. The
+two old double-hyphen ids are absent, and no id anywhere on the page contains `--`.
+
+**Why the fix moves the links rather than the headings.** Renaming the five headings would change five anchors that
+other references already resolve against, and would edit prose this catalogue's own citations depend on. Rewriting the
+twelve hrefs makes the document internally consistent with the 185 anchors that were already correct. A supporting
+measurement settles the direction: of the **51** headings in this document containing an em-dash, **0** produce a
+double-hyphen id, so the single-hyphen form is the rule and the twelve were the exception.
+
+### 23.2 `GET /auth/google` answers a raw developer JSON object on an HTML route
+
+**What it is.** The top-level Google sign-in entry point is an HTML-context route reached from a browser, and with the
+provider unconfigured it answers a bare JSON object with no page chrome, no navigation and no way back.
+
+**Evidence, measured over real HTTP on the delivered tree.**
+
+```text
+GET /auth/google                                   -> 200  application/json; charset=utf-8  96 bytes
+GET /auth/google   Accept: text/html,…             -> 200  application/json; charset=utf-8  96 bytes
+{"message":"Google OAuth is not configured. Please set up Google OAuth credentials.","flash":{}}
+```
+
+The `Accept` header makes no difference, so this is not content negotiation choosing wrongly — the route has no HTML
+branch to choose. `config/routes.js:L529-L533` declares `GET /auth/google auth.google` with `config : { auth : false }`
+and **no `html` key and no `success` block**, so the declarative responder has no template and no redirect to apply and
+falls through to its JSON arm; `lib/controllers/auth.js#google` returns `request.fail({ message : … })` when
+`config.app.auth.google.clientID` is absent, which it is in the shipped configuration
+(`config/default.yaml:L325-L328` are empty — see
+[§4.3](#43-sec-3-google-oauth-without-a-state-parameter-high-preserved)).
+
+**Origin.** Baseline. `git show 2f8712a:config/routes.js` carries the identical five-line declaration at the identical
+lines, and `git show 2f8712a:lib/controllers/auth.js` carries the identical `request.fail({ message : 'Google OAuth is
+not configured. Please set up Google OAuth credentials.' })` arm. The handler was already spelled
+`function (request, h)` at the base commit, so it is one of the two handlers in the tree that needed no signature
+change at all.
+
+**Why it is preserved.** Giving the route a template or a redirect changes both the status-bearing payload and the
+`Location` header of a route in the 233-row table, which the HTTP-surface and page-behaviour directives of AAP §0.9.4
+freeze, and adding an HTML branch to a route that has never had one is the "new feature" AAP §0.9.5 excludes. The
+scrubbed-JSON shape is also what the R-6 corpus compares. **An operator who configures Google OAuth never reaches this
+response**, which is the condition under which the route was written.
+
+### 23.3 The top-bar logo ships 79 times the pixels it renders, and no image on the page carries a responsive source
+
+**What it is.** The wordmark in the top bar is delivered at 855 × 150 and painted into a 96 × 16.83 CSS-pixel box, and
+neither it nor any other image in the application offers a smaller candidate.
+
+**Evidence, measured in a real browser at 1280 × 900 with `devicePixelRatio` 1.**
+
+| Metric | Value |
+|---|---|
+| `naturalWidth` × `naturalHeight` | **855 × 150** (independently confirmed from the PNG IHDR: 8-bit colormap, non-interlaced) |
+| `getBoundingClientRect()` | **96.00 × 16.83** px |
+| computed `width` / `height` | `96px` / `16.8281px` |
+| linear surplus | **8.91×** (855 / 96) |
+| pixel-area surplus | **79.39×** (128,250 px² / 1,615.5 px²) |
+| transferred payload | **14,148 bytes** — agreed by `content-length`, `encodedBodySize`, `decodedBodySize` and an out-of-band `curl` |
+| `srcset` / `sizes` / `width` / `height` attributes / parent `<picture>` | **all absent** |
+
+The rendered width has a single cause: `nav.top-bar img { width: 6rem }` in `public/css/base.css`, and 6rem × 16px =
+96px. The height follows from the intrinsic 855:150 ratio — 96 × 150 / 855 = 16.842105px, which Blink floors to
+1/64px LayoutUnits as `floor(16.842105 × 64) / 64` = **16.828125px**, exactly the observed value. The PNG carries no
+`pHYs` chunk, so no density override is in play.
+
+The page-wide audit is short because the page has only two images: **2** `<img>` elements, **0** with `srcset`, **0**
+with `sizes`, **0** inside a `<picture>`, **0** carrying both `width` and `height` attributes. The second image, the
+hero-band white logo, is 821 × 144 rendered at 240 × 42.09 — a 3.42× linear and 11.70× area surplus — sized by the only
+inline `style` on either element. The count is exhaustive rather than approximate: `document.images.length` agrees at
+2, and there are **0** `<img>` in any shadow root, **0** `<iframe>`, **0** inline-SVG `<image>`, **0**
+`input[type=image]` and **0** elements carrying a CSS `background-image`; the raw server-rendered HTML also contains
+exactly 2 `<img>` and 0 `srcset`, so AngularJS injects none at runtime. Despite the 8.91× downscale the logo renders
+without visible aliasing.
+
+**Origin.** Baseline, on both halves. `git diff 2f8712a HEAD -- lib/views/ public/img/` reports **0 changed files**:
+`lib/views/base.html:L105` still emits `<img src="{{ config.app.logo | cachePrefix }}" alt="{{ config.app.siteName }}">`
+with exactly two attributes, `config/default.yaml:L25` still names `/img/trinket-logo.png`, the asset's 14,148 bytes are
+unchanged, and `static/scss/**` — the source of the `6rem` rule — is frozen.
+
+**Why it is preserved.** Every available repair edits a frozen surface. Adding `srcset`/`sizes` or a `<picture>` edits
+one of the 79 templates AAP §0.2.2.2 and §0.5.1.8 freeze; shipping resized variants adds new files under `public/img/`
+at new URLs, which the asset-URL invariant TR5 and AAP §0.2.2.1 forbid; re-encoding the existing PNG changes the bytes
+of a tracked asset. The saving is also bounded and purely a transfer-size one — 14,148 bytes on a page that already
+carries 64 requests — and AAP §0.9.9 states that no performance objective exists and that no change may be justified on
+performance grounds. **An operator who wants responsive art direction should treat it as an authorized asset-contract
+change**, which is the same conclusion [§2](#2-the-three-deliberate-browser-versus-server-version-skews) reaches for
+the pinned browser-side library versions.
+
+### 23.4 The rendered documentation site has no working search, because a theme script reads an undefined global
+
+**What it is.** The MkDocs site builds cleanly and every page renders, but the search box never appears and searching is
+impossible, because the stock MkDocs search script is loaded onto a mkdocs-material page and dereferences a global that
+the Material templates do not define.
+
+**Evidence.** Built with `mkdocs build --strict` (mkdocs 1.6.1, mkdocs-material via the `techdocs-core` plugin) and
+served over HTTP, every page carries `<script src="search/main.js">` — `PRESERVED-QUIRKS/index.html:L569` is one — and
+the browser reports **exactly one** console message, on every load of every page:
+
+```text
+error> Uncaught ReferenceError: base_url is not defined
+    at (search/main.js:106:41)
+```
+
+Corroborated on disk rather than only in the browser: `search/main.js` is 109 lines and `grep -n base_url` yields
+**L32, L95 and L106**, where L106 reads `var searchWorker = new Worker(joinUrl(base_url, "search/worker.js"));` and
+column 41 is the `base_url` token. Two consequences follow from the throw landing at `Worker` construction, and both
+were observed: **no search input renders in the Material header**, and **`search/worker.js` never appears in the network
+log at all**. Nothing else is affected — 26 requests on the page, **all HTTP 200**, and the only console message on the
+page is this one.
+
+**Origin.** Baseline configuration. `git diff 2f8712a HEAD -- mkdocs.yml` is **two added nav lines and nothing else**:
+`site_name`, `site_description`, `docs_dir` and `plugins: [techdocs-core]` are byte-identical, and the two entries this
+changeset added are the R-3 and R-4 deliverables that AAP §0.2.1.12 requires it to add. The broken interaction is
+between the `search` plugin's stock assets and the Material theme's templates, neither of which this repository owns.
+
+**Why it is preserved.** The repair is a change to documentation infrastructure that behaved identically before this
+changeset — disabling or replacing the `search` plugin, or pinning a theme — and AAP §0.8.1 (R-1) places latent-bug
+repair outside the four sanctioned diff categories "even when obviously beneficial". It is also not the requirement
+G9 states: G9 asks that the two delivered documents exist and appear in the `mkdocs.yml` nav, which they do. The
+`mkdocs.yml` in this repository additionally targets Backstage TechDocs — `catalog-info.yaml` is present and
+`techdocs-core` is the plugin Backstage supplies — so the rendering pipeline that matters in deployment is not the local
+`mkdocs serve` used to measure this. **An operator who wants working local search should treat the plugin/theme pairing
+as an authorized documentation-infrastructure change**, and should expect that change to be version-specific rather
+than permanent.
+
+### 23.5 The rendered documentation site publishes an empty sitemap, and its paths are case-sensitive
+
+Two conditions with one root each, recorded together because both are properties of the rendered site rather than of
+its content.
+
+**A. The sitemap has no entries.** `sitemap.xml` builds at **109 bytes** and contains **0** `<url>` elements:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+</urlset>
+```
+
+The cause is that `mkdocs.yml` declares **no `site_url`**, and MkDocs' sitemap template emits one `<url>` per page from
+each page's `canonical_url`, which is derived from `site_url` and is `None` without it. Measured on both sides:
+`grep -c '^site_url' mkdocs.yml` is **0** at `HEAD` and **0** at `2f8712a`.
+
+**B. Rendered paths are case-sensitive.** Each document renders to a directory named after the source file, so only the
+exact casing resolves:
+
+```text
+/PRESERVED-QUIRKS/                 -> 200      /preserved-quirks/                 -> 404
+/setup/                            -> 200      /Setup/                            -> 404
+/MIGRATION-DEPENDENCY-INVENTORY/   -> 200      /migration-dependency-inventory/   -> 404
+```
+
+This is a property of static-file serving plus the source filenames, not of any configuration this changeset wrote. The
+two upper-case names are the two documents R-3 and R-4 mandate, and their names are the names the AAP specifies —
+`docs/MIGRATION-DEPENDENCY-INVENTORY.md` and `docs/PRESERVED-QUIRKS.md` — so the casing is a plan input rather than a
+choice made here.
+
+**Why both are preserved.** Adding `site_url` changes every canonical URL the rendered site publishes, and renaming the
+two delivered documents changes filenames the AAP names explicitly in §0.2.1.14 and the `mkdocs.yml` nav entries that
+G9 requires. Both are latent-bug repair under AAP §0.8.1 (R-1), and neither is a requirement G9 states. The nav, which
+is how a reader actually navigates the site, resolves correctly for all five pages — **62 of 62** local links resolve,
+independently confirmed.
+
+### 23.6 The `redis` service persists nothing, and the volume that looks like its cache is mounted by nobody
+
+**What it is.** `docker compose down` followed by `docker compose up` loses every Redis key and every queued Bull job,
+because the `redis` service has no volume, while the compose file declares a volume whose name suggests it is exactly
+that cache and which nothing mounts.
+
+**Evidence.** The delivered `redis` service, comments removed, is four keys and no storage:
+
+```yaml
+  redis:
+    image: redis:7.4
+    ports:
+      - 127.0.0.1:16379:6379
+    container_name: redis
+    networks:
+      - trinket
+```
+
+There is no `volumes:` key on the service and no `command:` enabling an append-only file, so the container's data lives
+only in its writable layer, which `docker compose down` discards with the container. Meanwhile the file's `volumes:`
+block declares **`shared-cache:`** and `grep -c shared-cache docker-compose.yml` is **1** — the declaration at L66 —
+so it is mounted by no service at all.
+
+**Origin.** Baseline on both halves. `git show 2f8712a:docker-compose.yml` shows the same four-key `redis` service with
+no `volumes:` and the same `shared-cache:` declaration in the same `volumes:` block. This changeset's only edits to that
+service are the two the runtime bump and the container hardening require: `image: redis:latest` → `redis:7.4`, and
+`16379:6379` → `127.0.0.1:16379:6379` so an unauthenticated Redis is not published on every host interface. It also
+added `public_css:` for the generated stylesheets. Neither touches persistence.
+
+**Why it is preserved.** Mounting a data volume and enabling persistence is infrastructure improvement, which is none of
+the four categories AAP §0.8.1 (R-1) sanctions, and it changes recovery behaviour after a recreation — a behaviour
+change under R-4. Removing the dead `shared-cache:` declaration is cleanup, which R-1 also forbids; that half is already
+recorded in [§1.14 D](#114-eight-further-preserved-conditions). Nothing in the application depends on Redis surviving a
+recreation: `lib/util/store.js` falls back to its own `InMemoryClient` and the stores under `lib/util/store/` keep
+working, and Redis is **not** the session store — `app.js` registers the `sessions` cache against the in-repo
+`lib/util/catbox-mongoose.js` engine, so server-side session records live in `mongodb`, which **does** carry
+`mongodb_data:`. The one thing genuinely lost is the `exports` queue's pending jobs, and
+[§7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit) records that the export worker cannot run at
+all. **An operator running this compose file in anything other than development should mount a Redis data volume and
+enable an append-only file**, and should remove the `shared-cache:` declaration at the same time.
+
+### 23.7 The complete crosswalk — all fifty identifiers
+
+Every identifier the final-acceptance report uses appears below exactly once, so a reader holding one has a way in. The
+**Disposition** column takes one of four values: **FIXED** (this changeset changed code or documentation to close it),
+**PRESERVED** (an inherited condition R-4 requires be documented rather than repaired), **ACCEPTED** (a residual risk
+with a recorded reason), or **ADJUDICATED** (an ambiguity R-6 settled against baseline). The **Deciding clause** column
+names the AAP section that makes the disposition mandatory — never a judgement, always a citation.
+
+| ID | Sev | Condition as reported | Disposition | Where it is answered | Deciding clause |
+|---|---|---|---|---|---|
+| `C-01` | Critical | Python cannot execute: Skulpt and its stdlib are fetched from `https://your-cdn-bucket.example.com/…`, which does not resolve, so `Sk` is undefined and Run sticks as Stop | **PRESERVED** | [§4.15.6](#4156-the-shipped-configuration-points-at-placeholder-asset-hosts-so-skulpt-does-not-load-in-a-default-checkout), [§15.9](#159-the-python-runtime-is-fetched-from-a-placeholder-cdn-host-so-it-never-initialises) | §0.5.1.8 freezes `config/*.yaml`; §0.2.2.1 leaves `public/js/**` untouched; TR5 (§0.1.2.3) freezes asset URLs |
+| `C-02` | Critical | The standalone export worker cannot boot (`AssertError: Schema can only contain plain objects (0)`) and, forced past it, dies on the removed `Query#stream` | **PRESERVED** | [§7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit), [§3.24](#324-querystream-has-thrown-since-mongoose-5-and-the-throw-is-preserved-as-is-count) | §0.8.6 (R-6): both halves reproduce identically at `2f8712a`, require order and `.stream()` call included; §0.8.4 (R-4) |
+| `C-03` | Critical | The markdown Renderer concatenates attacker-influenced values into `iframe` attributes without escaping, so a fenced info string can create a live `onload` | **PRESERVED** | [§4.10 SEC-10](#410-sec-10-renderer-attribute-concatenation-bypasses-the-sanitizer-medium-preserved) | §0.8.4 (R-4): the three concatenation sites are byte-identical to `2f8712a` and escaping them changes client-visible rendered markup for existing content |
+| `C-04` | Critical | The library-search typeahead writes stored trinket names through `bind-html-unsafe`, executing script in the authenticated session | **PRESERVED** | [§4.17 SEC-14](#417-sec-14-stored-cross-site-scripting-in-the-library-search-typeahead-critical-preserved), [§21.2](#212-the-stored-xss-in-the-library-search-typeahead) | §0.2.2.1 leaves `public/partials/**` untouched; §0.5.1.8 |
+| `C-05` | Critical | The admin user-detail JSON pane renders `json("pretty") \| safe`, so an ordinary user's display name executes in the administrator's session | **PRESERVED** | [§4.18 SEC-15](#418-sec-15-stored-cross-site-scripting-in-the-admin-user-detail-json-dump-critical-preserved) | §0.2.2.2 and §0.5.1.8 freeze `lib/views/**` |
+| `M-01` | Major | Real traffic through the two internal `request.server.inject` call sites emits DEP0169 from `@hapi/shot`, so the zero-deprecation gate fails under load | **PRESERVED** | [§7.6](#76-the-two-deprecation-warnings-and-why-neither-is-repairable-here) | G5 (§0.1.1.3) and §0.9.6 state the gate as **boot** with zero warnings, and boot is measured clean; §0.7.2 records `@hapi/shot` 6.0.3 as the latest published with no upstream fix; both call sites are base-identical, so rewriting them is out of §0.8.1's four categories |
+| `M-02` | Major | An invalid signup redirects to `/sign-up`, which 404s, and the rejected identifier plus the Joi error survive into the next `/login` render | **PRESERVED** | [§15.3](#153-post-users-sends-every-signup-failure-to-a-path-that-does-not-exist) | §0.8.6 (R-6) and §0.9.4: the `formName` and the persisted flash keys are base-identical and the emitted `Location` is frozen |
+| `M-03` | Major | An activation failure emits `Location: …/{redirectTo}` literally, and the browser lands on a 404 | **PRESERVED** | [§22.4.5](#2245-redirectto-is-never-interpolated-so-two-activation-failures-redirect-to-a-literal-brace) | §0.9.4: `config/routes.js` is byte-identical and [§4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated) records emitted `Location` values as frozen — an earlier revision that changed them was reverted on review |
+| `M-04` | Major | Authenticated `GET /login` and `GET /signup` both answer 500 and render the generic error page | **PRESERVED** | [§1.1](#11-authenticated-get-login-and-get-signup-return-http-500) | **§0.2.2.3 names this condition explicitly** as behaviour not to be repaired; it is also invariant I4 and an R-6 corpus assertion |
+| `M-05` | Major | Google OAuth carries no `state`, persists the account and bearer token before failing on an undefined `opts`, and a generated-username collision can link the wrong account | **PRESERVED** | [§4.3 SEC-3](#43-sec-3-google-oauth-without-a-state-parameter-high-preserved) | §0.9.4 and §0.9.5: the `opts` reference is base-identical (`2f8712a:lib/controllers/auth.js:L152`) and adding `state` is new capability |
+| `M-06` | Major | Login enumerates accounts, nothing throttles or locks out, 3-character passwords are accepted, reset/change/invite codes are 32-bit or 6 characters, and the share JWT key can be `"undefined"` | **PRESERVED** | [§4.15.1](#4151-no-rate-limiting-no-throttling-and-no-account-lockout-anywhere), [§4.15.2](#4152-login-responses-distinguish-wrong-password-from-no-such-account), [§4.5 SEC-5](#45-sec-5-32-bit-password-reset-and-email-change-keys-medium-preserved), [§4.6 SEC-6](#46-sec-6-the-jwt-key-is-undefined-plus-a-public-short-code-medium-preserved), [§4.11 SEC-11](#411-sec-11-mathrandom-six-character-course-access-codes-medium-preserved), [§15.7](#157-the-login-form-distinguishes-an-unknown-account-from-a-wrong-password-cwe-204-preserved) | §0.9.4 freezes validation outcomes and login-flow outcomes; §0.9.5 excludes new features; TR6 freezes the persisted token formats |
+| `M-07` | Major | A cross-origin state change with a valid cookie succeeds, and CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` are all absent | **PRESERVED** | [§4.15.3](#4153-no-csp-no-hsts-no-x-content-type-options-and-rendered-error-pages-carry-fewer-headers-than-everything-else), [§4.15.4](#4154-one-route-enables-cors-and-reflects-any-origin-but-grants-no-credentials), [§22.2.1](#2221-x-frame-options-is-applied-to-exactly-the-paths-configuration-names-three-of-which-exist) | §0.9.4 freezes the HTTP surface and §0.9.5 excludes new capability; a CSRF token is also a new persisted/verified field |
+| `M-08` | Major | Profile update accepts overlapping submits, never disables, and reports neither an offline failure nor a 401 because `.fail()` targets a `#passwordError` that does not exist on that page | **PRESERVED** | [§17.4 BQ-11](#174-bq-11-the-profile-forms-one-mis-targeted-alert-and-why-it-can-never-find-its-target), [§22.11.2](#22112-the-mis-targeted-alert-reproduced-end-to-end-through-a-real-session-expiry), [§22.11.4](#22114-the-only-field-level-error-in-the-application-attached-without-any-request-being-made) | §0.2.2.2 and §0.5.1.8 freeze `lib/views/**`, which is where the script and the target id live |
+| `M-09` | Major | The email-change request writes an 8-hex key with TTL −1, sends no confirmation and never answers, because its callback-shaped tail is unreachable | **PRESERVED** | [§3.34](#334-an-argument-list-that-was-never-read-and-a-denial-that-never-denied), [§6.2](#62-the-table), [§9](#9-the-no-response-and-process-fate-preservations-site-by-site), [§4.5 SEC-5](#45-sec-5-32-bit-password-reset-and-email-change-keys-medium-preserved) | §0.8.6 (R-6): `Store.set` is arity-two at `2f8712a` and now, so the third argument was never invoked at the base commit either; the no-response fate is reproduced with `h.abandon` per [§3.39](#339-the-no-response-fate-is-habandon-not-a-never-settling-promise) |
+| `M-10` | Major | Deleting a user leaves its folders with a dangling `_owner`, and a pending export behind | **PRESERVED** | [§4.22](#422-deleting-a-user-leaves-its-folders-behind-with-a-dangling-owner-reference) | §0.9.4 freezes persisted storage formats and §0.9.5 excludes new capability; a cascade is new behaviour on a write path |
+| `M-11` | Major | An unknown `/admin/{subpage}` answers a 96-byte `application/json` 500 with no chrome and none of the lifecycle headers | **PRESERVED** | [§17 BQ-5](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved), [§22.4.6](#2246-triage-rows-the-server-side-surface) | §0.2.2.2: the include that raises is `lib/views/admin/index.html:L46`, a frozen template with a 0-line diff, and the raise happens during marshalling, after `onPreResponse` has run |
+| `M-12` | Major | The admin Change Roles dialog is unreachable by keyboard, has no dialog semantics or focus trap, and collides with the table at 375px | **PRESERVED** | [§22.8.6](#2286-the-modal-takes-no-focus-traps-none-and-returns-none), [§22.8.1](#2281-the-tab-order-reaches-14-elements-and-skips-45), [§15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them) | §0.2.2.2 and §0.5.1.8 freeze `lib/views/**`; §15.13 records why the AAP's own precedence order forbids repairing accessibility here |
+| `M-13` | Major | `/admin?logoutAs=1` is inert; only `/admin/users?logoutAs=1` exits impersonation | **PRESERVED** | [§4.21](#421-the-logoutas-impersonation-escape-hatch-is-unreachable-at-adminlogoutas1) | §0.8.4 (R-4): base-identical route ordering, and the visible link lives in a frozen template |
+| `M-14` | Major | `GET /api/featured-courses` answers a scrubbed 500 as soon as any featured course carries a lesson | **PRESERVED** | [§22.4.7](#2247-a-featured-course-with-a-lesson-breaks-its-own-response-during-transmission), [§7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid) | §0.8.4 (R-4): the raise is inside hapi's `Response._marshal`, unreachable by any handler or by `lib/http/errorMap.js`, and its cause is `ObjectUtils.serialize`, whose output is the payload shape of every declarative response in the application |
+| `M-15` | Major | Class-page navigation and the direct reader redirect both emit port-less origins, so links resolve to port 80 and fail | **PRESERVED** | [§17.1 BQ-1](#171-bq-1-why-the-port-less-class-page-redirect-is-not-repaired-here) | §0.9.4 and [§4.4](#44-sec-4-open-redirect-and-cross-request-redirect-poisoning-high-remediated): emitted `Location` values are frozen, and the client half lives in `public/partials/**`, untouched per §0.2.2.1 |
+| `M-16` | Major | The course Dashboard receives non-zero metrics and renders none, turns zero rows into NaN, is keyboard-inaccessible and overlaps at 375px | **PRESERVED** | [§17.7 BQ-16](#177-bq-16-the-dashboard-that-receives-its-numbers-and-renders-none), [§22.5](#225-the-course-dashboard-why-no-number-reaches-the-screen-and-the-four-sub-conditions-around-it) | §0.2.2.1 leaves `public/js/**` and `public/partials/**` untouched; §0.2.2.2 freezes `lib/views/**` |
+| `M-17` | Major | Deleting a course leaves its lessons and materials in MongoDB | **PRESERVED** | [§15.4](#154-deleting-a-course-leaves-its-lessons-and-materials-behind) | §0.9.4 freezes persisted storage formats; §0.9.5 excludes new capability |
+| `M-18` | Major | Private course content is readable and copyable by non-members, an admin can self-elevate and self-demote, and course-A permission drives course-B assignment, feedback and accept operations | **PRESERVED** | [§4.16.1](#4161-the-final-security-gates-findings-sv-nn-and-why-each-remaining-one-is-deferred) (SV-07 … SV-12) | §0.9.4 freezes the HTTP surface including status codes — every repair turns a measured 200 into a 403 — and §0.9.5 excludes new object-level authorization |
+| `M-19` | Major | The invitation token is a deterministic 8-hex value derived from email plus course id, and a resend is authorized against the wrong course | **PRESERVED** | [§4.16.1](#4161-the-final-security-gates-findings-sv-nn-and-why-each-remaining-one-is-deferred) (SV-13), [§17.2 BQ-3](#172-bq-3-the-invitation-feature-answers-success-for-an-operation-it-did-not-perform) | §0.9.4 / TR6: the token is persisted and emailed, so widening it invalidates every in-flight invitation; the throttling half is new capability under §0.9.5 |
+| `M-20` | Major | `GET /api/folders/{id}/trinkets` answers `data:[]` without a query and the item with one, and a folder owner can attach another user's trinket | **PRESERVED** | [§15.1](#151-get-apifoldersfolderidtrinkets-answers-an-empty-list-because-its-internal-sub-request-loses-its), [§4.16.1](#4161-the-final-security-gates-findings-sv-nn-and-why-each-remaining-one-is-deferred) | §0.8.6 (R-6): the internal sub-request is base-identical (`2f8712a:lib/controllers/folders.js:L43`) and answers exactly what it answered then; §0.9.4 for the authorization half |
+| `M-21` | Major | An unauthenticated snapshot write overwrites a victim's field, and anonymous interactions disclose `_actor`, raw address and referer | **PRESERVED** | [§4.16.1](#4161-the-final-security-gates-findings-sv-nn-and-why-each-remaining-one-is-deferred) (SV-14, SV-15) | §0.9.4 / TR2: the `lastView` wire scrub exists as a documented shape, and extending it to another endpoint changes a measured payload |
+| `M-22` | Major | Multipart uploads to `/file`, `/file/avatar` and `/api/users/assets` all answer 415 before any controller runs | **PRESERVED** | [§7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit), [§13.7](#137-the-r-6-test-adjudications-each-measured-against-the-application), [§21.1](#211-the-upload-and-admin-surfaces) (VQ-2) | §0.9.4 freezes which requests are accepted; the 415 was **measured at `@hapi/hapi` 20.3.0 and 21.4.10 alike**, with `multipart` absent from the route options at both commits, so it is inherited rather than introduced |
+| `M-23` | Major | Asset-from-URL follows a redirect to a loopback address, downloads the body and uploads it with the application's credentials | **PRESERVED** | [§4.2b](#42b-ssrf-baseline-preserved), [§12.1](#121-assetuploadfromurl-streams-and-the-ssrf-exposure-is-inherited-rather-than-introduced) | §0.9.4 and §0.9.5: per-hop address validation changes which inputs the endpoint accepts. The paired memory-amplification half **was** a migration regression and **was** remediated — [§4.2a](#42a-unbounded-heap-buffering-a-migration-regression-remediated) |
+| `M-24` | Major | Archive entry names keep internal `../`, a 749.5× expansion is accepted, and 12 concurrent downloads leave 11 files plus a same-millisecond collision | **PRESERVED** | [§4.7 SEC-7](#47-sec-7-unsanitized-archive-entry-names-in-generated-downloads-medium-preserved), [§4.8 SEC-8](#48-sec-8-predictable-tmp-archive-names-toctou-no-cleanup-medium-preserved), [§4.12 SEC-12](#412-sec-12-no-jszip-decompression-limits-medium-preserved), [§4.20](#420-the-archive-filename-sanitizer-lets-cr-and-lf-through-because-its-own-character-class-admits-them) | §0.9.4 / TR6 freezes the archive layout, and caps change which inputs are accepted; §0.9.9 forbids justifying a change on resource grounds |
+| `M-25` | Major | `POST /api/exports` answers a scrubbed 500 after persisting a pending export and enqueuing, status stays 0/0/0, and the pending download never answers | **PRESERVED** | [§7.3](#73-objectutilsserialize-corrupts-any-payload-carrying-a-raw-objectid), [§6.2](#62-the-table), [§22.7.1](#2271-the-export-poller-runs-on-a-fixed-3-second-interval-with-no-backoff-and-no-give-up), [§22.7.2](#2272-the-progress-bar-reports-1-when-the-value-is-0-and-then-never-moves) | §0.8.6 (R-6): the 500 is the captured base-commit outcome in `test/baseline/responses.json`; the never-answering download is the base commit's own `TypeError` on the absent `exports` bucket, per [§7.5](#75-routes-and-code-paths-that-are-already-dead-at-the-base-commit) |
+| `M-26` | Major | `docker compose down` then `up` loses every Redis key and queued job, and the declared `shared-cache` volume is mounted by nobody | **PRESERVED** | [§23.6](#236-the-redis-service-persists-nothing-and-the-volume-that-looks-like-its-cache-is-mounted-by-nobody), [§1.14 D](#114-eight-further-preserved-conditions) | §0.8.1 (R-1): mounting a volume is infrastructure improvement and removing the dead declaration is cleanup, neither of which is one of the four sanctioned categories; both are base-identical |
+| `M-27` | Major | The smoke script scores 8/11 at port 3000 and 0/11 at its default 3001, and the documented in-container `build:css` / `watch:css` exit 127 | **PRESERVED** | [§1.6](#16-testsmoke-testsh-defaults-to-port-3001-while-everything-else-publishes-3000), [§1.14 F](#114-eight-further-preserved-conditions) | **§0.2.2.3 names the port mismatch explicitly**; the three failing assertions at port 3000 probe routes whose status is itself frozen — the feature-flag 404s §0.2.2.3 also names. The container commands live in `GETTING_STARTED.md`, which is not among the documentation files §0.2.1.12 places in scope and has a 0-line diff against `2f8712a` |
+| `M-28` | Major | Logs carry email addresses, login progress and result booleans, mail recipients and persistent user ids | **PRESERVED** | [§1.12](#112-the-leftover-consolelog-calls-64-matching-lines-at-the-base-commit-64-now), [§19.3](#193-the-log-channel-conditions-the-pass-added-to-the-record) (OBS-4, OBS-8) | **§0.9.9 states the 64 `console.log` calls are preserved** and that removing logging is not a sanctioned category; the password half was already remediated at [§15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) |
+| `M-29` | Major | `?limit=999999` returns the whole set, and every anonymous request allocates a MongoDB session document whose TTL index never reaps it | **PRESERVED** | [§20.1 PQ-1](#201-pq-1-the-unbounded-limit-and-why-a-max-is-the-one-repair-that-cannot-be-made-here), [§20.5](#205-pq-7-and-pq-8-the-three-surfaces-that-grow-and-the-one-whose-growth-rate-is-conditional), [§1.14 E](#114-eight-further-preserved-conditions) | §0.9.9: no performance or scalability objective exists, query and caching patterns are unchanged, and no change may be justified on performance grounds; a `max()` also changes which inputs validate, frozen by §0.9.4 |
+| `M-30` | Major | Unreachable controls, missing skip links and H1s, 2.45–3.83 contrast, suppressed focus rings, missing labels and ARIA, sub-44px targets and mobile overflow across core screens | **PRESERVED** | [§15.13](#1513-the-accessibility-conditions-and-why-the-aaps-own-precedence-order-forbids-repairing-them), [§22.8](#228-the-keyboard-and-accessibility-surface), [§22.9](#229-the-responsive-surface-at-four-widths), [§21.5](#215-interactive-states-and-keyboard-accessibility) | §0.2.2.1, §0.2.2.2 and §0.5.1.8 freeze `lib/views/**`, `public/partials/**` and `static/scss/**`; §0.3.5 makes the design layer preservation-only, and §15.13 records the precedence order that puts accessibility below the frozen contracts |
+| `M-31` | Major | 403 and 500 bodies are byte-identical, the error pages carry no chrome, landmarks or viewport meta, and each costs a `/favicon.ico` 404 | **PRESERVED** | [§17 BQ-6, BQ-7](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved), [§21.6](#216-the-two-status-code-gaps-a-500-where-a-404-belongs) | §0.2.2.2 and §0.5.1.8 freeze `lib/views/404.html` and `lib/views/50x.html`, both 0-line diffs, as is the `onPreResponse` region of `app.js` that selects them |
+| `M-32` | Major | Rendered docs: search is dead, five anchors are absent (12 dangling hrefs), `setup-vendor` does not exist, `aws.endpoint` is ignored, and the nginx/443 and in-container CSS claims are inaccurate | **SPLIT — one FIXED, three PRESERVED, one out of scope** | anchors → **FIXED**, [§23.1](#231-what-this-pass-changed-twelve-in-page-links-and-nothing-else); search → [§23.4](#234-the-rendered-documentation-site-has-no-working-search-because-a-theme-script-reads-an-undefined-global); `setup-vendor` → [§1.8](#18-npm-run-setup-vendor-does-not-exist-yet-two-documents-instruct-readers-to-run-it); container CSS → [§1.14 F](#114-eight-further-preserved-conditions) | The anchors are this changeset's own delivered content, so R-3/R-4 require the repair. **§0.2.2.3 names `npm run setup-vendor` explicitly.** `aws.endpoint` and nginx/443 are claims in `GETTING_STARTED.md`, not among the documentation files §0.2.1.12 places in scope, and its diff against `2f8712a` is empty. The search failure is base-identical configuration and latent-bug repair under §0.8.1 (R-1) |
+| `M-33` | Major | Validation failures answer HTTP 200 with a flash, and `/api/users` echoes the submitted plaintext password back to the requester | **PRESERVED** | [§4.19](#419-a-failed-validation-answers-http-200-and-echoes-the-whole-submitted-payload-including-the-plaintext-password), [§18.3](#183-the-submitted-password-in-the-session-flash-and-why-the-log-remediation-does-not-extend-to-it) | §0.9.4 freezes validation outcomes — "input accepted/rejected at baseline is accepted/rejected identically after" — and the 200 is a captured R-6 corpus assertion; the log-channel half was remediated at [§15.6](#156-a-failed-form-submission-wrote-the-submitted-password-to-the-application-log-cwe-532-remediated-log-only) |
+| `M-34` | Major | Authorization and duplicate failures become scrubbed 500s, and several duplicate/export/copy branches answer nothing and hold the socket | **PRESERVED** | [§10](#10-the-undeclared-boom-scrubbed-500s-61-call-sites-that-never-returned-the-status-they-name), [§9](#9-the-no-response-and-process-fate-preservations-site-by-site), [§1.15](#115-the-branches-that-answer-nothing-and-the-mechanism-that-preserves-them), [§3.39](#339-the-no-response-fate-is-habandon-not-a-never-settling-promise), [§6](#6-the-pending-convergence-decision-table) | §0.8.4 (R-4) and §0.8.6 (R-6): the undeclared-`Boom` 500s are 61 base-commit call sites, and each no-response branch is one the retired shim never settled — `h.abandon` reproduces that fate rather than inventing a status |
+| `m-01` | Minor | Every 403/404/500 page costs an extra `/favicon.ico` 404, because the error templates inherit no icon link | **PRESERVED** | [§17 BQ-7](#17-runtime-qa-observations-on-the-browser-surface-attributed-and-preserved) | §0.2.2.2 and §0.5.1.8: all three templates are 0-line diffs. Measured on the delivered tree, the ordinary pages are unaffected — `GET /img/icons/favicon.ico` answers **200** from `lib/views/base.html` |
+| `m-02` | Minor | `/login` offers no route to password recovery | **PRESERVED** | [§17.3 BQ-8](#173-bq-8-forgot-pass-is-gated-off-by-the-same-flag-that-empties-it) | §0.2.2.2 freezes `lib/views/login.html`; the recovery page itself is gated off by the same `emailEnabled` flag that empties it, so a link would lead to an empty form |
+| `m-03` | Minor | `/auth/google` renders a raw developer JSON object with no chrome or navigation | **PRESERVED** | [§23.2](#232-get-authgoogle-answers-a-raw-developer-json-object-on-an-html-route) | §0.9.4 freezes the response of a route in the 233-row table; §0.9.5 excludes adding an HTML branch a route has never had |
+| `m-04` | Minor | Two `browser_id` cookies exist on overlapping paths and are sent together | **PRESERVED** | [§22.2.2](#2222-a-pathless-client-set-cookie-is-stored-twice-and-sent-twice-under-one-path-prefix) | §0.2.2.1 leaves `public/js/**` untouched; the cookie is set client-side |
+| `m-05` | Minor | A search with no results leaves the grid blank with no message | **PRESERVED** | [§15.11](#1511-two-pages-render-an-empty-grid-with-no-empty-state-message-and-the-message-that-exists-is-gated-on-a-non-empty-featured-list) | §0.2.2.1 leaves `public/partials/**` untouched; the message that exists is gated on a *non-empty* featured list |
+| `m-06` | Minor | The logo is ~8.9× oversized and carries no `srcset` | **PRESERVED** | [§23.3](#233-the-top-bar-logo-ships-79-times-the-pixels-it-renders-and-no-image-on-the-page-carries-a-responsive-source) | §0.2.2.2 freezes the template that emits it, TR5 and §0.2.2.1 forbid new asset URLs, and §0.9.9 forbids justifying the change on performance grounds |
+| `m-07` | Minor | Protocol-relative third-party assets are requested over plain `http` first and answered 307 | **PRESERVED** | [§22.2.3](#2223-every-protocol-relative-third-party-asset-is-first-requested-over-plain-http) | §0.5.1.8 freezes `config/*.yaml` and `static/scss/**`, where every one of these URLs is pinned; TR5 freezes asset URLs. Re-measured here: 17 such references, each 307 → 200, **nothing fetched twice** |
+| `m-08` | Minor | Empty sitemap, case-sensitive rendered paths, package MIT versus README CC0, and a dead ViewerJS link | **SPLIT — two PRESERVED here, two already answered** | sitemap and casing → [§23.5](#235-the-rendered-documentation-site-publishes-an-empty-sitemap-and-its-paths-are-case-sensitive); license drift → **§0.2.2.2 names it**; ViewerJS → `COMPONENTS.md` already records the 404 and names `_source` as authoritative | §0.8.1 (R-1) for the two site properties, both base-identical; §0.2.2.2 states the license-field drift is "logged and deliberately not reconciled"; the ViewerJS row is byte-identical to the base commit's table |
+| `I-01` | Info | The production audit retains three moderate advisories, so `npm audit` exits 1 | **ACCEPTED** | [§12.2](#122-bull-uuid-accepted-on-measured-unreachability-the-override-an-earlier-revision-carried-was-removed), [§12.3](#123-highlightjs-9185-redos-reachable-held-by-an-explicit-aap-rule-accepted-with-evidence), and `MIGRATION-DEPENDENCY-INVENTORY.md` | §0.6.1.7 sets the gate at **zero critical and zero high**, which holds, and records the three moderates as accepted with reasons — two on measured unreachability whose only offered fix is a downgrade into the critical range, one on the `highlight.js` hold whose fix changes client-visible markup |
+| `I-02` | Info | The Technical Specification's `cd2a…` route-table digest is not reproducible | **ADJUDICATED** | [§3.22](#322-the-parity-baseline-was-recaptured-from-the-exact-base-tree-the-documented-digest-is-unreproducible) | §0.8.6 (R-6). The requested disposition — keep the adjudication, never present the legacy value as a live digest — already holds: the literal appears only as `gates.documentedDigest`, beside the live `452116ce…1d64a8` / `dfc1e295…b9326`; it is declared once in `test/baseline/capture.js`; `test/baseline/replay.js` contains **0** occurrences and binds it through `capture.DOCUMENTED_DIGEST`; and `test/lib/util/baseline-harness-integrity.js` asserts exactly that shape |
+| `I-03` | Info | `nvm` is unavailable and the system npm 11 is refused with `EBADENGINE` | **ALREADY DOCUMENTED** | `docs/setup.md` L14-42 and L179-189, `README.md` L26-30 | G1 (§0.1.1.3). The pinned invocation is documented three ways — `corepack prepare npm@10.9.9 --activate`, `npm install -g npm@10.9.9`, and `npx -y npm@10.9.9 ci` — the `EBADENGINE` refusal is described as the pin working as intended, and **"nvm is optional"** is stated in bold with its reason |
+
+**Verification.** Coverage is checked mechanically rather than asserted. All **50** identifiers — 5 Critical, 34 Major,
+8 Minor, 3 Informational — appear exactly once in the table above, and the counts reconcile with the report's own
+header. Anchor integrity is checked over the whole document against the python-markdown slug rule the renderer actually
+applies, so a link that merely looks plausible does not pass: `mkdocs build --strict` exits 0 with zero anchor notices,
+and an independent checker reports **0** dangling fragments across all five delivered documents.
+
+**Two sizing facts worth keeping.** Of the 50 findings, **49** are inherited conditions or explicitly frozen surfaces
+and **1** was this changeset's own — a documentation link defect, now repaired. And of the 49, **26** were already
+catalogued before this pass, **17** are named by the AAP itself in §0.2.2.1, §0.2.2.2, §0.2.2.3, §0.9.4, §0.9.5 or
+§0.9.9, and **6** needed the R-4 write-up this section adds.
 
 ## Appendix — the parity baseline anchors
 

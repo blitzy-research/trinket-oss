@@ -258,6 +258,7 @@ serverside/
 │   │   ├── Dockerfile
 │   │   ├── manager.js
 │   │   ├── package.json
+│   │   ├── package-lock.json
 │   │   └── config/
 │   │       ├── default.json
 │   │       ├── production.json
@@ -404,7 +405,7 @@ Python shells have a 60-second timeout. For long-running computations:
 
 ## Development (without Docker)
 
-For local development, you can run services directly:
+For local development, you can run services directly on Node 22, the version pinned in the repository's root `.nvmrc`:
 
 **Shell** (requires language runtime):
 ```bash
@@ -416,7 +417,7 @@ node server.js  # Listens on port 8010
 **Manager**:
 ```bash
 cd python/manager
-npm install
+npm ci
 node manager.js  # Listens on port 8100, connects to shell
 ```
 

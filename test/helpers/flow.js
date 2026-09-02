@@ -4,7 +4,13 @@ var _        = require('underscore'),
     querystring = require('querystring'),
     defaults = require('./defaults'),
     config   = require('../../config/app.config'),
-    app      = require('../../app.js');
+    // The mutable holder test/lib/00-ready.js publishes the resolved hapi
+    // server on. It replaces the former require of the application module
+    // here, which could only ever yield the exported PROMISE. Requiring this
+    // one at load time is safe -- it is a zero-require leaf -- but its `server`
+    // property MUST be read at call time, in createRequest, never captured
+    // here.
+    ready    = require('../lib/ready');
 
 // public interface
 var methods = {
@@ -407,6 +413,30 @@ var methods = {
 }
 
 function createRequest(flow, type, url) {
+  // Resolve the Supertest agent on FIRST USE rather than in the constructor.
+  //
+  // app.js exports a promise, so the hapi server -- and therefore its
+  // `.listener`, the Node http.Server Supertest needs -- does not exist while
+  // Mocha is collecting files, which is when `new Flow()` at the bottom of this
+  // module runs. The root `before` in test/lib/00-ready.js awaits that promise
+  // and publishes the resolved server on test/lib/ready.js, so the earliest
+  // point at which it is legitimately readable is the first request. Reading
+  // `ready.server` through the module object here -- and not into a local at
+  // require time, which would capture `null` permanently -- is what makes the
+  // resolution genuinely lazy.
+  if (!flow.agent) {
+    if (!ready.server || !ready.server.listener) {
+      throw new Error('No resolved hapi server on test/lib/ready.js: the root ' +
+        '`before` in test/lib/00-ready.js must publish it before the first ' +
+        'request. (app.js exports a promise, and boot failure exits the process.)');
+    }
+
+    // Cached on the instance so every request in the run shares one agent, and
+    // so one keep-alive socket pool, exactly as the eager construction did.
+    // Sessions do not depend on this: cookies are carried manually below.
+    flow.agent = server(ready.server.listener);
+  }
+
   var request = flow.agent[type](url);
   if (flow.activeUser && flow.cookies[flow.activeUser]) {
     request.set('cookie', flow.cookies[flow.activeUser]);
@@ -416,7 +446,12 @@ function createRequest(flow, type, url) {
 }
 
 function Flow() {
-  this.agent      = server(app.listener);
+  // Left unresolved deliberately: createRequest fills this slot on the first
+  // request, once test/lib/00-ready.js has published the resolved server.
+  // Constructing it here dereferenced `.listener` on a promise, which Supertest
+  // accepted without complaint and only reported much later, from the first
+  // request, as a TypeError about `address`.
+  this.agent      = null;
   this.activeUser = 'user';
   this.cookies    = {};
 

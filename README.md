@@ -15,7 +15,7 @@ Trinket lets students and educators write and run code directly in the browser, 
 ## Prerequisites
 
 - Docker and Docker Compose
-- Node.js 18+ (for local development without Docker)
+- Node.js 22 LTS with npm 10 (for local development without Docker) - `.nvmrc` pins the line, so `nvm use 22` selects it
 - MongoDB 5.0+
 - Redis (optional - falls back to in-memory)
 
@@ -55,6 +55,8 @@ Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required
 |---------|-------------|
 | `app.plugins.session.cookieOptions.password` | Session cookie secret (min 32 chars) |
 
+Production requires a real secret and refuses to start without one. Development and test generate an ephemeral secret when none is set, so sessions there do not survive a restart until you set your own.
+
 ### Optional Integrations
 
 | Setting | Description |
@@ -72,12 +74,19 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
 
 1. Install dependencies:
    ```bash
-   npm install
+   npm ci
    ```
 
-2. Start MongoDB locally (Redis is optional)
+2. Build the frontend assets:
+   ```bash
+   npm run build
+   ```
 
-3. Run the application:
+   The frontend components are not committed - they live in the gitignored `public/components/` and are distributed separately as `public-components.tgz`, so without them the SCSS build fails at `static/scss/_settings.scss:8`. `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own.
+
+3. Start MongoDB locally (Redis is optional)
+
+4. Run the application:
    ```bash
    node app.js
    ```
@@ -87,6 +96,8 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
 ```bash
 npm test
 ```
+
+The suite provisions its own MongoDB instance, so a local MongoDB is not needed to run the tests.
 
 ## Architecture
 

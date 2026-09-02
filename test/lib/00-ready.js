@@ -121,6 +121,40 @@ before(function () {
     // move the failure earlier while adding a second thing to keep in step with
     // the app's own contract.
     ready.server = server;
+
+    // Start the server's caches WITHOUT listening.
+    //
+    // config/test.yaml sets `app.start: false`, so app.js:330-331 never reaches
+    // `server.start()` and hapi stays in its 'stopped' phase. In hapi 17+ it is
+    // that phase transition -- not the listener -- which starts catbox clients:
+    // @hapi/hapi/lib/core.js:345-370 `_initialize()` awaits `client.start()` for
+    // every provisioned cache and then runs `onPreStart`, and `_start()` merely
+    // calls it before binding a port. The session store here IS such a cache:
+    // the Mongo-backed `sessions` policy at app.js:39,82-83.
+    //
+    // Left unstarted, every request that commits a session fails inside
+    // @hapi/yar's own onPreResponse (@hapi/yar/lib/index.js:297,311 ->
+    // @hapi/catbox/lib/client.js:85,104) with `Error: Disconnected`, which hapi
+    // maps to a 500. Measured through `server.inject` -- so with no Supertest or
+    // flow.js involvement at all -- POST /users returns 500 without this call
+    // and 302 to /welcome with it, the latter being what
+    // test/lib/api/registration.js:67-70 asserts. This defect was unreachable
+    // until test/helpers/flow.js's lazy agent made API requests possible, which
+    // is why it is not in AAP 0.6.5's list of seven.
+    //
+    // `initialize()` does not listen, so Supertest still wraps the non-listening
+    // `server.listener` and starts its own ephemeral listener via listen(0) --
+    // the arrangement the harness is written against is unchanged. The guard is
+    // required rather than defensive: `_initialize()` THROWS unless the phase is
+    // 'stopped' (core.js:355-357), so a server that app.js did start (any
+    // configuration with `app.start: true`) must be left alone. `info.started`
+    // is 0 for a never-started server, the same discriminator the `after` hook
+    // below uses.
+    if (!server || server.info.started) {
+      return;
+    }
+
+    return server.initialize();
   });
 });
 

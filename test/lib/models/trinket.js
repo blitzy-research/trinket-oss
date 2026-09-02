@@ -31,12 +31,12 @@ describe('Trinket model', function(){
             }
           }
         });
-        var cryptoStub = sinon.stub(crypto, 'createHash', function(){
+        var cryptoStub = sinon.stub(crypto, 'createHash').callsFake(function(){
           return {
             update : update
           }
         });
-        var dateStub = sinon.stub(Date, 'now', function() {
+        var dateStub = sinon.stub(Date, 'now').callsFake(function() {
           return now;
         });
         var trinket = {
@@ -152,7 +152,7 @@ describe('Trinket model', function(){
 
         callScope = { model : { findByIdAndUpdate : findByIdAndUpdate } };
 
-        interactionStub = sinon.stub(global, 'Interaction', function(data) {
+        interactionStub = sinon.stub(global, 'Interaction').callsFake(function(data) {
           return _.extend({
             save : sinon.spy(function(cb) {
               return cb(this);
@@ -164,8 +164,8 @@ describe('Trinket model', function(){
       });
 
       beforeEach(function(done) {
-        callScope.model.findByIdAndUpdate.reset();
-        interactionStub.reset();
+        callScope.model.findByIdAndUpdate.resetHistory();
+        interactionStub.resetHistory();
         done();
       });
 

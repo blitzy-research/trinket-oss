@@ -6,7 +6,7 @@ This guide walks through the prerequisites, configuration, and commands needed t
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - Git
-- Node.js 18+ (only required for local development without Docker)
+- Node.js 22 LTS with npm 10 (only required for local development without Docker) - `.nvmrc` pins the line, so `nvm use` selects it
 - MongoDB 5.0+ (runs inside Docker by default)
 - Redis (optional - falls back to in-memory store when disabled)
 
@@ -52,6 +52,8 @@ Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required
 |---------|-------------|
 | `app.plugins.session.cookieOptions.password` | Session cookie secret (min 32 chars) |
 
+In production this secret is mandatory - the application prints the setting it needs and exits with status 1 when the value is unset or shorter than 32 characters. Outside production it generates an ephemeral secret when none is configured, so a freshly cloned checkout boots, and logs one line to say it has done so. That generated secret is not for production use: it is new on every start, so sessions signed with it do not survive a restart. Set the value in `config/local.yaml` (or through the runtime environment) to keep sessions valid across restarts.
+
 ### Optional Integrations
 
 | Setting | Description |
@@ -69,12 +71,19 @@ Without email configured, password reset is unavailable but users can still regi
 
 1. Install dependencies:
    ```bash
-   npm install
+   npm ci
    ```
 
-2. Start MongoDB locally (Redis is optional).
+2. Build the frontend assets:
+   ```bash
+   npm run build
+   ```
 
-3. Run the application:
+   The frontend components are gitignored and distributed separately, so `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. The build writes `public/css/base.css` and `public/css/embed.css`.
+
+3. Start MongoDB locally (Redis is optional).
+
+4. Run the application:
    ```bash
    node app.js
    ```
@@ -84,6 +93,8 @@ Without email configured, password reset is unavailable but users can still regi
 ```bash
 npm test
 ```
+
+The test script starts an in-memory MongoDB instance for the run and stops it afterwards, so a locally running database is not needed to run the tests.
 
 ## Services
 

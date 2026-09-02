@@ -47,7 +47,11 @@ const cache_control = 'private, s-maxage=0, max-age=0, no-cache, no-store, must-
 const init = async () => {
   // Validate required configuration
   const sessionPassword = config.app.plugins.session.cookieOptions.password;
-  if (!sessionPassword || sessionPassword.length < 32) {
+  const sessionPasswordMissing = !sessionPassword || sessionPassword.length < 32;
+
+  // Production still fails fast, and this guard is evaluated before the
+  // non-production fallback below so that no production process can reach it.
+  if (sessionPasswordMissing && config.isProd) {
     console.error('\n' + '='.repeat(70));
     console.error('ERROR: Session cookie password not configured!');
     console.error('');
@@ -63,6 +67,28 @@ const init = async () => {
     console.error('='.repeat(70) + '\n');
     process.exit(1);
   }
+
+  // Outside production, derive an ephemeral secret so that a clean checkout
+  // boots: config/local.yaml is gitignored, so `git clean -xfd` removes the
+  // only source of a real value and config/default.yaml ships an empty one.
+  // Installed with a data descriptor rather than a plain assignment because the
+  // `config` package watches every property through an accessor and persists any
+  // assignment to config/runtime.json. Writing this secret there would put it on
+  // disk, make it outlive the process, and -- since runtime.json is layered over
+  // every other source -- let a later NODE_ENV=production run boot on a
+  // development secret instead of failing fast above. Replacing the accessor
+  // keeps the value visible to the server.register read below and persists
+  // nothing.
+  if (sessionPasswordMissing) {
+    Object.defineProperty(config.app.plugins.session.cookieOptions, 'password', {
+      value: require('crypto').randomBytes(32).toString('hex'),
+      writable: true,
+      enumerable: true,
+      configurable: true
+    });
+    log.info('Session cookie password is not configured; generated an ephemeral one for this non-production process. Set app.plugins.session.cookieOptions.password in config/local.yaml to keep sessions valid across restarts.');
+  }
+
   // Create server with Hapi 20+ configuration
   const server = Hapi.server({
     host: config.app.hostname || 'localhost',
@@ -251,12 +277,10 @@ const init = async () => {
         }
 
         try {
-          const user = await new Promise((resolve, reject) => {
-            User.findById(userId, (err, user) => {
-              if (err) reject(err);
-              else resolve(user);
-            });
-          });
+          // lib/models/model.js returns the same thenable it feeds the optional
+          // callback, so awaiting it directly yields the identical document,
+          // null, or rejection the hand-rolled Promise wrapper used to relay.
+          const user = await User.findById(userId);
 
           if (!user) {
             request.yar.clear('userId');

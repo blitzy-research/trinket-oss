@@ -12,8 +12,7 @@ chai.use(sinonChai);
 var sinon      = require('sinon'),
     config     = require('config'),
     redis      = require('redis'),
-    redismock  = require('redis-mock'),
-    catboxmock = require('./helpers/catbox-redis');
+    redismock  = require('redis-mock');
 
 sinon.stub(redis, 'createClient', redismock.createClient);
 

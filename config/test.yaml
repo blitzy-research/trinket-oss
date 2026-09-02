@@ -4,8 +4,25 @@ app:
   log:
     level: error
   trinketLibraryUser: testlibraryuser
+  # Fixed test-only session secret (52 characters; app.js:50-51 requires >= 32).
+  # Deliberately hard-coded rather than generated so session cookie values are
+  # reproducible across a baseline-capture / target-replay pair. This is not a
+  # credential and has no bearing on production, where app.js keeps its
+  # fail-fast for NODE_ENV === 'production'.
+  # Only `password` is set: default.yaml:37-47 supplies isSecure, domain,
+  # maxCookieSize, name and cache, and the config deep merge preserves them.
+  plugins:
+    session:
+      cookieOptions:
+        password: 'test-only-fixed-session-secret-not-a-real-credential'
 db:
   mongo:
     host: localhost
     port: 27017
     database: test
+  # Redis is OPTIONAL and is disabled for tests, so lib/util/queues.js uses its
+  # in-memory queue instead of constructing Bull against localhost:6379.
+  # Only `enabled` is set: default.yaml:377-389 supplies app, exports,
+  # bullqueues: [exports] and sandbox, which the deep merge keeps.
+  redis:
+    enabled: false

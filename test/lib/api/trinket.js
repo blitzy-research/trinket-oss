@@ -1,7 +1,6 @@
 var flow     = require('../../helpers/flow'),
     defaults = require('../../helpers/defaults'),
     mail     = require('../../helpers/mail'),
-    queue    = require('../../helpers/queue'),
     config   = require('config'),
     jwt      = require('jsonwebtoken');
 

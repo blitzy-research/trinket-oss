@@ -6,8 +6,9 @@ This guide will help you get Trinket running locally for development.
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - Git
+- Node.js 22 LTS with npm 10 - optional, and only for local development without Docker. `package.json` declares `node >=22.0.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and `.nvmrc` pins the line, so `nvm use 22` selects it.
 
-That's it! Everything else runs inside Docker.
+For the Docker workflow that's it - everything else runs inside Docker. Where a step can also be run on the host, the host command is given alongside the Docker one.
 
 ## Quick Start
 
@@ -33,7 +34,21 @@ Trinket requires frontend libraries (Ace Editor, Skulpt, etc.) that are distribu
 
 **Skulpt** is the Python-to-JavaScript compiler that powers the Python code execution in the browser. Trinket maintains a forked version with additional features.
 
-For local development, Docker handles everything automatically.
+Both workflows retrieve the components with the same script, `scripts/fetch-components.js`:
+
+- **Docker:** the image build runs the script, so there is nothing extra to do. It replaced an inline `curl` that performed no integrity check at all; the archive's SHA-256 is now verified before anything is extracted.
+- **Host:** run `npm run fetch-components` to retrieve and verify the bundle into `public/components/` (gitignored, like `node_modules`). `npm run build` runs it automatically ahead of the CSS build, so the usual setup needs no separate step.
+
+```bash
+# Host only - fetch and verify the component bundle
+npm run fetch-components
+```
+
+The components are a build input, not an optional extra: `static/scss/_settings.scss` imports `public/components/foundation/scss/foundation/functions`, so the SCSS compile exits 1 on a tree that does not have them. That is why `npm run build` fetches them first, and why `npm run build:css` on its own expects them to be in place already.
+
+The script is idempotent - a second run exits 0 without re-downloading - and atomic: it extracts into a temporary directory, moves the tree into place, and deletes partial files on failure, so `public/components/` is only ever absent or complete.
+
+See [COMPONENTS.md](COMPONENTS.md) for the release URL, its expected SHA-256, and the full component inventory.
 
 ## Development
 
@@ -48,6 +63,23 @@ docker-compose exec app npm run build:css
 # Watch mode (recompiles on changes)
 docker-compose exec app npm run watch:css
 ```
+
+The same scripts run on the host:
+
+```bash
+# Fetch the components if needed, then build the CSS
+npm run build
+
+# CSS only, when the components are already present
+npm run build:css
+
+# Watch mode
+npm run watch:css
+```
+
+Either way the outputs are `public/css/base.css` and `public/css/embed.css`, both gitignored build artifacts.
+
+A container built from the current `Dockerfile` already contains both stylesheets, because the image build runs `npm run build:css`. Earlier images shipped neither, which is why compiling the CSS after startup was a required step; the commands above remain what you want for watch mode and after editing SCSS.
 
 ### Viewing Logs
 
@@ -113,6 +145,8 @@ Run the CSS build:
 docker-compose exec app npm run build:css
 ```
 
+On the host, use `npm run build` instead - it fetches the frontend components first, which is what the SCSS compile needs.
+
 ### Container won't start?
 
 Check logs:
@@ -148,6 +182,8 @@ app:
       cookieOptions:
         password: 'your-32-character-secret-here!!'
 ```
+
+Production requires a real secret and refuses to start without one, while development and test generate an ephemeral secret when none is set - so sessions there do not survive a restart until you set your own.
 
 ## Email (SMTP)
 

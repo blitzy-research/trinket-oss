@@ -32,9 +32,9 @@ trinket-oss/
 
 ## Frontend Components
 
-Trinket depends on frontend libraries (Ace Editor, Skulpt, Blockly, GlowScript, etc.) that are distributed separately from the main repository. They live in `public/components/` (gitignored, like `node_modules`) and are packaged into `public-components.tgz`, which is downloaded automatically during the Docker build from GitHub releases.
+Trinket depends on frontend libraries (Ace Editor, Skulpt, Blockly, GlowScript, etc.) that are distributed separately from the main repository. They live in `public/components/` (gitignored, like `node_modules`) and are packaged into `public-components.tgz`, published as a GitHub release asset. Most are Trinket forks with customizations on top of their upstream projects.
 
-For local installs you can run `npm run setup-vendor` to fetch the required components. Most are Trinket forks with customizations on top of their upstream projects.
+Both retrieval paths run the same implementation, `scripts/fetch-components.js`, so the bundle is fetched once and verified identically: the Docker build runs it during the image build, and a host checkout runs it with `npm run fetch-components`. Either way the archive's SHA-256 is checked before anything is extracted. `npm run build` runs `npm run fetch-components` ahead of the CSS build, so a normal setup needs no separate step - run the command on its own to fetch components without rebuilding CSS, which is cheap to repeat because a destination that already matches exits without re-downloading. The exact release URL and its expected digest are recorded in [COMPONENTS.md](https://github.com/Blitzy-Sandbox/blitzy-trinket-oss/blob/main/COMPONENTS.md).
 
 ## Embeds by Feature
 

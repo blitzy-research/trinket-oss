@@ -1,0 +1,1022 @@
+<!--
+  GENERATED FILE -- do not hand-edit it. Every line below this block is written
+  by the generator named here from the analysed tree named here. An edit made by
+  hand is lost on the next run and, while it survives, is indistinguishable from a
+  measurement. To change what this document says, change the generator or the
+  tree and re-run the exact command.
+
+  generator          : test/parity/convert-inventory.js
+  exact command      : node test/parity/convert-inventory.js --app "$BASELINE" --out docs/conversion-inventory.md
+  where $BASELINE is : any path you choose -- create it with `git worktree add --detach "$BASELINE" 2f8712a`
+  analysed tree      : a git worktree outside the repository (its path is deliberately not recorded)
+  analysed tree HEAD : 2f8712a112db46f923918c4507c75abc732d83d0
+  base commit        : 2f8712a  <-- the analysed tree IS the base commit, so the
+                       baseline-calibrated self-checks are ASSERTED
+  generator HEAD     : 7feda413528730de3e5afb2cd505a2d2d6863275
+  node               : v22.23.2
+  generated at       : 2026-09-02T19:13:44.257Z
+
+  No absolute path appears anywhere in this document. A worktree's location on
+  disk is specific to the machine it was generated on, so recording it would make
+  two correct runs differ for a reason that says nothing about the tree. The tree
+  is identified by its HEAD, above.
+
+  Everything below this block is deterministic: two runs over the same tree
+  differ only in the "generated at" line above.
+-->
+
+# Conversion inventory
+
+One row per site an implementing agent must close to move this application from
+the 2013 callback idiom to the hapi lifecycle contract. **There is no target row
+count.** Rows are derived from the tree; nothing is padded to reach a number.
+
+## Why a signature count is not enough
+
+In hapi 17 and later every lifecycle method must return a value, return a promise,
+or throw. `undefined` is converted into a server error by the toolkit. So the
+requirement that makes a conversion *correct* is that **each handler returns exactly
+once on every path** -- and neither a returned-but-unawaited chain nor an
+awaited-but-unreturned one is visible in a signature count. Both are
+`async (request, h)`. Both satisfy any grep for the new signature. Only one works.
+
+That is the entire reason this document exists.
+
+## Why the work is safely orderable
+
+The mechanism being removed is the response emulation in the route wrapper:
+
+```js
+// lib/util/routeParser.js:567-570  (baseline coordinates)
+if (result === undefined) {
+    result = await responsePromise;
+}
+```
+
+It intercepts **only** an `undefined` result and passes any defined result straight
+through, so a handler converted to return its response **already works under the
+shim**. Converted and unconverted handlers coexist, which is what lets these rows be
+closed one at a time and re-verified as they go.
+
+Immediately **below** that block, `lib/util/routeParser.js:574-576` is a *different*
+mechanism -- the `else` branch returning `request.success(request.params)` when a
+route names a controller method that does not exist. Three registered routes depend
+on it. **The emulation goes; the fallback stays.** It is easy to delete by
+association, which is why those three routes have their own section below.
+
+## How to read a row
+
+| Column | Meaning |
+| --- | --- |
+| Done | `[x]` when the analysis finds the site already in its target shape, `[ ]` otherwise. Recomputed on every run, so re-generating against the working tree is how progress is demonstrated. |
+| Site | File and line in the analysed tree. |
+| Kind | One of: routed handler, routed pre-handler, inline pre-handler, promise chain, callback boundary, reply chain, stream site. |
+| Current shape | What the code does **now**, measured -- not what it looks like. |
+| Target disposition | The exact converted shape. Under R-d this is always the *preserved* behaviour, with one approved exception that is labelled as such. |
+
+The `Current shape` column for handlers and pre-handlers reports whether the body
+**returns its response** or **relies on the interception**, decided by whether every
+`request.success` / `request.fail` / `reply` call sits in a `return` position. That is
+a documented heuristic and it is honest about being one: it separates the two
+populations that matter, and it cannot prove "returns exactly once on every path".
+Proving that is what closing the row means.
+
+## What this document is NOT
+
+Saying so matters, because a checklist that looks complete is read as complete.
+
+- It is **not the error-edge inventory**. Every target disposition here preserves the
+  error mapping of the site it describes -- a swallowed error stays swallowed, a
+  fire-and-forget stays fire-and-forget, a mapped error reaches the same funnel -- but
+  the per-branch enumeration that R-e actually calls for lives in
+  `docs/error-edge-inventory.md`, generated by `test/parity/error-edges.js`. Closing
+  every row below does not discharge R-e.
+- It is **not evidence of parity**. Whether a converted site behaves identically is
+  decided by the request corpus (`test/parity/capture.js` and `replay.js`), the
+  storage cases and the joi matrix. This document tells you which sites to convert
+  and what to convert them to; those tell you whether you got it right. The three
+  builder-returning reply chains and all 17 stream sites depend on that evidence
+  outright, which is why their boxes are never ticked by analysis alone.
+- It is **not a route inventory**. The 233-route surface is gated by
+  `test/parity/manifest.js`. This document counts hapi-invoked *functions*, of which
+  there are 154 -- a different number for a different purpose.
+
+## Where the rest of the story lives
+
+A row here records the **return shape** of one site and stops. Two sibling
+documents own the rest about the same sites, and rows point at them by section
+number rather than repeating them -- two copies of one fact is how the two drift
+apart.
+
+| Document | What it owns about a site in this checklist |
+| --- | --- |
+| `docs/preserved-quirks.md` | The measured baseline **outcome** of a quirk, and, for the single approved deviation, the precedence argument in full. A row whose target reproduces a defect says so and cites the section. |
+| `docs/error-edge-inventory.md` | The **status, payload, side effects and timing** of every changed error edge. Rows that are themselves error edges -- a chain carrying a `.catch(` link, an error-first callback, an unreturned `reply(err)` -- cite the per-file section that owns them. |
+
+Neither reference is decorative. R-d requires that a preserved defect be recorded
+rather than fixed, and R-e requires that the error mapping survive unchanged; this
+document would contradict both if it restated their content in its own words.
+
+## The four recurring shapes, and streams
+
+Four shapes recur across the conversion set, each with its own distinct failure
+mode, plus stream sites which cut across all of them.
+
+### 1. Promise chains
+
+Their value is **discarded by the wrapper today**. After conversion each must be
+**returned or awaited exactly once per path**. Measured scale across the ten
+controllers: **183** `.then(` and **85** `.catch(` links at `2f8712a`.
+
+The canonical trap is `lib/controllers/pages.js:52` -- the AAP's own citation for
+the chain in `pages.home`, which ends `.then(...).catch(request.fail)`. The terminal
+link passes a **bare function reference**, so after conversion `request.fail`'s
+return value must **propagate** out of the handler rather than being dropped on the
+floor. A chain that is awaited but not returned, or returned but not awaited, looks
+identical in a signature scan.
+
+Rows are emitted **per chain**, not per link: "returned or awaited exactly once" is a
+property of the chain, and closing one means fixing all of its links together.
+
+### 2. Callback boundaries
+
+The `await` is created **at the call site**, per rule T-3 -- never pushed down into
+the utility. `lib/util/file.js`, `lib/util/store.js` and `lib/util/queues.js` keep
+their callback interfaces even though controllers call them directly (three, three
+and one controller respectively), because they are **not lifecycle methods**. Each
+row records where the `await` goes.
+
+### 3. Reply chains -- exactly eight, and they are not uniform
+
+In the shim's response builder (`lib/util/routeParser.js:375-405`) `.type()` and
+`.bytes()` return the builder **without** resolving the deferred, while `.code()`,
+`.header()`, `.redirect()` and `.view()` resolve it. So **what a client receives
+depends on which chain method ran last** -- and the 13 `.type()`/`.bytes()` calls
+spread across 8 chains produce three different outcomes. This is the largest source
+of preserved-quirk work in the migration.
+
+### 4. Streams
+
+**17** sites across four controllers, several of which
+error **after the response has begun**. Every row records that completion and error
+**timing** must be preserved.
+
+These are **derived, not grepped**. A crude pattern returns 10. The rule is: a stream
+site is a source line that creates a stream (`createReadStream` / `createWriteStream`),
+pipes one (`.pipe(`), constructs an archive (`archiver(`), hands one to the response
+(`reply(<stream>)` / `h.response(<stream>)`), or binds a call result to a
+stream-named identifier -- **deduped by line**, because
+`.pipe(fs.createWriteStream(p))` is two operations at one place a reader has to look.
+Lifecycle listeners (`.on('close')`, `.on('error')`) are attached *at* a site already
+counted, and a `.then(function (stream))` parameter merely names one. Excluding those
+two is what lands the rule on 17 rather than a larger number.
+
+### Target idiom, anchored on code already in the tree
+
+The conversion has references to work from, not inventions. Coordinates are baseline
+(`2f8712a`); a converted tree will have moved some of them.
+
+- **`lib/util/helpers.js:397-403`** -- The target PRE-HANDLER shape, already present: `async function (request, h) { ...; return await internals.namedTrinketList(lang, 'featured'); }`
+- **`app.js:116-137`** -- A server extension returning `h.continue` -- the shape for a lifecycle method that has nothing to contribute but must still return.
+- **`app.js:152-201`** -- The onPreResponse error mapper. Branch ORDER is load-bearing: it returns immediately on 401/404/403/>=500 for browser HTML requests, BEFORE the cache and frame header assignments, so those headers reach API/JSON and non-Boom responses only.
+- **`app.js:243-281`** -- The auth scheme, with all five outcomes -- absent userId, missing user, disabled user, valid user, lookup error. The modern `h.unauthenticated(...)` / `h.authenticated(...)` idiom.
+- **`lib/controllers/*.js`** -- Controllers converge on `async function (request, h) { ...; return request.success(data); }`.
+
+In the analysed tree the pre-handler exemplar `findFeaturedTrinkets` sits at `lib/util/helpers.js:397`.
+
+## The conversion set
+
+Derived from the **binding graph**, not from the export list. The two disagree in
+both directions, which is exactly why the export list is the wrong source: three
+routes name a controller method that does not exist, and two exported handlers are
+never routed.
+
+```text
+  145  routed handlers        (147 controller exports minus the 2 that no route references)
+    8  routed pre-handlers    (of 11 named pre-handlers in lib/util/helpers.js)
+    1  inline pre-handler     (config/api_routes.js:1104, on POST /api/users/login)
+  ---
+  154  hapi-invoked functions to convert
+```
+
+`145 + 8 + 1 = 154`, and the
+arithmetic is asserted by the self-check rather than asserted by this sentence.
+
+Measured in the analysed tree: 178 route declarations produce 148 distinct controller bindings, of which 145 resolve to a defined export and 3 do not. 5 declarations build their route string by
+concatenation and would be missed entirely by a scan over string literals alone.
+
+Three groups are **excluded from the 154** and have their
+own sections: the 2 defined-but-unrouted controller exports, the 3 unrouted named
+pre-handlers, and the 3 routes whose named controller method does not exist.
+
+## Self-check
+
+This generator refuses to emit a quietly incomplete checklist. A checklist that
+has silently dropped sites is worse than no checklist at all, because it reads as
+completed work. Three tiers of check therefore run before anything is written, and
+a failure in any of them exits non-zero with no document produced.
+
+| Tier | What it asserts | Result |
+| --- | --- | --- |
+| 1 -- invariants | Handler census (147 exports and its per-file distribution), route declarations (178), binding graph (145 routed / 3 nonexistent / 2 unrouted), pre-handler census (11), tokenizer length and delimiter balance per file. Must hold on **any** tree, converted or not. | pass |
+| 2 -- baseline-calibrated | Progress metrics: 202 `reply(` sites and their distribution, 183 `.then(`, 85 `.catch(`, 13 `.type()`/`.bytes()`, 17 stream sites, and the eight-entry reply-chain roster with its three categories. Asserted **exactly** at `2f8712a`; reported as a delta elsewhere. | pass (asserted) |
+| 3 -- directional | Off baseline, `reply(` sites may fall but must never rise above 202, and the handler census may not move. | pass |
+
+Why tier 2 is conditional rather than absolute: a converted tree has fewer `reply(`
+sites **by design**. Asserting the baseline figure unconditionally would make this
+tool fail on exactly the tree whose progress it exists to demonstrate. The check
+that actually catches a mis-tokenized file is the tier-1 handler census, because a
+desynchronized scrub loses exports and the census collapses immediately.
+
+### Measured against baseline
+
+| Metric | Baseline (`2f8712a`) | This tree | Kind |
+| --- | --- | --- | --- |
+| Controller handler exports | 147 | 147 | invariant |
+| Route declarations | 178 | 178 | invariant |
+| Distinct controller bindings | 148 | 148 | invariant |
+| Routed handlers | 145 | 145 | invariant |
+| `reply(` call sites | 202 | 202 | progress |
+| `.then(` links | 183 | 183 | progress |
+| `.catch(` links | 85 | 85 | progress |
+| `.type()` / `.bytes()` calls | 13 | 13 | progress |
+| Derived stream sites | 17 | 17 | derived |
+| Pre-handlers still `(request, reply)` | 11 | 11 | progress |
+
+## Row totals
+
+| Section | Rows | Closed | In the 154? |
+| --- | --- | --- | --- |
+| 1. Routed handlers | 145 | 2 | yes |
+| 2. Routed pre-handlers (incl. the 2 dead 301s) | 10 | 0 | yes |
+| 3. Inline pre-handler | 1 | 0 | yes |
+| 4. Promise chains | 129 | 90 | sites within |
+| 5. Callback boundaries | 57 | 0 | sites within |
+| 6. Reply chains (+1 distinct shape) | 9 | 0 | sites within |
+| 7. Stream sites | 17 | 0 | sites within |
+| 8. Unrouted controller exports | 2 | 2 | NO -- excluded |
+| 9. Unrouted named pre-handlers | 3 | 3 | NO -- excluded |
+| 10. Routes with no function | 3 | 3 | NO -- excluded |
+| **Total** | **376** | **100** | |
+
+The row count is **derived, not targeted**. It is not 154, and it should not be: the 154 counts hapi-invoked
+*functions*, while a function typically contains several sites -- a chain, two
+callback boundaries, a stream -- each of which is closed separately. Sections 1 to 3
+are the 154; sections 4 to 7 are the sites inside them;
+sections 8 to 10 are deliberately outside.
+
+## 1. Routed handlers -- 145 rows (2 closed)
+
+Every controller method that hapi invokes. **A declared signature settles nothing**,
+which is why the `Current shape` column reports what the body does rather than what
+the parameters are called. `lib/controllers/auth.js` contributes two rows that are
+declared `(request, h)` already, and the analysis still has to read their bodies to
+decide whether every signalling call sits in a `return` position -- while several
+handlers still declared `(request, reply)` turn out to return on every path and
+others fall off the end. Neither population is identifiable from the signature.
+
+### `lib/controllers/course.js` -- 42 handlers (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/course.js:10` `createCourse` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 3 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:43` `getCourse` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/course.js:113` `updateCourse` | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:144` `deleteCourse` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:160` `archiveCourse` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:174` `copyCourse` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 4 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:216` `addLesson` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 3 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:248` `getLesson` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/course.js:252` `updateLesson` (2 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:273` `moveLesson` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:296` `deleteLesson` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:316` `addMaterial` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 3 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:376` `getMaterial` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/course.js:398` `updateMaterial` (4 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:468` `moveMaterial` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:502` `deleteMaterial` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:523` `listUsers` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:555` `listInvitations` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:574` `userLookup` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 2 of 4 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:610` `removeUser` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:639` `addUser` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:666` `updateRoles` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:694` `updateViews` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:716` `sendInvitations` | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:747` `removeInvitation` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:767` `updateInvitation` (2 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 6 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:838` `generateAccessCode` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:858` `getAccessCode` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:871` `join` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 2 of 5 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:903` `startAssignment` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:942` `submitAssignment` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1006` `updateMySubmission` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1067` `autosaveComments` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1087` `getUserSubmissionsForMaterial` (2 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1126` `dashboardOverview` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1247` `materialDashboard` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1304` `getMaterialSubmissionsForAllUsers` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1387` `getUserSubmissionsForCourse` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1455` `autosaveFeedbackComments` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1480` `autosaveSubmissionOpt` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1492` `sendFeedback` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/course.js:1585` `acceptSubmission` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+
+### `lib/controllers/trinket.js` -- 34 handlers (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/trinket.js:33` `index` (11 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:59` `beta` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:70` `library` | routed handler | legacy `(request, reply)`; returns its response -- all 7 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:109` `list` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:253` `getById` | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:281` `grant` | routed handler | legacy `(request, reply)`; no `request.success` / `request.fail` / `reply` call in the body | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:288` `update` (4 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:336` `create` (2 routes) | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 2 of 2 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:379` `createFork` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 2 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:432` `updateMetrics` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:457` `remove` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:481` `getByShortCode` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:543` `embed` (3 routes) | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:780` `assignment` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:790` `assignmentFeedback` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:812` `viewOnly` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:823` `email` | routed handler | legacy `(request, reply)`; returns its response -- all 5 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:889` `snapshot` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:920` `interactions` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:929` `addToList` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:935` `namedList` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:938` `removeFromList` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:942` `logError` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:948` `logClientMetric` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:986` `draft` | routed handler | legacy `(request, reply)`; returns its response -- all 6 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:1039` `discardDraft` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/trinket.js:1054` `autosave` | routed handler | legacy `(request, reply)`; returns its response -- all 7 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:1108` `addToFolder` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:1141` `removeFromFolder` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:1163` `search` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:1174` `downloadMain` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:1210` `downloadFile` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:1270` `updateSlug` | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/trinket.js:1291` `downloadPostedZip` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+
+### `lib/controllers/users.js` -- 31 handlers (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/users.js:28` `create` (2 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 6 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:100` `login` (2 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 7 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:202` `remove` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:216` `deleted` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:220` `logout` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:228` `sendPassReset` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 5 signalling calls not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:267` `resetPasswordForm` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 5 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:287` `savePassword` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 6 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:313` `account` (2 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:369` `updateProfile` | routed handler | legacy `(request, reply)`; returns its response -- all 6 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:464` `assetList` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:514` `assetUpload` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:524` `replaceAsset` | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:549` `removeAsset` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:566` `restoreAsset` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:583` `assetUploadFromURL` | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. PRESERVED QUIRK -- a refused connection logs and leaves the route UNSETTLED; the conversion must not turn that into a rejection. Owned by `docs/preserved-quirks.md` §8.1; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/users.js:619` `changePassword` | routed handler | legacy `(request, reply)`; returns its response -- all 5 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:656` `getAvatar` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:670` `getInfo` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:683` `updateSettings` (3 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:694` `sendEmailChange` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 3 signalling calls not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:728` `resendEmailChange` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 4 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:752` `changeEmail` | routed handler | legacy `(request, reply)`; returns its response -- all 5 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:797` `sendEmailVerification` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 3 signalling calls not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:825` `verifyEmail` | routed handler | legacy `(request, reply)`; returns its response -- all 5 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:858` `activateAccountForm` | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:886` `activateAccount` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 5 signalling calls not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:930` `requestExport` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 2 of 4 signalling calls not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:990` `listExports` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/users.js:1015` `getExportStatus` | routed handler | legacy `(request, reply)`; returns its response -- all 6 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/users.js:1068` `downloadExport` | routed handler | legacy `(request, reply)`; returns its response -- all 6 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+
+### `lib/controllers/admin.js` -- 8 handlers (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/admin.js:11` `index` (2 routes) | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/admin.js:88` `ohnoes` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/admin.js:111` `uploadUsers` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/admin.js:158` `updateUser` | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/admin.js:176` `grantRole` | routed handler | legacy `(request, reply)`; returns its response -- all 4 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/admin.js:214` `addFeaturedCourse` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/admin.js:249` `removeFeaturedCourse` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/admin.js:258` `moveFeaturedCourse` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+
+### `lib/controllers/courses.js` -- 7 handlers (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/courses.js:18` `creationForm` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/courses.js:22` `create` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 3 of 3 signalling calls not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/courses.js:56` `getCourses` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/courses.js:65` `featuredCourses` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/courses.js:82` `copy` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/courses.js:101` `coursePage` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 2 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/courses.js:132` `download` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+
+### `lib/controllers/pages.js` -- 6 handlers (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/pages.js:10` `index` (3 routes) | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/pages.js:15` `login` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. PRESERVED QUIRK -- the authenticated-visitor 500 is REPRODUCED -- `reply.redirect` is a property access on a bare function and throws a TypeError that reaches the catch-all. Owned by `docs/preserved-quirks.md` §5; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/pages.js:25` `signup` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. PRESERVED QUIRK -- the authenticated-visitor 500 is REPRODUCED, and `request.yar.set('next', ...)` stays in the `else` branch only -- it does not precede the throw. Owned by `docs/preserved-quirks.md` §5; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/pages.js:38` `welcome` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/pages.js:42` `home` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/pages.js:70` `forgotPasswordForm` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+
+### `lib/controllers/folders.js` -- 6 handlers (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/folders.js:7` `list` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/folders.js:35` `listView` | routed handler | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/folders.js:38` `trinkets` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. PRESERVED QUIRK -- the queryless case passes NO folder filter because the injected URL is malformed; the extraction must reproduce both cases. Owned by `docs/preserved-quirks.md` §7; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/folders.js:63` `create` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/folders.js:94` `update` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/folders.js:142` `deleteFolder` | routed handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+
+### `lib/controllers/classes.js` -- 5 handlers (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/classes.js:25` `viewCourses` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/classes.js:59` `viewClass` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 2 signalling calls not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/classes.js:97` `getClass` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 1 signalling call not returned | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+| [ ] | `lib/controllers/classes.js:134` `acceptInvitation` | routed handler | legacy `(request, reply)`; returns its response -- all 7 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/classes.js:191` `joinFromLink` | routed handler | legacy `(request, reply)`; returns its response -- all 6 signalling calls in return position; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+
+### `lib/controllers/files.js` -- 4 handlers (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/files.js:10` `uploadAvatar` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 3 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/files.js:23` `upload` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 2 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/files.js:79` `download` | routed handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 2 of 2 signalling calls not returned; still consumes the shim `reply` | Convert to `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once. |
+| [ ] | `lib/controllers/files.js:108` `setThumbnail` | routed handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position | Convert to `async function (request, h)`; return `request.success(...)` / `request.fail(...)` on every path. |
+
+### `lib/controllers/auth.js` -- 2 handlers (2 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/controllers/auth.js:10` `google` | routed handler | toolkit `(request, h)`; returns its response -- all 2 signalling calls in return position | Already converted: `async function (request, h)` returning on every measured path. Confirm no branch falls through before ticking. |
+| [x] | `lib/controllers/auth.js:35` `googleCallback` | routed handler | toolkit `(request, h)`; returns its response -- all 4 signalling calls in return position | Already converted: `async function (request, h)` returning on every measured path. Confirm no branch falls through before ticking. PRESERVED QUIRK -- the new-user path persists the user, mutates session state and THEN reports the generic failure; that sequence is reproduced, not repaired. Owned by `docs/preserved-quirks.md` §6; reproduce it, do not fix it. |
+
+## 2. Routed pre-handlers -- 8 rows (0 closed)
+
+Named pre-handlers in `lib/util/helpers.js` that a route references. The census is
+11 named pre-handlers in total; 8 are routed and 3 are not.
+
+Two exports are deliberately **not** in that census, and saying why keeps the
+arithmetic honest: `lowerUserFields` is an alias -- `module.exports.lowerUserFields =
+internals.lowerUserFields;` -- with no function literal at the declaration, and the
+function it points at is already `(request, h)`; and `findFeaturedTrinkets` is
+already `(request, h)` too, which makes it the exemplar rather than the work.
+`register` is a `server.method` registrar, not a pre-handler at all.
+
+A pre-handler with nothing to contribute returns **`null`**, which is exactly what
+the shim already produces for it.
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/util/helpers.js:145` `findTrinket` (descriptor `method`) | routed pre-handler | legacy `(request, reply)`; returns its response -- all 5 signalling calls in return position; still consumes the shim `reply` | Convert to native lifecycle method `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once, or returns `null` where there is nothing to contribute. |
+| [ ] | `lib/util/helpers.js:197` `validLang` (descriptor `method`) | routed pre-handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to native lifecycle method `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once, or returns `null` where there is nothing to contribute. |
+| [ ] | `lib/util/helpers.js:213` `trinketTypeEnabled` (descriptor `method`) | routed pre-handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to native lifecycle method `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once, or returns `null` where there is nothing to contribute. |
+| [ ] | `lib/util/helpers.js:244` `coursesEnabled` (descriptor `method`) | routed pre-handler | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply` | Convert to native lifecycle method `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once, or returns `null` where there is nothing to contribute. |
+| [ ] | `lib/util/helpers.js:252` `verifyEmailToken` | routed pre-handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to native lifecycle method `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once, or returns `null` where there is nothing to contribute. |
+| [ ] | `lib/util/helpers.js:337` `getDefaultTrinket` | routed pre-handler | legacy `(request, reply)`; RELIES ON THE INTERCEPTION -- 1 of 2 signalling calls not returned; still consumes the shim `reply` | Convert to native lifecycle method `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once, or returns `null` where there is nothing to contribute. |
+| [ ] | `lib/util/helpers.js:351` `userByUsername` | routed pre-handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to native lifecycle method `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once, or returns `null` where there is nothing to contribute. |
+| [ ] | `lib/util/helpers.js:367` `courseBySlug` | routed pre-handler | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply` | Convert to native lifecycle method `async function (request, h)`; every `reply(...)` becomes a returned toolkit response and every path returns exactly once, or returns `null` where there is nothing to contribute. |
+
+### The two dead pre-handler 301 redirects
+
+Both are **measured dead**, and the mechanism matters because deleting it does not
+preserve the outcome. In the shim, `fakeReply(undefined)` settles the deferred with
+`null` at `lib/util/routeParser.js:147` **before** `.takeover()` reaches its own
+resolve at `:154`. So the redirect is discarded and the pre value is already `null`.
+The capability is dead end to end: `_isRedirect`, `_permanent` and `_takeover` appear
+**only** on the six lines that define them -- `lib/util/routeParser.js:98`, `:100`,
+`:101`, `:151`, `:153`, `:154`.
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/util/helpers.js:182` `findTrinket` | routed pre-handler | findTrinket language-mismatch branch: return reply().redirect(location).permanent().takeover(). MEASURED DEAD: fakeReply(undefined) settles the deferred with null at lib/util/routeParser.js:147 BEFORE .takeover() reaches its own resolve at :154, so the redirect is discarded and the pre value is already null. | return null. The probe confirmed GET /prenull -> {"pre":null}. The capability is dead end to end: _isRedirect, _permanent and _takeover appear only on the six lines defining them (routeParser :98, :100, :101, :151, :153, :154). Baseline outcome owned by `docs/preserved-quirks.md` §2; reproduce it, do not fix it. |
+| [ ] | `lib/util/helpers.js:385` `courseBySlug` | routed pre-handler | courseBySlug slug-alias branch (reached from 5 route declarations): return reply().redirect(location).permanent().takeover(). MEASURED DEAD by the same mechanism -- the deferred is already settled with null. | return null. Coverage is counted from the route manifest rather than from lexical references, because the per-language expansion multiplies them. Baseline outcome owned by `docs/preserved-quirks.md` §2; reproduce it, do not fix it. |
+
+## 3. Inline pre-handler -- 1 row
+
+A function literal declared directly inside a `pre :` array in a route config.
+There is exactly one, on `POST /api/users/login`, and it is the sole member of its
+own category in the conversion set. Note its parameter is `req`, not `request`.
+
+The other 116 declarations in `config/api_routes.js` are untouched by this
+migration -- only this pre-handler changes.
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `config/api_routes.js:1104` | inline pre-handler | legacy `(req, reply)`; body is `function(req, reply) { return reply(true) }` -- signals through the shim rather than returning to hapi | A function returning `true`: `function (request, h) { return true; }`. The assigned pre value stays `true`, so `request.pre.encryptRoles` is unchanged. |
+
+## 4. Promise chains -- 129 rows (90 closed)
+
+One row per chain. A chain is closed when its value leaves the enclosing function --
+`return`ed or `await`ed -- exactly once. Today the wrapper discards it.
+
+Terminal links that pass a **bare function reference** rather than a function
+literal are called out in the `Current shape` column, because that is the shape
+whose return value is silently dropped: `.catch(request.fail)` reads as handled and
+produces nothing the handler returns.
+
+### `lib/controllers/course.js` -- 37 chains (29 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/controllers/course.js:36-39` `createCourse` | promise chain | 1-link chain `.then()`; currently RETURNED; head `course.addUser(request.user, ["course-owner"])` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [ ] | `lib/controllers/course.js:90-109` `getCourse` | promise chain | 2-link chain `.then().then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `}`); head `course.populate(lessonsPopulate)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [x] | `lib/controllers/course.js:148-152` `deleteCourse` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `course.deleteCourse()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:199-208` `copyCourse` | promise chain | 1-link chain `.then()`; currently RETURNED; head `course.addUser(request.user, ["course-owner"])` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [ ] | `lib/controllers/course.js:230-241` `addLesson` | promise chain | 3-link chain `.then().then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `}`); head `lesson.save()` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:301-309` `deleteLesson` | promise chain | 3-link chain `.then().then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `{`); terminal `.catch(request.fail)` passes a BARE REFERENCE, so its return value is dropped; head `lesson.remove()` | Await the chain and return its value, and make sure the bare `request.fail` reference's return value PROPAGATES -- `.catch(function (err) { return request.fail(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:340-369` `addMaterial` | promise chain | 4-link chain `.then().then().then().catch()`; currently RETURNED; head `trinketPromise` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:386-395` `getMaterial` | promise chain | 1-link chain `.then()`; currently RETURNED; head `promise` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/course.js:420-461` `updateMaterial` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `trinketPromise` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:480-495` `moveMaterial` | promise chain | 3-link chain `.then().then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `;`); terminal `.catch(request.fail)` passes a BARE REFERENCE, so its return value is dropped; head `lesson.save()` | Await the chain and return its value, and make sure the bare `request.fail` reference's return value PROPAGATES -- `.catch(function (err) { return request.fail(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:508-516` `deleteMaterial` | promise chain | 3-link chain `.then().then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `{`); terminal `.catch(request.fail)` passes a BARE REFERENCE, so its return value is dropped; head `material.remove()` | Await the chain and return its value, and make sure the bare `request.fail` reference's return value PROPAGATES -- `.catch(function (err) { return request.fail(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:559-567` `listInvitations` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `CourseInvitation.findUnacceptedByCourse(course)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:578-603` `userLookup` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `User.findByLogin(request.payload.user)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:616-632` `removeUser` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `User.findById(userId)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:643-659` `addUser` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `User.findById(request.payload.user)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:671-687` `updateRoles` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `User.findById(request.payload.user)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:701-709` `updateViews` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `course.updateView(userId, view, action)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:726-741` `sendInvitations` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `CourseInvitation.addList(request.payload.emailList, course)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:728-731` `sendInvitations` | promise chain | 1-link chain `.then()`; currently RETURNED; head `CourseInvitation.sendEmails(invitations, course, request.user)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/course.js:751-761` `removeInvitation` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `CourseInvitation.findById(request.params.invitationId)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:798-825` `updateInvitation` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `invitation.save()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:800-803` `updateInvitation` | promise chain | 1-link chain `.then()`; currently RETURNED; head `CourseInvitation.sendEmails([savedInvitation], course, request.user)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/course.js:843-852` `generateAccessCode` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `course.save()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:884-900` `join` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `course.addUser(request.user, ["course-student"])` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:906-940` `startAssignment` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `Trinket.findById(request.payload.parent)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:947-1004` `submitAssignment` | promise chain | 4-link chain `.then().then().then().catch()`; currently RETURNED; head `Material.findById(request.params.materialId)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:1013-1061` `updateMySubmission` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `Material.findById(submission.materialId)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:1081` `autosaveComments` | promise chain | 1-link chain `.then()`; currently RETURNED; terminal `.then(request.success)` passes a BARE REFERENCE, so its return value is dropped; head `submission.save()` | Await the chain and return its value, and make sure the bare `request.success` reference's return value PROPAGATES -- `.then(function (err) { return request.success(err); })` or an equivalent that does not drop it. Exactly once per path. |
+| [x] | `lib/controllers/course.js:1103-1124` `getUserSubmissionsForMaterial` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Trinket.findByUserAndMaterial(userId, request.params.materialId)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:1163-1241` `dashboardOverview` | promise chain | 4-link chain `.then().then().then().catch()`; currently RETURNED; head `course.populate({ path : 'lessons', select : 'materials' })` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:1269-1298` `materialDashboard` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Trinket.courseDashboard(request.params.courseId)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:1328-1381` `getMaterialSubmissionsForAllUsers` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Trinket.findSubmissionsByMaterial(request.params.materialId)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:1403-1449` `getUserSubmissionsForCourse` | promise chain | 1-link chain `.then()`; currently RETURNED; head `Trinket.findSubmissionsByUserAndCourse(user._id, course._id)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [ ] | `lib/controllers/course.js:1474` `autosaveFeedbackComments` | promise chain | 1-link chain `.then()`; currently RETURNED; terminal `.then(request.success)` passes a BARE REFERENCE, so its return value is dropped; head `submission.save()` | Await the chain and return its value, and make sure the bare `request.success` reference's return value PROPAGATES -- `.then(function (err) { return request.success(err); })` or an equivalent that does not drop it. Exactly once per path. |
+| [ ] | `lib/controllers/course.js:1486` `autosaveSubmissionOpt` | promise chain | 1-link chain `.then()`; currently RETURNED; terminal `.then(request.success)` passes a BARE REFERENCE, so its return value is dropped; head `submission.save()` | Await the chain and return its value, and make sure the bare `request.success` reference's return value PROPAGATES -- `.then(function (err) { return request.success(err); })` or an equivalent that does not drop it. Exactly once per path. |
+| [x] | `lib/controllers/course.js:1497-1579` `sendFeedback` | promise chain | 5-link chain `.then().then().then().then().catch()`; currently RETURNED; head `Trinket.findById(request.payload.trinketId)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [x] | `lib/controllers/course.js:1592-1597` `acceptSubmission` | promise chain | 1-link chain `.then()`; currently RETURNED; head `trinket.save()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+
+### `lib/controllers/trinket.js` -- 40 chains (23 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/controllers/trinket.js:235-251` `list` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `getUserId()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:266-276` `getById` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `User.findById( data._owner)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:283-285` `grant` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; terminal `.catch(request.fail)` passes a BARE REFERENCE, so its return value is dropped; head `trinket.save()` | Await the chain and return its value, and make sure the bare `request.fail` reference's return value PROPAGATES -- `.catch(function (err) { return request.fail(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:307-333` `update` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; terminal `.catch(request.fail)` passes a BARE REFERENCE, so its return value is dropped; head `trinket.save()` | Await the chain and return its value, and make sure the bare `request.fail` reference's return value PROPAGATES -- `.catch(function (err) { return request.fail(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:311-323` `update` | promise chain | 2-link chain `.then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `{`); head `Folder.findById(trinket.folder.folderId)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:365-376` `create` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `trinket.save()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:415-429` `createFork` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `Trinket.findByIdAndUpdateMetrics(parent.id, 'forks', meta)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:450-454` `updateMetrics` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; terminal `.catch(reply)` passes a BARE REFERENCE, so its return value is dropped; head `Trinket.findByIdAndUpdateMetrics(request.params.trinketId, metric, me…` | Await the chain and return its value, and make sure the bare `reply` reference's return value PROPAGATES -- `.catch(function (err) { return reply(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:463-468` `remove` | promise chain | 1-link chain `.then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `(`); head `Folder.findById(trinket.folder.folderId)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [ ] | `lib/controllers/trinket.js:472-478` `remove` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; terminal `.catch(reply)` passes a BARE REFERENCE, so its return value is dropped; head `Promise.all(promises)` | Await the chain and return its value, and make sure the bare `reply` reference's return value PROPAGATES -- `.catch(function (err) { return reply(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:474-477` `remove` | promise chain | 1-link chain `.then()`; currently RETURNED; head `trinket.softDelete()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [ ] | `lib/controllers/trinket.js:522-540` `getByShortCode` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; terminal `.catch(reply)` passes a BARE REFERENCE, so its return value is dropped; head `updateMetrics()` | Await the chain and return its value, and make sure the bare `reply` reference's return value PROPAGATES -- `.catch(function (err) { return reply(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:589-599` `embed` | promise chain | 1-link chain `.then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `=`); head `Trinket.findRemix(request.pre.trinket.id, request.user.id)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [ ] | `lib/controllers/trinket.js:605-616` `embed` | promise chain | 1-link chain `.then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `=`); head `promise` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [x] | `lib/controllers/trinket.js:610-615` `embed` | promise chain | 1-link chain `.then()`; currently RETURNED; head `ownerPromise` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [ ] | `lib/controllers/trinket.js:614` `embed` | promise chain | 1-link chain `.then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `:`); head `Trinket.findByIdAndUpdateMetrics(request.pre.trinket.id, 'embedViews'…` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [ ] | `lib/controllers/trinket.js:622-778` `embed` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; terminal `.catch(reply)` passes a BARE REFERENCE, so its return value is dropped; head `promise` | Await the chain and return its value, and make sure the bare `reply` reference's return value PROPAGATES -- `.catch(function (err) { return reply(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:723-776` `embed` | promise chain | 2-link chain `.then().then()`; currently RETURNED; head `Promise.resolve()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/trinket.js:799-810` `assignmentFeedback` | promise chain | 1-link chain `.then()`; currently RETURNED; head `Draft.findOneMoreRecent(query)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/trinket.js:873-882` `email` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `mailer.send(request.payload.email, subject, options)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:906-916` `snapshot` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; terminal `.catch(request.fail)` passes a BARE REFERENCE, so its return value is dropped; head `new Promise(function(resolve, reject) { FileUtil.uploadSnapshotFromBu…` | Await the chain and return its value, and make sure the bare `request.fail` reference's return value PROPAGATES -- `.catch(function (err) { return request.fail(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:923-927` `interactions` | promise chain | 2-link chain `.then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `;`); terminal `.catch(reply)` passes a BARE REFERENCE, so its return value is dropped; head `Interaction.findByTrinketId(trinket.id)` | Await the chain and return its value, and make sure the bare `reply` reference's return value PROPAGATES -- `.catch(function (err) { return reply(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:978-984` `logClientMetric` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `ClientMetric.addMetric(values)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1006-1025` `draft` | promise chain | 2-link chain `.then().then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `;`); head `zip.loadAsync(request.payload.zipCode, { base64: true })` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [x] | `lib/controllers/trinket.js:1014-1022` `draft` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Draft.findOneAndUpdate(query, update)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1028-1036` `draft` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Draft.findOneAndUpdate(query, update)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1044-1052` `discardDraft` | promise chain | 2-link chain `.then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `;`); head `Draft.discard(query)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1073-1091` `autosave` | promise chain | 2-link chain `.then().then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `;`); head `zip.loadAsync(request.payload.zipCode, { base64: true })` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [x] | `lib/controllers/trinket.js:1081-1088` `autosave` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `trinket.save()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1094-1101` `autosave` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `trinket.save()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1117-1135` `addToFolder` | promise chain | 5-link chain `.then().then().then().then().catch()`; currently RETURNED; head `checkCurrent` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1146-1157` `removeFromFolder` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `folder.removeTrinket(trinket.id)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1164-1172` `search` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Trinket.searchForOwner(request.user, request.query.q)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1178-1208` `downloadMain` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Trinket.findById(request.params.shortCode)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1216-1268` `downloadFile` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Trinket.findById(request.params.shortCode)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1257-1260` `downloadFile` | promise chain | 1-link chain `.then()`; currently RETURNED; head `FileUtil.downloadUserAsset(file)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/trinket.js:1279-1287` `updateSlug` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `trinket.updateSlug(request.payload.slug)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1353-1360` `downloadPostedZip` | promise chain | 2-link chain `.then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `(`); head `FileUtil.downloadUserAsset(assetFile)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1365-1391` `downloadPostedZip` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `Promise.all(assetPromises)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [x] | `lib/controllers/trinket.js:1527-1555` (module scope) | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `Promise.allSettled(assetPromises)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+
+### `lib/controllers/users.js` -- 12 chains (7 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/controllers/users.js:204-210` `remove` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `request.user.remove()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [x] | `lib/controllers/users.js:342-366` `account` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `promise` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [x] | `lib/controllers/users.js:402-461` `updateProfile` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `usernameCheck` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:424-434` `updateProfile` | promise chain | 2-link chain `.then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `=`); head `Folder.findByOwner(user)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [x] | `lib/controllers/users.js:447-454` `updateProfile` | promise chain | 2-link chain `.then().then()`; currently RETURNED; head `addFolderSlugJob` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/users.js:481-511` `assetList` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `getUserFiles` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [x] | `lib/controllers/users.js:531-542` `replaceAsset` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `new Promise(function(resolve, reject) { FileUtil.uploadUserAsset(requ…` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:553-559` `removeAsset` | promise chain | 2-link chain `.then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `{`); head `file.hide()` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:570-576` `restoreAsset` | promise chain | 2-link chain `.then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `{`); head `file.show()` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [x] | `lib/controllers/users.js:684-692` `updateSettings` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `request.user.updateSettings(request.payload)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:934-987` `requestExport` | promise chain | 4-link chain `.then().then().then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `;`); head `Export.findPendingOrProcessing(userId)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:993-1012` `listExports` | promise chain | 2-link chain `.then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `;`); head `Export.findByOwner(request.user)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+
+### `lib/controllers/admin.js` -- 13 chains (8 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/admin.js:43-72` `index` | promise chain | 3-link chain `.then().then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `=`); head `featuredStore.getList()` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [x] | `lib/controllers/admin.js:46-52` `index` | promise chain | 1-link chain `.then()`; currently RETURNED; head `Course.findById(member.id)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/admin.js:78-86` `index` | promise chain | 1-link chain `.then()`; currently RETURNED; head `promise` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [ ] | `lib/controllers/admin.js:136-155` `uploadUsers` | promise chain | 1-link chain `.then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `;`); head `Promise.allSettled(promises)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [x] | `lib/controllers/admin.js:182-211` `grantRole` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `user.grant(request.payload.role, "site")` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [ ] | `lib/controllers/admin.js:190-192` `grantRole` | promise chain | 1-link chain `.then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `=`); head `promise` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [ ] | `lib/controllers/admin.js:195-197` `grantRole` | promise chain | 1-link chain `.then()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `=`); head `promise` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. |
+| [x] | `lib/controllers/admin.js:215-247` `addFeaturedCourse` | promise chain | 4-link chain `.then().then().then().catch()`; currently RETURNED; head `User.findByLogin(request.payload.ownerSlug)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [x] | `lib/controllers/admin.js:226-227` `addFeaturedCourse` | promise chain | 1-link chain `.then()`; currently RETURNED; head `featuredStore.addMember(course.id, request.payload.page)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/admin.js:250-256` `removeFeaturedCourse` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `featuredStore.removeMember(request.params.courseId, request.query.pag…` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [x] | `lib/controllers/admin.js:259-265` `moveFeaturedCourse` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `featuredStore.moveMember(request.payload.courseId, request.payload.pa…` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [ ] | `lib/controllers/admin.js:282-293` (module scope) | promise chain | 3-link chain `.then().then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `;`); head `Trinket.findForUser(user.id)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [x] | `lib/controllers/admin.js:303-309` (module scope) | promise chain | 1-link chain `.then()`; currently RETURNED; head `User.findByRole(role)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+
+### `lib/controllers/courses.js` -- 9 chains (9 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/controllers/courses.js:59-62` `getCourses` | promise chain | 1-link chain `.then()`; currently RETURNED; head `request.user.getCourses()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/courses.js:66-79` `featuredCourses` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Course.findFeaturedForUser(request.user)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.6. |
+| [x] | `lib/controllers/courses.js:94-97` `copy` | promise chain | 1-link chain `.then()`; currently RETURNED; head `request.user.grant("course-owner", "course", { id : course.id })` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/courses.js:158-173` `download` | promise chain | 1-link chain `.then()`; currently RETURNED; head `Lesson.findById(lesson)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/courses.js:162-172` `download` | promise chain | 1-link chain `.then()`; currently RETURNED; head `mkdirpify(lessonDir)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/courses.js:180-192` `download` | promise chain | 1-link chain `.then()`; currently RETURNED; head `Material.findById(info.material)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/courses.js:232-238` `download` | promise chain | 1-link chain `.then()`; currently RETURNED; head `nunjucks.render('courses/download/view.html', context)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/courses.js:256-262` `download` | promise chain | 1-link chain `.then()`; currently RETURNED; head `Promise.resolve()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/courses.js:277-286` `download` | promise chain | 7-link chain `.then().then().then().then().then().then().catch()`; currently RETURNED; head `mkdirpify(courseDir)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.6. |
+
+### `lib/controllers/pages.js` -- 1 chain (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/pages.js:48-54` `home` -- the AAP cites this chain as `lib/controllers/pages.js:52` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; terminal `.catch(request.fail)` passes a BARE REFERENCE, so its return value is dropped; head `Trinket.findRecentByOwner(request.user._id)` | Await the chain and return its value, and make sure the bare `request.fail` reference's return value PROPAGATES -- `.catch(function (err) { return request.fail(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.9. |
+
+### `lib/controllers/folders.js` -- 7 chains (4 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/controllers/folders.js:19-33` `list` | promise chain | 3-link chain `.then().then().catch()`; currently RETURNED; head `getUserId()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.8. |
+| [ ] | `lib/controllers/folders.js:71-74` `create` | promise chain | 1-link chain `.catch()`; currently RETURNED; terminal `.catch({ err : err , message : "You already have a folder with thi…)` passes a BARE REFERENCE, so its return value is dropped; head `request` | Await the chain and return its value, and make sure the bare `{ err : err , message : "You already have a folder with thi…` reference's return value PROPAGATES -- `.catch(function (err) { return { err : err , message : "You already have a folder with thi…(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.8. |
+| [x] | `lib/controllers/folders.js:84-91` `create` | promise chain | 1-link chain `.then()`; currently RETURNED; head `request.user.grant("folder-owner", "folder", { id : folder.id })` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/folders.js:100-136` `update` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `folder.save()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.8. |
+| [ ] | `lib/controllers/folders.js:107-117` `update` | promise chain | 2-link chain `.then().catch()`; currently NEITHER returned nor awaited -- its value is discarded (preceded by `{`); head `Trinket.findById(folderTrinket.trinketId)` | Await the chain and return its value -- exactly once per path. Every branch inside the links must produce the response, not signal it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.8. |
+| [ ] | `lib/controllers/folders.js:128-131` `update` | promise chain | 1-link chain `.catch()`; currently RETURNED; terminal `.catch({ success : false , message : "You already have a folder wi…)` passes a BARE REFERENCE, so its return value is dropped; head `request` | Await the chain and return its value, and make sure the bare `{ success : false , message : "You already have a folder wi…` reference's return value PROPAGATES -- `.catch(function (err) { return { success : false , message : "You already have a folder wi…(err); })` or an equivalent that does not drop it. Exactly once per path. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.8. |
+| [x] | `lib/controllers/folders.js:146-154` `deleteFolder` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `folder.deleteFolder()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.8. |
+
+### `lib/controllers/classes.js` -- 6 chains (6 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/controllers/classes.js:29-56` `viewCourses` | promise chain | 1-link chain `.then()`; currently RETURNED; head `request.pre.user.getOwnedCourses()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/classes.js:79-93` `viewClass` | promise chain | 1-link chain `.then()`; currently RETURNED; head `Course.findFeaturedForUser(request.user)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/classes.js:137-188` `acceptInvitation` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `CourseInvitation.findByToken(request.params.token)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.4. |
+| [x] | `lib/controllers/classes.js:140-178` `acceptInvitation` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `Course.findById(invitation.courseId)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.4. |
+| [x] | `lib/controllers/classes.js:155-163` `acceptInvitation` | promise chain | 2-link chain `.then().then()`; currently RETURNED; head `course.addUser(request.user, ['course-student'])` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. |
+| [x] | `lib/controllers/classes.js:211-219` `joinFromLink` | promise chain | 2-link chain `.then().catch()`; currently RETURNED; head `course.addUser(request.user, ["course-student"])` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.4. |
+
+### `lib/controllers/auth.js` -- 4 chains (4 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/controllers/auth.js:48-188` `googleCallback` | promise chain | 4-link chain `.then().then().then().catch()`; currently RETURNED; head `new Promise(function(resolve, reject) { _request.post({ url: 'https:/…` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.3. PRESERVED QUIRK -- the new-user path persists the user, mutates session state and THEN reports the generic failure; that sequence is reproduced, not repaired. Owned by `docs/preserved-quirks.md` §6; reproduce it, do not fix it. |
+| [x] | `lib/controllers/auth.js:84-157` `googleCallback` | promise chain | 1-link chain `.then()`; currently RETURNED; head `new Promise(function(resolve, reject) { User.findByMultiple({ email:…` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. PRESERVED QUIRK -- the new-user path persists the user, mutates session state and THEN reports the generic failure; that sequence is reproduced, not repaired. Owned by `docs/preserved-quirks.md` §6; reproduce it, do not fix it. |
+| [x] | `lib/controllers/auth.js:126-128` `googleCallback` | promise chain | 1-link chain `.then()`; currently RETURNED; head `Promise.all(promises)` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. PRESERVED QUIRK -- the new-user path persists the user, mutates session state and THEN reports the generic failure; that sequence is reproduced, not repaired. Owned by `docs/preserved-quirks.md` §6; reproduce it, do not fix it. |
+| [x] | `lib/controllers/auth.js:146-155` `googleCallback` | promise chain | 1-link chain `.then()`; currently RETURNED; head `user.save()` | Already leaves the function (`return`). Confirm the value reaching hapi is a response and not a builder, and that no branch inside the links returns nothing. PRESERVED QUIRK -- the new-user path persists the user, mutates session state and THEN reports the generic failure; that sequence is reproduced, not repaired. Owned by `docs/preserved-quirks.md` §6; reproduce it, do not fix it. |
+
+## 5. Callback boundaries -- 57 rows
+
+**A closed callback boundary ceases to exist**, so this section shrinks rather
+than ticks: replacing `util.f(x, function (err, r) { ... })` with `await` removes
+the callback literal, and the row with it. The `Done` box is therefore ticked only
+in the one case that is still detectable -- a call site that already carries an
+`await` -- and progress is read from the count instead. Baseline: **57**. This tree: **57** -- none resolved yet.
+
+Each row records **where the `await` goes**: at the call site, inside the converted
+lifecycle method. Rule T-3 puts the promise boundary at the lifecycle method and
+nowhere deeper, which is why `lib/util/file.js`, `lib/util/store.js` and
+`lib/util/queues.js` keep their callback interfaces -- a handler `await`s them, they
+are not lifecycle methods themselves.
+
+A boundary here is a call receiving a function literal whose parameters are either
+error-first or empty -- the two shapes a completion callback takes. Empty-parameter
+callbacks are deliberately included, because two named conversions are exactly that
+shape: `rimraf(dir, function () {})` and `fs.unlink(file, function () {})`. Promise
+links, event registrations and synchronous iteration helpers are excluded -- they
+have their own categories or are not boundaries at all.
+
+Where baseline swallows a callback error or fires and forgets, **that timing is the
+target**: an error made visible, or a response made to wait, is a behaviour change.
+
+### `lib/controllers/course.js` -- 7 boundaries (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/course.js:19` `createCourse` | callback boundary | `course.save(..., function (err, course) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:120` `updateCourse` | callback boundary | `course.save(..., function (err, course) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:165` `archiveCourse` | callback boundary | `course.save(..., function (err, course) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:183` `copyCourse` | callback boundary | `request.pre.course.copy(..., function (err, course) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:258` `updateLesson` | callback boundary | `lesson.save(..., function (err, lesson) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:282` `moveLesson` | callback boundary | `course.save(..., function (err, course) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+| [ ] | `lib/controllers/course.js:872` `join` | callback boundary | `Course.findByAccessCode(..., function (err, course) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.5. |
+
+### `lib/controllers/trinket.js` -- 7 boundaries (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/trinket.js:80` `library` | callback boundary | `Trinket.findById(..., function (err, trinket) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:97` `library` | callback boundary | `Trinket.findById(..., function (err, trinket) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:175` `list` | callback boundary | `User.findById(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:441` `updateMetrics` | callback boundary | `Trinket.findById(..., function (err, trinket) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:907` `snapshot` | callback boundary | `FileUtil.uploadSnapshotFromBuffer(..., function (err) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:944` `logError` | callback boundary | `error.save(..., function (err, error) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1389` `downloadPostedZip` | callback boundary | `fs.unlink(..., function () { ... })` -- completion callback with no parameters; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. |
+
+### `lib/controllers/users.js` -- 26 boundaries (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/users.js:63` `create` | callback boundary | `User.exists(..., function (err, result) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:81` `create` | callback boundary | `request.yar._logIn(..., function (err) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:111` `login` | callback boundary | `User.findByLogin(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:135` `login` | callback boundary | `user.comparePassword(..., function (err, isMatch) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:158` `login` | callback boundary | `request.yar._logIn(..., function () { ... })` -- completion callback with no parameters; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. |
+| [ ] | `lib/controllers/users.js:237` `sendPassReset` | callback boundary | `User.findByLogin(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:274` `resetPasswordForm` | callback boundary | `User.findById(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:296` `savePassword` | callback boundary | `User.findById(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:301` `savePassword` | callback boundary | `user.save(..., function (err) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:323` `account` | callback boundary | `Course.findForUser(..., function (err, courses) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:386` `updateProfile` | callback boundary | `User.exists(..., function (err, result) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:409` `updateProfile` | callback boundary | `user.save(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:471` `assetList` | callback boundary | `File.findForUser(..., function (err, files) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:518` `assetUpload` | callback boundary | `FileUtil.uploadUserAsset(..., function (err, file) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:532` `replaceAsset` | callback boundary | `FileUtil.uploadUserAsset(..., function (err, file) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:591` `assetUploadFromURL` | callback boundary | `tmp.tmpName(..., function (err, tmpPath) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. PRESERVED QUIRK -- a refused connection logs and leaves the route UNSETTLED; the conversion must not turn that into a rejection. Owned by `docs/preserved-quirks.md` §8.1; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/users.js:611` `assetUploadFromURL` | callback boundary | `FileUtil.uploadUserAsset(..., function (err, file) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. PRESERVED QUIRK -- a refused connection logs and leaves the route UNSETTLED; the conversion must not turn that into a rejection. Owned by `docs/preserved-quirks.md` §8.1; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/users.js:621` `changePassword` | callback boundary | `request.user.comparePassword(..., function (err, match) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:630` `changePassword` | callback boundary | `request.user.save(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:701` `sendEmailChange` | callback boundary | `User.findByLogin(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:718` `sendEmailChange` | callback boundary | `Store.set(..., function (err) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:905` `activateAccount` | callback boundary | `User.findById(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:913` `activateAccount` | callback boundary | `user.save(..., function (err) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:915` `activateAccount` | callback boundary | `request.yar._logIn(..., function (err) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:1020` `getExportStatus` | callback boundary | `Export.findById(..., function (err, exportRecord) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+| [ ] | `lib/controllers/users.js:1072` `downloadExport` | callback boundary | `Export.findById(..., function (err, exportRecord) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. |
+
+### `lib/controllers/admin.js` -- 5 boundaries (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/admin.js:116` `uploadUsers` | callback boundary | `parse(..., function (err, records) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [ ] | `lib/controllers/admin.js:159` `updateUser` | callback boundary | `User.findById(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [ ] | `lib/controllers/admin.js:166` `updateUser` | callback boundary | `user.save(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [ ] | `lib/controllers/admin.js:177` `grantRole` | callback boundary | `User.findById(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+| [ ] | `lib/controllers/admin.js:273` (module scope) | callback boundary | `User.findByLogin(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.2. |
+
+### `lib/controllers/courses.js` -- 3 boundaries (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/courses.js:83` `copy` | callback boundary | `request.pre.course.copy(..., function (err, course) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.6. |
+| [ ] | `lib/controllers/courses.js:266` `download` | callback boundary | `fs.stat(..., function (err, stats) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.6. |
+| [ ] | `lib/controllers/courses.js:268` `download` | callback boundary | `rimraf(..., function () { ... })` -- completion callback with no parameters; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. |
+
+### `lib/controllers/folders.js` -- 1 boundary (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/folders.js:68` `create` | callback boundary | `folder.save(..., function (err, folder) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.8. |
+
+### `lib/controllers/classes.js` -- 1 boundary (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/classes.js:194` `joinFromLink` | callback boundary | `Course.findByAccessCode(..., function (err, course) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.4. |
+
+### `lib/controllers/files.js` -- 4 boundaries (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/files.js:14` `uploadAvatar` | callback boundary | `FileUtil.uploadUserAvatar(..., function (err, results) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.7. |
+| [ ] | `lib/controllers/files.js:27` `upload` | callback boundary | `FileUtil.uploadMaterialFile(..., function (err, results) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.7. |
+| [ ] | `lib/controllers/files.js:58` `upload` | callback boundary | `file.save(..., function (err) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.7. |
+| [ ] | `lib/controllers/files.js:123` `setThumbnail` | callback boundary | `request.pre.file.save(..., function (err, file) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.7. |
+
+### `lib/controllers/auth.js` -- 3 boundaries (0 closed)
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/auth.js:49` `googleCallback` | callback boundary | `_request.post(..., function (err, response, body) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.3. PRESERVED QUIRK -- the new-user path persists the user, mutates session state and THEN reports the generic failure; that sequence is reproduced, not repaired. Owned by `docs/preserved-quirks.md` §6; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/auth.js:69` `googleCallback` | callback boundary | `_request.get(..., function (err, response, profile) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.3. PRESERVED QUIRK -- the new-user path persists the user, mutates session state and THEN reports the generic failure; that sequence is reproduced, not repaired. Owned by `docs/preserved-quirks.md` §6; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/auth.js:85` `googleCallback` | callback boundary | `User.findByMultiple(..., function (err, user) { ... })` -- Node error-first callback; call site is not awaited | Create the `await` AT THIS CALL SITE inside the converted handler: await the promise form (or a promisified wrapper) and continue with its result. Do not push the boundary into the callee. Preserve the baseline's error handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.3. PRESERVED QUIRK -- the new-user path persists the user, mutates session state and THEN reports the generic failure; that sequence is reproduced, not repaired. Owned by `docs/preserved-quirks.md` §6; reproduce it, do not fix it. |
+
+## 6. Reply chains -- 8 rows
+
+The roster below is a **recorded baseline measurement**, not a transcription: the
+three-way classification depends on which builder method ran last, and the
+analysis derives the same classification independently from
+`RESOLVING_BUILDER_METHODS` and `NON_RESOLVING_BUILDER_METHODS`. At `2f8712a` the two must
+agree chain for chain and line for line, and the self-check fails if they do not.
+Two independent routes to the same answer is the point.
+
+Removing the builder removes a **mechanism**, not a set of outcomes. Three of these
+chains return a builder object to hapi, four resolve real responses, and one never
+settles at all -- so the target disposition has to be stated per chain.
+
+In the analysed tree the derived scan finds 8 `reply(`-rooted chains carrying `.type()`/`.bytes()`.
+
+### Never settles -- 1 chain
+
+Only non-resolving links, and the chain's value is not returned either, so nothing ever produces a response and the branch hangs.
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/files.js:98-100` | reply chain (never-settles) | reply(stream).type(...).bytes(...) with no `return` and no resolving call. Neither .type() nor .bytes() settles the deferred, so the image-download branch never produces a response at all -- the request hangs. | **APPROVED DEVIATION.** Return `h.response(stream).type(request.pre.file.mime).bytes(request.pre.file.size)` -- and NO Content-Disposition header, because the image branch deliberately omits it. Measured baseline outcome owned by `docs/preserved-quirks.md` §4.1; the deviation and its precedence argument by §11.1. |
+
+> **Approved deviation, `lib/controllers/files.js:98-100`.** This is the
+> only row in this document whose target changes observable behaviour, and it is
+> approved rather than assumed. The response to serve is not inferred: the sibling branch four lines below performs the identical chain ending in .header() and returns a working stream response, so the target is that same response minus the Content-Disposition header the image branch deliberately omits.
+>
+> The precedence argument -- why R-b ("every route serves") controls over
+> R-d ("behaviour improvements prohibited") here and nowhere else -- is owned by
+> `docs/preserved-quirks.md` §11.1, which also
+> carries the corpus treatment: the baseline result is recorded as an expected
+> timeout and the target result as a 200 stream response, so the diff reads as an
+> approved change rather than a failure. It is not restated here.
+
+### Header-resolved and working -- 4 chains
+
+The chain reaches `.header(...)`, which resolves the deferred, so a real hapi response is produced. These work today and must come through the migration unchanged -- they must not become collateral damage of the approved deviation above.
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/files.js:102-105` | reply chain (header-resolved) | reply(stream).type(...).bytes(...).header('Content-Disposition', ...). Also has no `return`, but .header() resolves the deferred, so it works and returns a real hapi response. | Identical response. This is the non-image branch and it must NOT become collateral damage of the approved deviation four lines above. Measured baseline outcome owned by `docs/preserved-quirks.md` §4.2; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/courses.js:269-272` | reply chain (header-resolved) | return reply(stream).type('application/zip').bytes(stats.size).header('Content-Disposition', ...), inside the rimraf callback. Works: .header() resolves the deferred. | Identical response. Baseline WAITS for the deletion callback before the final .header() resolves, so the conversion awaits fs.promises.rm, swallows its error exactly as the empty callback does, and only then returns the response. Measured baseline outcome owned by `docs/preserved-quirks.md` §4.2; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/trinket.js:1383-1386` | reply chain (header-resolved) | return reply(outputReadStream).type('application/zip').bytes(bytes).header('Content-Disposition', ...). Works: .header() resolves the deferred. | Identical response, including the quoted filename form this chain uses. Measured baseline outcome owned by `docs/preserved-quirks.md` §4.2; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/trinket.js:1548-1551` | reply chain (header-resolved) | return reply(outputReadStream).type('application/zip').bytes(bytes).header('Content-Disposition', ...). Works: .header() resolves the deferred. | Identical response, including the unquoted filename form this chain uses. Measured baseline outcome owned by `docs/preserved-quirks.md` §4.2; reproduce it, do not fix it. |
+
+### Builder returned to hapi -- 3 chains
+
+`return reply(...).type(type)` hands the wrapper the **builder object** rather than a hapi response. What is emitted depends on whether the deferred was already resolved earlier in the request, so the outcome has to be captured before conversion rather than reasoned about.
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/trinket.js:1204` | reply chain (builder-returned) | return reply(code[0].content).type(type) -- hands the WRAPPER the builder object rather than a hapi response. What is emitted depends on whether the deferred had already been resolved earlier in the request. | Reproduce the measured status, content-type and body, captured before conversion by test/parity/capture.js. Measured baseline outcome owned by `docs/preserved-quirks.md` §4.3; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/trinket.js:1246` | reply chain (builder-returned) | return reply(file.content).type(type) -- builder object returned to hapi. | Reproduce the measured status, content-type and body, captured before conversion by test/parity/capture.js. Measured baseline outcome owned by `docs/preserved-quirks.md` §4.3; reproduce it, do not fix it. |
+| [ ] | `lib/controllers/trinket.js:1259` | reply chain (builder-returned) | return reply(stream).type(type) inside a .then() -- builder object returned to hapi, wrapping a stream. | Reproduce the measured status, content-type and body, captured before conversion by test/parity/capture.js. Measured baseline outcome owned by `docs/preserved-quirks.md` §4.3; reproduce it, do not fix it. |
+
+### A distinct shape, not one of the eight chains
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/trinket.js:375` `create` | reply call, no return | reply(err); with NO `return`, inside .catch(function(err) { ... }) on an error path. The shim resolved a Boom for an Error and the handler fell off the end returning undefined, so the response came from the deferred. | Return the mapped error so the same status and payload reach the same error funnel. This is a DISTINCT shape, not one of the eight reply chains. Baseline outcome owned by `docs/preserved-quirks.md` §4.4; reproduce it, do not fix it. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+
+The analysed tree still carries 1 unreturned bare `reply(` call: `lib/controllers/trinket.js:375`.
+
+## 7. Stream sites -- 17 rows across 4 controllers
+
+Derived, then reviewed -- see "Streams" above for the rule and for what it
+deliberately excludes. Several of these error **after the response has begun**,
+which is why every row carries the same non-negotiable target: completion and error
+**timing** are preserved.
+
+### `lib/controllers/trinket.js` -- 11 sites
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/trinket.js:1259` `downloadFile` | stream site | hands a stream to the response -- `return reply(stream).type(type);` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1292` `downloadPostedZip` | stream site | constructs an archive -- `var archive = archiver('zip', {` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1300` `downloadPostedZip` | stream site | binds a stream, creates a stream -- `, outputWriteStream = fs.createWriteStream(zipFile)` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1328` `downloadPostedZip` | stream site | pipes a stream -- `archive.pipe(outputWriteStream);` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1378` `downloadPostedZip` | stream site | binds a stream, creates a stream -- `outputReadStream = fs.createReadStream(zipFile);` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1383` `downloadPostedZip` | stream site | hands a stream to the response -- `return reply(outputReadStream)` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1454` (module scope) | stream site | constructs an archive -- `var archive = archiver('zip', {` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1459` (module scope) | stream site | binds a stream, creates a stream -- `, outputWriteStream = fs.createWriteStream(zipFile)` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1495` (module scope) | stream site | pipes a stream -- `archive.pipe(outputWriteStream);` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1543` (module scope) | stream site | binds a stream, creates a stream -- `outputReadStream = fs.createReadStream(zipFile);` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+| [ ] | `lib/controllers/trinket.js:1548` (module scope) | stream site | hands a stream to the response -- `return reply(outputReadStream)` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.10. |
+
+### `lib/controllers/users.js` -- 1 site
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/users.js:616` `assetUploadFromURL` | stream site | creates a stream, pipes a stream -- `.pipe(fs.createWriteStream(tmpPath));` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.11. PRESERVED QUIRK -- a refused connection logs and leaves the route UNSETTLED; the conversion must not turn that into a rejection. Owned by `docs/preserved-quirks.md` §8.1; reproduce it, do not fix it. |
+
+### `lib/controllers/courses.js` -- 2 sites
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/courses.js:267` `download` | stream site | binds a stream, creates a stream -- `var stream = fs.createReadStream(zipFile);` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.6. |
+| [ ] | `lib/controllers/courses.js:269` `download` | stream site | hands a stream to the response -- `return reply(stream)` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.6. |
+
+### `lib/controllers/files.js` -- 3 sites
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [ ] | `lib/controllers/files.js:89` `download` | stream site | binds a stream -- `var stream = FileUtil.downloadMaterialFile(remoteFile);` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.7. |
+| [ ] | `lib/controllers/files.js:98` `download` | stream site | hands a stream to the response -- `reply(stream)` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.7. |
+| [ ] | `lib/controllers/files.js:102` `download` | stream site | hands a stream to the response -- `reply(stream)` | Preserve completion and error TIMING exactly: the same event ordering, the same point at which the response begins, and the same behaviour for an error raised after it has begun. Awaiting a stream that baseline did not await, or surfacing an error baseline swallowed, is a behaviour change. Error mapping (status, payload, side effects, timing): `docs/error-edge-inventory.md` §7.7. |
+
+Stream rows are never auto-ticked. Whether timing is preserved is not a property of
+the text -- it is decided by the corpus and the storage cases -- so these boxes are
+closed by a human or an agent who has checked that evidence, not by this generator.
+
+## 8. EXCLUDED -- defined-but-unrouted controller exports (2)
+
+**Not counted in the 154.** These are exported handlers
+that no route references, so under blocking-only scope they are not hapi-facing
+work. They convert only if another gate independently forces it, and that
+determination is **recorded per function below rather than assumed**. Two gates can
+force one: the zero-deprecation-warning bar, and the repaired test suite.
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/controllers/admin.js:108` `uploadForm` | unrouted export (excluded) | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position; no route declaration references `admin.uploadForm` | **DO NOT CONVERT -- no gate forces it under blocking-only scope.** deprecation bar: no deprecated Node-core API in the body; repaired suite: no reference from test/lib or test/helpers. Leave as it is; R-a confines the diff to conversion work that something requires. |
+| [x] | `lib/controllers/pages.js:56` `features` | unrouted export (excluded) | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position; no route declaration references `pages.features` | **DO NOT CONVERT -- no gate forces it under blocking-only scope.** deprecation bar: no deprecated Node-core API in the body; repaired suite: no reference from test/lib or test/helpers. Leave as it is; R-a confines the diff to conversion work that something requires. |
+
+## 9. EXCLUDED -- unrouted named pre-handlers (3)
+
+**Not counted in the 154.** Same conditional basis as the
+section above: no route references them, so nothing forces their conversion unless
+a gate does. Recorded, not assumed.
+
+| Done | Site | Kind | Current shape | Target disposition |
+| --- | --- | --- | --- | --- |
+| [x] | `lib/util/helpers.js:298` `toLowerCaseURI` | unrouted pre-handler (excluded) | legacy `(request, reply)`; returns its response -- all 2 signalling calls in return position; still consumes the shim `reply`; no route declaration references `helpers.toLowerCaseURI` | **DO NOT CONVERT -- no gate forces it under blocking-only scope.** deprecation bar: no deprecated Node-core API in the body; repaired suite: no reference from test/lib or test/helpers. Leave as it is. |
+| [x] | `lib/util/helpers.js:321` `logUnauth` | unrouted pre-handler (excluded) | legacy `(request, reply)`; returns its response -- all 1 signalling call in return position; still consumes the shim `reply`; no route declaration references `helpers.logUnauth` | **DO NOT CONVERT -- no gate forces it under blocking-only scope.** deprecation bar: no deprecated Node-core API in the body; repaired suite: no reference from test/lib or test/helpers. Leave as it is. |
+| [x] | `lib/util/helpers.js:405` `trinketByOwnerAndSlug` | unrouted pre-handler (excluded) | legacy `(request, reply)`; returns its response -- all 3 signalling calls in return position; still consumes the shim `reply`; no route declaration references `helpers.trinketByOwnerAndSlug` | **DO NOT CONVERT -- no gate forces it under blocking-only scope.** deprecation bar: no deprecated Node-core API in the body; repaired suite: no reference from test/lib or test/helpers. Leave as it is. |
+
+One of these -- `trinketByOwnerAndSlug` -- carries a `reply().redirect(...)
+.permanent().takeover()` chain of the same shape as the two dead 301s in section 2,
+and `toLowerCaseURI` carries a fourth `.permanent()` chain of a different shape
+(`reply('')` settles the deferred immediately and there is no `.takeover()`).
+Neither is in the conversion set, because neither is routed. They are named here so
+that a file-wide search for `.permanent()` in `lib/util/helpers.js` -- which finds
+four hits, not two -- does not read as unfinished work.
+
+## 10. EXCLUDED -- routes whose named controller method does not exist (3)
+
+**Not counted in the 154, and there is nothing to convert:
+these are routes with no function.** They are recorded so that nobody hunts for a
+handler that was never written.
+
+All three answer entirely through the wrapper's missing-controller fallback at
+`lib/util/routeParser.js:574-576`, which returns `request.success(request.params)`.
+**That fallback must be PRESERVED.** It sits immediately below the interception
+block being removed and is easy to delete by association -- which would turn all
+three of these routes into failures.
+
+| Done | Route | Named binding | Declared at | Behaviour to preserve |
+| --- | --- | --- | --- | --- |
+| [x] | `POST /api/interest` | `pages.interest` -- **not defined** | `config/api_routes.js:1090` | Resolves through the preserved fallback at `lib/util/routeParser.js:574-576`, returning `request.success(request.params)`. Same status, same payload, same template resolution as today. Baseline outcome owned by `docs/preserved-quirks.md` §1. |
+| [x] | `GET /api/trinkets/popular` | `trinket.mostActive` -- **not defined** | `config/api_routes.js:714` | Resolves through the preserved fallback at `lib/util/routeParser.js:574-576`, returning `request.success(request.params)`. Same status, same payload, same template resolution as today. Baseline outcome owned by `docs/preserved-quirks.md` §1. |
+| [x] | `GET /api/trinkets/active` | `trinket.risingActive` -- **not defined** | `config/api_routes.js:729` | Resolves through the preserved fallback at `lib/util/routeParser.js:574-576`, returning `request.success(request.params)`. Same status, same payload, same template resolution as today. Baseline outcome owned by `docs/preserved-quirks.md` §1. |
+
+The `Done` box here means "the route declaration is present and the fallback is
+still what serves it" -- these rows are a **preservation** check, not conversion
+work.
+
+## Retained by design -- never a removal row
+
+R-a confines the diff to four things: the runtime bump, the hapi API migration, the
+async conversion, and blocking-only dependency swaps. The following are explicitly
+**retained**, and if any of them ever shows up in this document as work to be done,
+the generator is wrong -- not the code.
+
+| Retained | Why it must not be touched |
+| --- | --- |
+| Per-request debug logging at `lib/util/routeParser.js:311`, `:543-552`, `:556` | Explicitly retained. Performance is not a goal of this migration, so there is no licence to remove logging along the way. Recorded in `docs/preserved-quirks.md` §9.3. |
+| The missing-controller fallback at `lib/util/routeParser.js:574-576` | Three registered routes answer through it (section 10). It is adjacent to the interception block being removed, which is the whole risk. |
+| `request.success` (`:412-479`), `request.fail` (`:482-514`) and the hand-rolled validation block (`:516-541`) | Reshaped to *return* their response, but their projection, flash-and-redirect behaviour and validation outcomes are invariant. |
+| The handler catch-all at `lib/util/routeParser.js:578-589`, including its `if (err)` guard | A falsy throw produces no return and the toolkit converts `undefined` to the same status with a different message. That is observable, so the guard is copied verbatim. |
+| The route DSL, the `route.config` -> `route.options` rename, the forced `cors = false` and `delete route.options.validate` | The route surface is an invariant of this migration. |
+| The cross-request `fail.redirect` state leak | A measured baseline defect with a documented blast radius. R-d preserves it; two consecutive corpus requests exist so it cannot be silently fixed. Recorded in `docs/preserved-quirks.md` §3. |
+| The two validation message maps in `config/routes.js` | Measured inert on both joi 17.13.3 and 18.2.5. Inert is the baseline behaviour, so inert is the target. Recorded in `docs/preserved-quirks.md` §9.1. |
+
+No row in this document proposes a rename, a cleanup, or a "while we're here".
+Every target disposition is the **preserved** behaviour, with exactly one approved
+exception, labelled as such in section 6 and argued in `docs/preserved-quirks.md` §11.1.

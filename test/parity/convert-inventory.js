@@ -254,17 +254,15 @@ var REPLY_CHAIN_ROSTER = [
       '.bytes(request.pre.file.size)` -- and NO Content-Disposition header, because ' +
       'the image branch deliberately omits it.',
     approvedDeviation: true,
+    // One sentence, and it is the sentence an implementer needs at the call
+    // site: the response to serve is not inferred, it is already written four
+    // lines below. The precedence argument is NOT repeated here -- it is owned
+    // by docs/preserved-quirks.md, and the renderer emits the pointer.
     justification:
-      'AAP 0.7 decides R-b ("every route serves") against R-d ("behaviour improvements ' +
-      'prohibited") in favour of R-b, for three reasons that do not apply elsewhere. ' +
-      'First, an unsettled request is not behaviour a client can depend on -- it is the ' +
-      'absence of a response, and R-d protects observable behaviour. Second, the intended ' +
-      'response is not inferred but PRESENT IN THE SAME FUNCTION: the sibling branch four ' +
-      'lines below performs the identical chain ending in .header() and returns a working ' +
-      'stream response. Third, R-b is unqualified about routes serving, whereas the marked ' +
-      'conflict pits a prohibition against a validation target -- the opposite balance. ' +
-      'The corpus records the baseline result as an expected timeout and the target result ' +
-      'as a 200 stream response, so the diff reads as an approved change, not a failure.'
+      'The response to serve is not inferred: the sibling branch four lines below performs ' +
+      'the identical chain ending in .header() and returns a working stream response, so ' +
+      'the target is that same response minus the Content-Disposition header the image ' +
+      'branch deliberately omits.'
   },
   {
     file: 'lib/controllers/files.js',
@@ -428,6 +426,166 @@ var TARGET_IDIOM_ANCHORS = [
   }
 ];
 
+
+// ---------------------------------------------------------------------------
+// SECTION 2b -- CROSS-REFERENCES TO THE DOCUMENTS THAT OWN WHAT THIS ONE DOES NOT
+//
+// This document records, per site, the RETURN SHAPE: what the body does now and
+// what it must return afterwards. Two sibling documents own the rest of the
+// story about the same sites, and R-d and R-e both require the pointer rather
+// than a second copy:
+//
+//   docs/preserved-quirks.md      -- the measured baseline OUTCOME of a quirk,
+//                                    and, for the one approved deviation, the
+//                                    full precedence argument.
+//   docs/error-edge-inventory.md  -- the status, payload, side effects and
+//                                    timing of every changed error edge.
+//
+// So a row that carries a quirk or an error edge emits a section reference into
+// its target-disposition cell and stops there. Duplicating either document
+// would create two places for the same fact to drift.
+//
+// Section NUMBERS are cited rather than Markdown anchors on purpose: the
+// numbers are stable identifiers in both sibling documents, whereas a
+// GitHub-style anchor is derived from heading text and breaks silently when a
+// heading is reworded.
+// ---------------------------------------------------------------------------
+
+var QUIRK_DOC = 'docs/preserved-quirks.md';
+var ERROR_EDGE_DOC = 'docs/error-edge-inventory.md';
+
+// docs/error-edge-inventory.md lays its rows out in per-file sections, ordered
+// alphabetically by path: 7.1 through 7.12. A row here cites the section that
+// owns its file, which is as precise as a cross-reference can be without
+// pinning to that document's own row numbering -- which would couple two
+// generators to each other and break on either one's next run.
+var ERROR_EDGE_SECTIONS = {
+  'config/api_routes.js': '7.1',
+  'lib/controllers/admin.js': '7.2',
+  'lib/controllers/auth.js': '7.3',
+  'lib/controllers/classes.js': '7.4',
+  'lib/controllers/course.js': '7.5',
+  'lib/controllers/courses.js': '7.6',
+  'lib/controllers/files.js': '7.7',
+  'lib/controllers/folders.js': '7.8',
+  'lib/controllers/pages.js': '7.9',
+  'lib/controllers/trinket.js': '7.10',
+  'lib/controllers/users.js': '7.11',
+  'lib/util/helpers.js': '7.12'
+};
+
+// Quirk ownership per hapi-invoked function, keyed by the ENCLOSING FUNCTION
+// rather than by line, so the reference survives the file being edited. Every
+// entry names a quirk whose target disposition REPRODUCES a defect: the row
+// says so and points here, and no row proposes the fix.
+var QUIRK_REFS = [
+  {
+    file: 'lib/controllers/pages.js',
+    enclosing: 'login',
+    section: '5',
+    note: 'the authenticated-visitor 500 is REPRODUCED -- `reply.redirect` is a property ' +
+      'access on a bare function and throws a TypeError that reaches the catch-all'
+  },
+  {
+    file: 'lib/controllers/pages.js',
+    enclosing: 'signup',
+    section: '5',
+    note: 'the authenticated-visitor 500 is REPRODUCED, and `request.yar.set(\'next\', ...)` ' +
+      'stays in the `else` branch only -- it does not precede the throw'
+  },
+  {
+    file: 'lib/controllers/auth.js',
+    enclosing: 'googleCallback',
+    section: '6',
+    note: 'the new-user path persists the user, mutates session state and THEN reports the ' +
+      'generic failure; that sequence is reproduced, not repaired'
+  },
+  {
+    file: 'lib/controllers/folders.js',
+    enclosing: 'trinkets',
+    section: '7',
+    note: 'the queryless case passes NO folder filter because the injected URL is malformed; ' +
+      'the extraction must reproduce both cases'
+  },
+  {
+    file: 'lib/controllers/users.js',
+    enclosing: 'assetUploadFromURL',
+    section: '8.1',
+    note: 'a refused connection logs and leaves the route UNSETTLED; the conversion must not ' +
+      'turn that into a rejection'
+  }
+];
+
+// The quirk sections that own the eight reply chains, keyed by the category
+// this generator derives independently. docs/preserved-quirks.md §4 splits the
+// same three-way classification into 4.1, 4.2 and 4.3, and §4.4 owns the one
+// further unreturned reply on an error path.
+var CATEGORY_QUIRK_SECTIONS = {
+  'never-settles': '4.1',
+  'header-resolved': '4.2',
+  'builder-returned': '4.3'
+};
+
+// The quirk sections that own the anchored sites, keyed by their kind.
+var ANCHORED_QUIRK_SECTIONS = {
+  'reply-no-return': '4.4',
+  'dead-301': '2'
+};
+
+// The quirk section that owns the approved deviation. The precedence argument
+// lives there in full; this document states the target and points at it.
+var DEVIATION_QUIRK_SECTION = '11.1';
+
+// The quirk section that owns the three routes with no function to convert.
+var MISSING_BINDING_QUIRK_SECTION = '1';
+
+/**
+ * The error-edge pointer for one file, or '' when that file has no section in
+ * the sibling document. Emitted only on rows whose own measured shape IS an
+ * error edge -- a chain carrying a `.catch(` link, an error-first callback, an
+ * unreturned `reply(err)` -- because a pointer on every row of all ten
+ * controllers would be noise rather than a cross-reference.
+ */
+function errorEdgeRef(file) {
+  var section = ERROR_EDGE_SECTIONS[file];
+  if (!section) {
+    return '';
+  }
+  return ' Error mapping (status, payload, side effects, timing): `' +
+    ERROR_EDGE_DOC + '` \u00a7' + section + '.';
+}
+
+/**
+ * The quirk pointer for an anchored site, derived from its kind. Every
+ * anchored site IS a recorded quirk, so unlike quirkRef() this never returns
+ * an empty string for a known kind -- a missing entry is a generator fault and
+ * says so in the emitted text rather than silently dropping the reference.
+ */
+function anchoredQuirkRef(site) {
+  var section = ANCHORED_QUIRK_SECTIONS[site.kind];
+  if (!section) {
+    return ' Quirk record: `' + QUIRK_DOC + '` (section unmapped for kind `' +
+      site.kind + '` -- fix ANCHORED_QUIRK_SECTIONS).';
+  }
+  return ' Baseline outcome owned by `' + QUIRK_DOC + '` \u00a7' + section +
+    '; reproduce it, do not fix it.' +
+    (site.kind === 'reply-no-return' ? errorEdgeRef(site.file) : '');
+}
+
+/** The quirk pointer for a hapi-invoked function, or '' when it carries none. */
+function quirkRef(file, enclosing) {
+  if (!enclosing) {
+    return '';
+  }
+  for (var i = 0; i < QUIRK_REFS.length; i++) {
+    var ref = QUIRK_REFS[i];
+    if (ref.file === file && ref.enclosing === enclosing) {
+      return ' PRESERVED QUIRK -- ' + ref.note + '. Owned by `' + QUIRK_DOC +
+        '` \u00a7' + ref.section + '; reproduce it, do not fix it.';
+    }
+  }
+  return '';
+}
 
 // ---------------------------------------------------------------------------
 // SECTION 3 -- THE TOKENIZER
@@ -757,6 +915,16 @@ function oneLine(text, limit) {
     return flat.slice(0, limit - 1).trimEnd() + '\u2026';
   }
   return flat;
+}
+
+/**
+ * "1 chain" / "2 chains". Generated prose should read as prose: a heading that
+ * says "1 chains" tells a reviewer the document was assembled rather than
+ * written, which is precisely the impression a generated artifact cannot
+ * afford when its whole claim is that every figure in it was measured.
+ */
+function pluralize(count, singular, plural) {
+  return count + ' ' + (count === 1 ? singular : (plural || singular + 's'));
 }
 
 /** Escape the characters that would break a Markdown table cell. */
@@ -2865,20 +3033,98 @@ function isHandlerClosed(entry) {
     !entry.analysis.usesReply;
 }
 
+/**
+ * Describe the invocation that produced this run, in a form that is the same
+ * on every machine.
+ *
+ * Two requirements pull against each other here and both are met. The artifact
+ * has to record the EXACT command that produced it, or it is not reproducible.
+ * It also has to be byte-identical when two people generate it from the same
+ * tree, or `diff` stops being a review of the tree and becomes a review of
+ * whose checkout it ran in -- and an absolute path is exactly that kind of
+ * difference. So paths inside the repository are recorded relative to its
+ * root, and an external worktree is recorded as the shell variable the command
+ * reads, with the one command that creates it printed alongside. Nothing is
+ * lost: what identifies the analysed tree is its HEAD, which is recorded.
+ */
+function describeInvocation(options) {
+  var repoRoot = options.repoRoot;
+  var appIsRepo = path.resolve(options.app) === path.resolve(repoRoot);
+  var relativeApp = path.relative(repoRoot, options.app);
+  var appInsideRepo = !appIsRepo && relativeApp !== '' &&
+    relativeApp.indexOf('..') !== 0 && !path.isAbsolute(relativeApp);
+
+  var appToken;
+  var appLabel;
+  var recreate = null;
+
+  if (appIsRepo) {
+    // The default. No --app is needed, so the command does not carry one.
+    appToken = null;
+    appLabel = 'the repository containing the generator (no --app given)';
+  } else if (appInsideRepo) {
+    appToken = relativeApp;
+    appLabel = '`' + relativeApp + '`, inside the repository';
+  } else {
+    appToken = '"$BASELINE"';
+    appLabel = 'a git worktree outside the repository (its path is deliberately not recorded)';
+    recreate = 'any path you choose -- create it with `git worktree add --detach ' +
+      '"$BASELINE" ' + BASELINE_COMMIT + '`';
+  }
+
+  var relativeOut = path.relative(repoRoot, options.out);
+  var outToken = (relativeOut !== '' && relativeOut.indexOf('..') !== 0 &&
+    !path.isAbsolute(relativeOut)) ? relativeOut : '"$OUT"';
+
+  var command = 'node test/parity/convert-inventory.js' +
+    (appToken ? ' --app ' + appToken : '') +
+    ' --out ' + outToken;
+
+  return { command: command, appLabel: appLabel, recreate: recreate };
+}
+
+// Used when renderDocument() is called directly by a consumer of the module
+// rather than through main(), so the header never reports a command it cannot
+// substantiate.
+var UNKNOWN_INVOCATION = {
+  command: 'node test/parity/convert-inventory.js --app <tree> --out <file>  ' +
+    '(this run was driven through the module API, not the CLI)',
+  appLabel: '(not recorded -- renderDocument() was called directly)',
+  recreate: null
+};
+
 function renderFrontMatter(model) {
   var p = model.provenance;
+  var invocation = p.invocation || UNKNOWN_INVOCATION;
   var lines = [];
   lines.push('<!--');
-  lines.push('  GENERATED FILE -- do not hand-edit the rows.');
-  lines.push('  Regenerate with: node test/parity/convert-inventory.js --app <tree> --out <file>');
+  lines.push('  GENERATED FILE -- do not hand-edit it. Every line below this block is written');
+  lines.push('  by the generator named here from the analysed tree named here. An edit made by');
+  lines.push('  hand is lost on the next run and, while it survives, is indistinguishable from a');
+  lines.push('  measurement. To change what this document says, change the generator or the');
+  lines.push('  tree and re-run the exact command.');
   lines.push('');
-  lines.push('  analysed tree      : ' + p.appRoot);
+  lines.push('  generator          : test/parity/convert-inventory.js');
+  lines.push('  exact command      : ' + invocation.command);
+  if (invocation.recreate) {
+    lines.push('  where $BASELINE is : ' + invocation.recreate);
+  }
+  lines.push('  analysed tree      : ' + invocation.appLabel);
   lines.push('  analysed tree HEAD : ' + (p.appHead || '(not a git worktree)'));
   lines.push('  base commit        : ' + BASELINE_COMMIT +
-    (p.atBaseline ? '  <-- the analysed tree IS the base commit' : ''));
+    (p.atBaseline
+      ? '  <-- the analysed tree IS the base commit, so the'
+      : '  <-- the analysed tree is NOT the base commit, so the'));
+  lines.push('                       baseline-calibrated self-checks are ' +
+    (p.atBaseline ? 'ASSERTED' : 'reported as deltas'));
   lines.push('  generator HEAD     : ' + (p.toolHead || '(not a git worktree)'));
   lines.push('  node               : ' + p.nodeVersion);
   lines.push('  generated at       : ' + new Date().toISOString());
+  lines.push('');
+  lines.push('  No absolute path appears anywhere in this document. A worktree\'s location on');
+  lines.push('  disk is specific to the machine it was generated on, so recording it would make');
+  lines.push('  two correct runs differ for a reason that says nothing about the tree. The tree');
+  lines.push('  is identified by its HEAD, above.');
   lines.push('');
   lines.push('  Everything below this block is deterministic: two runs over the same tree');
   lines.push('  differ only in the "generated at" line above.');
@@ -3041,6 +3287,22 @@ function renderPreamble() {
   out.push('  `test/parity/manifest.js`. This document counts hapi-invoked *functions*, of which');
   out.push('  there are ' + CONVERSION_SET.total + ' -- a different number for a different purpose.');
   out.push('');
+  out.push('## Where the rest of the story lives');
+  out.push('');
+  out.push('A row here records the **return shape** of one site and stops. Two sibling');
+  out.push('documents own the rest about the same sites, and rows point at them by section');
+  out.push('number rather than repeating them -- two copies of one fact is how the two drift');
+  out.push('apart.');
+  out.push('');
+  out.push('| Document | What it owns about a site in this checklist |');
+  out.push('| --- | --- |');
+  out.push('| `' + QUIRK_DOC + '` | The measured baseline **outcome** of a quirk, and, for the single approved deviation, the precedence argument in full. A row whose target reproduces a defect says so and cites the section. |');
+  out.push('| `' + ERROR_EDGE_DOC + '` | The **status, payload, side effects and timing** of every changed error edge. Rows that are themselves error edges -- a chain carrying a `.catch(` link, an error-first callback, an unreturned `reply(err)` -- cite the per-file section that owns them. |');
+  out.push('');
+  out.push('Neither reference is decorative. R-d requires that a preserved defect be recorded');
+  out.push('rather than fixed, and R-e requires that the error mapping survive unchanged; this');
+  out.push('document would contradict both if it restated their content in its own words.');
+  out.push('');
   return out.join('\n');
 }
 
@@ -3166,12 +3428,16 @@ function renderHandlerRows(model) {
   });
   var closed = routed.filter(isHandlerClosed).length;
 
-  out.push('## 1. Routed handlers -- ' + routed.length + ' rows (' + closed + ' closed)');
+  out.push('## 1. Routed handlers -- ' + pluralize(routed.length, 'row') +
+    ' (' + closed + ' closed)');
   out.push('');
-  out.push('Every controller method that hapi invokes. `lib/controllers/auth.js` contributes two');
-  out.push('rows even though both of its handlers are **already** declared `(request, h)`: they');
-  out.push('remain shim-dependent, because they lean on `request.success` / `request.fail`');
-  out.push('resolving a deferred for them. A converted signature is not a converted handler.');
+  out.push('Every controller method that hapi invokes. **A declared signature settles nothing**,');
+  out.push('which is why the `Current shape` column reports what the body does rather than what');
+  out.push('the parameters are called. `lib/controllers/auth.js` contributes two rows that are');
+  out.push('declared `(request, h)` already, and the analysis still has to read their bodies to');
+  out.push('decide whether every signalling call sits in a `return` position -- while several');
+  out.push('handlers still declared `(request, reply)` turn out to return on every path and');
+  out.push('others fall off the end. Neither population is identifiable from the signature.');
   out.push('');
 
   CONTROLLERS.forEach(function (name) {
@@ -3184,8 +3450,8 @@ function renderHandlerRows(model) {
       return;
     }
     var sub = rows.filter(isHandlerClosed).length;
-    out.push('### `' + CONTROLLER_DIR + '/' + name + '.js` -- ' + rows.length +
-      ' handlers (' + sub + ' closed)');
+    out.push('### `' + CONTROLLER_DIR + '/' + name + '.js` -- ' +
+      pluralize(rows.length, 'handler') + ' (' + sub + ' closed)');
     out.push('');
     out.push('| Done | Site | Kind | Current shape | Target disposition |');
     out.push('| --- | --- | --- | --- | --- |');
@@ -3195,7 +3461,7 @@ function renderHandlerRows(model) {
         (h.routeDeclarations > 1 ? ' (' + h.routeDeclarations + ' routes)' : '') +
         ' | routed handler' +
         ' | ' + cell(describeCurrentShape(h)) +
-        ' | ' + cell(describeHandlerTarget(h, false)) + ' |');
+        ' | ' + cell(describeHandlerTarget(h, false) + quirkRef(h.file, h.name)) + ' |');
     });
     out.push('');
   });
@@ -3212,7 +3478,8 @@ function renderPreHandlerRows(model) {
   });
   var closed = routed.filter(isHandlerClosed).length;
 
-  out.push('## 2. Routed pre-handlers -- ' + routed.length + ' rows (' + closed + ' closed)');
+  out.push('## 2. Routed pre-handlers -- ' + pluralize(routed.length, 'row') +
+    ' (' + closed + ' closed)');
   out.push('');
   out.push('Named pre-handlers in `' + HELPERS_PATH + '` that a route references. The census is');
   out.push('' + BASELINE_NAMED_PRE_HANDLERS + ' named pre-handlers in total; ' + routed.length +
@@ -3236,7 +3503,7 @@ function renderPreHandlerRows(model) {
       (p.shape === 'descriptor' ? ' (descriptor `method`)' : '') +
       ' | routed pre-handler' +
       ' | ' + cell(describeCurrentShape(p)) +
-      ' | ' + cell(describeHandlerTarget(p, true)) + ' |');
+      ' | ' + cell(describeHandlerTarget(p, true) + quirkRef(HELPERS_PATH, p.name)) + ' |');
   });
   out.push('');
 
@@ -3261,7 +3528,7 @@ function renderPreHandlerRows(model) {
       ' | ' + cell(anchoredSiteLabel(model, s)) +
       ' | routed pre-handler' +
       ' | ' + cell(s.current) +
-      ' | ' + cell(s.target) + ' |');
+      ' | ' + cell(s.target + anchoredQuirkRef(s)) + ' |');
   });
   out.push('');
   return out.join('\n');
@@ -3377,8 +3644,8 @@ function anchoredSiteLabel(model, site) {
 
 function renderInlinePreHandlerRows(model) {
   var out = [];
-  out.push('## 3. Inline pre-handler -- ' + model.inlinePreHandlers.length + ' row' +
-    (model.inlinePreHandlers.length === 1 ? '' : 's'));
+  out.push('## 3. Inline pre-handler -- ' +
+    pluralize(model.inlinePreHandlers.length, 'row'));
   out.push('');
   out.push('A function literal declared directly inside a `pre :` array in a route config.');
   out.push('There is exactly one, on `POST /api/users/login`, and it is the sole member of its');
@@ -3409,7 +3676,8 @@ function renderPromiseChainRows(model) {
   var chains = model.promiseChains;
   var closed = chains.filter(isChainClosed).length;
 
-  out.push('## 4. Promise chains -- ' + chains.length + ' rows (' + closed + ' closed)');
+  out.push('## 4. Promise chains -- ' + pluralize(chains.length, 'row') +
+    ' (' + closed + ' closed)');
   out.push('');
   out.push('One row per chain. A chain is closed when its value leaves the enclosing function --');
   out.push('`return`ed or `await`ed -- exactly once. Today the wrapper discards it.');
@@ -3430,17 +3698,23 @@ function renderPromiseChainRows(model) {
       return;
     }
     var sub = rows.filter(isChainClosed).length;
-    out.push('### `' + CONTROLLER_DIR + '/' + name + '.js` -- ' + rows.length +
-      ' chains (' + sub + ' closed)');
+    out.push('### `' + CONTROLLER_DIR + '/' + name + '.js` -- ' +
+      pluralize(rows.length, 'chain') + ' (' + sub + ' closed)');
     out.push('');
     out.push('| Done | Site | Kind | Current shape | Target disposition |');
     out.push('| --- | --- | --- | --- | --- |');
     rows.forEach(function (c) {
+      // A chain carrying a `.catch(` link IS an error edge, so it gets the
+      // pointer at the document that owns the status, payload and timing.
+      // A chain without one is not, and does not.
+      var isErrorEdge = c.linkNames.indexOf('catch') !== -1;
       out.push('| ' + box(isChainClosed(c)) +
         ' | ' + cell(chainSiteLabel(c)) +
         ' | promise chain' +
         ' | ' + cell(describeChainCurrent(c)) +
-        ' | ' + cell(describeChainTarget(c)) + ' |');
+        ' | ' + cell(describeChainTarget(c) +
+          (isErrorEdge ? errorEdgeRef(c.file) : '') +
+          quirkRef(c.file, c.enclosing)) + ' |');
     });
     out.push('');
   });
@@ -3525,7 +3799,7 @@ function renderCallbackRows(model) {
   var closed = rows.filter(isCallbackClosed).length;
 
   var resolvedSinceBaseline = BASELINE_CALLBACK_BOUNDARIES - rows.length;
-  out.push('## 5. Callback boundaries -- ' + rows.length + ' rows');
+  out.push('## 5. Callback boundaries -- ' + pluralize(rows.length, 'row'));
   out.push('');
   out.push('**A closed callback boundary ceases to exist**, so this section shrinks rather');
   out.push('than ticks: replacing `util.f(x, function (err, r) { ... })` with `await` removes');
@@ -3569,8 +3843,8 @@ function renderCallbackRows(model) {
       return;
     }
     var sub = group.filter(isCallbackClosed).length;
-    out.push('### `' + CONTROLLER_DIR + '/' + name + '.js` -- ' + group.length +
-      ' boundaries (' + sub + ' closed)');
+    out.push('### `' + CONTROLLER_DIR + '/' + name + '.js` -- ' +
+      pluralize(group.length, 'boundary', 'boundaries') + ' (' + sub + ' closed)');
     out.push('');
     out.push('| Done | Site | Kind | Current shape | Target disposition |');
     out.push('| --- | --- | --- | --- | --- |');
@@ -3587,7 +3861,12 @@ function renderCallbackRows(model) {
         ' | ' + cell('Create the `await` AT THIS CALL SITE inside the converted handler: ' +
           'await the promise form (or a promisified wrapper) and continue with its result. ' +
           'Do not push the boundary into the callee. Preserve the baseline\'s error handling ' +
-          'exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget.') + ' |');
+          'exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget.' +
+          // An error-first callback carries an error disposition; an
+          // empty-parameter one carries none, so only the former points at the
+          // error-edge inventory.
+          (c.errorFirst ? errorEdgeRef(c.file) : '') +
+          quirkRef(c.file, c.enclosing)) + ' |');
     });
     out.push('');
   });
@@ -3606,7 +3885,7 @@ function renderReplyChainRows(model) {
     return c.root === 'reply';
   });
 
-  out.push('## 6. Reply chains -- ' + REPLY_CHAIN_ROSTER.length + ' rows');
+  out.push('## 6. Reply chains -- ' + pluralize(REPLY_CHAIN_ROSTER.length, 'row'));
   out.push('');
   out.push('The roster below is a **recorded baseline measurement**, not a transcription: the');
   out.push('three-way classification depends on which builder method ran last, and the');
@@ -3644,22 +3923,39 @@ function renderReplyChainRows(model) {
         return c.file === entry.file && c.startLine === entry.startLine;
       })[0];
       var stillLegacy = !!match;
+      var section = CATEGORY_QUIRK_SECTIONS[entry.category];
+      var reference = entry.approvedDeviation
+        ? ' Measured baseline outcome owned by `' + QUIRK_DOC + '` \u00a7' + section +
+          '; the deviation and its precedence argument by \u00a7' + DEVIATION_QUIRK_SECTION + '.'
+        : ' Measured baseline outcome owned by `' + QUIRK_DOC + '` \u00a7' + section +
+          '; reproduce it, do not fix it.';
       out.push('| ' + box(!stillLegacy) +
         ' | `' + entry.file + ':' + entry.lines + '`' +
         (stillLegacy ? '' : ' (baseline; converted in this tree)') +
         ' | reply chain (' + entry.category + ')' +
         ' | ' + cell(entry.current) +
-        ' | ' + cell((entry.approvedDeviation ? '**APPROVED DEVIATION.** ' : '') + entry.target) + ' |');
+        ' | ' + cell((entry.approvedDeviation ? '**APPROVED DEVIATION.** ' : '') +
+          entry.target + reference) + ' |');
     });
     out.push('');
+    // The deviation is STATED here and ARGUED in docs/preserved-quirks.md
+    // §11.1. Restating the argument would put the same reasoning in two
+    // documents, which is the drift R-d's cross-reference requirement exists
+    // to prevent -- so this block gives the reader what changes, which
+    // requirement controls, and where the argument lives.
     entries.filter(function (e) {
       return e.approvedDeviation;
     }).forEach(function (entry) {
       out.push('> **Approved deviation, `' + entry.file + ':' + entry.lines + '`.** This is the');
       out.push('> only row in this document whose target changes observable behaviour, and it is');
-      out.push('> approved rather than assumed.');
+      out.push('> approved rather than assumed. ' + entry.justification.replace(/\s+/g, ' '));
       out.push('>');
-      out.push('> ' + entry.justification.replace(/\s+/g, ' '));
+      out.push('> The precedence argument -- why R-b ("every route serves") controls over');
+      out.push('> R-d ("behaviour improvements prohibited") here and nowhere else -- is owned by');
+      out.push('> `' + QUIRK_DOC + '` \u00a7' + DEVIATION_QUIRK_SECTION + ', which also');
+      out.push('> carries the corpus treatment: the baseline result is recorded as an expected');
+      out.push('> timeout and the target result as a 200 stream response, so the diff reads as an');
+      out.push('> approved change rather than a failure. It is not restated here.');
       out.push('');
     });
   });
@@ -3678,7 +3974,7 @@ function renderReplyChainRows(model) {
       ' | ' + cell(anchoredSiteLabel(model, s)) +
       ' | reply call, no return' +
       ' | ' + cell(s.current) +
-      ' | ' + cell(s.target) + ' |');
+      ' | ' + cell(s.target + anchoredQuirkRef(s)) + ' |');
   });
   out.push('');
   if (model.bareReplies.length > 0) {
@@ -3719,8 +4015,8 @@ function renderStreamRows(model) {
     return CONTROLLERS.indexOf(a) - CONTROLLERS.indexOf(b);
   });
 
-  out.push('## 7. Stream sites -- ' + model.streamSiteTotal + ' rows across ' +
-    names.length + ' controller' + (names.length === 1 ? '' : 's'));
+  out.push('## 7. Stream sites -- ' + pluralize(model.streamSiteTotal, 'row') +
+    ' across ' + pluralize(names.length, 'controller'));
   out.push('');
   out.push('Derived, then reviewed -- see "Streams" above for the rule and for what it');
   out.push('deliberately excludes. Several of these error **after the response has begun**,');
@@ -3730,7 +4026,8 @@ function renderStreamRows(model) {
 
   names.forEach(function (name) {
     var sites = model.streamSitesByController[name];
-    out.push('### `' + CONTROLLER_DIR + '/' + name + '.js` -- ' + sites.length + ' sites');
+    out.push('### `' + CONTROLLER_DIR + '/' + name + '.js` -- ' +
+      pluralize(sites.length, 'site'));
     out.push('');
     out.push('| Done | Site | Kind | Current shape | Target disposition |');
     out.push('| --- | --- | --- | --- | --- |');
@@ -3743,7 +4040,9 @@ function renderStreamRows(model) {
         ' | ' + cell('Preserve completion and error TIMING exactly: the same event ordering, ' +
           'the same point at which the response begins, and the same behaviour for an error ' +
           'raised after it has begun. Awaiting a stream that baseline did not await, or ' +
-          'surfacing an error baseline swallowed, is a behaviour change.') + ' |');
+          'surfacing an error baseline swallowed, is a behaviour change.' +
+          errorEdgeRef(site.file) +
+          quirkRef(site.file, site.enclosing)) + ' |');
     });
     out.push('');
   });
@@ -3857,7 +4156,8 @@ function renderExcludedSections(model) {
       ' | ' + cell(where) +
       ' | ' + cell('Resolves through the preserved fallback at `lib/util/routeParser.js:574-576`, ' +
         'returning `request.success(request.params)`. Same status, same payload, same ' +
-        'template resolution as today.') + ' |');
+        'template resolution as today. Baseline outcome owned by `' + QUIRK_DOC +
+        '` \u00a7' + MISSING_BINDING_QUIRK_SECTION + '.') + ' |');
   });
   out.push('');
   out.push('The `Done` box here means "the route declaration is present and the fallback is');
@@ -3879,17 +4179,18 @@ function renderRetainedByDesign() {
   out.push('');
   out.push('| Retained | Why it must not be touched |');
   out.push('| --- | --- |');
-  out.push('| Per-request debug logging at `lib/util/routeParser.js:311`, `:543-552`, `:556` | Explicitly retained. Performance is not a goal of this migration, so there is no licence to remove logging along the way. |');
+  out.push('| Per-request debug logging at `lib/util/routeParser.js:311`, `:543-552`, `:556` | Explicitly retained. Performance is not a goal of this migration, so there is no licence to remove logging along the way. Recorded in `' + QUIRK_DOC + '` \u00a79.3. |');
   out.push('| The missing-controller fallback at `lib/util/routeParser.js:574-576` | Three registered routes answer through it (section 10). It is adjacent to the interception block being removed, which is the whole risk. |');
   out.push('| `request.success` (`:412-479`), `request.fail` (`:482-514`) and the hand-rolled validation block (`:516-541`) | Reshaped to *return* their response, but their projection, flash-and-redirect behaviour and validation outcomes are invariant. |');
   out.push('| The handler catch-all at `lib/util/routeParser.js:578-589`, including its `if (err)` guard | A falsy throw produces no return and the toolkit converts `undefined` to the same status with a different message. That is observable, so the guard is copied verbatim. |');
   out.push('| The route DSL, the `route.config` -> `route.options` rename, the forced `cors = false` and `delete route.options.validate` | The route surface is an invariant of this migration. |');
-  out.push('| The cross-request `fail.redirect` state leak | A measured baseline defect with a documented blast radius. R-d preserves it; two consecutive corpus requests exist so it cannot be silently fixed. |');
-  out.push('| The two validation message maps in `config/routes.js` | Measured inert on both joi 17.13.3 and 18.2.5. Inert is the baseline behaviour, so inert is the target. |');
+  out.push('| The cross-request `fail.redirect` state leak | A measured baseline defect with a documented blast radius. R-d preserves it; two consecutive corpus requests exist so it cannot be silently fixed. Recorded in `' + QUIRK_DOC + '` \u00a73. |');
+  out.push('| The two validation message maps in `config/routes.js` | Measured inert on both joi 17.13.3 and 18.2.5. Inert is the baseline behaviour, so inert is the target. Recorded in `' + QUIRK_DOC + '` \u00a79.1. |');
   out.push('');
   out.push('No row in this document proposes a rename, a cleanup, or a "while we\'re here".');
   out.push('Every target disposition is the **preserved** behaviour, with exactly one approved');
-  out.push('exception, labelled as such and carrying its justification in section 6.');
+  out.push('exception, labelled as such in section 6 and argued in `' + QUIRK_DOC + '` \u00a7' +
+    DEVIATION_QUIRK_SECTION + '.');
   out.push('');
   return out.join('\n');
 }
@@ -4026,7 +4327,7 @@ function renderDocument(model, checks) {
     }
   ];
 
-  return [
+  var body = [
     renderFrontMatter(model),
     '',
     renderPreamble(),
@@ -4042,9 +4343,15 @@ function renderDocument(model, checks) {
     renderReplyChainRows(model),
     renderStreamRows(model),
     renderExcludedSections(model),
-    renderRetainedByDesign(),
-    ''
+    renderRetainedByDesign()
   ].join('\n');
+
+  // Exactly one trailing newline. Each section renderer ends with a blank
+  // line so that sections are separated when they are joined, which leaves a
+  // run of newlines at the very end; trimming it here rather than in the
+  // renderers keeps the separation rule in one place instead of making the
+  // last section a special case.
+  return body.replace(/\n+$/, '') + '\n';
 }
 
 
@@ -4199,6 +4506,9 @@ function main(argv) {
   }
 
   var model = analyseTree(options.app);
+  // The provenance block reports the command that produced the document, so
+  // the invocation is recorded where the analysis cannot invent it.
+  model.provenance.invocation = describeInvocation(options);
   var checks = runSelfChecks(model);
 
   if (checks.failures.length > 0) {
@@ -4258,6 +4568,11 @@ module.exports = {
   lineAt: lineAt,
   readFunctionAt: readFunctionAt,
   classifySignature: classifySignature,
+  describeInvocation: describeInvocation,
+  errorEdgeRef: errorEdgeRef,
+  quirkRef: quirkRef,
+  anchoredQuirkRef: anchoredQuirkRef,
+  pluralize: pluralize,
   analyseFunctionShape: analyseFunctionShape,
   findControllerExports: findControllerExports,
   findPromiseChains: findPromiseChains,

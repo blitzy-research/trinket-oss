@@ -4,6 +4,9 @@ var mongoose = require('mongoose'),
     extend   = require('mongoose-schema-extend'),
     dbconfig = require('config').db;
 
+// Pin Mongoose 6's existing `strictQuery` default so mongoose.connect() emits no Mongoose 7 DeprecationWarning; mongoose stays deferred at 6.x.
+mongoose.set('strictQuery', true);
+
 var mongo_creds = dbconfig.mongo.user && dbconfig.mongo.pass
   ? dbconfig.mongo.user + ':' + dbconfig.mongo.pass + '@' : '';
 

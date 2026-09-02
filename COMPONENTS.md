@@ -2,7 +2,15 @@
 
 Frontend components live in `public/components/` (gitignored, like node_modules).
 
-Run `npm run setup-vendor` to install required components.
+Run `npm run fetch-components` to install required components. `npm run build` runs it automatically ahead of the CSS build, so the standard setup needs no separate step.
+
+The components come from a single pinned release asset, retrieved by `scripts/fetch-components.js`, which holds both values below:
+
+- `https://github.com/trinketapp/trinket-oss/releases/download/v1.1.0/public-components.tgz` - the archive
+- `58422c0d0c7d25c1e6fdd1e014ff690f41c899257703e416e85a0fb0a926181f` - its expected SHA-256, verified before anything is extracted
+- Extraction is staged in a temporary directory and published atomically, and partial files are deleted on failure - `public/components/` is only ever absent or complete
+- A destination that already matches exits 0 without re-downloading, so re-running the script is cheap and safe
+- The host and the Docker build run this same script, so the artifact is fetched once and verified identically - it replaces an inline `curl | tar` step in the Dockerfile that performed no integrity check at all
 
 ## Components by Feature
 
@@ -72,4 +80,4 @@ Eventually, features should be toggleable so users can skip unnecessary dependen
 
 - Most components are Trinket forks with customizations
 - Original bower.json preserved for reference but bower is deprecated
-- Components should be cloned/downloaded via setup script, not committed
+- Components should be downloaded via `scripts/fetch-components.js`, not committed

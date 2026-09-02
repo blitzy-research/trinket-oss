@@ -1101,7 +1101,8 @@ module.exports = [
     route : 'POST /api/users/login users.login',
     cookie : true,
     config  : {
-      pre : [{ method : helpers.lowerUserFields }, { method : function(req, reply) { return reply(true) }, assign : 'encryptRoles' }],
+      // encryptRoles is a flag only: true selects the projected login payload (lib/controllers/users.js:181)
+      pre : [{ method : helpers.lowerUserFields }, { method : function(request, h) { return true; }, assign : 'encryptRoles' }],
       validate : {
         payload : {
           email    : Joi.string().required(),

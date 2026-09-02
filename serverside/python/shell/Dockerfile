@@ -24,7 +24,7 @@ ENV HOME /home/trinket
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
 
 ENV NVM_DIR /home/trinket/.nvm
-ENV NODE_VERSION 14.21.1
+ENV NODE_VERSION 22.23.2
 
 SHELL ["/bin/bash", "-c"]
 

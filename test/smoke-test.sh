@@ -4,10 +4,10 @@
 # Run this after docker-compose up to verify basic functionality
 #
 # Usage: ./test/smoke-test.sh [base_url]
-# Default: http://localhost:3001
+# Default: http://localhost:3000
 #
 
-BASE_URL="${1:-http://localhost:3001}"
+BASE_URL="${1:-http://localhost:3000}"
 PASS=0
 FAIL=0
 

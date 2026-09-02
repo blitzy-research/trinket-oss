@@ -1,0 +1,39 @@
+{
+  "app": {
+    "start": true,
+    "hostname": "127.0.0.1",
+    "port": 3010,
+    "url": {
+      "protocol": "http",
+      "hostname": "127.0.0.1",
+      "port": 3010
+    },
+    "plugins": {
+      "session": {
+        "cookieOptions": {
+          "password": "parity-harness-only-not-a-production-secret-0000"
+        }
+      }
+    },
+    "mail": {
+      "from": "parity@localhost",
+      "host": "127.0.0.1"
+    }
+  },
+  "db": {
+    "mongo": {
+      "database": "parity"
+    },
+    "redis": {
+      "enabled": false
+    }
+  },
+  "aws": {
+    "buckets": {
+      "exports": {
+        "name": "parity-exports",
+        "host": "http://127.0.0.1:3010/parity-exports"
+      }
+    }
+  }
+}

@@ -257,6 +257,114 @@ const FUNNEL = Object.freeze({
   NONE: 'none'
 });
 
+// The two documents this one deliberately does not duplicate. Every claim
+// about *why* a defect is kept belongs to the quirk catalogue, and every
+// claim about which call sites still need a `return`/`await` belongs to the
+// conversion checklist. Rows cross-reference them; they do not restate them.
+const SIBLING_DOCS = Object.freeze({
+  quirks: 'docs/preserved-quirks.md',
+  conversion: 'docs/conversion-inventory.md'
+});
+
+// Edges that are also catalogued quirks, matched on properties that survive a
+// conversion - carrier name, thrown kind, mechanism - rather than on line
+// numbers, which move. A matcher that finds nothing simply emits no
+// cross-reference, so a closed row does not produce a dangling one.
+const QUIRK_CROSS_REFERENCES = Object.freeze([
+  {
+    section: '5',
+    title: 'the two `pages` handlers that answer 500 to authenticated visitors',
+    match: function (edge) {
+      return Boolean(edge.thrownKind) && edge.thrownKind.kind === 'type-error';
+    }
+  },
+  {
+    // Section 8.1 is specifically the `_request.get(...).on('error')` listener
+    // in the user-asset upload, not every stream error listener in the tree:
+    // the other `.on('error')` sites are archive and download streams with
+    // their own outcomes. Matching them here would point a reviewer at the
+    // wrong catalogue entry, so the predicate names the file and the
+    // disposition as well as the mechanism.
+    section: '8.1',
+    title: 'the streaming asset fetch\'s two failure modes',
+    match: function (edge) {
+      return edge.file === 'lib/controllers/users.js' &&
+        edge.disposition === DISPOSITION.LOG_CONTINUE &&
+        edge.mechanism === '.on(\'error\')';
+    }
+  },
+  {
+    section: '6',
+    title: 'Google OAuth\'s new-user path, which saves the user and then reports failure',
+    match: function (edge) {
+      return edge.carrier === 'auth.googleCallback';
+    }
+  },
+  {
+    section: '7',
+    title: '`folders.trinkets`, whose injected URL is malformed when no query is present',
+    match: function (edge) {
+      return edge.carrier === 'folders.trinkets';
+    }
+  },
+  {
+    // Section 4.4 is one site: the `reply(err)` with no return inside a
+    // `.catch` in the trinket controller. The other unreturned replies carry
+    // Boom factories rather than the caught error and are not that entry.
+    section: '4.4',
+    title: 'the unreturned reply on an error path',
+    match: function (edge) {
+      return edge.file === 'lib/controllers/trinket.js' &&
+        edge.disposition === DISPOSITION.REPLY_ERR &&
+        edge.returned === false &&
+        Boolean(edge.valueKind) && edge.valueKind.kind === 'error-identifier';
+    }
+  },
+  {
+    // Section 3's blast radius is the routes whose `fail.redirect` carries a
+    // placeholder: interpolating a literal string is idempotent, so only a
+    // template can be consumed. The leak-bearing routes are MEASURED from the
+    // route declarations rather than listed here, so this reference cannot
+    // drift from the tree.
+    section: '3',
+    title: 'the cross-request state leak in `fail.redirect`',
+    match: function (edge, bindings) {
+      if (edge.disposition !== DISPOSITION.FAIL_LOCAL || !bindings ||
+        !bindings.templatedFailRedirects) {
+        return false;
+      }
+      return edge.routes.some(function (spec) {
+        return bindings.templatedFailRedirects.has(spec);
+      });
+    }
+  }
+]);
+
+/**
+ * The `See also` targets for one edge: the quirk sections that catalogue it,
+ * and - where the missing `return` is what the conversion has to fix - the
+ * conversion checklist that owns that call site.
+ *
+ * Deterministic: QUIRK_CROSS_REFERENCES is evaluated in declaration order and
+ * the conversion reference is appended last.
+ */
+function crossReferences(edge, bindings) {
+  const refs = QUIRK_CROSS_REFERENCES.filter(function (entry) {
+    return entry.match(edge, bindings);
+  }).map(function (entry) {
+    return SIBLING_DOCS.quirks + ' section ' + entry.section + ' - ' + entry.title;
+  });
+
+  if (edge.returned === false) {
+    refs.push(
+      SIBLING_DOCS.conversion + ' - this call site has no `return`, so the ' +
+      'per-site return/await disposition is tracked there as well as here'
+    );
+  }
+
+  return refs;
+}
+
 // Boom factory -> status. Used to state the status a row must preserve rather
 // than leaving the reader to look it up. Every factory the analysed tree uses
 // is present; unknown factories are reported without a status rather than
@@ -1234,13 +1342,65 @@ function findCarriers(relPath, src, codeOnly) {
   return carriers;
 }
 
+/**
+ * The route specification a `route :` key names, as a single string.
+ *
+ * A declaration is usually one literal, but the per-language loop in
+ * config/routes.js builds its declarations by concatenation:
+ *
+ *   route : 'GET /' + lang + '/{shortCode} trinket.getByShortCode'
+ *
+ * Reading only the first literal there yields `GET /`, whose third
+ * whitespace-separated token - the controller binding - does not exist, so
+ * three routed download handlers were reported as having no declaration at
+ * all and their rows fell back to "drive through the carrier". The
+ * concatenation is therefore followed, with each non-literal operand rendered
+ * as `<name>` so the result reads as the template it is rather than as a
+ * literal path: `GET /<lang>/{shortCode} trinket.getByShortCode`. The
+ * expanded per-language surface belongs to test/parity/manifest.js and the
+ * generated document says so.
+ */
+function readRouteSpec(src, codeOnly, from) {
+  const first = readStringLiteral(src, codeOnly, from);
+  if (!first) {
+    return null;
+  }
+  let text = first.text;
+  let cursor = first.end;
+
+  for (;;) {
+    const plus = skipSpaceForward(codeOnly, cursor);
+    if (codeOnly[plus] !== '+') {
+      break;
+    }
+    const operandAt = skipSpaceForward(codeOnly, plus + 1);
+    const literal = readStringLiteral(src, codeOnly, operandAt);
+    if (literal) {
+      text += literal.text;
+      cursor = literal.end;
+      continue;
+    }
+    if (!isIdentifierChar(codeOnly[operandAt])) {
+      break;
+    }
+    const identifier = readIdentifierForward(codeOnly, operandAt);
+    if (!identifier) {
+      break;
+    }
+    text += '<' + identifier + '>';
+    cursor = operandAt + identifier.length;
+  }
+
+  return { text: text, end: cursor };
+}
+
 /** Carriers for a route module: one per literal `route :` declaration. */
 function findRouteDeclarationCarriers(relPath, src, codeOnly) {
   const carriers = [];
   const routeKey = /\broute\s*:/g;
   let m;
   while ((m = routeKey.exec(codeOnly)) !== null) {
-    const literal = readStringLiteral(src, codeOnly, m.index + m[0].length);
+    const literal = readRouteSpec(src, codeOnly, m.index + m[0].length);
     if (!literal) {
       continue;
     }
@@ -1287,9 +1447,46 @@ function carrierAt(carriers, offset) {
  * generated document says so. A tree missing either module still yields a
  * complete inventory - carriers name the reachable code path instead.
  */
+/**
+ * Whether the route declaration between `from` and `to` declares a
+ * `fail.redirect` whose value carries a `{placeholder}`.
+ *
+ * This is what decides section 3's blast radius. `request.fail` assigns the
+ * interpolated value back onto the parse-time object on every such route, but
+ * interpolating a literal string yields the same string, so only a template
+ * can be consumed by the first request. Measuring it here keeps the
+ * cross-reference tied to the tree instead of to a list in this file.
+ */
+function hasTemplatedFailRedirect(src, codeOnly, from, to) {
+  const failKey = /\bfail\s*:/g;
+  failKey.lastIndex = from;
+  let m;
+  while ((m = failKey.exec(codeOnly)) !== null && m.index < to) {
+    const brace = skipSpaceForward(codeOnly, m.index + m[0].length);
+    if (codeOnly[brace] !== '{') {
+      continue;
+    }
+    const end = matchDelimiter(codeOnly, brace);
+    if (end === -1 || end > to) {
+      continue;
+    }
+    const redirectKey = /\bredirect\s*:/g;
+    redirectKey.lastIndex = brace;
+    let r;
+    while ((r = redirectKey.exec(codeOnly)) !== null && r.index < end) {
+      const literal = readStringLiteral(src, codeOnly, r.index + r[0].length);
+      if (literal && /\{[^}]+\}/.test(literal.text)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function buildRouteBindings(appRoot) {
   const byTarget = new Map();
   const byHelper = new Map();
+  const templatedFailRedirects = new Set();
   const modulesRead = [];
 
   ROUTE_MODULES.forEach(function (relPath) {
@@ -1306,7 +1503,7 @@ function buildRouteBindings(appRoot) {
     const routeKey = /\broute\s*:/g;
     let m;
     while ((m = routeKey.exec(codeOnly)) !== null) {
-      const literal = readStringLiteral(src, codeOnly, m.index + m[0].length);
+      const literal = readRouteSpec(src, codeOnly, m.index + m[0].length);
       if (!literal) {
         continue;
       }
@@ -1322,6 +1519,9 @@ function buildRouteBindings(appRoot) {
 
     declarations.forEach(function (decl, index) {
       const blockEnd = index + 1 < declarations.length ? declarations[index + 1].start : codeOnly.length;
+      if (hasTemplatedFailRedirect(src, codeOnly, decl.start, blockEnd)) {
+        templatedFailRedirects.add(decl.spec);
+      }
       if (decl.target) {
         if (!byTarget.has(decl.target)) {
           byTarget.set(decl.target, []);
@@ -1344,7 +1544,12 @@ function buildRouteBindings(appRoot) {
     });
   });
 
-  return { byTarget: byTarget, byHelper: byHelper, modulesRead: modulesRead };
+  return {
+    byTarget: byTarget,
+    byHelper: byHelper,
+    templatedFailRedirects: templatedFailRedirects,
+    modulesRead: modulesRead
+  };
 }
 
 /** Routes bound to a carrier, deduplicated and ordered. */
@@ -1666,6 +1871,94 @@ function isReturned(codeOnly, offset) {
   return readMemberPathBack(codeOnly, prev).text === 'return';
 }
 
+/**
+ * The statement a chain link or listener registration belongs to, and whether
+ * anything waits for it.
+ *
+ * A `.catch(handler)` link is REGISTERED synchronously and INVOKED later, so
+ * its timing is decided by the statement it hangs off: a chain that is
+ * returned or awaited makes the enclosing function wait for the rejection,
+ * and one that is neither leaves nothing waiting for it. `isReturned` cannot
+ * answer that, because it only looks immediately behind the offset and the
+ * `return` sits at the head of the statement, several links earlier.
+ */
+function chainContext(ctx, offset) {
+  const code = ctx.codeOnly;
+  let head = offset;
+  let i = skipSpaceBack(code, offset - 1);
+
+  // Walk back along the chain itself rather than using statementBounds, whose
+  // backward walk cannot see past an intervening block: an `if (...) { ... }`
+  // earlier in the same handler masks the `;` that would have bounded the
+  // statement, and the walk then reports the function body's own start with
+  // no `return` in front of it. Measured on the `home` handler of the pages
+  // controller, whose chain IS returned - so the naive reading got both the
+  // line and the awaited-ness wrong, on the two fields this clause exists to
+  // state. This walk hops matched `(...)`/`[...]` groups and member paths
+  // backwards until it reaches something that cannot be part of the chain.
+  while (i >= 0) {
+    const ch = code[i];
+    if (ch === ')' || ch === ']') {
+      let depth = 0;
+      let j = i;
+      for (; j >= 0; j--) {
+        if (CLOSERS[code[j]]) {
+          depth++;
+        } else if (OPENERS[code[j]]) {
+          depth--;
+          if (depth === 0) {
+            break;
+          }
+        }
+      }
+      if (j < 0) {
+        break;
+      }
+      head = j;
+      i = skipSpaceBack(code, j - 1);
+      continue;
+    }
+    if (ch === '.') {
+      head = i;
+      i = skipSpaceBack(code, i - 1);
+      continue;
+    }
+    if (isIdentifierChar(ch)) {
+      const path = readMemberPathBack(code, i);
+      if (path.text === 'return' || path.text === 'await') {
+        return { line: lineFromIndex(ctx.lineIndex, path.start), awaited: true };
+      }
+      head = path.start;
+      i = skipSpaceBack(code, path.start - 1);
+      continue;
+    }
+    break;
+  }
+
+  // The chain is not returned or awaited at its own statement. It may still
+  // be assigned to something that is - `promise = featuredStore.getList()...`
+  // in the admin controller is returned twenty lines later - so an assignment
+  // is reported as an assignment rather than as "nothing waits for it", which
+  // would be a false claim about the very field this clause exists to state.
+  let boundTo = null;
+  const before = skipSpaceBack(code, head - 1);
+  if (before >= 0 && code[before] === '=' && code[before - 1] !== '=' &&
+    code[before - 1] !== '!' && code[before - 1] !== '<' && code[before - 1] !== '>' &&
+    code[before + 1] !== '=') {
+    const target = skipSpaceBack(code, before - 1);
+    if (target >= 0 && (isIdentifierChar(code[target]) || code[target] === ']')) {
+      const path = readMemberPathBack(code, target);
+      boundTo = path.text || null;
+    }
+  }
+
+  return {
+    line: lineFromIndex(ctx.lineIndex, head),
+    awaited: false,
+    boundTo: boundTo
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Edge extraction
 // ---------------------------------------------------------------------------
@@ -1934,6 +2227,7 @@ function analyseFile(relPath, src, bindings) {
         bareReference: bare,
         mechanism: site.mechanism,
         unresolved: !resolved.resolved,
+        chain: chainContext(ctx, site.at),
         notes: resolved.resolved ? [] : [
           'The handler is a bare reference to `' + bare + '`, which this tool ' +
           'did not resolve to a body in this file. The disposition recorded is ' +
@@ -2007,6 +2301,7 @@ function analyseFile(relPath, src, bindings) {
       }),
       endLine: lineFromIndex(ctx.lineIndex, handlerFn.bodyEnd),
       notes: notes,
+      chain: chainContext(ctx, site.at),
       propagation: propagationAt(ctx, handlerFn.keywordAt)
     });
   });
@@ -2304,7 +2599,222 @@ function statusPhrase(kind) {
   return kind.status ? String(kind.status) : 'the status of Boom.' + kind.factory + '()';
 }
 
+// ---------------------------------------------------------------------------
+// Side effects and timing
+//
+// R-e's deliverable is one row per changed error edge carrying the target
+// status, payload or redirect, its SIDE EFFECTS and its TIMING. The first
+// group is what the disposition prose states. The last two are the fields a
+// mechanical conversion drops silently - a swallowed error that starts being
+// reported, a fire-and-forget deletion that starts being awaited, a response
+// that starts settling earlier than the callback that used to produce it - so
+// they are stated explicitly on EVERY row rather than only where the prose
+// happens to mention them. A row without them is not checkable.
+//
+// Neither clause is boilerplate. The effects clause names the writes this
+// edge actually performs, read from the edge's own logging calls, settling
+// calls and surface; the timing clause names the point at which it settles,
+// taken from the propagation walk that already decided its funnel.
+// ---------------------------------------------------------------------------
+
+/** The edge's logging calls as an inline list, or null when it makes none. */
+function logList(edge) {
+  const calls = edge.loggingCalls || [];
+  if (!calls.length) {
+    return null;
+  }
+  return calls.map(function (call) {
+    return '`' + call + '`';
+  }).join(', ');
+}
+
+/** The settling calls the edge produces, as an inline list, or null. */
+function producedList(edge) {
+  const produced = edge.producedResponses || [];
+  if (!produced.length) {
+    return null;
+  }
+  return produced.map(function (call) {
+    return '`' + call + '`';
+  }).join(', ');
+}
+
+/**
+ * What this edge writes, beyond the response itself. Stated so a conversion
+ * that adds a write - or drops one - is visible in a diff of this document.
+ */
+function sideEffectsText(edge) {
+  const logs = logList(edge);
+  const pre = edge.surface === SURFACE.PRE || edge.surface === SURFACE.INLINE_PRE;
+
+  if (edge.disposition === DISPOSITION.FAIL_LOCAL) {
+    return 'request.fail logs its argument at info level when one is present; on ' +
+      'the `html` + `fail.redirect` branch it writes the `failure` flash (only ' +
+      'when a payload was passed), mutates `fail.redirect` IN PLACE on the ' +
+      'object captured at parse time, and writes the `payload` and `query` ' +
+      'flashes; on the other two branches it calls `request.yar.flash()` with ' +
+      'no arguments, which READS AND CLEARS the accumulated flash into the ' +
+      'response body. Preserve exactly those writes - no more, and none ' +
+      'dropped. The in-place mutation is the cross-request leak catalogued in ' +
+      SIBLING_DOCS.quirks + ' section 3 and is required, not repaired.';
+  }
+
+  if (edge.disposition === DISPOSITION.REPLY_ERR) {
+    if (pre) {
+      return 'on the resolving path the pre-handler\'s assigned value becomes ' +
+        'the value passed here, so `request.pre.<assign>` holds it for every ' +
+        'later stage that reads it; on the rejecting path nothing is assigned. ' +
+        'No session or database write happens at this edge.';
+    }
+    return 'the shim resolves its deferred promise with this value, which is ' +
+      'the mechanism the conversion removes and the only effect this edge has ' +
+      'beyond the response. No flash, session or database write happens here' +
+      (logs ? ', and the ' + logs + ' log call is unchanged' : '') + '.';
+  }
+
+  if (edge.disposition === DISPOSITION.LOG_CONTINUE) {
+    return 'the ' + (logs || 'log') + ' call and nothing else - no flash, no ' +
+      'session write, no response, no rethrow. A conversion that adds any of ' +
+      'those changes this edge.';
+  }
+
+  if (edge.disposition === DISPOSITION.SWALLOW) {
+    return logs
+      ? 'the ' + logs + ' call only. The error itself is discarded, so no ' +
+        'response, rethrow, flash or session write follows it.'
+      : 'none at all - no log, no response, no rethrow, no flash. The error ' +
+        'value is discarded where it is received, and R-d requires that it ' +
+        'keep being discarded.';
+  }
+
+  if (edge.disposition === DISPOSITION.LATE_RESOLVE) {
+    const produced = producedList(edge);
+    return 'whatever the callback body performs before it settles, plus the ' +
+      'effects of the settling call' + (produced ? 's ' + produced : '') +
+      ' itself - for `request.fail` that includes its flash writes. The ' +
+      'deferred promise is resolved at that point and not before.';
+  }
+
+  // DISPOSITION.BOOM
+  const kind = edge.thrownKind || { kind: 'value' };
+  const prop = edge.propagation || {};
+  if (kind.kind === 'type-error') {
+    return 'none from this line, and that is part of the contract: it throws ' +
+      'before a response is built, so every statement that follows it in the ' +
+      'same branch does not run. Layer 1 then logs `err.stack` at error level. ' +
+      'Preserve both the absence and the log.';
+  }
+  if (edge.returnedBoom) {
+    return 'none beyond the response itself - the value is returned, not ' +
+      'thrown, so nothing is logged and nothing is written.';
+  }
+  if (prop.downstreamCatch) {
+    return 'none here; the writes belong to the `.catch(...)` handler at line ' +
+      prop.catchLine + ', whose own row states them.';
+  }
+  if (pre) {
+    return 'none beyond the rejection: the pre-handler assigns nothing when it ' +
+      'rejects, so no `request.pre` value is written on this path.';
+  }
+  if (prop.kind === 'cps-callback') {
+    return 'none, and nothing is logged either: the throw escapes the callback ' +
+      'as an uncaught exception rather than reaching a funnel that would log it.';
+  }
+  if (prop.kind === 'promise-chain' && !prop.chainReturned) {
+    return 'none - the rejection is unhandled, so nothing logs it and nothing ' +
+      'is written in response to it.';
+  }
+  return 'Layer 1 logs `err.stack` at error level, or `String(err)` when there ' +
+    'is no stack. Nothing else is written.';
+}
+
+/**
+ * When this edge settles, relative to the handler body. This is the field a
+ * mechanical conversion is most likely to change without changing a single
+ * status code, because moving an `await` moves the settlement.
+ */
+function timingText(edge) {
+  const prop = edge.propagation || {};
+  const chain = edge.chain || null;
+
+  // A `.catch(...)` link is registered on the handler's own stack and RUN
+  // later, so its timing is the chain's, never the registration's. Saying
+  // "synchronous" here - which the propagation walk would, because the link
+  // itself sits in the handler body - would be exactly backwards on the one
+  // field a conversion is most likely to break.
+  if (edge.mechanism === '.catch()') {
+    return 'deferred. The handler is registered synchronously while the chain ' +
+      'at line ' + ((chain && chain.line) || edge.line) + ' is built, and runs ' +
+      'only when that chain rejects - a microtask at the earliest, and after ' +
+      'the handler body has already returned. ' +
+      (chain && chain.awaited
+        ? 'The chain is returned or awaited, so the enclosing function waits ' +
+          'for the rejection and must keep waiting for it.'
+        : (chain && chain.boundTo
+          ? 'The chain is assigned to `' + chain.boundTo + '` at that ' +
+            'statement rather than returned, so whether anything waits for ' +
+            'the rejection is decided where `' + chain.boundTo + '` is ' +
+            'consumed - preserve that consumption point, and do not move the ' +
+            'settlement to this one.'
+          : 'The chain is NEITHER returned, awaited nor assigned at that ' +
+            'statement, so nothing waits for the rejection today: the request ' +
+            'settles on whichever path settles it first, and adding an await ' +
+            'here would change that.'));
+  }
+
+  if (edge.mechanism === '.on(\'error\')' || edge.listener) {
+    return 'when the stream emits `' + (edge.listener || 'error') + '`, which is ' +
+      'not awaited by anything: for a refused connection it fires INSTEAD of ' +
+      '`end`, and for a mid-stream failure it fires after `response`. The ' +
+      'handler body has already returned by then, so the settlement time of ' +
+      'the request is decided by whichever listener runs - or, when none does, ' +
+      'not at all. Preserve that, including the case where nothing settles.';
+  }
+
+  if (edge.disposition === DISPOSITION.LATE_RESOLVE) {
+    return 'deferred. The response is built only when `' +
+      (edge.callee || 'the surrounding call') + '` invokes its callback, so the ' +
+      'request settles then and not when the handler body returns. Rule T-3 ' +
+      'puts the `await` boundary at this call site; moving the settlement ' +
+      'earlier changes which settle wins.';
+  }
+
+  if (prop.kind === 'promise-chain') {
+    return 'asynchronous, in the chain step at line ' + (prop.chainLine || edge.line) +
+      ', so it settles a microtask after the handler body has run' +
+      (prop.chainReturned
+        ? '. The chain is returned or awaited, so the handler waits for it and must keep waiting.'
+        : '. The chain is NEITHER returned nor awaited, so nothing waits for it today and nothing may start waiting for it.');
+  }
+
+  if (prop.kind === 'cps-callback') {
+    return 'inside the callback `' + (prop.callee || 'library code') +
+      '` invokes, off the handler\'s own stack, so it runs after the handler ' +
+      'body has already returned.';
+  }
+
+  if (prop.kind === 'module-scope') {
+    return 'at module load, before any request exists.';
+  }
+
+  return 'synchronous, on the handler body\'s own stack, before it returns' +
+    (prop.viaIteratee
+      ? ', reached through a synchronous iteratee which is why it stays on that stack'
+      : '') + '.';
+}
+
+/** The two fields R-e requires on every row, appended to every target. */
+function effectsAndTiming(edge) {
+  return ' Side effects: ' + sideEffectsText(edge) +
+    ' Timing: ' + timingText(edge);
+}
+
+/** The composed target: the disposition prose, then side effects and timing. */
 function targetText(edge) {
+  return targetCore(edge) + effectsAndTiming(edge);
+}
+
+function targetCore(edge) {
   const pre = edge.surface === SURFACE.PRE || edge.surface === SURFACE.INLINE_PRE;
   const prop = edge.propagation || {};
 
@@ -2362,7 +2872,7 @@ function targetText(edge) {
         'shape. Layer 3 then post-processes it, and for a browser HTML request at ' +
         '401/403/404/>=500 it takes over BEFORE the header block, so the four ' +
         'cache and frame headers do not reach the rendered error page. Preserve ' +
-        'the status, the payload and the synchronous timing. ' + RETURN_DISCIPLINE;
+        'the status and the payload. ' + RETURN_DISCIPLINE;
     }
     return 'The shim\'s reply() selects on the runtime value and all three ' +
       'outcomes are observable: an isBoom value resolves unchanged with its own ' +
@@ -2391,8 +2901,7 @@ function targetText(edge) {
       'Converting a log-and-continue branch into a rejection or a returned Boom ' +
       'turns an edge that produces no response into one that does, changes the ' +
       'status a client sees from whatever else settles the request to a 500, ' +
-      'and is exactly the silent conversion R-e is written to catch. Timing and ' +
-      'log text unchanged.';
+      'and is exactly the silent conversion R-e is written to catch.';
   }
 
   if (edge.disposition === DISPOSITION.SWALLOW) {
@@ -2409,7 +2918,7 @@ function targetText(edge) {
       ((edge.loggingCalls || []).length ? '' : ', no log') +
       '. Funnel: none. Preserve the swallow exactly - R-d prohibits repairing ' +
       'it, and a caller that today proceeds on a failed operation must keep ' +
-      'proceeding. Side effects and timing unchanged.';
+      'proceeding.';
   }
 
   if (edge.disposition === DISPOSITION.LATE_RESOLVE) {
@@ -2423,7 +2932,7 @@ function targetText(edge) {
       'the await boundary at this call site, and the response must still be ' +
       'produced after the callback would have run. Collapsing this into an ' +
       'earlier await changes which settle wins and can change the response ' +
-      'itself. Status, payload and side effects unchanged.';
+      'itself. Status and payload unchanged.';
   }
 
   // DISPOSITION.BOOM
@@ -2846,12 +3355,29 @@ function renderProvenance(model) {
   lines.push('| Token self-check | ' + (model.check.applied ? 'asserted' : 'reported only') +
     ' (`--counts-check=' + model.check.mode + '`) |');
   lines.push('| Rows emitted by this run | ' + model.totals.rows + ' |');
+  lines.push('| Exact command | `' + model.invocation + '` |');
   lines.push('');
   lines.push('<!-- /provenance -->');
   lines.push('');
-  lines.push('> Regenerate with `node ' + model.tool.path + ' --app <tree> --out <file>`.');
+  lines.push('> **This file is generated output. Do not hand-edit it.** Every line below is');
+  lines.push('> written by `' + model.tool.path + '` from the analysed tree named above;');
+  lines.push('> an edit made here is lost on the next run and, worse, is indistinguishable');
+  lines.push('> from a measurement while it survives. To change what this document says,');
+  lines.push('> change the generator or the tree and re-run the exact command in the');
+  lines.push('> provenance block.');
+  lines.push('>');
+  if (model.tree.isBaselineCommit) {
+    lines.push('> The analysed tree is an untouched worktree at the R-f baseline commit, which');
+    lines.push('> is what makes every *current* disposition below a baseline fact rather than a');
+    lines.push('> reading of the converted tree. Recreate it with');
+    lines.push('> `git worktree add --detach <path> ' + BASELINE_COMMIT.slice(0, 7) + '`; it needs no install,');
+    lines.push('> because this generator requires nothing but Node core and reads the');
+    lines.push('> controllers as text.');
+    lines.push('>');
+  }
   lines.push('> Everything below the provenance block is a pure function of the analysed');
-  lines.push('> tree, so two runs over one tree differ only inside that block.');
+  lines.push('> tree, so two runs over one tree differ only inside that block - which makes');
+  lines.push('> `diff` on the body a review of the tree rather than of the run.');
   return lines;
 }
 
@@ -2872,6 +3398,22 @@ function renderPreamble(model) {
     model.totals.rows + ' rows over ' + model.totals.files + ' files. A different tree');
   lines.push('yields a different number, and that is the intended behaviour: conversion');
   lines.push('closes rows.');
+  lines.push('');
+  lines.push('### What is in scope, and what deliberately is not');
+  lines.push('');
+  lines.push('The analysed surface is the ' + ANALYSIS_TARGETS.length + ' files hapi itself invokes into: the ten');
+  lines.push('controllers, the named pre-handlers in `' + HELPERS_FILE + '`, and the one');
+  lines.push('inline pre-handler in `' + INLINE_PRE_FILE + '`. Every one of them is read,');
+  lines.push('and a file with no row says so in its own section rather than being omitted.');
+  lines.push('');
+  lines.push('Nothing else is reviewed. Rule R-a requires the diff to read as a runtime bump,');
+  lines.push('a hapi API migration, an async conversion and blocking-only dependency swaps -');
+  lines.push('so this is a record of the error edges **that conversion moves**, not a general');
+  lines.push('audit of the application\'s error handling. The internal callback modules keep');
+  lines.push('their callback interfaces under rule T-3, which puts the `await` boundary at the');
+  lines.push('lifecycle method rather than pushing it into the utility, so their internal');
+  lines.push('error edges are not conversion sites and carry no row here. Where a converted');
+  lines.push('handler awaits one of them, the edge that appears below is the handler\'s own.');
   lines.push('');
   lines.push('### The sizing metric is not the row count');
   lines.push('');
@@ -2942,6 +3484,15 @@ function renderFunnels(model) {
   lines.push('');
   lines.push('None of those three is a Boom, so a Layer 2 response takes Layer 3\'s non-Boom');
   lines.push('branch and **does** receive the cache headers.');
+  lines.push('');
+  lines.push('The in-place interpolation is the **cross-request state leak**: the `fail`');
+  lines.push('object was captured once at parse time and the handler closure holds it by');
+  lines.push('reference, so the assignment mutates the long-lived object and a later request');
+  lines.push('to the same route redirects to the earlier request\'s target. It is catalogued,');
+  lines.push('with its measurement and its blast radius, in `' + SIBLING_DOCS.quirks +
+    '` section 3.');
+  lines.push('R-d requires it: rows on this funnel preserve the mutation rather than');
+  lines.push('repairing it.');
   lines.push('');
   lines.push('### Layer 3 - `onPreResponse`, `' + f.layer3.file + ':' +
     f.layer3.startLine + '-' + f.layer3.endLine + '`');
@@ -3028,9 +3579,12 @@ function renderSilentChanges() {
     'failure modes with different outcomes:',
     '',
     '- a **refused connection** emits `error` and **not** `end`, so the upload',
-    '  continuation never runs and the request is left **unsettled**;',
-    '- a **mid-stream failure after `response`** may still reach `end`, so the',
-    '  continuation runs on a partial file.',
+    '  continuation never runs, **nothing is uploaded at all**, and the request is',
+    '  left **unsettled**. An earlier reading of this site had it uploading partial',
+    '  bytes; that was wrong, and the distinction matters because the two failure',
+    '  modes need different fixtures and produce different observable results;',
+    '- a **mid-stream failure after `response`** may still reach `end`, so *there*',
+    '  the continuation does run, on a partial file.',
     '',
     'Both are baseline behaviour and both are preserved.',
     '',
@@ -3052,17 +3606,26 @@ function renderHowToRead(model) {
   lines.push('## 4. How to read a row');
   lines.push('');
   lines.push('```');
-  lines.push('- [ ] `<file>:<line>` - <Disposition> - <Funnel> - <Shape>');
-  lines.push('  ... Carrier <reachable code path> - Routes <bound routes> - Source <the line>');
-  lines.push('  ... Target: <the outcome to preserve>');
-  lines.push('  ... Note: <a measured detail, when there is one>');
+  lines.push('  ... - [ ] `<file>:<line>` - <Disposition> - <Funnel> - <Shape>');
+  lines.push('  ...       Carrier <reachable code path> - Routes <bound routes> - Source <the line>');
+  lines.push('  ...       Target: <the outcome to preserve, ending in Side effects and Timing>');
+  lines.push('  ...       Note: <a measured detail, when there is one>');
+  lines.push('  ...       See also: <the sibling document that catalogues this edge>');
   lines.push('```');
   lines.push('');
-  lines.push('A row is a line beginning `- [ ] ` at column 0; its continuation lines are');
-  lines.push('indented six spaces and begin `Carrier `, `Target: ` or `Note: `. The `... `');
-  lines.push('above is only to keep this sketch from being mistaken for a row by a parser');
-  lines.push('reading the document - `test/parity/capture.js` reads it - and does not appear');
-  lines.push('in real rows.');
+  lines.push('A real row is a line beginning `- [ ] ` at column 0, and its continuation');
+  lines.push('lines are indented six spaces and begin `Carrier `, `Target: `, `Note: ` or');
+  lines.push('`See also: `. Every line of the sketch above carries a `... ` prefix that a');
+  lines.push('real row does not, so counting lines that begin `- [ ] ` at column 0 returns');
+  lines.push('the row count this document states and nothing else - the sketch does not');
+  lines.push('inflate it by one.');
+  lines.push('');
+  lines.push('Nothing machine-reads this document. `test/parity/capture.js` carries the');
+  lines.push('corresponding failure-path scenarios by hand, in its `error-edge.*` groups,');
+  lines.push('and `test/parity/replay.js` cites this checklist as what supplies the failure');
+  lines.push('paths that one-minimal-request-per-route cannot reach. The row format is');
+  lines.push('stable and grep-friendly so that a reviewer, and a future consumer, can both');
+  lines.push('work from it.');
   lines.push('');
   lines.push('**Disposition** is the closed vocabulary of AAP 0.6.3 and every row carries');
   lines.push('exactly one value from it:');
@@ -3088,6 +3651,26 @@ function renderHowToRead(model) {
   lines.push('the edge sits in - and **Routes** are the literal route declarations that bind');
   lines.push('it. Every row carries a carrier, so every row is drivable; see section ' +
     model.sections.drivability + '.');
+  lines.push('');
+  lines.push('**See also** appears on a row whose edge is also catalogued elsewhere, and is');
+  lines.push('the only form of duplication this document permits.');
+  lines.push('');
+  lines.push('### What this document does not own');
+  lines.push('');
+  lines.push('Three documents describe the same edges from different angles, and each claim');
+  lines.push('belongs to exactly one of them:');
+  lines.push('');
+  lines.push('| Document | Owns |');
+  lines.push('|---|---|');
+  lines.push('| this document | the per-edge status, payload or redirect, side effects and timing, and the funnel each edge must still reach |');
+  lines.push('| `' + SIBLING_DOCS.quirks + '` | why a baseline defect is kept, its measurement, and the two approved deviations |');
+  lines.push('| `' + SIBLING_DOCS.conversion + '` | the per-site return/await disposition for every handler body the conversion touches |');
+  lines.push('');
+  lines.push('So a row states the outcome to preserve and points at the quirk catalogue for');
+  lines.push('the reasoning; it does not restate it. Every row whose Target carries the');
+  lines.push('return-discipline sentence is also a conversion site, and the call sites where');
+  lines.push('a missing `return` is what makes the conversion decisive carry an explicit');
+  lines.push('`See also` to `' + SIBLING_DOCS.conversion + '`.');
   return lines;
 }
 
@@ -3208,6 +3791,9 @@ function renderInventory(model) {
       edge.notes.forEach(function (note) {
         lines.push('      Note: ' + note);
       });
+      crossReferences(edge, model.bindings).forEach(function (reference) {
+        lines.push('      See also: ' + reference);
+      });
       if (edge.unresolved) {
         lines.push('      **Unresolved:** confirm this row by hand before closing it.');
       }
@@ -3247,25 +3833,37 @@ function renderDrivability(model) {
   lines.push('');
   lines.push('## ' + model.sections.drivability + '. Drivability');
   lines.push('');
-  lines.push('`test/parity/capture.js` derives its failure-path scenarios from these rows, so');
-  lines.push('a row nothing can drive is not a testable edge.');
+  lines.push('`test/parity/capture.js`\'s failure-path scenarios are derived from these rows -');
+  lines.push('by hand, in its `error-edge.*` groups, not by parsing this file - and');
+  lines.push('`test/parity/replay.js` cites this checklist as what supplies the failure paths');
+  lines.push('the success sweep cannot reach. A row nothing can drive is not a testable');
+  lines.push('edge, so every row names either a bound route or the code path that reaches');
+  lines.push('it.');
   lines.push('');
-  lines.push('- Rows naming at least one literal route declaration: **' + withRoutes + '** of ' +
+  lines.push('- Rows naming at least one route declaration: **' + withRoutes + '** of ' +
     model.totals.rows + '.');
   lines.push('- Rows naming a reachable code path (their carrier): **' + withCarrier + '** of ' +
     model.totals.rows + '.');
   lines.push('- Rows naming neither: **' + (model.totals.rows - Math.max(withRoutes, withCarrier)) +
     '**.');
   lines.push('');
-  lines.push('Route bindings are read from the literal `route :` declarations in ' +
+  lines.push('Route bindings are read from the `route :` declarations in ' +
     (model.bindings.modulesRead.length
       ? model.bindings.modulesRead.map(code).join(' and ')
       : 'the route modules, neither of which was present') + '.');
   lines.push('`config/routes.js` expands a subset of those per language at parse time, so the');
   lines.push('registered surface is larger than the declarations named here; the expanded');
-  lines.push('route manifest belongs to `test/parity/manifest.js`. A row whose carrier has no');
-  lines.push('declaration is reached through its carrier - an unrouted export, or a function');
-  lines.push('called by one - and is driven that way.');
+  lines.push('route manifest belongs to `test/parity/manifest.js`. A declaration built by');
+  lines.push('concatenation is read through the concatenation and rendered with its');
+  lines.push('non-literal operands as `<name>`, so `GET /<lang>/{shortCode}` is a template');
+  lines.push('standing for one registered route per configured language - not a path with a');
+  lines.push('`lang` parameter.');
+  lines.push('');
+  lines.push('A row whose carrier names no declaration is reached **through its carrier**, and');
+  lines.push('there are two such cases: a module-local function called by a routed handler,');
+  lines.push('marked `(module-local)` or `(internal)` in the carrier field, and an export');
+  lines.push('with no route reference at all. Both are driven by driving the routed caller,');
+  lines.push('or - for an unrouted export - by calling it directly.');
   lines.push('');
   lines.push('| Carrier surface | Rows |');
   lines.push('|---|---:|');
@@ -3431,6 +4029,22 @@ function toolRepositoryRoot() {
 }
 
 /**
+ * A path expressed relative to this repository when it lies inside it, and
+ * absolute otherwise. The recorded command is meant to be re-runnable by a
+ * reviewer with a different checkout location, so the output path is written
+ * the way they would type it; --app stays absolute because the baseline
+ * worktree is external and its location is genuinely a property of the run.
+ */
+function relativeToToolRepository(target) {
+  const root = toolRepositoryRoot();
+  const resolved = path.resolve(target);
+  const relative = path.relative(root, resolved);
+  return relative && relative.indexOf('..') !== 0 && !path.isAbsolute(relative)
+    ? relative
+    : resolved;
+}
+
+/**
  * Analyse a tree and write the inventory. Returns a summary for callers that
  * want to assert on the run without parsing the document.
  *
@@ -3525,6 +4139,12 @@ function generate(options) {
 
   const model = {
     generatedAt: new Date().toISOString(),
+    // The exact command, rebuilt from the RESOLVED options rather than from
+    // argv, so it is truthful for a programmatic caller too and re-running it
+    // reproduces this document byte for byte outside the provenance block.
+    invocation: 'node ' + TOOL_RELATIVE_PATH + ' --app ' + appRoot +
+      ' --out ' + relativeToToolRepository(options.outPath) +
+      ' --counts-check ' + options.countsCheck,
     tree: tree,
     tool: toolProvenance(toolRepositoryRoot(), TOOL_RELATIVE_PATH),
     funnels: funnels,

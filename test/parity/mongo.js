@@ -121,6 +121,38 @@ var EXIT_ERROR = 2;
 var PACKAGE_NAME  = 'mongodb-memory-server';
 var PACKAGE_FIELD = 'devDependencies';
 
+// One EXACT, VALID semantic version and nothing else. This is the official
+// SemVer 2.0.0 grammar (semver.org's own recommended expression), transcribed
+// rather than borrowed from a package: `semver` is present in node_modules only
+// as a transitive dependency of something else, and a gate that must run on a
+// clean `npm ci` of either worktree cannot rest on a package neither manifest
+// declares.
+//
+// Writing the full grammar rather than `\d+\.\d+\.\d+` matters because the
+// loose form accepts strings npm does not treat as versions at all: leading
+// zeros (`01.2.3`, `1.02.3`), an empty prerelease identifier (`1.2.3-.foo`,
+// `1.2.3-foo..bar`), a numeric prerelease identifier with a leading zero
+// (`1.2.3-01`) and an empty build identifier (`1.2.3+foo..bar`). Each of those
+// would have been reported as an acceptable exact pin while resolving
+// unpredictably or not at all. It still rejects every range form - `^`, `~`,
+// `>=`, `x`, `*`, `latest`, a `||` union, a partial `11.2` - which a specifier
+// beginning with a digit can otherwise contain.
+//
+// Two tolerances are deliberate, and both are the reference parser's own rather
+// than this file's invention: surrounding whitespace is trimmed before the test,
+// and a single lower-case `v` prefix is accepted. `semver.valid(' 1.2.3 ')` and
+// `semver.valid('v1.2.3')` both return `1.2.3`, and npm installs either
+// declaration as that exact version - so rejecting them would fail a pin that
+// IS exact, which is a false alarm rather than a stricter gate. `V1.2.3`,
+// `=1.2.3`, `vv1.2.3` and `v 1.2.3` are rejected, exactly as the reference
+// parser rejects them.
+var EXACT_VERSION = new RegExp(
+  '^v?(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)' +
+  '(?:-(?:(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)' +
+  '(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*))?' +
+  '(?:\\+(?:[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$'
+);
+
 // This file's own worktree root, two levels above test/parity/. Used for the
 // declaration check and as the default working directory for the child.
 var TOOL_ROOT = path.resolve(__dirname, '..', '..');
@@ -131,9 +163,71 @@ var TOOL_ROOT = path.resolve(__dirname, '..', '..');
 // the child runs in moves.
 var DEFAULT_OVERLAY = path.join(__dirname, 'server-overlay.json');
 
-// Matches what test/env.js sets, so `config` never writes config/runtime.json
-// (which .gitignore lists) during a parity run.
-var PERSIST_ON_CHANGE = 'N';
+// The two `config` controls that together stop the npm `config` package
+// writing config/runtime.json (a path .gitignore lists) into the tree a parity
+// run is reading. BOTH are required, which was measured rather than assumed
+// after an earlier version of this file claimed persistence alone sufficed:
+// config 0.4.37 writes '{}' into RUNTIME_JSON_FILENAME whenever that file is
+// missing or empty, to give fs.watch something to watch, and skips the write
+// only when PERSIST_ON_CHANGE is 'N' AND DISABLE_FILE_WATCH is 'Y'
+// [node_modules/config/lib/config.js:867-880]. Measured on this tree: with
+// persistence alone, `node test/parity/joi-matrix.js --schema-only` created
+// config/runtime.json inside the worktree it was analysing - invisible to
+// `git status` because .gitignore covers it.
+//
+// Disabling the watch changes no application behaviour here: nothing in the
+// bootstrap, in lib/ or in config/ subscribes with `config.watch(...)`, so
+// nothing consumes the notifications it suppresses, and R-d is not engaged as a
+// result - no observable behaviour changes. In config 0.4.37 the
+// flag reaches exactly two places - the runtime.json creation above and the
+// early return in watchForConfigFileChanges [config/lib/config.js:470] - and no
+// configuration VALUE is affected.
+var PERSIST_ON_CHANGE   = 'N';
+var DISABLE_FILE_WATCH  = 'Y';
+
+// Where the redirected runtime.json goes when this process allocates it. One
+// directory per process, outside every worktree, holding the single file the
+// `config` package may create. Redirecting is the third control and it is not
+// redundant: it means that even a `config` version that ignored the two flags
+// above, or an inherited path pointing into somebody else's tree, cannot put a
+// file inside the tree under test. An inherited value is never trusted - a
+// stale runtime.json is layered OVER every other configuration source
+// [config/lib/config.js:780], so reading one from a previous run would feed
+// this run whatever that run persisted (measured: a redirected file containing
+// {"a":999} overrode config/default.yaml's a: 1).
+var RUNTIME_DIR_PREFIX  = 'parity-config-';
+var RUNTIME_JSON_NAME   = 'runtime.json';
+
+// The environment variables that let an AMBIENT setting change what a child
+// executes or where it resolves modules from. Every parity harness that spawns
+// a child removes them, and this list is the one place they are named so the
+// harnesses cannot drift from each other.
+//
+// Each entry is a real vector rather than a precaution:
+//   NODE_OPTIONS               accepts `--require`, `--import` and
+//                              `--experimental-loader`, so an inherited value
+//                              preloads arbitrary code into the child BEFORE
+//                              the parity fixtures - and therefore before
+//                              anything the child then does is evidence of the
+//                              application's own behaviour.
+//   NODE_PATH                  redirects `require` resolution, so a child can
+//                              be handed a different `mongoose`, `@hapi/hapi`
+//                              or fixture than the tree under test installs -
+//                              which is exactly the two-trees-configured-as-one
+//                              failure the `--app` design exists to prevent.
+//   NODE_REPL_EXTERNAL_MODULE  replaces the REPL implementation module, a
+//                              second documented preload path.
+//
+// Removal, not rejection, is the right treatment for a SPAWNED child: the
+// harness controls its argv completely, so the explicit `--node-flags` channel
+// remains available and validated while the ambient one is closed. A tool that
+// loads the application into its OWN process cannot be repaired this way and
+// must refuse to run instead - test/parity/worker.js does exactly that.
+var PRELOAD_ENV_VARS = Object.freeze([
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'NODE_REPL_EXTERNAL_MODULE'
+]);
 
 // How long a forwarded SIGINT/SIGTERM is given to bring the child down before
 // it is killed outright. Bounded, because an unresponsive child must not leave
@@ -166,6 +260,12 @@ var USAGE = [
   '                    drives the target tree and a baseline worktree alike.',
   '  -h, --help        Print this on stderr and exit 0.',
   '',
+  'Option rules apply to the harness options only: none is repeatable, so a',
+  'second --overlay or --app is a usage error rather than a last-one-wins, and',
+  '--app rejects a dash-leading value instead of consuming the next option.',
+  'EVERYTHING AFTER THE FIRST BARE `--` IS THE COMMAND and is passed through',
+  'untouched, dashes, repeats and further `--` included.',
+  '',
   'Examples:',
   '  node test/parity/mongo.js -- mocha',
   '  node test/parity/mongo.js --overlay -- node test/parity/server.js',
@@ -187,15 +287,37 @@ var state = {
   info           : null,   // The published address, as returned by start().
   dataPath       : null,   // The instance's dbPath, captured for the sweep.
   tmpDir         : null,   // Set only when the PACKAGE created the directory.
+  owned          : [],     // The ChildProcess objects this file started,
+                           // recorded at start because server.instanceInfo
+                           // becomes undefined once stop() has run - measured -
+                           // so neither the escalation in stopInstance nor the
+                           // synchronous sweep can read them off the instance
+                           // afterwards. The objects, not just the pids: Node
+                           // records the exit on the object it spawned, and a
+                           // pid alone cannot tell a live process from a
+                           // terminated-but-unreaped one.
+  pids           : [],     // Their pids, for the diagnostics that name them.
+  runtimeConfig  : null,   // The runtime.json isolation this process allocated.
   startPromise   : null,   // In-flight start, so concurrent callers share one.
   stopPromise    : null,   // In-flight stop, which is what makes stop idempotent.
-  stopped        : false,  // True once the server is down and cleaned up.
+  stopped        : false,  // True once the server is CONFIRMED down and cleaned
+                           // up - never merely once a stop was attempted.
   child          : null,   // The spawned command.
   childResult    : null,   // {code, signal} once it has exited.
   interrupted    : null,   // The signal name, if one arrived.
   shuttingDown   : false,  // True once a signal path has begun.
   failed         : false,  // A failure of the HARNESS: raises a zero exit code,
                            // and never lowers a non-zero one.
+  // Every teardown operation that did not complete, as {operation, message}.
+  // `state.failed` answers "did anything fail" for THIS process's own exit
+  // code; this list answers "what failed" for a caller that embeds the
+  // lifecycle and derives its own verdict - which is every sibling harness,
+  // because `withMongo` propagates the body's outcome and therefore cannot
+  // report a teardown fault through it.
+  cleanupFailures: [],
+  exitGuardInstalled: false, // The `exit` listener that has the last word on
+                           // the exit code once a teardown failure is recorded,
+                           // installed only when one is.
   sweepInstalled : false,  // The synchronous last-resort `exit` listener.
   listeners      : []      // [event, handler] pairs installed by the CLI.
 };
@@ -309,17 +431,26 @@ function deepMerge(base, overlay) {
  * `npm ci` would not install it on the next clean host and the gate would then
  * be unreproducible - which is the whole point of the exact pin.
  *
- * A range is reported and allowed to proceed: the run is still valid, but the
- * pin AAP §0.9.2 asks for is not in force, and that is worth saying out loud
- * rather than failing a suite over.
+ * A RANGE IS A HARD ERROR, not a warning. An earlier version of this function
+ * tested only that the specifier began with a digit and then proceeded, which
+ * accepted `>=11`, `11.x`, `~11.2.0` and `11.2.0 || 12.0.0` alike - so the
+ * reproducibility the pin exists to provide was reported as missing and then
+ * ignored. Two hosts resolving different servers is precisely the failure the
+ * pin prevents, and a gate that announces its own unreproducibility while
+ * continuing is not a gate. What is accepted is one VALID exact semantic
+ * version - the complete SemVer 2.0.0 grammar, so a malformed string such as
+ * `01.2.3` or `1.2.3-foo..bar` is rejected too rather than being reported as a
+ * pin npm could resolve.
  *
- * A package.json this file cannot read is reported too, and the require below
- * remains the authoritative gate - a missing manifest must not be the reason a
- * database silently fails to appear.
+ * A package.json this file cannot read is reported and proceeds, which is a
+ * different case: the require below remains the authoritative gate, and a
+ * manifest this process cannot open must not be the reason a database silently
+ * fails to appear.
  *
  * @param {string} [manifestPath] Defaults to this tree's package.json.
  * @returns {(string|null)} The declared specifier, or null when unreadable.
- * @throws {ToolError} If the manifest is readable and does not declare it.
+ * @throws {ToolError} If the manifest is readable and the declaration is
+ *   missing or is not an exact version.
  */
 function assertDeclaredDependency(manifestPath) {
   var target = manifestPath || path.join(TOOL_ROOT, 'package.json');
@@ -349,10 +480,17 @@ function assertDeclaredDependency(manifestPath) {
     );
   }
 
-  if (!/^\d/.test(String(declared).trim())) {
-    note('WARNING: ' + PACKAGE_NAME + ' is declared as "' + declared +
-      '" in ' + target + '. AAP §0.9.2 asks for an exact pinned version so ' +
-      'this gate resolves the same server everywhere. Proceeding.');
+  if (!EXACT_VERSION.test(String(declared).trim())) {
+    throw new ToolError(
+      PACKAGE_NAME + ' is declared as "' + declared + '" in ' + target +
+      ', which is not one exact, valid semantic version. AAP §0.9.2 requires ' +
+      'an exact pinned version so this gate resolves the same server on every ' +
+      'host; a range lets two runs of the identical command test different ' +
+      'servers, and a malformed version resolves unpredictably or not at all, ' +
+      'which is the reproducibility the pin exists to provide. Change the "' +
+      PACKAGE_FIELD + '" entry to a single exact version, for example "' +
+      PACKAGE_NAME + '": "11.2.0", and commit the regenerated lockfile.'
+    );
   }
 
   return String(declared);
@@ -597,6 +735,250 @@ function composeNodeConfig(inherited, overlay, runtime) {
 
 
 // ---------------------------------------------------------------------------
+// Configuration isolation - the one implementation every parity tool uses
+// ---------------------------------------------------------------------------
+
+/**
+ * This process's private runtime.json path, allocated once and reused.
+ *
+ * The directory is created eagerly so a caller can hand the path straight to a
+ * child without wondering whether its parent exists. It lives under the system
+ * temporary directory, never inside a worktree, and the removal is registered
+ * HERE, at the moment of allocation - whoever creates the artifact owns
+ * removing it, so a caller that only wants the environment fragment for a child
+ * cannot leave a directory per run behind.
+ *
+ * @returns {string} An absolute path to this process's runtime.json.
+ */
+function privateRuntimeJsonPath() {
+  var dir;
+
+  if (state.runtimeConfig) {
+    return state.runtimeConfig.runtimeJsonPath;
+  }
+
+  dir = path.join(
+    os.tmpdir(),
+    RUNTIME_DIR_PREFIX + process.pid + '-' + crypto.randomBytes(4).toString('hex')
+  );
+
+  fs.mkdirSync(dir, { recursive: true });
+
+  state.runtimeConfig = {
+    dir             : dir,
+    runtimeJsonPath : path.join(dir, RUNTIME_JSON_NAME),
+    owned           : true
+  };
+
+  process.on('exit', removePrivateRuntimeConfig);
+
+  return state.runtimeConfig.runtimeJsonPath;
+}
+
+/**
+ * The three variables that isolate the npm `config` package's runtime layer.
+ *
+ * Every parity tool sets these, in its own process before its first `config`
+ * require and in the environment of every child it spawns, and they all get
+ * them from here - which is the point. They previously existed as a per-tool
+ * copy of a rule that was half right, so `test/parity/server.js` and
+ * `test/parity/worker.js` redirected the runtime path while
+ * `test/parity/{mongo,manifest,storage,joi-matrix}.js` and every capture and
+ * replay child set persistence alone and wrote runtime.json into the tree they
+ * were reading.
+ *
+ * A fourth variable travels with them, `PARITY_CONFIG_RUNTIME_OWNER`, and it is
+ * not decoration. A child cannot tell a runtime path its launcher allocated for
+ * this run from one left in the ambient environment by something else, and the
+ * difference decides whether the path may be trusted: a stale runtime.json is
+ * layered over every other configuration source, so consuming one silently
+ * imports a previous run's values. The variable states which process allocated
+ * the path and for which path, so `test/env.js` - the Mocha preload, which runs
+ * both under this wrapper and standalone - can verify that its own parent
+ * allocated the value it inherited, and allocate its own private path whenever
+ * that does not hold rather than trusting the variable's mere presence.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.runtimeJsonPath] A path the CALLER owns - a per-run
+ *   directory it already created and already cleans up. Anything else, including
+ *   an inherited environment value, is replaced by this process's private path.
+ * @returns {{NODE_CONFIG_PERSIST_ON_CHANGE: string,
+ *   NODE_CONFIG_DISABLE_FILE_WATCH: string, NODE_CONFIG_RUNTIME_JSON: string,
+ *   PARITY_CONFIG_RUNTIME_OWNER: string}}
+ */
+function configIsolationEnv(options) {
+  var opts        = options || {};
+  var runtimeJson = opts.runtimeJsonPath
+    ? path.resolve(opts.runtimeJsonPath)
+    : privateRuntimeJsonPath();
+
+  return {
+    NODE_CONFIG_PERSIST_ON_CHANGE : PERSIST_ON_CHANGE,
+    NODE_CONFIG_DISABLE_FILE_WATCH: DISABLE_FILE_WATCH,
+    NODE_CONFIG_RUNTIME_JSON      : runtimeJson,
+    PARITY_CONFIG_RUNTIME_OWNER   : runtimeConfigOwner(runtimeJson)
+  };
+}
+
+/**
+ * The attribution token for a runtime path this process allocated.
+ *
+ * `<pid>:<path>`, so a reader can verify BOTH halves: that the process which
+ * allocated it is the one it claims - a child compares the pid against its own
+ * parent - and that the token belongs to the path actually in the environment,
+ * rather than to some earlier path the same variable once held. The path is
+ * embedded rather than hashed because a diagnostic a person reads is worth more
+ * here than opacity; the token authorizes nothing, it only attributes.
+ *
+ * @param {string} runtimeJsonPath
+ * @returns {string}
+ */
+function runtimeConfigOwner(runtimeJsonPath) {
+  return String(process.pid) + ':' + runtimeJsonPath;
+}
+
+/**
+ * True when an inherited runtime path was allocated by THIS process's parent.
+ *
+ * The rule a child applies, exported so `test/env.js` runs the same check this
+ * file's own children get rather than a second reading of it. Both halves must
+ * hold - the token names the very path in the environment, and the pid that
+ * issued it is this process's parent - and anything else is ambient state to be
+ * replaced, including a token from a run that has since exited.
+ *
+ * @param {Object} [env] Defaults to process.env.
+ * @returns {boolean}
+ */
+function inheritedRuntimeConfigIsOwned(env) {
+  var source = env || process.env;
+  var declared = source.NODE_CONFIG_RUNTIME_JSON;
+  var token    = source.PARITY_CONFIG_RUNTIME_OWNER;
+  var split;
+
+  if (!declared || !token) {
+    return false;
+  }
+
+  split = String(token).indexOf(':');
+
+  if (split <= 0) {
+    return false;
+  }
+
+  return String(token).slice(split + 1) === declared &&
+    Number(String(token).slice(0, split)) === process.ppid;
+}
+
+/**
+ * Applies the isolation to one environment object, and reconciles
+ * NODE_CONFIG_DIR.
+ *
+ * `env` is mutated and returned, so this works equally on `process.env` and on
+ * a copy destined for `spawn`. The NODE_CONFIG_DIR half is the second thing
+ * that leaks between trees: `config` resolves its directory from
+ * `process.cwd()` unless told otherwise, so a nested invocation can arrive
+ * carrying the OTHER tree's config/ - which loads one tree's YAML into the
+ * other tree's code and compares two trees while configured as one.
+ *
+ * @param {Object} env The environment to mutate.
+ * @param {Object} [options]
+ * @param {string} [options.runtimeJsonPath] As documented on configIsolationEnv.
+ * @param {string} [options.appRoot] The tree the environment belongs to. With
+ *   it, NODE_CONFIG_DIR is reconciled against `<appRoot>/config`.
+ * @param {string} [options.configDir] 'set' (the default when `appRoot` is
+ *   given) writes `<appRoot>/config`; 'clean' only REMOVES a value that points
+ *   somewhere else, for a child whose working directory is already `appRoot` and
+ *   whose configuration must therefore resolve by itself; 'ignore' leaves
+ *   NODE_CONFIG_DIR untouched.
+ * @returns {{env: Object, runtimeJsonPath: string,
+ *   configDir: (string|undefined), replaced: (string|null)}} What was applied,
+ *   so a caller can report it.
+ */
+function applyConfigIsolation(env, options) {
+  var opts     = options || {};
+  var values   = configIsolationEnv(opts);
+  var mode     = opts.configDir || (opts.appRoot ? 'set' : 'ignore');
+  var expected = opts.appRoot ? path.join(path.resolve(opts.appRoot), 'config') : null;
+  var replaced = null;
+  var inherited;
+  var keys     = Object.keys(values);
+  var i;
+
+  for (i = 0; i < keys.length; i++) {
+    env[keys[i]] = values[keys[i]];
+  }
+
+  if (mode !== 'ignore' && expected) {
+    inherited = env.NODE_CONFIG_DIR;
+
+    if (inherited && path.resolve(inherited) !== expected) {
+      replaced = inherited;
+    }
+
+    if (mode === 'set') {
+      env.NODE_CONFIG_DIR = expected;
+    }
+    else if (replaced) {
+      delete env.NODE_CONFIG_DIR;
+    }
+  }
+
+  return {
+    env             : env,
+    runtimeJsonPath : values.NODE_CONFIG_RUNTIME_JSON,
+    configDir       : env.NODE_CONFIG_DIR,
+    replaced        : replaced
+  };
+}
+
+/**
+ * Isolates THIS process's `config` runtime layer, before its first require.
+ *
+ * Idempotent, so a tool may call it and then be called by another tool that
+ * calls it again: the private path is allocated once per process, and
+ * `privateRuntimeJsonPath` registers its own removal. A caller-owned path is
+ * left for its owner to remove.
+ *
+ * @param {Object} [options] As documented on applyConfigIsolation.
+ * @returns {Object} The report from applyConfigIsolation.
+ */
+function isolateRuntimeConfig(options) {
+  var applied = applyConfigIsolation(process.env, options);
+
+  if (applied.replaced) {
+    note('replaced an inherited NODE_CONFIG_DIR of ' + applied.replaced +
+      ' with ' + (applied.configDir || '(none)') + '; it does not belong to ' +
+      'the tree this run reads.');
+  }
+
+  return applied;
+}
+
+/**
+ * Removes the private runtime.json directory this process created.
+ *
+ * Synchronous by necessity - it runs from an `exit` listener - and silent about
+ * a failure to remove: the directory is a temporary artifact of this process
+ * and a warning about it during exit would be noise inside the stream AAP
+ * §0.9.3's zero-warning gate inspects. Nothing under a worktree is touched.
+ *
+ * @returns {undefined}
+ */
+function removePrivateRuntimeConfig() {
+  if (!state.runtimeConfig || !state.runtimeConfig.owned) {
+    return;
+  }
+
+  try {
+    fs.rmSync(state.runtimeConfig.dir, { recursive: true, force: true });
+  }
+  catch (err) {
+    // Deliberately silent: see the note above.
+  }
+}
+
+
+// ---------------------------------------------------------------------------
 // The last-resort sweep
 // ---------------------------------------------------------------------------
 
@@ -612,42 +994,59 @@ function composeNodeConfig(inherited, overlay, runtime) {
  * knowing even though the sweep repaired it.
  *
  * Only processes this file started are signalled - the package's own mongod and
- * its watchdog, read off the instance - and only a directory the PACKAGE
- * created is removed. A dbPath a caller supplied is left alone; it is not ours.
+ * its watchdog, whose pids `recordOwnedPids` captured at start - and only a
+ * directory the PACKAGE created is removed. A dbPath a caller supplied is left
+ * alone; it is not ours.
+ *
+ * The pids come from module state rather than from the instance because
+ * `server.instanceInfo` is `undefined` once `server.stop()` has run - measured
+ * on mongodb-memory-server 11.2.0 - so after a stop that failed part way
+ * through, reading them off the instance finds nothing and the sweep would kill
+ * nothing at exactly the moment it is needed.
+ *
+ * The data directory is removed only when no owned process survived the kills.
+ * Removing the files under a live mongod produces a database that is running
+ * and corrupt, which is worse than the leak the sweep is repairing.
  *
  * @returns {undefined}
  */
 function sweepSynchronously() {
-  var instance = state.info && state.server && state.server.instanceInfo
-    ? state.server.instanceInfo.instance
-    : null;
-  var killed = 0;
+  var owned     = ownedProcesses();
+  var killed    = 0;
+  var surviving = 0;
 
-  if (state.stopped || !state.server) {
+  if (state.stopped || (!state.server && !owned.length)) {
     return;
   }
 
   note('WARNING: the asynchronous teardown did not complete; sweeping ' +
     'synchronously from the exit handler.');
 
-  [instance && instance.mongodProcess, instance && instance.killerProcess]
-    .forEach(function (proc) {
-      if (proc && typeof proc.pid === 'number' && !proc.killed) {
-        try {
-          process.kill(proc.pid, 'SIGKILL');
-          killed++;
-        }
-        catch (err) {
-          // ESRCH means it is already gone, which is the outcome we wanted.
-          if (!err || err.code !== 'ESRCH') {
-            note('WARNING: could not kill pid ' + proc.pid + ': ' +
-              err.message);
-          }
-        }
-      }
-    });
+  owned.forEach(function (proc) {
+    if (hasExited(proc)) {
+      return;
+    }
 
-  if (state.tmpDir) {
+    try {
+      process.kill(proc.pid, 'SIGKILL');
+      killed++;
+    }
+    catch (err) {
+      // ESRCH means it is already gone, which is the outcome we wanted.
+      if (!err || err.code !== 'ESRCH') {
+        surviving++;
+        note('WARNING: could not kill pid ' + proc.pid + ': ' + err.message);
+      }
+    }
+  });
+
+  if (surviving) {
+    note('WARNING: ' + surviving + ' owned process(es) could not be ' +
+      'signalled; the data directory ' + (state.tmpDir || state.dataPath) +
+      ' is LEFT IN PLACE rather than removed from under a database that may ' +
+      'still be running.');
+  }
+  else if (state.tmpDir) {
     try {
       fs.rmSync(state.tmpDir, { recursive: true, force: true });
     }
@@ -662,7 +1061,144 @@ function sweepSynchronously() {
   }
 
   note('swept: ' + killed + ' process(es) killed' +
-    (state.tmpDir ? ', data directory ' + state.tmpDir + ' removed' : ''));
+    (surviving ? ', ' + surviving + ' left running' : '') +
+    (!surviving && state.tmpDir
+      ? ', data directory ' + state.tmpDir + ' removed'
+      : ''));
+}
+
+/**
+ * Records the processes the package started for this instance.
+ *
+ * Called immediately after a successful start, because the instance stops
+ * reporting them once it has been stopped. Both are the package's own children
+ * of THIS process - the mongod and the watchdog that kills it if this process
+ * dies - so they are the only processes this file may ever signal.
+ *
+ * The ChildProcess OBJECTS are kept, not just their pids, and that is what
+ * makes exit verification honest. Node reaps a child it spawned and records the
+ * result on the object, so `exitCode`/`signalCode` answer "has it exited?"
+ * exactly. A pid alone cannot: `process.kill(pid, 0)` succeeds for a zombie
+ * that has terminated but not yet been reaped, so a pid-only check would report
+ * a cleanly stopped mongod as still running for the whole grace period and turn
+ * every successful teardown into a reported leak.
+ *
+ * @param {Object} instanceInfo server.instanceInfo, freshly started.
+ * @returns {number[]} The pids recorded, for the diagnostics that name them.
+ */
+function recordOwnedPids(instanceInfo) {
+  var instance = instanceInfo && instanceInfo.instance;
+
+  state.owned = [instance && instance.mongodProcess, instance && instance.killerProcess]
+    .filter(function (proc) {
+      return proc && typeof proc.pid === 'number';
+    });
+
+  state.pids = state.owned.map(function (proc) {
+    return proc.pid;
+  });
+
+  return state.pids;
+}
+
+/**
+ * The recorded processes, refreshed from a live instance when one still
+ * reports them.
+ *
+ * @returns {Object[]} ChildProcess objects this file's start created.
+ */
+function ownedProcesses() {
+  if (state.server && state.server.instanceInfo) {
+    recordOwnedPids(state.server.instanceInfo);
+  }
+
+  return state.owned || [];
+}
+
+/**
+ * True when the process is known to have exited.
+ *
+ * The ChildProcess is asked first and is authoritative: a non-null `exitCode`
+ * or `signalCode` means Node reaped it and knows how it ended. Only when the
+ * object cannot answer does this fall back to `process.kill(pid, 0)`, where
+ * ESRCH means no such process. EPERM means it exists and is not ours to
+ * signal, which is emphatically NOT gone, and any other error is treated the
+ * same way - an unverified process is reported as alive, because the
+ * consequence of guessing wrong is deleting the data directory of a running
+ * database.
+ *
+ * @param {Object} proc A ChildProcess, or an object carrying only `pid`.
+ * @returns {boolean}
+ */
+function hasExited(proc) {
+  if (!proc || typeof proc.pid !== 'number') {
+    return true;
+  }
+
+  if (proc.exitCode !== null && proc.exitCode !== undefined) {
+    return true;
+  }
+
+  if (proc.signalCode !== null && proc.signalCode !== undefined) {
+    return true;
+  }
+
+  try {
+    process.kill(proc.pid, 0);
+    return false;
+  }
+  catch (err) {
+    return Boolean(err) && err.code === 'ESRCH';
+  }
+}
+
+/**
+ * Raises a zero exit code to EXIT_ERROR, and never lowers a non-zero one.
+ *
+ * @returns {boolean} True if this call changed the code.
+ */
+function raiseExitCode() {
+  if (process.exitCode === undefined || process.exitCode === null ||
+      process.exitCode === EXIT_OK) {
+    process.exitCode = EXIT_ERROR;
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * The last word on the exit code, from the `exit` listener.
+ *
+ * Says so when it has to act, because a consumer that reported success over a
+ * failed teardown has a defect of its own worth seeing - the raise here keeps
+ * the run honest, and the line says where to look.
+ *
+ * @returns {undefined}
+ */
+function reassertExitCode() {
+  if (!state.failed) {
+    return;
+  }
+
+  if (raiseExitCode()) {
+    note('ERROR: exiting ' + EXIT_ERROR + ' because this harness could not ' +
+      'tear down its MongoDB; the reported result had been set to success ' +
+      'after that failure, which would have hidden it.');
+  }
+}
+
+/**
+ * True when a teardown failure has been recorded in this process.
+ *
+ * Exported so a harness can assert on it explicitly rather than inferring it
+ * from an exit code, and so a caller that swallows `stop()`'s boolean still has
+ * one honest question to ask before it reports success.
+ *
+ * @returns {boolean}
+ */
+function cleanupFailed() {
+  return state.failed === true;
 }
 
 /**
@@ -744,6 +1280,20 @@ async function startInstance(opts) {
   ServerClass = loadServerClass();
   installSweep();
 
+  // A new instance is a new teardown to account for, so the previous one's
+  // failures are forgotten HERE rather than in `start` - which returns an
+  // already-running instance without reaching this function, and must not
+  // discard the record of a stop that failed a moment ago.
+  resetCleanupFailures();
+
+  // Before the server exists, and therefore before any caller can reach its
+  // first application require: every harness in test/parity/ calls start()
+  // ahead of loading the application, so this is the one place that protects
+  // all of them without each re-deriving the rule. Idempotent, so a tool that
+  // also isolates explicitly - manifest.js never starts a database and has to -
+  // gets the same private path rather than a second one.
+  isolateRuntimeConfig();
+
   try {
     server = await ServerClass.create({ instance: { dbName: database } });
   }
@@ -780,6 +1330,11 @@ async function startInstance(opts) {
   state.tmpDir   = instanceInfo.tmpDir;
   state.stopped  = false;
 
+  // Captured now because the instance stops reporting them the moment it is
+  // stopped, and both the escalation in stopInstance and the synchronous sweep
+  // need them precisely when a stop has gone wrong.
+  recordOwnedPids(instanceInfo);
+
   address    = describeAddress(server, database, instanceInfo);
   nodeConfig = composeNodeConfig(
     opts.inheritedNodeConfig === undefined
@@ -795,12 +1350,14 @@ async function startInstance(opts) {
     port       : address.port,
     database   : address.database,
     nodeConfig : nodeConfig,
-    env        : {
+    env        : Object.assign({
       NODE_CONFIG                   : nodeConfig,
-      NODE_CONFIG_PERSIST_ON_CHANGE : PERSIST_ON_CHANGE,
       PARITY_MONGO_URI              : address.uri,
       PARITY_MONGO_DATABASE         : address.database
-    },
+    // All three isolation variables, not persistence alone: a consumer that
+    // spreads info.env into a child environment gets the whole rule, which is
+    // what stops each of them re-deriving half of it.
+    }, configIsolationEnv()),
     dataPath   : instanceInfo.dbPath
   };
 
@@ -873,11 +1430,17 @@ function describeAddress(server, database, instanceInfo) {
  * server is brought down and every path goes through it.
  *
  * A failure to stop is REPORTED and recorded, not thrown: the caller's own
- * result - a suite's exit code - must still reach the shell. It is recorded on
- * `state.failed`, which raises a zero exit code, because a leaked
- * mongod or a surviving data directory is a real failure that must be visible.
+ * result - a suite's exit code - must still reach the shell. `recordCleanupFailure`
+ * raises a zero `process.exitCode` and sets `state.failed`, so a leaked mongod
+ * or a surviving data directory is visible whether the caller is the CLI, is
+ * `withMongo`, or discards the boolean this returns.
  *
- * @returns {Promise<boolean>} True if the server is down and cleaned up.
+ * A `false` here means the server is NOT down. The state is deliberately kept
+ * in that case, so calling `stop()` again retries rather than being handed
+ * `true` for a server that is still running.
+ *
+ * @returns {Promise<boolean>} True only if the server is confirmed down and
+ *   cleaned up.
  */
 function stop() {
   if (state.stopped || !state.server) {
@@ -894,30 +1457,176 @@ function stop() {
 }
 
 /**
+ * Records a teardown operation that did not complete, and reports it.
+ *
+ * THREE THINGS HAPPEN HERE AND ALL THREE ARE LOAD-BEARING. The note is emitted
+ * with the same text the site printed before, because the stderr diagnostic is
+ * the evidence. `state.failed` is raised, which is what makes the CLI's own
+ * exit code non-zero through `finalExitCode`. And the failure is APPENDED to a
+ * list a caller can read, which is the part that was missing: `withMongo`
+ * propagates its body's outcome untouched - a rejection stays a rejection, a
+ * value stays that value - so a teardown fault has no channel through it, and
+ * every sibling harness that embeds this lifecycle was therefore discarding the
+ * boolean `stop()` returns and exiting 0 with a possibly-leaked mongod behind
+ * it.
+ *
+ * @param {string} operation What was attempted, one phrase.
+ * @param {string} message The measured cause, without an 'ERROR: ' prefix.
+ * @returns {Object} The recorded entry.
+ */
+function recordCleanupFailure(operation, message) {
+  var entry = { operation : operation, message : message };
+
+  state.failed = true;
+  state.cleanupFailures.push(entry);
+
+  note('ERROR: ' + message);
+
+  // AND THE EXIT CODE IS RAISED HERE TOO, which is the half the readable
+  // record does not cover. `state.failed` is what the CLI's `finalExitCode`
+  // reads, but the sibling harnesses embed this lifecycle as a library and end
+  // by assigning `process.exitCode` from their own artifact or verdict - so a
+  // zero written then would report success over a leaked mongod. Raising it
+  // now makes the promise true in library mode, and reasserting it from an
+  // `exit` listener - installed once, and only when there is something to
+  // assert - makes this file the LAST writer whatever the consumer does
+  // afterwards. A non-zero code is never lowered at either point.
+  raiseExitCode();
+
+  if (!state.exitGuardInstalled) {
+    state.exitGuardInstalled = true;
+    process.on('exit', reassertExitCode);
+  }
+
+  return entry;
+}
+
+/**
+ * The teardown operations that did not complete, as `{operation, message}`.
+ *
+ * A COPY, so a caller cannot mutate the record it is reporting on, and shallow
+ * copies of the entries for the same reason. Read AFTER `stop()` or
+ * `withMongo()` has returned: that is the point at which the answer is
+ * complete, and it is deliberately not thrown, because the caller's own result
+ * - an artifact, a suite's exit code - must still reach the shell.
+ *
+ * @returns {Array<{operation: string, message: string}>}
+ */
+function cleanupFailures() {
+  return state.cleanupFailures.map(function (entry) {
+    return { operation : entry.operation, message : entry.message };
+  });
+}
+
+/**
+ * Whether any teardown operation failed.
+ *
+ * @returns {boolean}
+ */
+function cleanupFailed() {
+  return state.cleanupFailures.length > 0;
+}
+
+/**
+ * Forgets the recorded teardown failures.
+ *
+ * Needed because this module is a singleton: a process that runs two
+ * `withMongo` calls - `test/parity/storage.js` under a sibling harness, a
+ * validation script driving the lifecycle twice - would otherwise have the
+ * second run inherit the first run's failures and report a leak it did not
+ * cause. `startInstance` calls it when a genuinely new instance is created, and
+ * it is exported so a caller that reads the accessor can also clear it
+ * explicitly. `state.failed` is deliberately NOT cleared here: this process's
+ * own exit code must not be lowered by a later run's success.
+ *
+ * @returns {undefined}
+ */
+function resetCleanupFailures() {
+  state.cleanupFailures = [];
+}
+
+/**
  * The body of `stop`, separated so `stop` stays a guard.
  *
  * `stop({doCleanup: true})` is the package's own removal of the data directory.
  * The directory is then checked, and removed here if it survived - only when
  * the PACKAGE created it, which `instanceInfo.tmpDir` is what records.
  *
- * @returns {Promise<boolean>}
+ * THE STOP IS NOT ASSUMED TO HAVE WORKED. An earlier version of this function
+ * cleared `state.server`, cleared `state.info` and set `state.stopped = true`
+ * whatever happened, and removed the data directory before knowing whether
+ * mongod had died. Three consequences, all of them silent:
+ *
+ *   A retry became impossible. `stop()` short-circuits on `state.stopped`, so
+ *   the second call returned `true` for a server that was still running.
+ *
+ *   The synchronous sweep was disarmed. It returns early on `state.stopped` and
+ *   on a null `state.server`, so the one mechanism that would have killed the
+ *   survivor at exit had been switched off by the failure it exists for.
+ *
+ *   The data directory could be deleted from under a live mongod - a database
+ *   that is running and corrupt, which is worse than the leak.
+ *
+ * So: attempt the package's own stop; if it throws, escalate to the processes
+ * this file started and NOTHING else - SIGTERM, then SIGKILL - and in either
+ * case confirm each one has actually gone, by reading the exit off the
+ * ChildProcess Node reaped and falling back to `process.kill(pid, 0)` when the
+ * object cannot answer, under a bounded deadline. The data directory is
+ * removed, and the state cleared and marked stopped, only once that
+ * confirmation holds. When it does not, the server, the address, the data path
+ * and the processes are all KEPT so the caller can retry and the sweep can
+ * still act, and the failure is recorded.
+ *
+ * @returns {Promise<boolean>} True only when the server is confirmed down and
+ *   its data directory dealt with.
  */
 async function stopInstance() {
-  var server = state.server;
-  var tmpDir = state.tmpDir;
-  var ok     = true;
+  var server    = state.server;
+  var tmpDir    = state.tmpDir;
+  var owned     = ownedProcesses().slice();
+  var ok        = true;
+  var confirmed = true;
+  var surviving;
 
   try {
     await server.stop({ doCleanup: true, force: false });
   }
   catch (err) {
     ok = false;
-    state.failed = true;
-    note('ERROR: stopping ' + PACKAGE_NAME + ' failed: ' +
-      ((err && err.message) || err));
+    recordCleanupFailure('stop ' + PACKAGE_NAME,
+      'stopping ' + PACKAGE_NAME + ' failed: ' + ((err && err.message) || err) +
+      '. Escalating to the ' + owned.length + ' process(es) this harness ' +
+      'started.');
   }
 
-  if (tmpDir) {
+  // Whether the stop threw or not, the question is the same one: are the
+  // processes gone? A stop that resolved while a mongod survived would
+  // otherwise be reported as a clean teardown.
+  surviving = await confirmExited(owned, ok);
+
+  if (surviving.length) {
+    recordCleanupFailure(
+      'stop the surviving ' + PACKAGE_NAME + ' process(es) ' +
+        surviving.join(', '),
+      PACKAGE_NAME + ' process(es) ' +
+      surviving.join(', ') + ' are still running after ' +
+      (SHUTDOWN_GRACE_MS / 1000) + 's' +
+      (ok
+        // The package reported a clean stop, so nothing was signalled: the
+        // wait was a check, and saying "after SIGKILL" here would be false.
+        ? ', although ' + PACKAGE_NAME + ' reported stopping cleanly'
+        : ' of SIGTERM and SIGKILL') +
+      '. The server, its address and its data directory ' +
+      (tmpDir || state.dataPath || '(unknown)') + ' are KEPT so stop() can be ' +
+      'retried and the exit sweep can still act; the data directory is NOT ' +
+      'removed while a database may still be reading it.'
+    );
+
+    ok        = false;
+    confirmed = false;
+  }
+
+  if (confirmed && tmpDir) {
     try {
       if (fs.existsSync(tmpDir)) {
         await fs.promises.rm(tmpDir, { recursive: true, force: true });
@@ -925,19 +1634,151 @@ async function stopInstance() {
     }
     catch (err) {
       ok = false;
-      state.failed = true;
-      note('ERROR: could not remove the data directory ' + tmpDir + ': ' +
+      recordCleanupFailure('remove the data directory ' + tmpDir,
+        'could not remove the data directory ' + tmpDir + ': ' +
         ((err && err.message) || err));
     }
+  }
+
+  if (!confirmed) {
+    // Deliberately NOT cleared: state.server, state.info, state.dataPath,
+    // state.tmpDir, state.owned and state.pids are what a retry and the exit
+    // sweep need. Only the in-flight promise is released, so a retry runs this
+    // again rather than being handed the settled promise of the attempt that
+    // failed.
+    state.stopPromise = null;
+
+    return false;
   }
 
   state.stopped      = true;
   state.server       = null;
   state.info         = null;
+  state.owned        = [];
+  state.pids         = [];
   state.startPromise = null;
   state.stopPromise  = null;
 
   return ok;
+}
+
+/**
+ * Confirms that every owned pid has exited, escalating if any has not.
+ *
+ * `stopResolved` decides whether this signals or only checks. When the
+ * package's own stop resolved, the processes are expected to be gone already,
+ * so this waits and verifies rather than killing - signalling on that path
+ * would be signalling something the package may have already reaped and whose
+ * pid could since have been reused. When the stop threw, the escalation is the
+ * whole point: SIGTERM first so mongod can flush and close its files, SIGKILL
+ * only after it has been given time.
+ *
+ * The polling interval is short and the deadline is SHUTDOWN_GRACE_MS, the same
+ * bound a forwarded signal gives the child, because the two are the same
+ * question: how long to wait before deciding something is not coming down.
+ *
+ * @param {Object[]} owned The ChildProcess objects this file started.
+ * @param {boolean} stopResolved Whether the package's own stop resolved.
+ * @returns {Promise<number[]>} The pids still running when time ran out.
+ */
+async function confirmExited(owned, stopResolved) {
+  var deadline  = Date.now() + SHUTDOWN_GRACE_MS;
+  var escalated = false;
+  var pending   = (owned || []).filter(function (proc) { return !hasExited(proc); });
+
+  if (!pending.length) {
+    return [];
+  }
+
+  if (stopResolved) {
+    // The package reported success and something is still alive. Give it the
+    // grace period to finish before treating it as a leak - but do not signal:
+    // on this path the package owns the shutdown it says it completed.
+    while (pending.length && Date.now() < deadline) {
+      await delay(100);
+      pending = pending.filter(function (proc) { return !hasExited(proc); });
+    }
+
+    return pids(pending);
+  }
+
+  signalProcesses(pending, 'SIGTERM');
+
+  while (pending.length && Date.now() < deadline) {
+    await delay(100);
+    pending = pending.filter(function (proc) { return !hasExited(proc); });
+
+    if (pending.length && !escalated &&
+        Date.now() > deadline - (SHUTDOWN_GRACE_MS / 2)) {
+      escalated = true;
+      signalProcesses(pending, 'SIGKILL');
+    }
+  }
+
+  if (pending.length) {
+    signalProcesses(pending, 'SIGKILL');
+    await delay(200);
+    pending = pending.filter(function (proc) { return !hasExited(proc); });
+  }
+
+  return pids(pending);
+}
+
+/**
+ * Signals the given processes, tolerating one that has already gone.
+ *
+ * Only the processes `recordOwnedPids` captured ever reach here, which is what
+ * keeps this from being a `pkill`: the mongod and watchdog the package started
+ * as children of this process, and nothing else on the host.
+ *
+ * @param {Object[]} procs ChildProcess objects.
+ * @param {string} signal
+ * @returns {undefined}
+ */
+function signalProcesses(procs, signal) {
+  procs.forEach(function (proc) {
+    try {
+      process.kill(proc.pid, signal);
+      note('sent ' + signal + ' to ' + PACKAGE_NAME + ' pid ' + proc.pid + '.');
+    }
+    catch (err) {
+      // ESRCH is the outcome we wanted; anything else is worth seeing, because
+      // EPERM here means a process we believe we own is not ours to signal.
+      if (!err || err.code !== 'ESRCH') {
+        note('WARNING: could not send ' + signal + ' to pid ' + proc.pid +
+          ': ' + ((err && err.message) || err));
+      }
+    }
+  });
+}
+
+/**
+ * The pids of a list of processes.
+ *
+ * @param {Object[]} procs
+ * @returns {number[]}
+ */
+function pids(procs) {
+  return (procs || []).map(function (proc) { return proc.pid; });
+}
+
+/**
+ * Resolves after `ms`.
+ *
+ * The timer is deliberately NOT unref'd. This runs inside teardown, which is
+ * frequently the last work in the process, and an unref'd timer there would let
+ * the process exit mid-confirmation - so the promise a caller is awaiting would
+ * never settle and the leak this loop exists to detect would go unreported. The
+ * wait is bounded by SHUTDOWN_GRACE_MS and is entered only when a process this
+ * harness started is still running, which is a condition worth waiting on.
+ *
+ * @param {number} ms
+ * @returns {Promise<undefined>}
+ */
+function delay(ms) {
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
 }
 
 /**
@@ -970,18 +1811,33 @@ function uri(database) {
 /**
  * Runs `fn` against a started server and stops it afterwards.
  *
- * The stop is in a `finally`, so it happens whether `fn` returns or throws, and
- * `fn`'s outcome is propagated untouched - a rejection stays a rejection. This
- * is the form test/parity/{storage,worker,seed}.js use so that none of them
- * re-implements the lifecycle.
+ * The stop happens whether `fn` returns or throws, and `fn`'s outcome is
+ * propagated untouched - a rejection stays a rejection, with its own error, so
+ * a caller's diagnosis is never replaced by a teardown message. This is the
+ * form test/parity/{storage,seed}.js use so that neither re-implements the
+ * lifecycle.
+ *
+ * THE TEARDOWN'S RESULT IS NOT DISCARDED. An earlier version put the stop in a
+ * bare `finally`, so a `stop()` that fulfilled `false` - a mongod that would
+ * not die, a data directory that could not be removed - vanished, and every
+ * consumer that called this went on to report success while the leak stood.
+ * Now a cleanup failure after a SUCCESSFUL `fn` rejects with a ToolError naming
+ * what leaked, which is the only way the caller's success path can be stopped
+ * from running; a cleanup failure after a FAILING `fn` leaves `fn`'s error as
+ * the rejection, because that is the more useful one, and the leak is still
+ * reported on stderr and still raises the exit code through
+ * `recordCleanupFailure`.
  *
  * @param {function(Object): *} fn Receives the published address.
  * @param {Object} [options] As documented on `start`.
  * @returns {Promise<*>} Whatever `fn` resolves to.
- * @throws {ToolError} If `fn` is not a function.
+ * @throws {ToolError} If `fn` is not a function, or if `fn` succeeded and the
+ *   teardown then failed.
  */
 async function withMongo(fn, options) {
   var info;
+  var result;
+  var stopped;
 
   if (typeof fn !== 'function') {
     throw new ToolError('withMongo requires a function');
@@ -990,11 +1846,39 @@ async function withMongo(fn, options) {
   info = await start(options);
 
   try {
-    return await fn(info);
+    result = await fn(info);
   }
-  finally {
-    await stop();
+  catch (err) {
+    // The stop still runs, and still reports and raises the exit code on
+    // failure; `fn`'s error is what the caller needs to see, so an unexpected
+    // throw from the teardown itself is recorded here rather than allowed to
+    // replace the diagnosis the caller came for.
+    try {
+      await stop();
+    }
+    catch (stopErr) {
+      recordCleanupFailure(
+        'tear down the in-memory MongoDB after the work itself failed',
+        'the teardown threw while reporting a failure of the work itself: ' +
+        ((stopErr && stopErr.message) || stopErr)
+      );
+    }
+
+    throw err;
   }
+
+  stopped = await stop();
+
+  if (!stopped) {
+    throw new ToolError(
+      'the work completed but the in-memory MongoDB could not be torn down; ' +
+      'see the ERROR line(s) above for what survived. Reported as a failure ' +
+      'rather than returned as a success, because a leaked mongod or a ' +
+      'surviving data directory is a real failure of this run.'
+    );
+  }
+
+  return result;
 }
 
 
@@ -1026,12 +1910,38 @@ function parseArguments(args) {
     command     : null,
     commandArgs : []
   };
+  var seen = {};
   var i;
   var arg;
   var next;
 
+  // A REPEATED OPTION IS A USAGE ERROR. No option here is repeatable, and
+  // quietly keeping the last of two `--overlay` paths or two `--app`
+  // directories would provision the database from a configuration the caller
+  // did not name while reporting the command they did. Tracked by option NAME,
+  // so `--app x --app=y` is caught as well.
+  //
+  // ONLY THE HEAD IS EXAMINED. Everything after the first bare `--` is the
+  // command to run - `node test/parity/mongo.js -- mocha` is this repository's
+  // `npm test` - and the tail is never this parser's business: a repeated flag
+  // or a dash-leading token there belongs to the command, and touching it would
+  // change what the test script runs.
+  function once(name) {
+    if (seen[name]) {
+      throw usageError(name + ' was given more than once; no harness option ' +
+        'is repeatable, so two values would mean this run silently discarded ' +
+        'one of them.');
+    }
+
+    seen[name] = true;
+
+    return name;
+  }
+
   for (i = 0; i < head.length; i++) {
     arg = head[i];
+
+    once(arg.indexOf('=') > 0 ? arg.slice(0, arg.indexOf('=')) : arg);
 
     if (arg === '-h' || arg === '--help') {
       options.mode = 'help';
@@ -1179,21 +2089,73 @@ function assertDirectory(dir) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Removes the preload and module-resolution vectors from a child environment.
+ *
+ * Mutates `env` in place and returns the names it removed, so a caller can
+ * announce the removal: a variable that silently disappears is as surprising as
+ * one that silently applies, and the announcement is what makes the choice
+ * reviewable in the captured stderr a gate reads.
+ *
+ * Every parity harness that spawns a child calls this, and PRELOAD_ENV_VARS
+ * carries the reasoning for each variable. It is deliberately a REMOVAL rather
+ * than a rejection: refusing to run because a host happens to export
+ * NODE_OPTIONS would make the harness unusable in environments that set it for
+ * unrelated reasons, while removing it makes the child's behaviour depend only
+ * on the tree under test and the flags the harness passed explicitly.
+ *
+ * @param {Object} env A child environment, about to be handed to spawn.
+ * @returns {Array.<string>} The names that were present and were removed.
+ */
+function scrubPreloadVars(env) {
+  var removed = [];
+  var i;
+  var name;
+
+  if (!env || typeof env !== 'object') {
+    return removed;
+  }
+
+  for (i = 0; i < PRELOAD_ENV_VARS.length; i++) {
+    name = PRELOAD_ENV_VARS[i];
+
+    if (Object.prototype.hasOwnProperty.call(env, name) &&
+        env[name] !== undefined) {
+      delete env[name];
+      removed.push(name);
+    }
+  }
+
+  return removed;
+}
+
+/**
  * Builds the child's environment.
  *
  * Four things are added to an inherited copy:
  *
  *   NODE_CONFIG                    the composed address, which is the whole
  *                                  point of this file.
- *   NODE_CONFIG_PERSIST_ON_CHANGE  'N', matching test/env.js, so `config` never
- *                                  writes config/runtime.json - a gitignored
- *                                  path this harness must not create.
- *   NODE_CONFIG_DIR                only when the child runs in a DIFFERENT tree
- *                                  and the caller has not set it. The `config`
- *                                  package resolves its directory from the
- *                                  working directory, and a baseline run that
- *                                  read the target tree's YAML would compare two
- *                                  trees while configured as one.
+ *   the three isolation variables  NODE_CONFIG_PERSIST_ON_CHANGE,
+ *                                  NODE_CONFIG_DISABLE_FILE_WATCH and
+ *                                  NODE_CONFIG_RUNTIME_JSON, from
+ *                                  `configIsolationEnv` - the one
+ *                                  implementation every parity tool shares - so
+ *                                  `config` cannot write config/runtime.json
+ *                                  into the tree the child runs in, and cannot
+ *                                  read a stale one an outer process left in
+ *                                  the environment. Persistence alone does NOT
+ *                                  achieve that; the constants carry the
+ *                                  measurement.
+ *   NODE_CONFIG_DIR                `<appRoot>/config`, always. The child's
+ *                                  working directory IS appRoot, so `config`
+ *                                  would resolve the same directory unaided -
+ *                                  but an INHERITED value pointing at another
+ *                                  tree would silently win, and a baseline run
+ *                                  that read the target tree's YAML would
+ *                                  compare two trees while configured as one.
+ *                                  Setting it explicitly makes the inherited
+ *                                  value harmless, and a replacement is
+ *                                  announced.
  *   PATH                           the child tree's node_modules/.bin, prepended
  *                                  exactly as npm does, so `-- mocha` resolves
  *                                  when the wrapper is invoked directly and not
@@ -1212,14 +2174,28 @@ function buildChildEnv(info, appRoot) {
   var binDir  = path.join(appRoot, 'node_modules', '.bin');
   var pathKey = 'PATH';
   var keys    = Object.keys(process.env);
+  var applied;
   var i;
   var key;
+  var scrubbed;
 
   for (i = 0; i < keys.length; i++) {
     env[keys[i]] = process.env[keys[i]];
     if (keys[i].toUpperCase() === 'PATH') {
       pathKey = keys[i];
     }
+  }
+
+  // Closed before anything is added: an inherited NODE_OPTIONS would preload
+  // code into the child - `mocha` under `npm test`, or a nested launcher - and
+  // an inherited NODE_PATH would let it resolve a different module tree than
+  // the one `--app` selected. See PRELOAD_ENV_VARS.
+  scrubbed = scrubPreloadVars(env);
+  if (scrubbed.length) {
+    note('removed ' + scrubbed.join(', ') + ' from the child environment: ' +
+      'each can preload code into the child or redirect its module ' +
+      'resolution, and the child must behave as the tree under test alone ' +
+      'determines. Pass node flags explicitly instead.');
   }
 
   keys = Object.keys(info.env);
@@ -1232,8 +2208,22 @@ function buildChildEnv(info, appRoot) {
     ? binDir + path.delimiter + env[pathKey]
     : binDir;
 
-  if (appRoot !== process.cwd() && !process.env.NODE_CONFIG_DIR) {
-    env.NODE_CONFIG_DIR = path.join(appRoot, 'config');
+  // The isolation and the config directory, through the shared helper rather
+  // than a fourth private copy of the rule. `info.env` already carries the
+  // three isolation variables; this call is what reconciles NODE_CONFIG_DIR
+  // against the tree the child actually runs in.
+  applied = applyConfigIsolation(env, {
+    appRoot         : appRoot,
+    configDir       : 'set',
+    runtimeJsonPath : info.env.NODE_CONFIG_RUNTIME_JSON
+  });
+
+  if (applied.replaced) {
+    note('replaced an inherited NODE_CONFIG_DIR of ' + applied.replaced +
+      ' with ' + applied.configDir + ': the command runs in ' + appRoot +
+      ', so its own configuration must be the one that loads.');
+  }
+  else if (appRoot !== process.cwd()) {
     note('the command runs in ' + appRoot + '; NODE_CONFIG_DIR points at ' +
       env.NODE_CONFIG_DIR + ' so its own configuration is the one that loads.');
   }
@@ -1689,10 +2679,34 @@ async function main() {
 // created, no command is spawned and no signal listener is installed.
 module.exports = {
   // The lifecycle.
-  start      : start,
-  stop       : stop,
-  uri        : uri,
-  withMongo  : withMongo,
+  start        : start,
+  stop         : stop,
+  uri          : uri,
+  withMongo    : withMongo,
+
+  // Whether a teardown failure has been recorded in this process, for a caller
+  // that wants to ask rather than infer it from an exit code.
+  cleanupFailed: cleanupFailed,
+
+  // Configuration isolation - the one implementation every parity tool uses,
+  // exported so no tool re-derives it. `configIsolationEnv` for a child's
+  // environment, `applyConfigIsolation` for an environment object a caller is
+  // assembling, `isolateRuntimeConfig` for this process before its first
+  // `config` require.
+  configIsolationEnv          : configIsolationEnv,
+  applyConfigIsolation        : applyConfigIsolation,
+  isolateRuntimeConfig        : isolateRuntimeConfig,
+  inheritedRuntimeConfigIsOwned: inheritedRuntimeConfigIsOwned,
+
+  // The teardown record. `withMongo` cannot report a teardown fault through
+  // its return value without corrupting the body's outcome, so a caller that
+  // needs the answer reads it here, right after the call returns, and folds it
+  // into its own verdict. This is the channel test/parity/{storage,seed,worker,
+  // capture,replay,joi-matrix}.js use to keep a leaked mongod or a surviving
+  // data directory out of an exit code of 0.
+  cleanupFailures      : cleanupFailures,
+  cleanupFailed        : cleanupFailed,
+  resetCleanupFailures : resetCleanupFailures,
 
   // Building blocks, exported because each has a failure mode worth testing
   // directly rather than through a spawned process.
@@ -1704,6 +2718,7 @@ module.exports = {
   parseInheritedNodeConfig: parseInheritedNodeConfig,
   readOverlay             : readOverlay,
   buildChildEnv           : buildChildEnv,
+  scrubPreloadVars        : scrubPreloadVars,
   generateDatabaseName    : generateDatabaseName,
   assertDatabaseName      : assertDatabaseName,
   assertDeclaredDependency: assertDeclaredDependency,
@@ -1715,6 +2730,8 @@ module.exports = {
   // file uses rather than a second copy of them.
   DEFAULT_OVERLAY   : DEFAULT_OVERLAY,
   PERSIST_ON_CHANGE : PERSIST_ON_CHANGE,
+  PRELOAD_ENV_VARS  : PRELOAD_ENV_VARS,
+  DISABLE_FILE_WATCH: DISABLE_FILE_WATCH,
   SHUTDOWN_GRACE_MS : SHUTDOWN_GRACE_MS,
   PACKAGE_NAME      : PACKAGE_NAME,
   EXIT_OK           : EXIT_OK,
@@ -1727,4 +2744,3 @@ module.exports = {
 if (require.main === module) {
   main();
 }
-

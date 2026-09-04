@@ -89,6 +89,15 @@
 // `Date.now`, no `new ObjectId()`, no `url.parse` (DEP0169 - this tooling's
 // stderr is inside the zero-warning gate's stream; `new URL` is used instead).
 //
+// One field is written by an UNAWAITED hook rather than by a save, and it is
+// not in that set because it is made deterministic instead: `File.metrics.
+// trinkets` is incremented by `updateAssetMetrics` (`lib/models/trinket.js:326-
+// 348`) with the promise discarded, and `metrics` is in the File publicSpec, so
+// its value reaches a compared response. `reconcileAssetMetrics` below waits
+// for every increment it is owed, assigns the final value, reads it back - and
+// FAILS rather than publishing a fixture whose metric may still move. A
+// harness cannot tell a lost increment from a late one, so neither is shipped.
+//
 // Three fields are written by the models themselves and are NOT fixable from
 // here, so they stay in replay.js's enumerated volatile set:
 //   * `lastUpdated`  - `lib/models/plugins/timestamps.js` assigns `Date.now()`
@@ -105,14 +114,36 @@
 // ===========================================================================
 //   ids                  frozen map of every fixed identifier
 //   credentials          frozen login literals per seeded identity
+//   oauth                the OAuth identity contract - both addresses, their
+//                        derived usernames, the provider ids and the token
+//   oauthIdentities      the same, in the shape setIdentityEmails() accepts
 //   fixtures             frozen, configuration-INDEPENDENT fixture facts
 //                        (bytes, digests, sizes, keys, shortCodes, payloads)
 //   GROUPS               the selectable group names, in dependency order
-//   seed(options)        idempotent; async; returns a summary
+//   seed(options)        idempotent; async; GATES on verify(); returns a summary
+//   verify(options)      the fixture checks, scoped to a selection; throws
 //   reset(options)       deletes only this seeder's collections; async
+//   resetOAuthNewcomer() restores the new-user OAuth precondition alone
 //   storage()            resolved bucket/key/url descriptors (reads config)
 //   s3Manifest()         a seed manifest for test/parity/fixtures/aws.js
 //   keyFromUrl(url)      the object key a stored url resolves to
+//
+// ===========================================================================
+// THE GATE
+// ===========================================================================
+// `seed()` runs `verify()` over the groups it seeded before it returns, and
+// throws if any check fails. That is deliberate and it is what makes the
+// checks load-bearing: every harness in this directory already fails when
+// `seed()` rejects - `capture.js` and `replay.js` spawn a seeder child and
+// gate on its exit code, `storage.js` and `worker.js` let the rejection out of
+// their own prepare step, `joi-matrix.js` reports it as a tool error - so
+// gating here gives the strongest statement this file can make about its own
+// fixtures a caller in every one of them. Reachable only from `--verify`, it
+// was the one thing no harness consulted.
+//
+// `seed({verify: false})` opts out, for a caller that wants to assert
+// something about a deliberately incomplete database. Nothing in this
+// directory does.
 //
 // ===========================================================================
 // INVOCATION
@@ -120,7 +151,7 @@
 // As a module, inside a harness that already has a connection:
 //
 //   var seed = require('./seed');
-//   await seed.seed();                       // everything
+//   await seed.seed();                       // everything, gated
 //   await seed.seed({ users: true, files: true });   // storage.js
 //
 // Standalone, as a self-check that proves the fixtures load and satisfy every
@@ -175,6 +206,10 @@ var ids = Object.freeze({
   user         : '000000000000000000000101',
   admin        : '000000000000000000000102',
   disabledUser : '000000000000000000000103',
+  // The Google-linked identity the OAuth fixture's existing-user profile
+  // serves. See THE OAUTH IDENTITY CONTRACT below for why it is a seeded
+  // fixture rather than a by-product of the new-user scenario.
+  oauthUser    : '000000000000000000000104',
   missingUser  : '0000000000000000000001ff',
 
   // 02 - trinkets. Both code shapes `lib/workers/exports.js:334-352` branches
@@ -236,6 +271,105 @@ var ids = Object.freeze({
 // a raw role with no `permissions` - `hasRole('admin')` is true, which is the
 // predicate `lib/util/helpers.js:22` and `app.js:261` actually use, and
 // `hasPermission` is false. That asymmetry is baseline and is preserved.
+//
+// ===========================================================================
+// THE OAUTH IDENTITY CONTRACT
+// ===========================================================================
+// `googleCallback` (`lib/controllers/auth.js:200-204`) chooses between its two
+// database branches with `User.findByMultiple`, an $or over the email, the
+// derived username and `profiles.google.id` from the provider profile. There is
+// no other switch: which branch runs is decided ENTIRELY by whether a user
+// matching the served profile already exists. So the two branches AAP 0.4.2 and
+// 0.6.6 require - the existing user who signs in successfully, and the new user
+// who is persisted and then reported as a failure - are selected by seeding one
+// identity and not the other:
+//
+//   OAUTH.existing   IS seeded, by `seedUsers` below, with a fixed `_id`.
+//   OAUTH.new        is NOT seeded, and `seedUsers` REMOVES it if a previous
+//                    new-user scenario left the account behind.
+//
+// Both halves are load-bearing. Without the first, the existing-user case can
+// only reach its branch by running AFTER the new-user case and inheriting the
+// account that quirk creates, which makes one scenario's result depend on
+// another's having run - and on its having run exactly once. Without the
+// second, the account the new-user case creates survives into the next run, the
+// same request then takes the existing-user branch, and the quirk stops being
+// reachable at all. Together they make each provider scenario independently
+// reproducible, in any order, on any number of runs.
+//
+// The values below MIRROR `test/parity/fixtures/http.js` - its `identities`,
+// `googleIds`, `accessToken` - and that module is deliberately NOT required
+// here: requiring it installs a global `fetch` interceptor as a side effect of
+// the require, which a seeder must never do to a process that has not asked for
+// it. The two artifacts are kept aligned in the other direction instead, by the
+// consumer: `OAUTH_IDENTITIES` below is exported in exactly the shape that
+// fixture's `setIdentityEmails({existing, new})` accepts, so a harness pushes
+// the seeder's addresses into the fixture rather than either file guessing at
+// the other's.
+//
+// Drift is still checked, as far as it can be from here: where a process has
+// ALREADY loaded that fixture, `verify()` compares the two address pairs and
+// fails naming both. It reads the module out of `require.cache` rather than
+// requiring it, so the check exists exactly when both artifacts are in one
+// process, and it never installs anything when they are not. In a process
+// holding only this file there is nothing to compare, and the consumer's
+// `setIdentityEmails` call is what keeps them aligned.
+// ---------------------------------------------------------------------------
+
+/**
+ * The username `lib/util/user.js:generate_username` derives from an email, and
+ * therefore the username `googleCallback` looks up and writes.
+ *
+ * Replicated rather than required, for the same reason the identity values
+ * above are copied rather than imported: this file requires no test helper and
+ * no fixture, and the expression is one line whose behaviour is pinned by the
+ * `verify()` check that compares it against the seeded document's own username.
+ *
+ * @param {string} email
+ * @returns {string}
+ */
+function derivedUsername(email) {
+  return String(email).replace(/\W+/g, '-').toLowerCase();
+}
+
+var OAUTH = Object.freeze({
+  // The address the fixture's `oauth:success-existing-user` profile serves.
+  existing         : 'parity-existing@example.com',
+  // The address its `oauth:success-new-user` profile serves. Never seeded.
+  new              : 'parity-newcomer@example.com',
+  existingUsername : derivedUsername('parity-existing@example.com'),
+  newUsername      : derivedUsername('parity-newcomer@example.com'),
+
+  // The provider account ids the fixture's two userinfo profiles carry. The
+  // existing one is stored on the seeded document, so the $or matches on
+  // `profiles.google.id` as well as on the email - which is what makes the
+  // lookup insensitive to a change in either one alone.
+  googleIds        : Object.freeze({
+    existing : '100000000000000000001',
+    new      : '100000000000000000002'
+  }),
+
+  // The token the fixture's token-exchange profile returns, which the linked
+  // account already carries. Obviously synthetic, and unable to match any
+  // provider's token format so that a secret scanner cannot mistake it for a
+  // credential.
+  accessToken      : 'PARITY-FIXED-GOOGLE-ACCESS-TOKEN',
+
+  // The seeded document's `_id`, so a harness naming this identity does not
+  // have to know which key of `ids` holds it.
+  existingId       : ids.oauthUser
+});
+
+// Exactly the argument `setIdentityEmails` in `test/parity/fixtures/http.js`
+// accepts, so a consumer aligns the fixture to the seeder in one call instead
+// of copying two addresses.
+var OAUTH_IDENTITIES = Object.freeze({
+  existing         : OAUTH.existing,
+  new              : OAUTH.new,
+  existingUsername : OAUTH.existingUsername,
+  newUsername      : OAUTH.newUsername
+});
+
 var IDENTITIES = Object.freeze({
   user : Object.freeze({
     _id      : ids.user,
@@ -265,6 +399,52 @@ var IDENTITIES = Object.freeze({
     email    : 'disabled@example.com',
     password : 'disabled-fixture-password',
     roles    : [{ context : 'site', roles : ['user', 'disabled'] }]
+  }),
+
+  // The Google-linked account - see THE OAUTH IDENTITY CONTRACT below. Its
+  // fields are chosen so that `googleCallback`'s existing-user branch performs
+  // NO write, which is what makes the scenario independent of order:
+  //
+  //   * `profiles.google` is already populated, so `!user.profiles.google`
+  //     (`lib/controllers/auth.js:229`) is false and `updateUser` stays false.
+  //     Were it absent, the first sign-in would link the account and MUTATE
+  //     this document, and a second run would then take a different path
+  //     through the same branch.
+  //   * `avatar` is supplied, so `!user.avatar` (`:222`) is false as well. The
+  //     value is deliberately NOT the fixture's `picture` URL: `normalizeAvatar`
+  //     (`lib/models/user.js:244-246`) rewrites any avatar containing
+  //     'example.com' to a default that depends on whether
+  //     `aws.buckets.useravatars.host` is configured, and a stored field must
+  //     not depend on the overlay in force. '/img/avatar-default.svg' is
+  //     returned verbatim by that function (`:249-251`) and is exactly what it
+  //     produces for an unconfigured host, so the seeded value is both fixed
+  //     and the one the application would have written.
+  //   * No `password`, because the schema does not require one
+  //     (`lib/models/user.js:15`) and a Google-sourced account has none -
+  //     `encryptPassword` skips an unmodified path (`:51`). `verify()`
+  //     therefore asserts this identity through the OAuth lookup rather than
+  //     through `comparePassword`.
+  //   * `verified` is left at its default `false`: `googleCallback` does not
+  //     set it when it creates an account (`:247-267`), so a linked account
+  //     that this fixture stands in for would not carry it either.
+  oauthExisting : Object.freeze({
+    _id      : ids.oauthUser,
+    // The `name` the fixture's userinfo profile serves, so a reviewer reading
+    // a captured response sees the same person in both artifacts. Only the
+    // NEW-user branch reads `profile.name`, so this value is legibility
+    // rather than a coupling.
+    fullname : 'Parity Existing User',
+    username : OAUTH.existingUsername,
+    email    : OAUTH.existing,
+    avatar   : '/img/avatar-default.svg',
+    // What `googleCallback` writes for an account it created (`:252`).
+    source   : 'google',
+    profiles : {
+      google : {
+        id    : OAUTH.googleIds.existing,
+        token : OAUTH.accessToken
+      }
+    }
   })
 });
 
@@ -286,6 +466,7 @@ var DATES = Object.freeze({
   user             : '2024-01-01T00:00:00.000Z',
   admin            : '2024-01-01T00:01:00.000Z',
   disabledUser     : '2024-01-01T00:02:00.000Z',
+  oauthUser        : '2024-01-01T00:03:00.000Z',
   trinketPython    : '2024-02-01T00:00:00.000Z',
   trinketPython3   : '2024-02-02T00:00:00.000Z',
   trinketHtml      : '2024-02-03T00:00:00.000Z',
@@ -1120,7 +1301,9 @@ var GROUP_DEPENDENCIES = Object.freeze({
 // to prove every id in `ids` resolves to a document - except the `missing*`
 // ids, which are listed separately because their absence is the fixture.
 var GROUP_IDS = Object.freeze({
-  users    : Object.freeze(['User', [ids.user, ids.admin, ids.disabledUser]]),
+  users    : Object.freeze(['User', [
+    ids.user, ids.admin, ids.disabledUser, ids.oauthUser
+  ]]),
   files    : Object.freeze(['File', [
     ids.file, ids.notebookFile, ids.userAssetFile, ids.legacyImageFile
   ]]),
@@ -1153,6 +1336,12 @@ var MISSING_IDS = Object.freeze([
   Object.freeze({ model : 'Export',  id : ids.missingExport,  key : 'missingExport' })
 ]);
 
+// The option keys that are not group names. `verify` is one of them because
+// `seed()` gates on the fixture checks by default (see the note on `seed`), and
+// a caller that turns the gate off must be able to say so without tripping the
+// unknown-option guard below.
+var SELECTION_FLAGS = Object.freeze(['force', 'scope', 'verify']);
+
 /**
  * Resolves the requested groups into a dependency-closed selection.
  *
@@ -1180,10 +1369,11 @@ function resolveSelection(options) {
   });
 
   Object.keys(opts).forEach(function(key) {
-    if (key !== 'force' && key !== 'scope' && GROUP_ORDER.indexOf(key) === -1) {
+    if (SELECTION_FLAGS.indexOf(key) === -1 && GROUP_ORDER.indexOf(key) === -1) {
       throw new Error(
         LOG_PREFIX + 'unknown seed option `' + key + '`; the groups are ' +
-        GROUP_ORDER.join(', ') + ' and the flags are force, scope'
+        GROUP_ORDER.join(', ') + ' and the flags are ' +
+        SELECTION_FLAGS.join(', ')
       );
     }
   });
@@ -1285,6 +1475,34 @@ function privateModel(name) {
 }
 
 /**
+ * `User.findByMultiple`, awaited.
+ *
+ * The application's own class method is callback-shaped
+ * (`lib/models/user.js:105-115`, an `$or` over every key of the query) and this
+ * file does not get to change that, so the call is wrapped rather than
+ * reimplemented. Reimplementing it would be the more convenient thing and the
+ * wrong one: the point of using it in `verify()` is that the OAuth identity is
+ * asserted through the exact lookup `googleCallback` performs, so a query built
+ * here that happened to differ would prove nothing about which branch a served
+ * profile reaches.
+ *
+ * @param {Object} query field -> value; each becomes one arm of the $or
+ * @returns {Promise<Object|null>} the matched user document, or null
+ */
+function findByMultiple(query) {
+  return new Promise(function(resolve, reject) {
+    loadModels().User.findByMultiple(query, function(err, user) {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      resolve(user);
+    });
+  });
+}
+
+/**
  * A structural copy of a frozen fixture literal, so mongoose is never handed a
  * frozen object it might try to annotate. Every value in these literals is a
  * string, number, boolean, array or plain object - dates are carried as ISO
@@ -1375,7 +1593,7 @@ async function ensure(summary, model, id, create) {
 // ---------------------------------------------------------------------------
 
 /**
- * The three identities.
+ * The four identities, and the one account that must not exist.
  *
  * Saved through the model, never inserted raw, because `encryptPassword`
  * (`lib/models/user.js:48-62`) is a pre-save hook: a raw insert would store the
@@ -1412,6 +1630,88 @@ async function seedUsers(models, summary) {
       { created : DATES.disabledUser }
     )).save();
   });
+
+  // The Google-linked identity, and then the absence that is its counterpart.
+  // Both belong to the `users` group because both are facts about the User
+  // collection, and every other group depends on `users`, so a selection that
+  // seeds anything at all establishes the whole OAuth precondition.
+  await ensure(summary, 'User', ids.oauthUser, async function() {
+    return await new models.User(attributes(
+      copy(IDENTITIES.oauthExisting),
+      { created : DATES.oauthUser }
+    )).save();
+  });
+
+  summary.oauth = await removeOAuthNewcomer();
+}
+
+/**
+ * Removes the account the new-user OAuth scenario creates, so its branch is
+ * reachable again.
+ *
+ * This is the second half of THE OAUTH IDENTITY CONTRACT and it is not
+ * housekeeping. `googleCallback`'s new-user branch persists a real user for
+ * whatever address the provider profile served, and that account's `_id` is
+ * GENERATED - so it is not one of this file's fixed ids, `deleteFixtures` does
+ * not reach it, and `seed({force: true})` leaves it behind. One run therefore
+ * arms the next run's failure: the same request finds the account, takes the
+ * existing-user branch, and the quirk AAP 0.6.6 requires stops being
+ * observable while every status code stays exactly as it was.
+ *
+ * Deleted by email OR username, because those are two of the three arms of the
+ * lookup `googleCallback` performs and either one alone would still match. The
+ * third arm, `profiles.google.id`, is covered by the same document: the branch
+ * writes all three together (`lib/controllers/auth.js:248-259`).
+ *
+ * Nothing else is touched. The addresses are this file's own fixtures, so
+ * removing them is inside the ownership `reset()` describes - a document
+ * carrying a fixture identity, in a collection this file owns - and no seeded
+ * `_id` can match, because the newcomer is never seeded.
+ *
+ * @returns {Promise<Object>} what the caller should record: the seeded
+ *   identity, the address that must stay absent, and how many leftover
+ *   accounts were removed
+ */
+async function removeOAuthNewcomer() {
+  var result = await privateModel('User').collection.deleteMany({
+    $or : [
+      { email    : OAUTH.new },
+      { username : OAUTH.newUsername }
+    ]
+  });
+
+  if (result.deletedCount) {
+    note('removed ' + result.deletedCount + ' leftover account(s) for ' +
+         OAUTH.new + ', which a previous new-user OAuth scenario created; ' +
+         'that branch is reachable again');
+  }
+
+  return {
+    existingId       : ids.oauthUser,
+    existingEmail    : OAUTH.existing,
+    existingUsername : OAUTH.existingUsername,
+    newEmail         : OAUTH.new,
+    newUsername      : OAUTH.newUsername,
+    newcomerRemoved  : result.deletedCount
+  };
+}
+
+/**
+ * Restores the new-user OAuth precondition on its own, without re-seeding.
+ *
+ * Exported for a driver that runs the new-user scenario more than once in a
+ * single pass - a capture and an immediate re-capture of the same case, say.
+ * `seed()` establishes the same precondition, but a full seed between two
+ * requests is a much larger intervention than one delete, and a driver should
+ * not have to choose between them.
+ *
+ * @returns {Promise<number>} how many accounts were removed
+ * @throws {Error} If there is no connection.
+ */
+async function resetOAuthNewcomer() {
+  assertConnection();
+
+  return (await removeOAuthNewcomer()).newcomerRemoved;
 }
 
 /**
@@ -1535,6 +1835,11 @@ async function seedTrinkets(models, summary) {
   var descriptors = storage({ exports : false });
   var i, descriptor;
 
+  // Read BEFORE anything is created, because the metric hook is an `$inc`:
+  // "the increment has landed" is only decidable against the value that was
+  // there beforehand. See reconcileAssetMetrics.
+  var metricBaseline = await sampleAssetMetrics();
+
   for (i = 0; i < TRINKETS.length; i++) {
     descriptor = TRINKETS[i];
 
@@ -1578,14 +1883,16 @@ async function seedTrinkets(models, summary) {
     /* eslint-enable no-loop-func */
   }
 
-  await reconcileAssetMetrics(summary);
+  await reconcileAssetMetrics(summary, metricBaseline);
 }
 
 // How long reconcileAssetMetrics waits for an in-flight metric increment, and
-// how often it looks. Two seconds against a local in-memory mongod is very
-// generous for one small update; the bound exists so a lost increment surfaces
-// as a reported fact rather than a hang.
-var METRIC_SETTLE_TIMEOUT_MS = 2000;
+// how often it looks. Five seconds against a local in-memory mongod is very
+// generous for one small update - the wait returns as soon as the value lands,
+// so the bound is only ever paid when the increment is genuinely lost, and a
+// host running dozens of harnesses at once should not turn a slow write into a
+// failure.
+var METRIC_SETTLE_TIMEOUT_MS = 5000;
 var METRIC_POLL_INTERVAL_MS  = 10;
 
 /**
@@ -1602,6 +1909,55 @@ function sleep(ms) {
 }
 
 /**
+ * Reads `metrics.trinkets` for every file an asset-bearing trinket references.
+ *
+ * Called before any trinket is created, because the hook this exists to
+ * observe is an `$inc` (`lib/models/file.js:27-37`, `{$inc, upsert: true}`) and
+ * an increment is only detectable against the value that preceded it. Waiting
+ * for "the metric is at least the number of increments owed" - which is what
+ * this function replaced - is satisfied instantly by a file that already
+ * carried that value from an earlier run, so the wait would return while the
+ * increment was still in flight and the whole reconciliation would be built on
+ * a value that had not settled.
+ *
+ * @returns {Promise<Object>} file id -> the metric value before this call
+ */
+async function sampleAssetMetrics() {
+  var baseline = {};
+  var fileIds  = [];
+
+  TRINKETS.forEach(function(descriptor) {
+    var fileId;
+
+    if (!descriptor.asset) {
+      return;
+    }
+
+    fileId = ids[descriptor.asset];
+
+    if (fileIds.indexOf(fileId) === -1) {
+      fileIds.push(fileId);
+    }
+  });
+
+  for (var i = 0; i < fileIds.length; i++) {
+    /* eslint-disable no-await-in-loop */
+    var document = await privateModel('File').collection.findOne(
+      { _id : new mongoose.Types.ObjectId(fileIds[i]) },
+      { projection : { 'metrics.trinkets' : 1 } }
+    );
+    /* eslint-enable no-await-in-loop */
+
+    baseline[fileIds[i]] = (document && document.metrics &&
+      typeof document.metrics.trinkets === 'number')
+      ? document.metrics.trinkets
+      : 0;
+  }
+
+  return baseline;
+}
+
+/**
  * Fixes `File.metrics.trinkets` at the value the seeded set implies.
  *
  * `updateAssetMetrics` (`lib/models/trinket.js:326-348`) fires an UNAWAITED
@@ -1609,23 +1965,43 @@ function sleep(ms) {
  * so the increment lands at a moment the caller cannot observe - and `metrics`
  * is in the File publicSpec, so its value is visible in a compared response.
  * The hook is left to run exactly as it does in production, and this makes the
- * result reproducible in two steps:
+ * result reproducible in three steps:
  *
  *   1. For each file an asset-bearing trinket was CREATED against in this call,
- *      wait until the increment has actually landed. Setting the value while an
- *      increment is still in flight would leave `expected + 1` behind, which is
- *      the whole race - so the wait, not the assignment, is what closes it.
+ *      wait until every increment owed has actually landed - measured as
+ *      `baseline + owed`, against the value sampled before the trinkets were
+ *      created. Assigning the final value while an increment is still in flight
+ *      would leave `expected + 1` behind, which is the whole race, so the wait
+ *      is what closes it.
  *   2. Assign the final value. Assignment rather than another increment,
  *      because a repeat `seed()` must not double it, and it also normalizes a
  *      file whose metric a corpus case moved.
+ *   3. Read the value back and confirm it. An increment that arrives between
+ *      the assignment and this read is the one failure mode step 1 cannot rule
+ *      out, and it is exactly the corruption a compared response would show as
+ *      an off-by-one metric in a JSON body.
+ *
+ * An increment that does not land within the bound is FATAL. It has to be: a
+ * missing increment and a late increment are indistinguishable from here, so
+ * carrying on would either publish a fixture whose metric is about to change or
+ * publish one whose hook never ran, and a harness cannot tell which it got.
+ * Reporting it and assigning the value anyway - which is what this function
+ * used to do - left a `summary.assetMetricsSettled` flag no driver read, so a
+ * corpus captured against a metric that moved mid-run looked exactly like a
+ * clean one. Throwing here means every consumer of `seed()` fails on it,
+ * because every consumer already fails when `seed()` rejects.
  *
  * @param {Object} summary the seed summary; `created.Snippet` says which
- *   trinkets were created in this call, and therefore which increments to wait
- *   for
+ *   trinkets were created in this call, and therefore which increments are owed
+ * @param {Object} baseline `sampleAssetMetrics()` taken before the trinkets in
+ *   this call were created
+ * @throws {Error} If an owed increment does not land within
+ *   METRIC_SETTLE_TIMEOUT_MS, or if the assigned value does not read back.
  */
-async function reconcileAssetMetrics(summary) {
+async function reconcileAssetMetrics(summary, baseline) {
   var expected = {};
-  var pending  = {};
+  var owed     = {};
+  var before   = baseline || {};
   var createdTrinkets = summary.created.Snippet || [];
 
   TRINKETS.forEach(function(descriptor) {
@@ -1637,45 +2013,36 @@ async function reconcileAssetMetrics(summary) {
     expected[fileId] = (expected[fileId] || 0) + 1;
 
     if (createdTrinkets.indexOf(descriptor._id) >= 0) {
-      pending[fileId] = (pending[fileId] || 0) + 1;
+      owed[fileId] = (owed[fileId] || 0) + 1;
     }
   });
 
-  var fileIds  = GROUP_IDS.files[1];
-  var settled  = true;
-  var i, fileId, waited, current;
+  var fileIds = GROUP_IDS.files[1];
+  var i, fileId, target, landed, stored;
 
   for (i = 0; i < fileIds.length; i++) {
     fileId = fileIds[i];
 
-    if (pending[fileId]) {
-      waited = 0;
+    if (owed[fileId]) {
+      target = (before[fileId] || 0) + owed[fileId];
+      landed = await waitForMetric(fileId, target);
 
-      /* eslint-disable no-await-in-loop */
-      while (waited < METRIC_SETTLE_TIMEOUT_MS) {
-        current = await privateModel('File').collection.findOne(
-          { _id : new mongoose.Types.ObjectId(fileId) },
-          { projection : { 'metrics.trinkets' : 1 } }
+      if (!landed.settled) {
+        throw new Error(
+          LOG_PREFIX + 'the asset metric for File ' + fileId + ' did not ' +
+          'settle: ' + owed[fileId] + ' increment(s) were owed against a ' +
+          'starting value of ' + (before[fileId] || 0) + ', so the value had ' +
+          'to reach ' + target + ', and it was still ' + landed.observed +
+          ' after ' + METRIC_SETTLE_TIMEOUT_MS + 'ms. `updateAssetMetrics` ' +
+          '(lib/models/trinket.js:326-348) fires that increment unawaited, so ' +
+          'a lost one and a late one are indistinguishable from here and ' +
+          'neither may be published: an increment arriving after this seeder ' +
+          'assigned the final value would leave ' + (expected[fileId] + 1) +
+          ' behind, and `metrics` is in the File publicSpec, so a corpus ' +
+          'captured against it would carry a value the next run does not ' +
+          'reproduce. Re-run the seed; if it recurs, the hook itself is not ' +
+          'firing and the trinkets group is what to look at.'
         );
-
-        if (current && current.metrics &&
-            current.metrics.trinkets >= pending[fileId]) {
-          break;
-        }
-
-        await sleep(METRIC_POLL_INTERVAL_MS);
-        waited += METRIC_POLL_INTERVAL_MS;
-      }
-      /* eslint-enable no-await-in-loop */
-
-      if (waited >= METRIC_SETTLE_TIMEOUT_MS) {
-        // Reported, not thrown: the assignment below still leaves the right
-        // value, and `verify()` asserts it independently. A hang or a silent
-        // pass would both be worse than a recorded fact.
-        settled = false;
-        note('the asset metric increment for File ' + fileId + ' did not ' +
-             'land within ' + METRIC_SETTLE_TIMEOUT_MS + 'ms; the final value ' +
-             'is being set anyway and verify() will catch a late arrival');
       }
     }
 
@@ -1683,10 +2050,74 @@ async function reconcileAssetMetrics(summary) {
       { _id : new mongoose.Types.ObjectId(fileId) },
       { $set : { 'metrics.trinkets' : expected[fileId] || 0 } }
     );
+
+    stored = await readMetric(fileId);
+
+    if (stored !== (expected[fileId] || 0)) {
+      throw new Error(
+        LOG_PREFIX + 'the asset metric for File ' + fileId + ' was set to ' +
+        (expected[fileId] || 0) + ' and read back as ' + stored + ', so an ' +
+        'increment landed after the assignment. The fixture is not ' +
+        'reproducible and must not be captured against; re-run the seed.'
+      );
+    }
   }
 
-  summary.assetMetrics        = expected;
-  summary.assetMetricsSettled = settled;
+  summary.assetMetrics = expected;
+
+  // An invariant rather than a flag: `seed()` throws above rather than
+  // returning with this false, so a consumer reading it is reading a record of
+  // what was established, not a condition to branch on. It is kept because the
+  // value is worth having in a seed summary a harness prints as evidence.
+  summary.assetMetricsSettled = true;
+}
+
+/**
+ * Polls one file's `metrics.trinkets` until it reaches `target`.
+ *
+ * @param {string} fileId
+ * @param {number} target the value the owed increments must bring it to
+ * @returns {Promise<{settled: boolean, observed: number, waited: number}>}
+ */
+async function waitForMetric(fileId, target) {
+  var waited = 0;
+  var observed;
+
+  /* eslint-disable no-await-in-loop */
+  while (true) {
+    observed = await readMetric(fileId);
+
+    if (observed >= target) {
+      return { settled : true, observed : observed, waited : waited };
+    }
+
+    if (waited >= METRIC_SETTLE_TIMEOUT_MS) {
+      return { settled : false, observed : observed, waited : waited };
+    }
+
+    await sleep(METRIC_POLL_INTERVAL_MS);
+    waited += METRIC_POLL_INTERVAL_MS;
+  }
+  /* eslint-enable no-await-in-loop */
+}
+
+/**
+ * One file's `metrics.trinkets`, as a number. A file with no metrics subdocument
+ * reads as 0, which is what an unreferenced file means.
+ *
+ * @param {string} fileId
+ * @returns {Promise<number>}
+ */
+async function readMetric(fileId) {
+  var document = await privateModel('File').collection.findOne(
+    { _id : new mongoose.Types.ObjectId(fileId) },
+    { projection : { 'metrics.trinkets' : 1 } }
+  );
+
+  return (document && document.metrics &&
+    typeof document.metrics.trinkets === 'number')
+    ? document.metrics.trinkets
+    : 0;
 }
 
 /**
@@ -2084,10 +2515,14 @@ async function deleteFixtures(groups) {
  * @param {boolean} [options.folders]
  * @param {boolean} [options.exports]
  * @param {boolean} [options.force=false] delete the selected fixtures first
- * @returns {Promise<Object>} a summary: selected and implied groups, and the
- *   ids created, skipped, updated and deleted, by model
+ * @param {boolean} [options.verify=true] run `verify()` over the seeded groups
+ *   before returning, and throw if any check fails
+ * @returns {Promise<Object>} a summary: selected and implied groups, the ids
+ *   created, skipped, updated and deleted by model, the OAuth identity
+ *   contract, the asset metrics, and the fixture-check report
  * @throws {Error} If there is no connection, a group is unknown, a required
- *   group was disabled, or a needed bucket is unconfigured.
+ *   group was disabled, a needed bucket is unconfigured, an asset metric did
+ *   not settle, or a fixture check failed.
  */
 async function seed(options) {
   assertConnection();
@@ -2095,6 +2530,7 @@ async function seed(options) {
   var selection = resolveSelection(options);
   var models    = loadModels();
   var force     = !!(options && options.force);
+  var gated     = !(options && options.verify === false);
   var summary   = {
     selected : selection.selected,
     implied  : selection.implied,
@@ -2117,6 +2553,21 @@ async function seed(options) {
   for (i = 0; i < selection.selected.length; i++) {
     group = selection.selected[i];
     await SEEDERS[group](models, summary);
+  }
+
+  // The gate. Every harness in this directory calls `seed()` and every one of
+  // them fails when it rejects - `capture.js` and `replay.js` spawn a child
+  // whose exit code is the gate, `storage.js` and `worker.js` let the rejection
+  // out of their own prepare step, `joi-matrix.js` turns it into a tool error -
+  // so running the checks here is what gives them a caller. It was reachable
+  // only from `--verify` before, which meant the strongest statement this file
+  // can make about its own fixtures was the one thing no harness consulted.
+  //
+  // Scoped to the groups that were actually seeded, because a check about a
+  // group a caller declined is a false failure, and `verify()` asserting the
+  // whole set is exactly why it could not be called from a subset seed.
+  if (gated) {
+    summary.verified = await verify({ groups : selection.selected });
   }
 
   return summary;
@@ -2277,23 +2728,99 @@ async function projection() {
 // ---------------------------------------------------------------------------
 
 /**
+ * The OAuth addresses `test/parity/fixtures/http.js` is serving, if that module
+ * is already loaded in this process.
+ *
+ * Read from `require.cache`, never required: loading that fixture installs a
+ * global `fetch` interceptor, and a fixture-integrity check must not change
+ * what the process it is checking does. `require.resolve` only resolves a path,
+ * so the guard costs one lookup and returns null in a process that holds this
+ * file alone - a seeder child, for instance, where there is nothing to compare.
+ *
+ * @returns {{existing: string, new: string}|null}
+ */
+function servedIdentities() {
+  var resolved;
+
+  try {
+    resolved = require.resolve('./fixtures/http');
+  }
+  catch (e) {
+    return null;
+  }
+
+  var entry = require.cache[resolved];
+
+  return (entry && entry.exports && entry.exports.identities) || null;
+}
+
+/**
+ * The groups `verify()` should assert about.
+ *
+ * `{groups: [...]}` is the form `seed()` uses, because it already knows the
+ * dependency-closed selection it seeded and re-resolving it could only
+ * disagree. Anything else goes through `resolveSelection`, so a caller may hand
+ * `verify()` the same option object it handed `seed()`.
+ *
+ * @param {Object} [options]
+ * @returns {string[]} group names, in GROUP_ORDER
+ * @throws {Error} If a named group is not a group.
+ */
+function verifiedGroups(options) {
+  var named = options && options.groups;
+
+  if (!named) {
+    return resolveSelection(options).selected;
+  }
+
+  if (!Array.isArray(named)) {
+    throw new Error(
+      LOG_PREFIX + '`groups` must be an array of group names; the groups are ' +
+      GROUP_ORDER.join(', ')
+    );
+  }
+
+  named.forEach(function(group) {
+    if (GROUP_ORDER.indexOf(group) === -1) {
+      throw new Error(
+        LOG_PREFIX + 'unknown group `' + group + '`; the groups are ' +
+        GROUP_ORDER.join(', ')
+      );
+    }
+  });
+
+  return GROUP_ORDER.filter(function(group) {
+    return named.indexOf(group) >= 0;
+  });
+}
+
+/**
  * Proves the seeded state satisfies every contract this file claims.
  *
- * Assumes a FULL seed: it asserts that every fixed id resolves, so calling it
- * after a subset seed correctly reports the groups that were not asked for as
- * missing. A harness that seeds a subset should assert its own groups rather
- * than call this.
+ * Scoped to a selection, so it can gate a subset seed as well as a full one:
+ * every check below belongs to the group whose documents it reads, and a group
+ * that was not seeded contributes no checks instead of contributing failures.
+ * Called with no argument it asserts the whole set, which is what direct
+ * execution does.
+ *
+ * This is the routine `seed()` runs before it returns, which is how it reaches
+ * every harness in this directory. Called directly it is also the standalone
+ * gate: `node test/parity/seed.js --verify` provisions a database, seeds and
+ * runs it.
  *
  * Failures are COLLECTED and reported together rather than thrown one at a
  * time: a fixture set with three problems should say so once, because fixing
  * them one run at a time is how a broken corpus takes an afternoon.
  *
- * @returns {Promise<{checks: number, failures: string[]}>}
+ * @param {Object} [options] the same group flags `seed()` takes, or
+ *   `{groups: string[]}` to name the seeded groups directly
+ * @returns {Promise<{checks: number, failures: string[], groups: string[]}>}
  * @throws {Error} If any check fails. The message lists every failure.
  */
-async function verify() {
+async function verify(options) {
   assertConnection();
 
+  var groups   = verifiedGroups(options);
   var failures = [];
   var checks   = 0;
 
@@ -2305,8 +2832,18 @@ async function verify() {
     }
   }
 
-  // 1. Every fixed id resolves to exactly one document.
-  var map    = idsForGroups(GROUP_ORDER);
+  /**
+   * Whether a group's documents are present to be asserted about.
+   *
+   * @param {string} group
+   * @returns {boolean}
+   */
+  function has(group) {
+    return groups.indexOf(group) >= 0;
+  }
+
+  // 1. Every fixed id in the seeded groups resolves to exactly one document.
+  var map    = idsForGroups(groups);
   var models = Object.keys(map);
   var i, j, model, id, count;
 
@@ -2341,23 +2878,32 @@ async function verify() {
   //    corpus is unreachable - so it is checked through the model's own
   //    comparePassword rather than by inspecting the stored string.
   var models8 = loadModels();
-  var seededUser  = await models8.User.findById(ids.user);
-  var seededAdmin = await models8.User.findById(ids.admin);
-  var disabled    = await models8.User.findById(ids.disabledUser);
+  var seededUser, seededAdmin, disabled;
 
-  check('the seeded user was found by findById', !!seededUser);
-  check('the seeded admin was found by findById', !!seededAdmin);
-  check('the disabled user was found by findById', !!disabled);
+  if (has('users')) {
+    seededUser  = await models8.User.findById(ids.user);
+    seededAdmin = await models8.User.findById(ids.admin);
+    disabled    = await models8.User.findById(ids.disabledUser);
+
+    check('the seeded user was found by findById', !!seededUser);
+    check('the seeded admin was found by findById', !!seededAdmin);
+    check('the disabled user was found by findById', !!disabled);
+  }
 
   if (seededUser) {
     check('the seeded user\'s password accepts \'' + IDENTITIES.user.password + '\'',
           await seededUser.comparePassword(IDENTITIES.user.password));
     check('the seeded user is reachable by login',
           !!(await models8.User.findByLogin(IDENTITIES.user.email)));
-    check('the seeded user owns the course through the course-owner role',
-          seededUser.hasRole('course-owner', 'course', { id : ids.course }));
     check('the seeded user is not an admin',
           !seededUser.hasRole('admin'));
+
+    // The role is granted by the course seeder, so it is only assertable when
+    // that group was selected.
+    if (has('course')) {
+      check('the seeded user owns the course through the course-owner role',
+            seededUser.hasRole('course-owner', 'course', { id : ids.course }));
+    }
   }
 
   if (seededAdmin) {
@@ -2373,11 +2919,95 @@ async function verify() {
     check('the disabled user is still a user', disabled.hasRole('user'));
   }
 
+  // 3b. THE OAUTH IDENTITY CONTRACT, both halves.
+  //
+  //     Asserted through the application's own predicate rather than through a
+  //     query of this file's own devising: `googleCallback` selects its branch
+  //     with `User.findByMultiple` over the three arms below
+  //     (`lib/controllers/auth.js:200-204`), so running that exact call is what
+  //     proves the branch a served profile reaches. A check that merely
+  //     confirmed a document exists would pass while the lookup missed it.
+  if (has('users')) {
+    var linked = await findByMultiple({
+      email                : OAUTH.existing,
+      username             : OAUTH.existingUsername,
+      'profiles.google.id' : OAUTH.googleIds.existing
+    });
+
+    check('the OAuth existing identity ' + OAUTH.existing + ' is found by the ' +
+          '$or lookup googleCallback performs, so its profile reaches the ' +
+          'existing-user branch without depending on the new-user scenario ' +
+          'having run first', !!linked);
+
+    if (linked) {
+      check('that lookup resolves to the SEEDED document ' + ids.oauthUser +
+            ' (found ' + linked.id + '), so the identity is a fixture rather ' +
+            'than an account a previous scenario created',
+            String(linked.id) === ids.oauthUser);
+      check('the seeded OAuth identity carries the derived username ' +
+            OAUTH.existingUsername + ' (found ' + linked.username + '), which ' +
+            'is the second arm of that lookup and the value the controller ' +
+            'would have written', linked.username === OAUTH.existingUsername);
+      check('the seeded OAuth identity is already linked to google id ' +
+            OAUTH.googleIds.existing + ', so `!user.profiles.google` is false ' +
+            'and the existing-user branch performs no write',
+            !!(linked.profiles && linked.profiles.google &&
+               linked.profiles.google.id === OAUTH.googleIds.existing));
+      check('the linked account carries the fixture\'s access token, so a ' +
+            'captured response cannot distinguish it from one the controller ' +
+            'linked itself',
+            !!(linked.profiles && linked.profiles.google &&
+               linked.profiles.google.token === OAUTH.accessToken));
+      check('the seeded OAuth identity carries an avatar, so `!user.avatar` ' +
+            'is false and that write is not taken either (found ' +
+            linked.avatar + ')', !!linked.avatar);
+    }
+
+    // The absence. Both arms are checked, because either one alone would make
+    // the lookup match and send the request down the existing-user branch.
+    var newcomerByEmail = await privateModel('User').collection.countDocuments({
+      email : OAUTH.new
+    });
+    var newcomerByUsername = await privateModel('User').collection.countDocuments({
+      username : OAUTH.newUsername
+    });
+
+    check('no account carries the OAuth new-user email ' + OAUTH.new +
+          ' (found ' + newcomerByEmail + '), so that profile still reaches ' +
+          'the new-user branch AAP 0.6.6 requires', newcomerByEmail === 0);
+    check('no account carries its derived username ' + OAUTH.newUsername +
+          ' (found ' + newcomerByUsername + '), which is the other arm of the ' +
+          'same lookup', newcomerByUsername === 0);
+    check('the two OAuth identities are distinct addresses, so seeding one ' +
+          'cannot satisfy the other', OAUTH.existing !== OAUTH.new);
+
+    // Drift against the fixture that serves those addresses, but only where it
+    // is already loaded - see the note on THE OAUTH IDENTITY CONTRACT. In a
+    // seeder child that holds this file alone there is nothing to compare and
+    // no check is counted.
+    var served = servedIdentities();
+
+    if (served) {
+      check('the http fixture serves the address this file seeds (it serves ' +
+            served.existing + ', seeded ' + OAUTH.existing + ') - if these ' +
+            'differ, call setIdentityEmails(seed.oauthIdentities) before the ' +
+            'first intercepted call', served.existing === OAUTH.existing);
+      check('the http fixture serves the address this file keeps absent (it ' +
+            'serves ' + served.new + ', absent ' + OAUTH.new + ')',
+            served.new === OAUTH.new);
+    }
+  }
+
   // 4. The content-hash contract. AAP 0.6.7: the S3 key IS a content digest,
   //    so a changed digest silently orphans every stored object. Three things
   //    must agree - the bytes, the seeded record's `hash`, and the key the
   //    record's `url` resolves to.
-  var descriptors = storage();
+  //    Configuration-independent apart from the bucket names, so it runs for
+  //    every selection - except the export archive, whose descriptor needs the
+  //    `exports` bucket that `config/default.yaml` does not declare (AAP
+  //    0.6.7). Asking for it under a selection that did not seed exports would
+  //    turn a legitimate subset seed into a configuration error.
+  var descriptors = storage({ exports : has('exports') });
   var names       = Object.keys(descriptors);
   var payloads    = {
     materialText       : MATERIAL_TEXT,
@@ -2413,32 +3043,53 @@ async function verify() {
     ['legacyImageFile', ids.legacyImageFile, DIGESTS.legacyPng, KEYS.legacyPng]
   ];
 
-  for (i = 0; i < fileChecks.length; i++) {
-    var expectation = fileChecks[i];
-    var fileDoc     = await privateModel('File').findById(expectation[1]).exec();
+  if (has('files')) {
+    for (i = 0; i < fileChecks.length; i++) {
+      var expectation = fileChecks[i];
+      var fileDoc     = await privateModel('File').findById(expectation[1]).exec();
 
-    check('File ' + expectation[0] + ' was found', !!fileDoc);
+      check('File ' + expectation[0] + ' was found', !!fileDoc);
 
-    if (fileDoc) {
-      check('File ' + expectation[0] + ' carries the content digest as its hash',
-            fileDoc.hash === expectation[2]);
-      check('File ' + expectation[0] + '\'s url resolves to ' + expectation[3],
-            keyFromUrl(fileDoc.url) === expectation[3]);
+      if (fileDoc) {
+        check('File ' + expectation[0] + ' carries the content digest as its hash',
+              fileDoc.hash === expectation[2]);
+        check('File ' + expectation[0] + '\'s url resolves to ' + expectation[3],
+              keyFromUrl(fileDoc.url) === expectation[3]);
+      }
     }
+
+    // 6. The legacy record is the only one whose `type` reaches the image branch
+    //    of lib/controllers/files.js:153 - and it must have survived the enum.
+    var legacy = await privateModel('File').findById(ids.legacyImageFile).exec();
+    check('the legacy file record kept its mime-like `type`, which the enum ' +
+          'would now reject and which is the only way into the image download ' +
+          'branch', !!legacy && /^image/.test(legacy.type));
   }
 
-  // 6. The legacy record is the only one whose `type` reaches the image branch
-  //    of lib/controllers/files.js:153 - and it must have survived the enum.
-  var legacy = await privateModel('File').findById(ids.legacyImageFile).exec();
-  check('the legacy file record kept its mime-like `type`, which the enum ' +
-        'would now reject and which is the only way into the image download ' +
-        'branch', !!legacy && /^image/.test(legacy.type));
-
   // 7. The asset metric settled at the value the seeded set implies, whatever
-  //    the unawaited hook did.
-  var assetFile = await privateModel('File').findById(ids.userAssetFile).exec();
-  check('the asset file records exactly one referencing trinket',
-        !!assetFile && assetFile.metrics && assetFile.metrics.trinkets === 1);
+  //    the unawaited hook did. Both groups are required: the File carries the
+  //    metric and the trinkets are what the value counts, so under `files`
+  //    alone the correct value is 0 and this assertion would be about nothing.
+  if (has('files') && has('trinkets')) {
+    var expectedMetrics = {};
+
+    TRINKETS.forEach(function(descriptor) {
+      if (descriptor.asset) {
+        var fileId = ids[descriptor.asset];
+        expectedMetrics[fileId] = (expectedMetrics[fileId] || 0) + 1;
+      }
+    });
+
+    for (i = 0; i < fileChecks.length; i++) {
+      var metricId = fileChecks[i][1];
+      var metric   = await readMetric(metricId);
+
+      check('File ' + fileChecks[i][0] + ' records ' +
+            (expectedMetrics[metricId] || 0) + ' referencing trinket(s) ' +
+            '(found ' + metric + '), the value the seeded set implies whatever ' +
+            'the unawaited hook did', metric === (expectedMetrics[metricId] || 0));
+    }
+  }
 
   // 8. Both code shapes lib/workers/exports.js:334-352 branches on are present.
   var shapes = Object.keys(fixtures.trinkets).map(function(key) {
@@ -2454,83 +3105,95 @@ async function verify() {
   //    fixed seed, and its shortCode is the fixed one. This is what proves the
   //    hash was DERIVED rather than defaulted, and that Date.now() never
   //    reached the shortCode.
-  for (i = 0; i < TRINKETS.length; i++) {
-    var spec        = TRINKETS[i];
-    var trinketDoc  = await privateModel('Snippet').findById(spec._id).exec();
-    var ownerId     = ids[spec.owner];
-    var expectedHash = sha1Hex(Buffer.from(
-      spec.code + spec.lang + ownerId + ownerId + '', 'utf8'
-    ));
+  if (has('trinkets')) {
+    for (i = 0; i < TRINKETS.length; i++) {
+      var spec        = TRINKETS[i];
+      var trinketDoc  = await privateModel('Snippet').findById(spec._id).exec();
+      var ownerId     = ids[spec.owner];
+      var expectedHash = sha1Hex(Buffer.from(
+        spec.code + spec.lang + ownerId + ownerId + '', 'utf8'
+      ));
 
-    check('trinket ' + spec.key + ' was found', !!trinketDoc);
+      check('trinket ' + spec.key + ' was found', !!trinketDoc);
 
-    if (trinketDoc) {
-      check('trinket ' + spec.key + ' kept its fixed shortCode',
-            trinketDoc.shortCode === spec.shortCode);
-      check('trinket ' + spec.key + '\'s hash is the one hashify() derives ' +
-            'from its fixed seed', trinketDoc.hash === expectedHash);
+      if (trinketDoc) {
+        check('trinket ' + spec.key + ' kept its fixed shortCode',
+              trinketDoc.shortCode === spec.shortCode);
+        check('trinket ' + spec.key + '\'s hash is the one hashify() derives ' +
+              'from its fixed seed', trinketDoc.hash === expectedHash);
+      }
     }
   }
 
   // 10. The export records reach the branches they exist for.
-  var completed = await privateModel('Export').findById(ids.exportCompleted).exec();
-  var expired   = await privateModel('Export').findById(ids.exportExpired).exec();
-  var pending   = await privateModel('Export').findById(ids.exportPending).exec();
+  if (has('exports')) {
+    var completed = await privateModel('Export').findById(ids.exportCompleted).exec();
+    var expired   = await privateModel('Export').findById(ids.exportExpired).exec();
+    var pending   = await privateModel('Export').findById(ids.exportPending).exec();
 
-  check('the completed export is completed',
-        !!completed && completed.status === 'completed');
-  check('the completed export\'s s3Key has the exports/<userId>/<filename> ' +
-        'form lib/workers/exports.js:104 builds',
-        !!completed && completed.s3Key === 'exports/' + ids.user + '/' +
-          fixtures.exportArchive.filename);
-  check('the completed export has not expired, so the download branch is ' +
-        'reachable', !!completed && completed.expiresAt > new Date());
-  check('the expired export has expired, so lib/controllers/users.js:1293 is ' +
-        'reachable', !!expired && expired.expiresAt < new Date());
-  check('the pending export is pending, so the in-flight branch is reachable',
-        !!pending && pending.status === 'pending');
+    check('the completed export is completed',
+          !!completed && completed.status === 'completed');
+    check('the completed export\'s s3Key has the exports/<userId>/<filename> ' +
+          'form lib/workers/exports.js:104 builds',
+          !!completed && completed.s3Key === 'exports/' + ids.user + '/' +
+            fixtures.exportArchive.filename);
+    check('the completed export has not expired, so the download branch is ' +
+          'reachable', !!completed && completed.expiresAt > new Date());
+    check('the expired export has expired, so lib/controllers/users.js:1293 is ' +
+          'reachable', !!expired && expired.expiresAt < new Date());
+    check('the pending export is pending, so the in-flight branch is reachable',
+          !!pending && pending.status === 'pending');
+  }
 
   // 11. The folder and its reverse references, without which the queryless
   //     folders.trinkets quirk cannot be distinguished from the query-bearing
-  //     one.
-  var folderDoc = await privateModel('Folder').findById(ids.folder).exec();
+  //     one. The reverse reference lives on the trinket, so the member check
+  //     needs that group too.
+  if (has('folders')) {
+    var folderDoc = await privateModel('Folder').findById(ids.folder).exec();
 
-  check('the folder was found', !!folderDoc);
-  check('the folder lists both member trinkets',
-        !!folderDoc && folderDoc.trinkets.length === FOLDER_TRINKET_KEYS.length);
+    check('the folder was found', !!folderDoc);
+    check('the folder lists both member trinkets',
+          !!folderDoc && folderDoc.trinkets.length === FOLDER_TRINKET_KEYS.length);
 
-  for (i = 0; i < FOLDER_TRINKET_KEYS.length; i++) {
-    var memberId  = ids[FOLDER_TRINKET_KEYS[i]];
-    var memberDoc = await privateModel('Snippet').findById(memberId).exec();
+    if (has('trinkets')) {
+      for (i = 0; i < FOLDER_TRINKET_KEYS.length; i++) {
+        var memberId  = ids[FOLDER_TRINKET_KEYS[i]];
+        var memberDoc = await privateModel('Snippet').findById(memberId).exec();
 
-    check('trinket ' + FOLDER_TRINKET_KEYS[i] + ' carries the reverse folder ' +
-          'reference the trinket list filters on',
-          !!memberDoc && !!memberDoc.folder && !!memberDoc.folder.folderId &&
-            memberDoc.folder.folderId.toString() === ids.folder);
+        check('trinket ' + FOLDER_TRINKET_KEYS[i] + ' carries the reverse folder ' +
+              'reference the trinket list filters on',
+              !!memberDoc && !!memberDoc.folder && !!memberDoc.folder.folderId &&
+                memberDoc.folder.folderId.toString() === ids.folder);
+      }
+    }
   }
 
   // 12. The course tree has the concrete path segments its route family needs.
-  var courseDoc = await privateModel('Course').findById(ids.course).exec();
-  var lessonDoc = await privateModel('Lesson').findById(ids.lesson).exec();
+  if (has('course')) {
+    var courseDoc = await privateModel('Course').findById(ids.course).exec();
+    var lessonDoc = await privateModel('Lesson').findById(ids.lesson).exec();
 
-  check('the course was found', !!courseDoc);
-  check('the course lists both lessons',
-        !!courseDoc && courseDoc.lessons.length === 2);
-  check('the course carries the fixed access code',
-        !!courseDoc && courseDoc.accessCode === fixtures.course.accessCode);
-  check('the course slug is the recorded one',
-        !!courseDoc && courseDoc.slug === fixtures.slugs.course);
-  check('the lesson lists both materials',
-        !!lessonDoc && lessonDoc.materials.length === 2);
+    check('the course was found', !!courseDoc);
+    check('the course lists both lessons',
+          !!courseDoc && courseDoc.lessons.length === 2);
+    check('the course carries the fixed access code',
+          !!courseDoc && courseDoc.accessCode === fixtures.course.accessCode);
+    check('the course slug is the recorded one',
+          !!courseDoc && courseDoc.slug === fixtures.slugs.course);
+    check('the lesson lists both materials',
+          !!lessonDoc && lessonDoc.materials.length === 2);
+  }
 
   if (failures.length) {
     throw new Error(
       LOG_PREFIX + failures.length + ' of ' + checks + ' fixture checks ' +
-      'failed:\n  - ' + failures.join('\n  - ')
+      'failed over the seeded group(s) ' + (groups.join(', ') || '(none)') +
+      ':\n  - ' + failures.join('\n  - ')
     );
   }
 
-  return { checks : checks, failures : failures };
+  return { checks : checks, failures : failures, groups : groups };
 }
 
 // ---------------------------------------------------------------------------
@@ -2544,12 +3207,21 @@ var USAGE = [
   'the fixtures, runs every fixture check, prints the determinism projection',
   'to stdout and stops the server. Exits 0 only if every check passed.',
   '',
+  'The checks are not exclusive to this entry point: seed() runs them over the',
+  'groups it seeded and throws on any failure, so every harness that seeds is',
+  'gated on them. This is the standalone form, which provisions its own',
+  'database and asserts the whole fixture set.',
+  '',
   '  --verify           the default action; accepted explicitly',
   '  --overlay <path>   NODE_CONFIG overlay to apply beneath the address',
   '                     (defaults to test/parity/server-overlay.json, which is',
   '                     what supplies the aws.buckets.exports entry that',
   '                     config/default.yaml lacks - see AAP 0.6.7)',
-  '  --help, -h         this message'
+  '  --help, -h         this message',
+  '',
+  'No option here is repeatable: a second --verify or --overlay is a usage',
+  'error rather than a last-one-wins, and --overlay rejects a dash-leading',
+  'value instead of consuming the following option.'
 ].join('\n');
 
 /**
@@ -2578,10 +3250,33 @@ function note(message) {
 async function main(argv) {
   var args    = argv || process.argv.slice(2);
   var overlay = mongo.DEFAULT_OVERLAY;
-  var i, arg;
+  var code, failures;
+  var seen = {};
+  var i, arg, name;
 
+  // TWO RULES, both reported the way this file already reports a usage fault -
+  // the message, the usage text, exit 2. NO OPTION HERE IS REPEATABLE, so a
+  // second `--overlay` is an error rather than a silent last-one-wins: the
+  // overlay decides which buckets the fixtures are resolved against, and
+  // seeding against a configuration the caller did not name produces fixtures
+  // that look right and are not. `--verify` is repeat-REJECTING like the rest,
+  // deliberately: it names the default action, so a second one adds nothing
+  // that could justify an exception, and one rule with no special cases is
+  // easier to rely on than two. It remains ACCEPTED AND IGNORED, exactly as
+  // before. And a dash-leading value is a usage error, which `--overlay`
+  // already enforced and which is left as it is.
   for (i = 0; i < args.length; i++) {
     arg = args[i];
+    name = arg.indexOf('=') > 0 ? arg.slice(0, arg.indexOf('=')) : arg;
+
+    if (seen[name]) {
+      note(name + ' was given more than once; no option here is repeatable, ' +
+        'so two values would mean this run silently discarded one of them');
+      process.stderr.write(USAGE + '\n');
+      return 2;
+    }
+
+    seen[name] = true;
 
     if (arg === '--help' || arg === '-h') {
       process.stderr.write(USAGE + '\n');
@@ -2608,7 +3303,7 @@ async function main(argv) {
     return 2;
   }
 
-  return await mongo.withMongo(async function(info) {
+  code = await mongo.withMongo(async function(info) {
     var summary, report, artifact;
 
     process.env.NODE_ENV = process.env.NODE_ENV || 'test';
@@ -2624,10 +3319,22 @@ async function main(argv) {
     await mongoose.connect(info.uri);
 
     try {
+      // `seed()` gates on the fixture checks itself, so this call is also the
+      // proof that the gate every harness inherits passes here.
       summary = await seed();
       note('seeded groups: ' + summary.selected.join(', '));
       note('created: ' + JSON.stringify(summary.created));
+      note('seed() gated on ' + summary.verified.checks + ' fixture checks ' +
+           'over ' + summary.verified.groups.join(', '));
+      note('oauth: seeded ' + summary.oauth.existingEmail + ' as ' +
+           summary.oauth.existingId + '; ' + summary.oauth.newEmail +
+           ' left absent (' + summary.oauth.newcomerRemoved + ' leftover ' +
+           'account(s) removed)');
+      note('asset metrics: ' + JSON.stringify(summary.assetMetrics));
 
+      // Again through the exported entry point, with no argument, which is the
+      // form a caller outside this file uses and the one that asserts the
+      // whole set rather than a selection.
       report = await verify();
       note(report.checks + ' fixture checks passed');
 
@@ -2652,6 +3359,30 @@ async function main(argv) {
       await mongoose.disconnect();
     }
   }, { overlay : mongo.readOverlay(overlay) });
+
+  // THE DATABASE'S OWN TEARDOWN. `withMongo`'s `finally` stops the server and
+  // discards the boolean it returns, deliberately - the body's outcome, which
+  // is this tool's whole result, must reach the caller untouched - so a leaked
+  // mongod or a data directory that survived has no channel through it. The
+  // record is read here instead, after the projection has already been written
+  // to stdout, so the artifact still lands and the exit code still says the run
+  // was not clean. A non-zero code is never lowered.
+  failures = mongo.cleanupFailures();
+
+  if (failures.length) {
+    failures.forEach(function(entry) {
+      note('CLEANUP FAILURE: could not ' + entry.operation + ': ' +
+        entry.message);
+    });
+
+    note(failures.length + ' cleanup failure(s); exiting 1 - the fixtures and ' +
+      'the projection above are complete, but this process may have left a ' +
+      'live mongod or its data directory behind');
+
+    return 1;
+  }
+
+  return code;
 }
 
 module.exports = {
@@ -2666,10 +3397,28 @@ module.exports = {
   GROUPS      : Object.freeze(GROUP_ORDER.slice()),
   MISSING_IDS : MISSING_IDS,
 
+  // THE OAUTH IDENTITY CONTRACT. `oauth` is the whole of it - both addresses,
+  // both derived usernames, both provider account ids, the token and the seeded
+  // `_id` - and `oauthIdentities` is the subset shaped for
+  // `setIdentityEmails()` in `test/parity/fixtures/http.js`, so a harness
+  // aligns the fixture to the seeder with
+  // `httpFixture.setIdentityEmails(seed.oauthIdentities)` rather than by
+  // repeating two addresses in a third place.
+  //
+  // The existing identity carries no password, so it is deliberately NOT in
+  // `credentials`: nothing can log it in through `POST /login`, which is what a
+  // Google-sourced account looks like.
+  oauth           : OAUTH,
+  oauthIdentities : OAUTH_IDENTITIES,
+
   // The operations.
   seed   : seed,
   reset  : reset,
   verify : verify,
+
+  // Restores the new-user OAuth precondition without a full re-seed, for a
+  // driver that runs that scenario more than once in a pass.
+  resetOAuthNewcomer : resetOAuthNewcomer,
 
   // Resolved against the configuration in force, so a harness asserts against
   // the same values the seeded records carry.

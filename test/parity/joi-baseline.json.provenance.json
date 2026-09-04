@@ -1,13 +1,24 @@
 {
   "generator": "test/parity/joi-matrix.js",
-  "capturedAt": "2026-09-02T14:37:03.463Z",
+  "capturedAt": "2026-09-04T02:42:09.541Z",
   "mode": "capture",
+  "role": "baseline-capture",
+  "artifact": {
+    "path": "<repo>/test/parity/joi-baseline.json",
+    "digest": "fba3a0601313845d5545f0f7c61ee0a0e155cb6f15ff9632792da2c86d5b6ffd",
+    "payloadDigest": "9ca52c2d7668fd4340a4e44f549663b440eb7fadb1a3482a365f97d3ef6af216",
+    "bytes": 1127370,
+    "digestNote": "sha256. `digest` covers the exact bytes of `path`. `payloadDigest` covers the same artifact re-serialized with `targetComparison` and `crossCheck` set to null, so it survives --record-into embedding the completed comparison back into this recording."
+  },
   "tool": {
-    "root": "/tmp/blitzy/trinket-oss/blitzy-94fb8942-119f-4be8-abfa-00828e472cd3-w-005_fe228a",
-    "head": "6da0a28adee67d89a59a2643a9dca400c48e3ee3"
+    "root": "<repo>",
+    "head": "c6ecfd160ec35680c4697efa51384dda608f8c43",
+    "generator": "test/parity/joi-matrix.js",
+    "digest": "a748edad23354cc1ac0161644889a8004a61b24b1b58f931fa5bb50be6294b73",
+    "dirty": false
   },
   "app": {
-    "root": "/tmp/blitzy-c5/baseline-2f8712a",
+    "root": "<baseline-worktree>",
     "head": "2f8712a112db46f923918c4507c75abc732d83d0"
   },
   "versions": {
@@ -18,21 +29,33 @@
   },
   "environment": {
     "NODE_ENV": "test",
-    "NODE_CONFIG": "{\"app\":{\"start\":true,\"hostname\":\"127.0.0.1\",\"port\":3010,\"url\":{\"protocol\":\"http\",\"hostname\":\"127.0.0.1\",\"port\":3010},\"plugins\":{\"session\":{\"cookieOptions\":{\"password\":\"[redacted-by-joi-matrix]\"}}},\"mail\":{\"from\":\"parity@localhost\",\"host\":\"127.0.0.1\"}},\"db\":{\"mongo\":{\"database\":\"joimatrix_base3\",\"host\":\"127.0.0.1\",\"port\":43061,\"user\":null,\"pass\":null},\"redis\":{\"enabled\":false},\"mongoread\":{\"host\":null}},\"aws\":{\"buckets\":{\"exports\":{\"name\":\"parity-exports\",\"host\":\"http://127.0.0.1:3010/parity-exports\"}}}}",
-    "NODE_CONFIG_DIR": "/tmp/blitzy-c5/baseline-2f8712a/config",
+    "NODE_CONFIG": "{\"db\":{\"redis\":{\"enabled\":false},\"mongo\":{\"database\":\"joimatrix_f5b\",\"host\":\"127.0.0.1\",\"port\":41207,\"user\":null,\"pass\":null},\"mongoread\":{\"host\":null}},\"app\":{\"start\":true,\"hostname\":\"127.0.0.1\",\"port\":3010,\"url\":{\"protocol\":\"http\",\"hostname\":\"127.0.0.1\",\"port\":3010},\"plugins\":{\"session\":{\"cookieOptions\":{\"password\":\"[redacted-by-joi-matrix]\"}}},\"mail\":{\"from\":\"parity@localhost\",\"host\":\"127.0.0.1\"}},\"aws\":{\"buckets\":{\"exports\":{\"name\":\"parity-exports\",\"host\":\"http://127.0.0.1:3010/parity-exports\"}}}}",
+    "NODE_CONFIG_DIR": "<baseline-worktree>/config",
     "redactedKeys": [
       "app.plugins.session.cookieOptions.password"
     ]
   },
   "recaptchaConfigured": false,
+  "databaseAlignment": {
+    "source": "provisioned mongodb-memory-server",
+    "host": "127.0.0.1",
+    "port": 41207,
+    "database": "joimatrix_f5b",
+    "seederUri": "mongodb://127.0.0.1:41207/joimatrix_f5b",
+    "agreedAcross": [
+      "this process's composed NODE_CONFIG db.mongo.{host,port,database}",
+      "the address handed to the application under test",
+      "the URI the seeder connects with"
+    ]
+  },
   "server": {
-    "origin": "http://127.0.0.1:3054",
-    "port": 3054,
+    "origin": "http://127.0.0.1:20231",
+    "port": 20231,
     "secure": false,
-    "pid": 1153261,
-    "appRoot": "/tmp/blitzy-c5/baseline-2f8712a",
-    "runDir": "/tmp/parity-server-1153035-86f18ad3",
-    "database": "joimatrix_base3"
+    "pid": 292025,
+    "appRoot": "<baseline-worktree>",
+    "runDir": "/tmp/trinket-c23/parity-server-291950-fba655ac",
+    "database": "joimatrix_f5b"
   },
   "seed": {
     "selected": [
@@ -55,5 +78,17 @@
     ]
   },
   "normalization": "Only the ORIGIN of an absolute Location header is removed, into locationRelative; the verbatim header is recorded beside it. Nothing else is normalized.",
-  "redaction": "environment.NODE_CONFIG has the value of every secret-labelled key replaced with \"[redacted-by-joi-matrix]\"; the keys withheld are listed in environment.redactedKeys. The child process received the real configuration - the redaction applies to this record only. The values themselves come from the committed overlay (test/parity/server-overlay.json) and any --overlay the caller passed, which are where a reviewer reproduces them from."
+  "redaction": "environment.NODE_CONFIG has the value of every secret-labelled key replaced with \"[redacted-by-joi-matrix]\"; the keys withheld are listed in environment.redactedKeys. The child process received the real configuration - the redaction applies to this record only. The values themselves come from the committed overlay (test/parity/server-overlay.json) and any --overlay the caller passed, which are where a reviewer reproduces them from.",
+  "comparisonEmbedded": {
+    "at": "2026-09-04T02:44:50.558Z",
+    "keys": [
+      "targetComparison",
+      "crossCheck"
+    ],
+    "reportPath": "<scratch>/f5-cmp.json",
+    "reportDigest": "bb63c4ff97c475a08f0538dff675fff436821cadebeb52b6aea970fa50f216a8",
+    "targetMatrix": "<scratch>/f5-cmp.json.target.json",
+    "targetDigest": "1de6dae86d578284e692c45a0e72ce128a752cf22a72efe61e3706e2ac4d548d",
+    "note": "The capture itself is unchanged: `artifact.payloadDigest` is identical before and after this embedding, and is what a comparison report links this recording by. `artifact.digest` covers the file as it now stands, including the embedded block."
+  }
 }

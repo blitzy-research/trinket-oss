@@ -13,12 +13,12 @@
   "dependencies": {
     "@hapi/boom": "^10.0.0",
     "@hapi/hapi": "^21.4.10",
-    "@hapi/inert": "^7.1.2",
+    "@hapi/inert": "^7.0.0",
     "@hapi/vision": "^7.0.0",
     "@hapi/yar": "^11.0.0",
     "accepts": "^1.3.8",
     "adm-zip": "^0.6.0",
-    "archiver": "^2.0.0",
+    "archiver": "^6.0.2",
     "aws-sdk": "^2.1.20",
     "bcrypt": "^6.0.0",
     "bull": "^4.16.5",
@@ -56,7 +56,7 @@
     "mocha": "^3.4.1",
     "mongodb-memory-server": "11.2.0",
     "redis-mock": "~0.2.0",
-    "sass": "1.98.0",
+    "sass": "^1.57.0",
     "sinon": "^22.1.0",
     "supertest": "~0.8.3",
     "vite": "^4.5.14"
@@ -67,7 +67,13 @@
     "watch:css": "vite build --watch",
     "fetch-components": "node scripts/fetch-components.js",
     "build": "npm run fetch-components && npm run build:css",
-    "make-admin": "node scripts/make-admin.js"
+    "make-admin": "node scripts/make-admin.js",
+    "verify:routes": "mkdir -p ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity} && NODE_ENV=test NODE_CONFIG='{\"db\":{\"redis\":{\"enabled\":false}}}' node test/parity/manifest.js --out ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/route-manifest.json >/dev/null && NODE_ENV=test NODE_CONFIG='{\"db\":{\"redis\":{\"enabled\":false}}}' node test/parity/manifest.js --compare test/parity/route-manifest.baseline.json ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/route-manifest.json",
+    "verify:corpus": "mkdir -p ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity} && node test/parity/replay.js --app . --corpus test/parity/corpus.json --annotations test/parity/corpus.json --manifest ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/route-manifest.json --out ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/replay-result.json --report ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/replay-report.txt --port ${PARITY_PORT:-3010}",
+    "verify:joi": "mkdir -p ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity} && node test/parity/joi-matrix.js --compare test/parity/joi-baseline.json --out ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/joi-comparison.json --port ${PARITY_PORT:-3010}",
+    "verify:storage": "mkdir -p ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity} && node test/parity/storage.js --out ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/storage-result.json",
+    "verify:worker": "mkdir -p ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity} && node test/parity/worker.js --out ${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/worker-result.json",
+    "verify:parity": "rc=0; for gate in routes corpus joi storage worker; do echo \"== verify:$gate ==\"; npm run --silent verify:$gate || rc=1; done; if [ \"$rc\" -ne 0 ]; then echo \"verify:parity FAILED - at least one gate above did not pass\"; fi; exit \"$rc\""
   },
   "repository": {
     "type": "git",

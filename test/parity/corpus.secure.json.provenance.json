@@ -1,0 +1,540 @@
+{
+  "artifact": "corpus.secure.json",
+  "schema": 1,
+  "role": "baseline-response-corpus",
+  "cookiePass": "secure",
+  "note": "Provenance for the sibling corpus. Every record in that file is a measurement taken by the tool named below, run from the target worktree against the independently installed baseline worktree named below. The corpus digest binds this sidecar to the exact bytes it describes.",
+  "corpus": {
+    "path": "test/parity/corpus.secure.json",
+    "bytes": 2768924,
+    "sha256": "70319abfb4f55a0cf9480371e12757c466af69875ec762a32853468cb8e28ef9",
+    "scenarios": 383,
+    "recordedSteps": 390,
+    "unreachableByDesign": 1,
+    "baselinesPending": 0
+  },
+  "baseline": {
+    "commit": "2f8712a112db46f923918c4507c75abc732d83d0",
+    "subject": "chore: extend catalog tags (security, web-app)",
+    "worktree": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/baseline",
+    "install": "npm ci from the baseline lockfile, then npm rebuild bcrypt so the 5.1.1 native binding is present",
+    "note": "A `git worktree` at the base commit with its own node_modules. It cannot share the target's install: the dependency graphs differ."
+  },
+  "tool": {
+    "path": "test/parity/capture.js",
+    "worktree": "/tmp/blitzy/trinket-oss/blitzy-94fb8942-119f-4be8-abfa-00828e472cd3-w-019_0b1ebd",
+    "head": "0716cd281c115b623cc7ea305aa12723b328251c",
+    "note": "The parity tooling is created BY this migration and does not exist at the base commit, so a baseline capture is target-worktree tooling driving a baseline install through --app. That indirection is what makes the two runs comparable, and it is why the tool commit is recorded beside the analysed one."
+  },
+  "runtime": {
+    "node": "v22.23.2",
+    "platform": "linux"
+  },
+  "segments": [
+    {
+      "label": "A",
+      "selection": "every scenario except route.post.api-admin-user-userId.json, excluded by an --only pattern that fails on its id, its group and its route key",
+      "scenariosCaptured": 382,
+      "exitCode": 1,
+      "exitReason": "capture.js exits non-zero because route.post.api-users-email.json stalls without having declared itself a timeout, and because four of its own authored expectations did not hold under the committed configuration. Both are recorded in the corpus with their measured mechanism; no record was dropped and the artifact was written.",
+      "server": {
+        "launched": true,
+        "baseUrl": "http://127.0.0.1:3010",
+        "origin": "http://127.0.0.1:3010",
+        "port": 3010,
+        "secure": true,
+        "overlay": "/tmp/blitzy/trinket-oss/blitzy-94fb8942-119f-4be8-abfa-00828e472cd3-w-019_0b1ebd/test/parity/server-overlay.json",
+        "nodeFlags": [
+          "--pending-deprecation",
+          "--trace-deprecation"
+        ],
+        "nodeConfig": "{\"app\":{\"start\":true,\"hostname\":\"127.0.0.1\",\"port\":3010,\"url\":{\"protocol\":\"http\",\"hostname\":\"127.0.0.1\",\"port\":3010},\"plugins\":{\"session\":{\"cookieOptions\":{\"password\":\"parity-harness-only-not-a-production-secret-0000\",\"isSecure\":true}}},\"mail\":{\"from\":\"parity@localhost\",\"host\":\"127.0.0.1\"},\"auth\":{\"google\":{\"clientID\":\"parity-harness-client-id.apps.example.invalid\",\"clientSecret\":\"parity-harness-not-a-real-secret\",\"callbackURL\":\"/auth/google/callback\"}}},\"db\":{\"mongo\":{\"database\":\"parity_sec_a_c19\",\"host\":\"127.0.0.1\",\"port\":45625,\"user\":null,\"pass\":null},\"redis\":{\"enabled\":false},\"mongoread\":{\"host\":null}},\"aws\":{\"buckets\":{\"exports\":{\"name\":\"parity-exports\",\"host\":\"http://127.0.0.1:3010/parity-exports\"}}}}",
+        "runDir": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-83888-c427e528",
+        "stdoutPath": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-83888-c427e528/stdout.log",
+        "stderrPath": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-83888-c427e528/stderr.log",
+        "mongo": {
+          "host": "127.0.0.1",
+          "port": 45625,
+          "database": "parity_sec_a_c19"
+        },
+        "s3Root": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-83888-c427e528/s3",
+        "httpProfile": "default",
+        "httpProfilePath": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-83888-c427e528/http-profile.json",
+        "evidence": {
+          "http": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-83888-c427e528/http.log",
+          "mail": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-83888-c427e528/mail.log",
+          "s3": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-83888-c427e528/s3.log"
+        }
+      },
+      "configuration": {
+        "secure": true,
+        "googleClientInjected": true,
+        "seeded": {
+          "attempted": true,
+          "ok": true,
+          "reason": null
+        },
+        "objectStoreSeed": {
+          "path": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-capture-Kv0cOO/s3-seed.json",
+          "entries": 6,
+          "reason": null
+        },
+        "timeoutMs": 15000
+      },
+      "provenanceSha256": "8e1ad49445b235e3f16c7acca88680148d43ef2b4fdad5ff3b9309eb009862c9"
+    },
+    {
+      "label": "B",
+      "selection": "route.post.api-admin-user-userId.json alone, against a fresh server and database on the same port",
+      "scenariosCaptured": 1,
+      "exitCode": 0,
+      "exitReason": "the single scenario drove and recorded its outcome: the application terminated on an uncaught `Error: Cannot wrap an error` and the client saw a socket hang up in 19ms.",
+      "applicationTerminated": true,
+      "server": {
+        "launched": true,
+        "baseUrl": "http://127.0.0.1:3010",
+        "origin": "http://127.0.0.1:3010",
+        "port": 3010,
+        "secure": true,
+        "overlay": "/tmp/blitzy/trinket-oss/blitzy-94fb8942-119f-4be8-abfa-00828e472cd3-w-019_0b1ebd/test/parity/server-overlay.json",
+        "nodeFlags": [
+          "--pending-deprecation",
+          "--trace-deprecation"
+        ],
+        "nodeConfig": "{\"app\":{\"start\":true,\"hostname\":\"127.0.0.1\",\"port\":3010,\"url\":{\"protocol\":\"http\",\"hostname\":\"127.0.0.1\",\"port\":3010},\"plugins\":{\"session\":{\"cookieOptions\":{\"password\":\"parity-harness-only-not-a-production-secret-0000\",\"isSecure\":true}}},\"mail\":{\"from\":\"parity@localhost\",\"host\":\"127.0.0.1\"},\"auth\":{\"google\":{\"clientID\":\"parity-harness-client-id.apps.example.invalid\",\"clientSecret\":\"parity-harness-not-a-real-secret\",\"callbackURL\":\"/auth/google/callback\"}}},\"db\":{\"mongo\":{\"database\":\"parity_sec_b_c19\",\"host\":\"127.0.0.1\",\"port\":37885,\"user\":null,\"pass\":null},\"redis\":{\"enabled\":false},\"mongoread\":{\"host\":null}},\"aws\":{\"buckets\":{\"exports\":{\"name\":\"parity-exports\",\"host\":\"http://127.0.0.1:3010/parity-exports\"}}}}",
+        "runDir": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-84874-53b91a61",
+        "stdoutPath": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-84874-53b91a61/stdout.log",
+        "stderrPath": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-84874-53b91a61/stderr.log",
+        "mongo": {
+          "host": "127.0.0.1",
+          "port": 37885,
+          "database": "parity_sec_b_c19"
+        },
+        "s3Root": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-84874-53b91a61/s3",
+        "httpProfile": "default",
+        "httpProfilePath": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-84874-53b91a61/http-profile.json",
+        "evidence": {
+          "http": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-84874-53b91a61/http.log",
+          "mail": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-84874-53b91a61/mail.log",
+          "s3": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-server-84874-53b91a61/s3.log"
+        }
+      },
+      "configuration": {
+        "secure": true,
+        "googleClientInjected": true,
+        "seeded": {
+          "attempted": true,
+          "ok": true,
+          "reason": null
+        },
+        "objectStoreSeed": {
+          "path": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-019/tmp/parity-capture-ryDNSJ/s3-seed.json",
+          "entries": 6,
+          "reason": null
+        },
+        "timeoutMs": 15000
+      },
+      "provenanceSha256": "fa02c3ceb6b23d464e22b78b2aff307f1686a10c3af6953ab825367f039ef043"
+    }
+  ],
+  "fixtureProfiles": [
+    "default",
+    "recaptcha:success",
+    "recaptcha:rejected",
+    "recaptcha:non-200",
+    "recaptcha:transport-failure",
+    "recaptcha:malformed-json",
+    "oauth:success-existing-user",
+    "oauth:success-new-user",
+    "oauth:token-non-2xx",
+    "oauth:token-malformed-body",
+    "oauth:token-non-object-body",
+    "oauth:token-transport-failure",
+    "oauth:profile-missing-email",
+    "oauth:profile-transport-failure",
+    "asset:success",
+    "asset:non-2xx",
+    "asset:redirect",
+    "asset:transport-refused",
+    "asset:midstream-failure",
+    "none"
+  ],
+  "routeManifest": {
+    "routes": 233,
+    "expected": 233,
+    "sha256": "03fa6e2ef581711e643b67e948dd20881608098837c5341f7fc59c614f5b7622",
+    "note": "Generated from the baseline worktree by test/parity/manifest.js and compared entry by entry against the same generator run over the target worktree: 233 entries, identical set and identical order."
+  },
+  "payloads": {
+    "entries": 21,
+    "sha256": "cc96da784153744494d4e3cce3c76712113c8b3967b3aa6bf13d634eca253289",
+    "note": "The same table is committed inside the corpus under `payloads`, so the digest here authenticates what is in that file."
+  },
+  "replay": {
+    "nonSecure": "node test/parity/replay.js --app . --corpus test/parity/corpus.json --secure-corpus test/parity/corpus.secure.json --pass both",
+    "note": "The overlay test/parity/server-overlay.json declares port 3010 and both passes were captured on it. Absolute Location headers embed the port and replay.js does not normalize an origin, so a replay on another port needs a corpus captured there."
+  },
+  "verification": {
+    "applicationHead": {
+      "recorded": "0716cd281c115b623cc7ea305aa12723b328251c",
+      "note": "The HEAD each pass records is the commit the application was read from when it ran, and it is necessarily the parent of the commit that carries this evidence: a replay cannot run against a commit that does not exist until the replay has finished. What matters is that the application source is the same in both. Checkable: `git diff --name-only 0716cd2..HEAD` lists only test/parity/corpus.json, test/parity/corpus.json.provenance.json, test/parity/corpus.secure.json and test/parity/corpus.secure.json.provenance.json - four data files no application module requires - so no application behaviour changed between the recorded HEAD and the delivered one."
+    },
+    "note": "What was run against this corpus, and what it reported. The result and report artifacts are not committed: replay.js's output-path contract is owned outside this artifact, and writing generated evidence into the source tree is the very thing that contract is being tightened about. The commands below reproduce both runs.",
+    "selfConsistency": {
+      "what": "replay of this corpus against the tree it was captured from. The strictest mode: every difference fails and the approved deviation must NOT materialize. A corpus that cannot replay against its own tree is nondeterministic, and this is where that shows.",
+      "command": "node test/parity/replay.js --app <worktree at 2f8712a> --corpus test/parity/corpus.json --secure-corpus test/parity/corpus.secure.json --pass both --self-check --node-flags \"--pending-deprecation --trace-deprecation\"",
+      "verdict": "FAIL",
+      "exitCode": 1,
+      "gates": {
+        "differences": 28,
+        "undriven": 0,
+        "missingBaselines": 0,
+        "failedChecks": [
+          "non-secure: zero warnings from the application",
+          "secure: zero warnings from the application"
+        ],
+        "applicationDied": false,
+        "fatalPasses": []
+      },
+      "passes": [
+        {
+          "pass": "non-secure",
+          "counts": {
+            "difference": 14,
+            "match": 368,
+            "unreachable-by-design": 1
+          },
+          "scenariosDriven": 382,
+          "failingScenarios": 14,
+          "applicationHead": "2f8712a112db46f923918c4507c75abc732d83d0",
+          "namedChecks": [
+            {
+              "name": "auth-scheme outcomes",
+              "verdict": "PASS",
+              "asserted": 5,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "header-resolved reply chains unchanged",
+              "verdict": "PASS",
+              "asserted": 4,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "guest browsing on auth-inheriting routes",
+              "verdict": "PASS",
+              "asserted": 234,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "fixture profiles in force",
+              "verdict": "PASS",
+              "asserted": 382,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "zero warnings from the application",
+              "verdict": "FAIL",
+              "asserted": 1,
+              "skipped": false,
+              "reason": null,
+              "failures": [
+                "4 warning line(s) on the application's stderr. The zero-warning condition covers the whole running application, not boot alone, and this replay is the pass over the route surface where handler-time warnings surface."
+              ]
+            },
+            {
+              "name": "route coverage",
+              "verdict": "PASS",
+              "asserted": 233,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            }
+          ]
+        },
+        {
+          "pass": "secure",
+          "counts": {
+            "difference": 14,
+            "match": 368,
+            "unreachable-by-design": 1
+          },
+          "scenariosDriven": 382,
+          "failingScenarios": 14,
+          "applicationHead": "2f8712a112db46f923918c4507c75abc732d83d0",
+          "namedChecks": [
+            {
+              "name": "auth-scheme outcomes",
+              "verdict": "PASS",
+              "asserted": 5,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "header-resolved reply chains unchanged",
+              "verdict": "PASS",
+              "asserted": 4,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "guest browsing on auth-inheriting routes",
+              "verdict": "PASS",
+              "asserted": 234,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "fixture profiles in force",
+              "verdict": "PASS",
+              "asserted": 382,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "zero warnings from the application",
+              "verdict": "FAIL",
+              "asserted": 1,
+              "skipped": false,
+              "reason": null,
+              "failures": [
+                "4 warning line(s) on the application's stderr. The zero-warning condition covers the whole running application, not boot alone, and this replay is the pass over the route surface where handler-time warnings surface."
+              ]
+            },
+            {
+              "name": "route coverage",
+              "verdict": "PASS",
+              "asserted": 233,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            }
+          ]
+        }
+      ],
+      "measured": "non-secure pass: 382 scenarios driven, 368 matched their baseline, 14 differed, 0 were approved deviations, 1 carried an unreachableReason instead of a record, and 14 scenarios are counted as failing. Named checks failing: zero warnings from the application. secure pass: 382 scenarios driven, 368 matched their baseline, 14 differed, 0 were approved deviations, 1 carried an unreachableReason instead of a record, and 14 scenarios are counted as failing. Named checks failing: zero warnings from the application. Gates: 28 unapproved differences, 0 scenarios not driven, 0 scenarios with no baseline, application died: no.",
+      "reading": "Every scenario that can be driven drove, every driven scenario had a recorded baseline to compare against, and the one scenario that is not driven is auth.outcome.lookup-error, which carries an unreachableReason rather than a record. The differences that remain are the five generated-value classes the corpus enumerates under `residualVolatility`, and they are why this run does not exit 0: they close in replay.js's volatile set and in test/parity/seed.js, neither of which is this artifact. The one failing named check is the zero-warning condition, which fails against the BASE COMMIT for the base commit's own reasons: iconv-lite's DEP0005 through nodemailer 2.7.2, and Mongoose's strictQuery notice. Both are fixed in the migrated tree."
+    },
+    "againstTheMigratedTree": {
+      "what": "replay of this corpus against the target worktree, both cookie passes, without --self-check, so the one approved deviation is allowed to materialize and is checked field by field against what was approved.",
+      "command": "node test/parity/replay.js --app . --corpus test/parity/corpus.json --secure-corpus test/parity/corpus.secure.json --pass both --node-flags \"--pending-deprecation --trace-deprecation\"",
+      "verdict": "FAIL",
+      "exitCode": 1,
+      "gates": {
+        "differences": 40,
+        "undriven": 0,
+        "missingBaselines": 0,
+        "failedChecks": [
+          "non-secure: zero warnings from the application",
+          "secure: zero warnings from the application"
+        ],
+        "applicationDied": false,
+        "fatalPasses": []
+      },
+      "approvedDeviations": [
+        {
+          "id": "quirk.reply-chain.never-settles.image-download",
+          "route": "GET /api/files/{fileId}/{fileName}",
+          "approvedBy": "AAP 0.7",
+          "rule": "R-b",
+          "baseline": "The request never settles: the image branch ends at `.bytes(...)` with no `return` and nothing that resolves the deferred [lib/controllers/files.js:98-100], so the step is recorded as an expected timeout.",
+          "target": "A 200 stream response carrying the file's own mime type and byte length, and NO Content-Disposition - the image branch deliberately omits the header its sibling four lines below sets [lib/controllers/files.js:102-105].",
+          "reason": "An unsettled request is the absence of a response, not a behaviour a client can depend on, so R-d's protection does not attach to it; the intended response is present in the same function for the non-image case; and R-b is unqualified about routes serving.",
+          "markerSource": "corpus",
+          "verified": true,
+          "differences": [
+            {
+              "scenario": "quirk.reply-chain.never-settles.image-download",
+              "group": "quirk.reply-chain.never-settles",
+              "route": "GET /api/files/{fileId}/{fileName}",
+              "identity": "user",
+              "step": "drive",
+              "stepIndex": 0,
+              "target": "/api/files/000000000000000000000504/parity-legacy.png",
+              "field": "outcome",
+              "baselineValue": "timed-out",
+              "targetValue": "answered",
+              "note": "the baseline never settled and the target answered. This is a behaviour change: it is a FAILURE unless the scenario carries an approved deviation marker.",
+              "baselineDetail": null,
+              "targetDetail": 200
+            }
+          ],
+          "pass": "non-secure"
+        },
+        {
+          "id": "quirk.reply-chain.never-settles.image-download",
+          "route": "GET /api/files/{fileId}/{fileName}",
+          "approvedBy": "AAP 0.7",
+          "rule": "R-b",
+          "baseline": "The request never settles: the image branch ends at `.bytes(...)` with no `return` and nothing that resolves the deferred [lib/controllers/files.js:98-100], so the step is recorded as an expected timeout.",
+          "target": "A 200 stream response carrying the file's own mime type and byte length, and NO Content-Disposition - the image branch deliberately omits the header its sibling four lines below sets [lib/controllers/files.js:102-105].",
+          "reason": "An unsettled request is the absence of a response, not a behaviour a client can depend on, so R-d's protection does not attach to it; the intended response is present in the same function for the non-image case; and R-b is unqualified about routes serving.",
+          "markerSource": "corpus",
+          "verified": true,
+          "differences": [
+            {
+              "scenario": "quirk.reply-chain.never-settles.image-download",
+              "group": "quirk.reply-chain.never-settles",
+              "route": "GET /api/files/{fileId}/{fileName}",
+              "identity": "user",
+              "step": "drive",
+              "stepIndex": 0,
+              "target": "/api/files/000000000000000000000504/parity-legacy.png",
+              "field": "outcome",
+              "baselineValue": "timed-out",
+              "targetValue": "answered",
+              "note": "the baseline never settled and the target answered. This is a behaviour change: it is a FAILURE unless the scenario carries an approved deviation marker.",
+              "baselineDetail": null,
+              "targetDetail": 200
+            }
+          ],
+          "pass": "secure"
+        }
+      ],
+      "passes": [
+        {
+          "pass": "non-secure",
+          "counts": {
+            "approved-deviation": 1,
+            "difference": 20,
+            "match": 361,
+            "unreachable-by-design": 1
+          },
+          "scenariosDriven": 382,
+          "failingScenarios": 20,
+          "applicationHead": "0716cd281c115b623cc7ea305aa12723b328251c",
+          "namedChecks": [
+            {
+              "name": "auth-scheme outcomes",
+              "verdict": "PASS",
+              "asserted": 5,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "header-resolved reply chains unchanged",
+              "verdict": "PASS",
+              "asserted": 4,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "guest browsing on auth-inheriting routes",
+              "verdict": "PASS",
+              "asserted": 234,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "fixture profiles in force",
+              "verdict": "PASS",
+              "asserted": 382,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "zero warnings from the application",
+              "verdict": "FAIL",
+              "asserted": 1,
+              "skipped": false,
+              "reason": null,
+              "failures": [
+                "1 warning line(s) on the application's stderr. The zero-warning condition covers the whole running application, not boot alone, and this replay is the pass over the route surface where handler-time warnings surface."
+              ]
+            },
+            {
+              "name": "route coverage",
+              "verdict": "PASS",
+              "asserted": 233,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            }
+          ]
+        },
+        {
+          "pass": "secure",
+          "counts": {
+            "approved-deviation": 1,
+            "difference": 20,
+            "match": 361,
+            "unreachable-by-design": 1
+          },
+          "scenariosDriven": 382,
+          "failingScenarios": 20,
+          "applicationHead": "0716cd281c115b623cc7ea305aa12723b328251c",
+          "namedChecks": [
+            {
+              "name": "auth-scheme outcomes",
+              "verdict": "PASS",
+              "asserted": 5,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "header-resolved reply chains unchanged",
+              "verdict": "PASS",
+              "asserted": 4,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "guest browsing on auth-inheriting routes",
+              "verdict": "PASS",
+              "asserted": 234,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "fixture profiles in force",
+              "verdict": "PASS",
+              "asserted": 382,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            },
+            {
+              "name": "zero warnings from the application",
+              "verdict": "FAIL",
+              "asserted": 1,
+              "skipped": false,
+              "reason": null,
+              "failures": [
+                "1 warning line(s) on the application's stderr. The zero-warning condition covers the whole running application, not boot alone, and this replay is the pass over the route surface where handler-time warnings surface."
+              ]
+            },
+            {
+              "name": "route coverage",
+              "verdict": "PASS",
+              "asserted": 233,
+              "skipped": false,
+              "reason": null,
+              "failures": []
+            }
+          ]
+        }
+      ],
+      "measured": "non-secure pass: 382 scenarios driven, 361 matched their baseline, 20 differed, 1 were approved deviations, 1 carried an unreachableReason instead of a record, and 20 scenarios are counted as failing. Named checks failing: zero warnings from the application. secure pass: 382 scenarios driven, 361 matched their baseline, 20 differed, 1 were approved deviations, 1 carried an unreachableReason instead of a record, and 20 scenarios are counted as failing. Named checks failing: zero warnings from the application. Gates: 40 unapproved differences, 0 scenarios not driven, 0 scenarios with no baseline, application died: no.",
+      "reading": "The approved deviation materialized in BOTH passes and was reported as an approved change - outcome \"timed-out\" -> \"answered\" on the image branch of the file download - which is the outcome AAP 0.7 authorizes. The remaining unapproved differences are two classes, neither of them a property of this artifact: the five generated-value classes enumerated under `residualVolatility`, and a session-cookie emission difference on six routes where the baseline re-emitted `session=...; HttpOnly; SameSite=Lax; Path=/` and the target sends no Set-Cookie at all - GET /account/{accountPage}, DELETE /api/folders/{folderId}, PUT /api/folders/{folderId}/name, DELETE /api/users, POST /admin/upload and POST /api/admin/featured-course. That second class is a real target behaviour difference this corpus exists to surface, and it belongs to whoever owns the session and controller conversions. The zero-warning check fails on one line: the pre-existing DEP0005 from compress-commons via archiver 2.1.1, raised at module scope."
+    }
+  }
+}

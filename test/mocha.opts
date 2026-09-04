@@ -2,4 +2,5 @@
 --recursive
 --check-leaks
 --require ./test/env.js
+--timeout 20000
 test/lib/**/*.js

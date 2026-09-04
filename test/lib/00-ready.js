@@ -91,12 +91,58 @@ global.Interaction      = require('../../lib/models/interaction');
 global.Folder           = require('../../lib/models/folder');
 global.CourseInvitation = require('../../lib/models/courseInvitation');
 
-// Required for its side effect and intentionally left unbound: test/helpers/db.js
-// runs its connection check at require time, which connects and drops the test
-// database. Doing that here, rather than from the test/env.js preload, is what
-// keeps it after that preload has established the test environment and after the
-// Mongo connection string has been published by whatever runs `mocha`.
-require('../helpers/db');
+// test/helpers/db.js runs its connection check at require time, which connects
+// and drops the test database. Doing that here, rather than from the test/env.js
+// preload, is what keeps it after that preload has established the test
+// environment and after the Mongo connection string has been published by
+// whatever runs `mocha`.
+var db = require('../helpers/db');
+
+// ---------------------------------------------------------------------------
+// Arity adapter for the two bare-reference db hooks. This belongs HERE, and not
+// in test/helpers/db.js, because that file is a read-only authority for this
+// migration: AAP 0.2.1 lists it as "reference only for `reset`", AAP 0.3.1's
+// target tree marks it "unchanged", and AAP 0.9.2 fixes `reset` as an
+// empty-database operation. The defect below is also not one of AAP 0.6.5's
+// seven harness defects -- it is pre-existing and was simply unreachable while
+// the suite still died during file collection -- so repairing it inside db.js
+// would be an unrelated edit to an unchanged file, which R-a forbids. Adapting
+// the arity from an authorized harness file keeps db.js at its baseline.
+//
+// The defect: Mocha decides whether a hook is asynchronous from its ARITY.
+// mocha 3.5.3 sets `this.async = fn && fn.length`
+// (node_modules/mocha/lib/runnable.js:52). db.js binds its two methods with
+// `_.bindAll`, and underscore <= 1.8.x delegated that to native bind, which
+// reports the target's arity -- so `db.reset.length` was 1 when db.js was
+// written. underscore 1.9+ builds bound copies through `restArguments`, whose
+// length is 0. Measured on the installed 1.13.8: `_.bindAll` yields 0, native
+// bind yields 1. At 0, the bare-reference hooks `before(db.reset)`
+// (test/lib/api/index.js, test/lib/models/user.js) and
+// `beforeEach(db.ensureConnection)` (test/lib/api/index.js) run as SYNCHRONOUS
+// hooks, are called with no `done`, and throw `TypeError: done is not a
+// function` inside `reset`.
+//
+// This runs at LOAD time rather than from a hook because those `before(...)`
+// calls sit in `describe` bodies, which Mocha executes while it REQUIRES each
+// spec file. The reference is therefore captured at require time, and the only
+// way to be earlier is to be an earlier file -- which this one is, by the `00-`
+// prefix documented above. Restoring the arity from a hook would be too late.
+//
+// Each wrapper forwards to the already-bound method, so `this` binding,
+// behaviour and the empty-database contract are untouched; the single observable
+// difference is `length === 1`, which is the contract the hooks were written
+// against.
+var boundEnsureConnection = db.ensureConnection;
+var boundReset            = db.reset;
+
+db.ensureConnection = function (done) {
+  return boundEnsureConnection(done);
+};
+
+db.reset = function (done) {
+  return boundReset(done);
+};
+// ---------------------------------------------------------------------------
 
 // The mutable holder the lazy Supertest agent reads from. No requires of its
 // own, so its position carries no ordering constraint.
@@ -130,7 +176,7 @@ before(function () {
     // @hapi/hapi/lib/core.js:345-370 `_initialize()` awaits `client.start()` for
     // every provisioned cache and then runs `onPreStart`, and `_start()` merely
     // calls it before binding a port. The session store here IS such a cache:
-    // the Mongo-backed `sessions` policy at app.js:39,82-83.
+    // the Mongo-backed `sessions` policy at app.js:38,105-106.
     //
     // Left unstarted, every request that commits a session fails inside
     // @hapi/yar's own onPreResponse (@hapi/yar/lib/index.js:297,311 ->
@@ -147,41 +193,100 @@ before(function () {
     // the arrangement the harness is written against is unchanged. The guard is
     // required rather than defensive: `_initialize()` THROWS unless the phase is
     // 'stopped' (core.js:355-357), so a server that app.js did start (any
-    // configuration with `app.start: true`) must be left alone. `info.started`
-    // is 0 for a never-started server, the same discriminator the `after` hook
-    // below uses.
+    // configuration with `app.start: true`) must be left alone, and for that
+    // question `info.started` IS the right discriminator -- it is non-zero
+    // exactly when `server.start()` ran.
+    //
+    // It is not the right discriminator for teardown, which is why the `after`
+    // hook below does not reuse it: `initialize()` starts the caches without
+    // ever touching `info.started`. Record what this harness actually did, so
+    // teardown rests on observed ownership rather than on a listener timestamp.
     if (!server || server.info.started) {
       return;
     }
 
-    return server.initialize();
+    return server.initialize().then(function () {
+      ready.initialized = true;
+    });
   });
 });
 
-after(function () {
+after(async function () {
   this.timeout(30000);
 
   // The resolved value is legitimately absent when app.js's `process.exit(1)`
-  // branch ran, so guard before touching it.
+  // branch ran, so guard before touching it. That guard is the ONLY condition on
+  // teardown: there is deliberately no test on `info.started` here.
   //
-  // config/test.yaml sets `app.start: false`, so app.js never calls
-  // `server.start()` and the server never listens -- Supertest wraps the
-  // non-listening `server.listener` and starts its own ephemeral listener. hapi
-  // reports exactly that distinction: `info.started` is 0 for a server that was
-  // never started and an epoch timestamp for one that was, so it is the precise
-  // discriminator for "is there anything to stop".
+  // Why, measured on @hapi/hapi 21.4.10 rather than inferred from the API:
   //
-  // Measured on @hapi/hapi 21.4.10: `stop()` on a never-started server resolves
-  // rather than throwing, so this guard skips a no-op instead of suppressing an
-  // error -- and because there is no `try`/`catch` here, a genuine `stop()`
-  // rejection still fails this hook, which is what should happen.
-  if (ready.server && ready.server.info && ready.server.info.started) {
-    return ready.server.stop({ timeout: 5000 });
+  //   * `info.started` is set by `server.start()` alone. `server.initialize()`
+  //     -- which the `before` hook above calls, because config/test.yaml sets
+  //     `app.start: false` -- takes the server to the 'initialized' phase,
+  //     starts EVERY provisioned catbox client and calls `heavy.start()`, and
+  //     leaves `info.started` at 0 (core.js:345-379). Probed directly: after
+  //     `initialize()` the cache client reports started while `info.started` is
+  //     0. So gating teardown on `info.started` skipped `stop()` on the only
+  //     path this suite takes, and the Mongo-backed `sessions` cache
+  //     (app.js:38,105-106) was left running for the whole run.
+  //
+  //   * `stop()` is safe to call unconditionally. `_stop()` accepts the
+  //     'stopped', 'initialized', 'started' and 'invalid' phases and throws only
+  //     while a transition is in flight (core.js:397). Probed: a second
+  //     `stop()` on an already-stopped server resolves. So this is idempotent,
+  //     and it is not suppressing an error to call it when there is little to do.
+  //
+  // There is no `try`/`catch`: a genuine `stop()` rejection must fail this hook.
+  if (!ready.server) {
+    return;
+  }
+
+  await ready.server.stop({ timeout: 5000 });
+  ready.initialized = false;
+
+  // Close the listener Supertest bound, which `stop()` above provably cannot.
+  //
+  // `_stop()` runs `await this._unlisten(...)` only `if (this.started)`
+  // (core.js:406-411), and an initialize-only server has `started === false`.
+  // Meanwhile supertest 0.8.3 does `var addr = app.address(); if (!addr)
+  // app.listen(0);` (lib/test.js:56-58) against hapi's own `server.listener` --
+  // and it never stores or closes that listener. Probed end to end: after
+  // `stop()` the listener is still bound to its ephemeral port. Nothing else
+  // reaches it, so it is closed here; until now the run depended on Mocha's
+  // forced exit to release the socket.
+  //
+  // `address()` is the state to test rather than a flag we keep, because it
+  // answers for every path at once: null when app.js started the server (hapi
+  // already unlistened) and when no request was ever made, non-null exactly when
+  // Supertest's listener is still open.
+  var listener = ready.server.listener;
+
+  if (listener && listener.address()) {
+    // Sockets kept alive by the agent would otherwise hold `close()` open until
+    // they time out; Node's default agent sets `keepAlive: true`. Available
+    // since Node 18.2, and this project is pinned to Node 22.
+    if (typeof listener.closeAllConnections === 'function') {
+      listener.closeAllConnections();
+    }
+
+    await new Promise(function (resolve, reject) {
+      listener.close(function (err) {
+        // ERR_SERVER_NOT_RUNNING is the benign race: the listener closed between
+        // the `address()` check and here. Any other error is real and propagates.
+        if (err && err.code !== 'ERR_SERVER_NOT_RUNNING') {
+          return reject(err);
+        }
+
+        return resolve();
+      });
+    });
   }
 
   // Nothing else is torn down here by design: the MongoDB lifecycle belongs to
   // the runner that wraps `mocha`, and the API suite's final `db.reset` belongs
   // to test/lib/api/index.js. app.js's 60-second leak-detection interval holds
   // the event loop open, and Mocha 3.5.3 force-exits after the run, so no
-  // `--exit` flag or `process.exit()` call is needed or wanted.
+  // `--exit` flag or `process.exit()` call is needed or wanted -- but that
+  // forced exit is now a convenience rather than the thing that releases this
+  // server's resources.
 });

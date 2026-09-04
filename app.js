@@ -332,9 +332,201 @@ const init = async () => {
     log.info('Server started on port: ' + server.info.port);
 
     detectLeaks();
+
+    // This process now owns a listening socket, a MongoDB connection, the queue
+    // singletons and the leak-detect interval, so it also owns ending them. The
+    // handlers are installed HERE, under the same flag that started the
+    // listener, rather than at module scope: with `app.start: false` this module
+    // is a library the test harness requires (test/lib/00-ready.js awaits the
+    // exported promise and closes the server in its own root `after`), and
+    // test/parity/mongo.js installs its own signal handling for the in-memory
+    // database. Claiming the host process's signals in that mode would pre-empt
+    // a teardown that is not ours.
+    installShutdownHandlers(server);
   }
 
   return server;
+};
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown
+// ---------------------------------------------------------------------------
+// Nothing on the request path reaches any of this: the handlers below run only
+// on SIGINT or SIGTERM, so no route, response, cookie or error mapping changes.
+//
+// Two properties are load-bearing rather than stylistic.
+//
+//   It is BOUNDED. test/parity/server.js gives the child STOP_GRACE_MS = 5000ms
+//   after SIGTERM before escalating to SIGKILL, and `pm2` (Dockerfile) applies
+//   its own kill timeout, so a shutdown that could block would be worse than no
+//   shutdown at all - it would turn today's prompt exit into a forced kill on
+//   every run. Each stage therefore carries its own timeout and the whole
+//   sequence carries a hard watchdog, both well inside that window. A database
+//   or Redis endpoint that has gone away cannot hold the process open.
+//
+//   It PRESERVES THE EXIT DISPOSITION. Measured before this was added: SIGTERM
+//   to the running application ended it in 108ms through the signal's default
+//   disposition, so the wait status a supervisor sees is "terminated by signal",
+//   not an exit code. After the ordered close the handler removes itself and
+//   re-raises the same signal, which reproduces that status exactly instead of
+//   substituting an exit code a launcher or an orchestrator would read
+//   differently.
+//
+// Ordering is deliberate: stop accepting requests first, then close what an
+// in-flight request could still be using. Draining the connections before the
+// queues and the database means no handler is left reaching for a closed
+// connection, which would surface as a spurious 500 during shutdown.
+
+// The leak-detect interval's handle. `setInterval` below holds the event loop
+// open for the life of the process, which is exactly why a polite wait cannot
+// end it and why clearing it is the first thing shutdown does. It is NOT
+// unref'd: that would let the process exit on its own and change when it lives,
+// which is observable behaviour rather than cleanup.
+let leakInterval = null;
+
+// One shutdown, however many signals arrive. A second SIGTERM while the first
+// is in flight must not start a second teardown - hapi's `stop` is not
+// re-entrant and a doubled `queues.closeAll` would reject on an already-closed
+// queue - so the sequence runs once and later signals are noted and ignored.
+let shuttingDown = false;
+
+/**
+ * Runs one stage of the shutdown, bounded, and swallows its failure.
+ *
+ * A stage that rejects or hangs must not prevent the stages after it: the point
+ * of the sequence is that the process ends having released what it could, and a
+ * queue that never reached its Redis server is a normal state here rather than
+ * an error. Both outcomes are logged, so a stage that stopped working is
+ * visible rather than silent.
+ *
+ * @param {string} label What the stage is called in the log.
+ * @param {number} budgetMs How long it is given before it is abandoned.
+ * @param {function(): (Promise|undefined)} run The stage itself.
+ * @returns {Promise<void>} Always resolves.
+ */
+const shutdownStage = async function(label, budgetMs, run) {
+  let timer = null;
+
+  try {
+    await Promise.race([
+      Promise.resolve().then(run),
+      new Promise((resolve, reject) => {
+        timer = setTimeout(function() {
+          reject(new Error('did not finish within ' + budgetMs + 'ms'));
+        }, budgetMs);
+      })
+    ]);
+    log.info('Shutdown: ' + label + ' closed.');
+  }
+  catch (err) {
+    log.error('Shutdown: ' + label + ' did not close cleanly: ' +
+      ((err && err.message) || err));
+  }
+  finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+};
+
+/**
+ * Closes the listener, the queues and the database connection, in that order.
+ *
+ * `lib/util/queues` and `config/db` are required HERE rather than at the top of
+ * this file, and that is not laziness. AAP §0.6.5 establishes that
+ * `mongoose-schema-extend` replaces the global `Object.getPrototypeOf` and makes
+ * `@hapi/hapi` unloadable if it loads first; the require order this file already
+ * has is therefore load-bearing, and adding a module to the top of it risks the
+ * ordering rather than the shutdown. By the time a signal arrives both modules
+ * are long since in the require cache - `config/app.config` pulled in
+ * `config/db`, and the controllers pulled in `lib/util/queues` - so these
+ * requires return the very singletons the application has been using, which is
+ * the only thing that makes closing them meaningful.
+ *
+ * @param {Object} server The started hapi server.
+ * @returns {Promise<void>} Always resolves.
+ */
+const shutdownResources = async function(server) {
+  if (leakInterval) {
+    clearInterval(leakInterval);
+    leakInterval = null;
+  }
+
+  // Stop accepting connections and let in-flight requests finish. The explicit
+  // timeout matters: hapi's own default would let a keep-alive connection hold
+  // the close for longer than the launcher's grace window.
+  await shutdownStage('the HTTP listener', 1500, function() {
+    return server.stop({ timeout: 1000 });
+  });
+
+  await shutdownStage('the job queues', 1000, function() {
+    return require('./lib/util/queues').closeAll();
+  });
+
+  await shutdownStage('the MongoDB connection', 1000, function() {
+    return require('./config/db').disconnect();
+  });
+};
+
+/**
+ * Installs the SIGINT and SIGTERM handlers.
+ *
+ * @param {Object} server The started hapi server.
+ * @returns {undefined}
+ */
+const installShutdownHandlers = function(server) {
+  // Kept so that EVERY handler this function installed can be removed before
+  // the signal is re-raised. Removing only the one that fired would leave the
+  // other registered, and a signal with any listener attached does not reach
+  // its default disposition - so re-raising it would be absorbed by our own
+  // listener and the process would never end.
+  const installed = [];
+
+  const shutdown = function(signal) {
+    if (shuttingDown) {
+      log.info('Shutdown: ' + signal + ' received while already shutting ' +
+        'down; ignoring it.');
+      return;
+    }
+
+    shuttingDown = true;
+    log.info('Shutdown: ' + signal + ' received; closing the listener, the ' +
+      'job queues and the MongoDB connection.');
+
+    // The watchdog is the last guarantee. Every stage is bounded already, so
+    // reaching this means something outside the stages is wedged - and a
+    // supervisor waiting on us would escalate to SIGKILL anyway, which releases
+    // nothing. Ending here at least means the stages that could close, did. It
+    // is deliberately NOT unref'd: an unref'd watchdog would let the process
+    // slip out with exit code 0 in exactly the case it exists to report.
+    const watchdog = setTimeout(function() {
+      log.error('Shutdown: did not complete within 4000ms; exiting now.');
+      process.exit(128 + (signal === 'SIGINT' ? 2 : 15));
+    }, 4000);
+
+    shutdownResources(server).then(function() {
+      clearTimeout(watchdog);
+      log.info('Shutdown: complete.');
+
+      // Re-raise the signal with our own handlers removed, so the process ends
+      // through the signal's default disposition and a supervisor sees the
+      // same wait status it saw before this handler existed.
+      installed.forEach(function(entry) {
+        process.removeListener(entry.signal, entry.handler);
+      });
+
+      process.kill(process.pid, signal);
+    });
+  };
+
+  ['SIGINT', 'SIGTERM'].forEach(function(signal) {
+    const handler = function() {
+      shutdown(signal);
+    };
+
+    installed.push({ signal: signal, handler: handler });
+    process.on(signal, handler);
+  });
 };
 
 const detectLeaks = function() {
@@ -367,8 +559,11 @@ gleak.ignore("Folder", "CourseInvitation");
 gleak.ignore("log", "NODE_CONFIG", "tokenizer", "$V", "$M", "$L", "$P");
 gleak.ignore("DEFAULT_FILE_PATH", "Promise");
 
-// Poll for new leaks every 60 seconds
-setInterval(detectLeaks, 60*1000);
+// Poll for new leaks every 60 seconds. The handle is retained so that an
+// ordered shutdown can clear it; the timer itself is unchanged, still installed
+// unconditionally at module scope, and still holds the event loop open exactly
+// as it did before.
+leakInterval = setInterval(detectLeaks, 60*1000);
 
 // Initialize and export
 const serverPromise = init().catch(err => {

@@ -31,6 +31,28 @@ npm-debug.log
 build.log
 test-*.js
 
+# Parity tooling output. The four tools that produce parity evidence -
+# test/parity/manifest.js, capture.js, replay.js and joi-matrix.js - take their
+# destination from --out (or from the PARITY_ARTIFACT_DIR directory) and have no
+# repository default, so nothing below is written unless a run was pointed at
+# the worktree on purpose. The two documentation generators, error-edges.js and
+# convert-inventory.js, still default to the docs/*.md deliverables they exist
+# to produce, which are tracked on purpose and are not listed here. What is
+# listed is the two kinds of file that a run inside the worktree still leaves
+# behind: the temporary file each tool renames its artifact from, which survives
+# only a killed process, and the replay and comparison outputs, which are run
+# results rather than evidence. The committed
+# artifacts are deliberately NOT listed: test/parity/route-manifest.json,
+# route-table.json, corpus.json and joi-baseline.json (with their provenance
+# sidecars) are reviewable deliverables and must stay committable.
+*.parity-tmp-*
+test/parity/replay-result.json
+test/parity/replay-result.json.provenance.json
+test/parity/replay-report.txt
+test/parity/joi-comparison.json
+test/parity/joi-comparison.json.target.json
+test/parity/joi-comparison.json.provenance.json
+
 .sass-cache
 
 public/css/base.css

@@ -32,12 +32,20 @@ Trinket lets students and educators write and run code directly in the browser, 
    cp config/local.example.yaml config/local.yaml
    ```
 
-3. Start the services:
+3. Build the stylesheets into the checkout:
+   ```bash
+   docker-compose run --rm --user root app npm run build
+   # or, with Node 22 on the host: npm ci && npm run build
+   ```
+
+   `docker-compose.yml` mounts the checkout over the application directory, so `/css/base.css` and `/css/embed.css` are served from `public/css/` in the checkout rather than from the copies the image built. Both are generated and gitignored, so on a fresh clone they are absent and those two requests answer 404 until this step has run. See [GETTING_STARTED.md](GETTING_STARTED.md) for the detail, including why the container command needs `--user root`.
+
+4. Start the services:
    ```bash
    docker-compose up
    ```
 
-4. Visit http://localhost:3000 in your browser.
+5. Visit http://localhost:3000 in your browser.
 
 ## Configuration
 
@@ -82,7 +90,7 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
    npm run build
    ```
 
-   The frontend components are not committed - they live in the gitignored `public/components/` and are distributed separately as `public-components.tgz`, so without them the SCSS build fails at `static/scss/_settings.scss:8`. `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own.
+   The frontend components are not committed - they live in the gitignored `public/components/` and are distributed separately as `public-components.tgz`, so without them the SCSS build fails at `static/scss/_settings.scss:8`. `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. On a clean checkout the two commands above were measured to exit 0 and to write `public/css/base.css` and `public/css/embed.css`; the SCSS compile prints several hundred Sass deprecation notices from the vendored Foundation tree along the way, which is expected.
 
 3. Start MongoDB locally (Redis is optional)
 

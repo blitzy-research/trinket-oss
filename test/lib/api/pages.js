@@ -6,7 +6,9 @@
 // not mistakes, and they must not be "corrected":
 //
 //   * an authenticated visit to /login or /signup answers 500, not a redirect;
-//   * /api and /library answer 404, not the 200 that test/smoke-test.sh claims.
+//   * /api and /library answer 404, because neither path has a registered route.
+//     test/smoke-test.sh once claimed 200 for both; this measurement is what
+//     corrected it, and that script now asserts 404 too.
 //
 // Preserving those outcomes is the whole point of the file. Behaviour
 // improvements are prohibited, so a change that made either pair answer more
@@ -67,6 +69,13 @@ module.exports = function() {
         flow.wasOk.should.be.true;
         flow.lastResponse.statusCode.should.eql(500);
         flow.lastContentType.should.contain('text/html');
+        // The rendered error page, not just its status. lib/views/50x.html is
+        // what app.js's error extension renders for a >= 500 Boom on a browser
+        // request, and these two markers are its title and heading, measured
+        // over real HTTP. Without them a 500 carrying an empty body, a
+        // stack-trace page, or the login form itself would still pass.
+        flow.lastResponse.text.should.contain('<title>Something went wrong</title>');
+        flow.lastResponse.text.should.contain('<h1>Something went wrong <span>:(</span></h1>');
       });
     });
 
@@ -89,6 +98,8 @@ module.exports = function() {
         flow.wasOk.should.be.true;
         flow.lastResponse.statusCode.should.eql(500);
         flow.lastContentType.should.contain('text/html');
+        flow.lastResponse.text.should.contain('<title>Something went wrong</title>');
+        flow.lastResponse.text.should.contain('<h1>Something went wrong <span>:(</span></h1>');
       });
     });
 
@@ -110,6 +121,14 @@ module.exports = function() {
         flow.wasOk.should.be.true;
         flow.lastResponse.statusCode.should.eql(200);
         flow.lastContentType.should.contain('text/html');
+        // Three markers, each from a different layer of the render, so that a
+        // 200 carrying the wrong page or an empty body cannot pass: the title
+        // and body id come from the `title` and `body_id` blocks
+        // lib/views/static/about.html overrides in base.html, and the heading
+        // comes from its own content block. Measured over real HTTP.
+        flow.lastResponse.text.should.contain('<title>About Trinket</title>');
+        flow.lastResponse.text.should.contain('id="about"');
+        flow.lastResponse.text.should.contain('<h2>About Trinket</h2>');
       });
     });
 
@@ -124,14 +143,20 @@ module.exports = function() {
         flow.wasOk.should.be.true;
         flow.lastResponse.statusCode.should.eql(200);
         flow.lastContentType.should.contain('text/html');
+        flow.lastResponse.text.should.contain('<title>Help</title>');
+        flow.lastResponse.text.should.contain('id="help"');
+        flow.lastResponse.text.should.contain('<h2>Help</h2>');
       });
     });
 
     // The two cases below are an R-f resolution: where an expectation is
     // ambiguous, the observed behaviour of the application decides it.
     //
-    // test/smoke-test.sh asserts 200 for both of these paths, but that script
-    // targets a deployed stack and has never been green against this checkout.
+    // test/smoke-test.sh USED to assert 200 for both of these paths. It no
+    // longer does: the measurement below is what settled the question, and that
+    // script now asserts 404 for both, with the reasoning recorded at its own
+    // site. The two pieces of evidence this checkpoint ships therefore agree.
+    //
     // MEASURED HERE: both answer 404 with content-type text/html, whether the
     // visitor is authenticated or not, and both before and after the asset
     // build and the component fetch. 404 is therefore the value adopted.
@@ -159,6 +184,12 @@ module.exports = function() {
         flow.wasOk.should.be.true;
         flow.lastResponse.statusCode.should.eql(404);
         flow.lastContentType.should.contain('text/html');
+        // lib/views/404.html, which app.js's error extension renders for a 404
+        // Boom on a browser request. Asserting the rendered page distinguishes
+        // "no route, error page served" from a 404 with an empty body or one
+        // produced by Inert's own directory listing. Measured over real HTTP.
+        flow.lastResponse.text.should.contain('<title>Page not found</title>');
+        flow.lastResponse.text.should.contain('<h1>Page not found</h1>');
       });
     });
 
@@ -173,6 +204,8 @@ module.exports = function() {
         flow.wasOk.should.be.true;
         flow.lastResponse.statusCode.should.eql(404);
         flow.lastContentType.should.contain('text/html');
+        flow.lastResponse.text.should.contain('<title>Page not found</title>');
+        flow.lastResponse.text.should.contain('<h1>Page not found</h1>');
       });
     });
   });

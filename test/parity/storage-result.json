@@ -1,0 +1,798 @@
+{
+  "tool": "test/parity/storage.js",
+  "nodeFlags": [
+    "--pending-deprecation",
+    "--trace-deprecation"
+  ],
+  "volatile": [
+    "provenance.generatedAt",
+    "dataStore.digest, when the run-local address differs",
+    "cases[].durationMs",
+    "cases[*].evidence.documentId, and the remoteName, url and persistedUrl built from it (a generated ObjectId, except where a case supplies a fixed id)",
+    "cases[*].evidence.delayMs and elapsedMs (measured wall clock; the assertions bound them, the values are not fixed)",
+    "cases[*].evidence.errorMessage where the message embeds a generated id or a scratch path",
+    "cases[archive-layout].evidence.archiveSha1 and archiveBytes (the ZIP records a modification time per entry)",
+    "warnings, and the findings derived from them - see nodeFlags"
+  ],
+  "nodeEnv": "test",
+  "node": "v22.23.2",
+  "dataStore": {
+    "kind": "mongodb",
+    "lifecycle": "started by this harness",
+    "configurationDigest": {
+      "algorithm": "sha256",
+      "canonicalization": "secret-labelled values replaced with <redacted>, address-labelled values dropped, URI userinfo removed, then JSON with object keys sorted lexicographically and no whitespace",
+      "value": "6edecacb5f75f3bca9062d8a892db294e19ab5ada1ca02fbde09e43dc8152110"
+    }
+  },
+  "seeded": {
+    "groups": [
+      "users",
+      "files",
+      "exports"
+    ],
+    "objects": 6
+  },
+  "versions": {
+    "admZip": "0.6.0",
+    "archiver": "6.0.2"
+  },
+  "provenance": {
+    "provenanceSchema": 2,
+    "artifact": "storage-result.json",
+    "role": "target",
+    "generator": {
+      "path": "test/parity/storage.js",
+      "blob": "688484f01d5c734494c4aab52bd411dec3a4cac5",
+      "commit": "ded27163a97492cb1fc308da286c77f148074553",
+      "commitState": "contains-this-exact-source",
+      "verified": true,
+      "deliveredHead": "ded27163a97492cb1fc308da286c77f148074553",
+      "deliveredHeadShort": "ded2716",
+      "matchesDeliveredHead": true
+    },
+    "analysedTree": {
+      "head": "ded27163a97492cb1fc308da286c77f148074553",
+      "headShort": "ded2716",
+      "subject": "Align the suite-total gate and two handler cases with the delivered engines",
+      "isBaselineCommit": false,
+      "worktreeState": "dirty"
+    },
+    "delivered": {
+      "head": "ded27163a97492cb1fc308da286c77f148074553",
+      "headShort": "ded2716",
+      "subject": "Align the suite-total gate and two handler cases with the delivered engines",
+      "isBaselineCommit": false,
+      "worktreeState": "dirty"
+    },
+    "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+    "runtime": {
+      "node": "v22.23.2",
+      "platform": "linux"
+    },
+    "detail": {
+      "contract": "AAP 0.6.7 - the persisted-data and file-format contract of lib/util/file.js and lib/workers/exports.js",
+      "configuration": {
+        "NODE_ENV": "test"
+      },
+      "analysedTreeIsToolWorktree": true
+    },
+    "payloadDigest": {
+      "algorithm": "sha256",
+      "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
+      "value": "a84d98c86b796e281a7dfcbf72674fd1ad8ee51f6f155ef23ff5cb9407be7017"
+    }
+  },
+  "reader": {
+    "library": "adm-zip",
+    "version": "0.6.0",
+    "entryCount": 12,
+    "crcVerified": 12,
+    "crcAbsent": 0,
+    "getDataUsable": true,
+    "getDataFailures": [],
+    "defect": null,
+    "applicationRead": {
+      "library": "adm-zip",
+      "version": "0.6.0",
+      "entries": 12,
+      "files": 12,
+      "readable": 12,
+      "unreadable": []
+    }
+  },
+  "findings": [],
+  "documentsRemoved": 4,
+  "total": 35,
+  "passed": 35,
+  "failed": 0,
+  "notRun": 0,
+  "cases": [
+    {
+      "name": "fixture-preflight",
+      "pins": "test/parity/fixtures/aws.js, config/default.yaml:236-237",
+      "status": "passed",
+      "durationMs": 0,
+      "evidence": {
+        "s3Patched": true,
+        "extensionWhitelist": {
+          "ipynb": "text/plain"
+        },
+        "redisEnabled": false,
+        "seededObjects": [
+          "your-materials-bucket/5d9f824c6e90f8b80a2156c3300263bc92b08653.txt",
+          "your-materials-bucket/5d9f824c6e90f8b80a2156c3300263bc92b08653-000000000000000000000501.txt",
+          "your-materials-bucket/7bc78084f9f965079d5047873879b8bdf76dab07.ipynb",
+          "your-materials-bucket/309a9fdfaa34a9b5b4872f5fbd743eb8e596f1fd.png",
+          "your-user-assets-bucket/d5fceb6532643d0d84ffe09c40c481ecdf59e15a-000000000000000000000503.gif",
+          "parity-exports/exports/000000000000000000000101/trinket-export-cd30c142e147.zip"
+        ]
+      }
+    },
+    {
+      "name": "digest-agreement",
+      "pins": "lib/util/file.js:66-78",
+      "status": "passed",
+      "durationMs": 6,
+      "evidence": {
+        "keyBytes": {
+          "bytes": 65,
+          "sha1": "07481165fe77e6f3ab46ac69a7100245a0eb645c"
+        },
+        "multiDotBytes": {
+          "bytes": 41,
+          "sha1": "17a919e9bf5c3234848d19a552de7868e99551e8"
+        },
+        "notebookBytes": {
+          "bytes": 76,
+          "sha1": "04cbb0110ad616b88b4b1779a5684049c78d4a89"
+        },
+        "passthroughBytes": {
+          "bytes": 48,
+          "sha1": "540e259e043e17dfb13cb27b4b6dfe4ebcf0d769"
+        },
+        "avatarPng": {
+          "bytes": 77,
+          "sha1": "fea9d396f751d00b7469dda31a46aba650288aa7"
+        },
+        "snapshotPng": {
+          "bytes": 69,
+          "sha1": "309a9fdfaa34a9b5b4872f5fbd743eb8e596f1fd"
+        },
+        "assetGif": {
+          "bytes": 42,
+          "sha1": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a"
+        },
+        "failBytes": {
+          "bytes": 45,
+          "sha1": "cf010878237a8f91f42a5ecf343b0cd8008a2fed"
+        }
+      }
+    },
+    {
+      "name": "upload-parameters",
+      "pins": "lib/util/file.js:10-19, 91-94",
+      "status": "passed",
+      "durationMs": 2,
+      "evidence": {
+        "bucket": "your-materials-bucket",
+        "key": "07481165fe77e6f3ab46ac69a7100245a0eb645c.txt",
+        "contentType": "text/plain",
+        "storedBytes": 65,
+        "storedSha1": "07481165fe77e6f3ab46ac69a7100245a0eb645c",
+        "bodyType": "readable",
+        "callbackResult": {
+          "host": "https://your-materials-bucket.example.com",
+          "path": "07481165fe77e6f3ab46ac69a7100245a0eb645c.txt",
+          "name": "07481165fe77e6f3ab46ac69a7100245a0eb645c.txt",
+          "hash": "07481165fe77e6f3ab46ac69a7100245a0eb645c",
+          "size": 65
+        },
+        "sourceUnlinked": true
+      }
+    },
+    {
+      "name": "key-bare-digest",
+      "pins": "lib/util/file.js:26, 32-37",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "bucket": "parity-keys",
+        "key": "07481165fe77e6f3ab46ac69a7100245a0eb645c",
+        "digest": "07481165fe77e6f3ab46ac69a7100245a0eb645c",
+        "declaredFilename": "parity-key-case",
+        "suffixes": {
+          "fileId": null,
+          "extension": null
+        },
+        "sourceUnlinked": true
+      }
+    },
+    {
+      "name": "key-digest-fileId",
+      "pins": "lib/util/file.js:38-40",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "bucket": "parity-keys-fileid",
+        "key": "07481165fe77e6f3ab46ac69a7100245a0eb645c-000000000000000000000501",
+        "digest": "07481165fe77e6f3ab46ac69a7100245a0eb645c",
+        "suffixes": {
+          "fileId": "000000000000000000000501",
+          "extension": null
+        }
+      }
+    },
+    {
+      "name": "key-digest-extension",
+      "pins": "lib/util/file.js:41-43",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "bucket": "parity-keys-ext",
+        "key": "07481165fe77e6f3ab46ac69a7100245a0eb645c.txt",
+        "digest": "07481165fe77e6f3ab46ac69a7100245a0eb645c",
+        "suffixes": {
+          "fileId": null,
+          "extension": "txt"
+        }
+      }
+    },
+    {
+      "name": "key-digest-fileId-extension",
+      "pins": "lib/util/file.js:38-43",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "bucket": "parity-keys-both",
+        "key": "07481165fe77e6f3ab46ac69a7100245a0eb645c-000000000000000000000502.txt",
+        "digest": "07481165fe77e6f3ab46ac69a7100245a0eb645c",
+        "suffixes": {
+          "fileId": "000000000000000000000502",
+          "extension": "txt"
+        }
+      }
+    },
+    {
+      "name": "key-last-dot-extension",
+      "pins": "lib/util/file.js:26",
+      "status": "passed",
+      "durationMs": 2,
+      "evidence": {
+        "bucket": "parity-keys-multidot",
+        "declaredFilename": "parity.last.tar.gz",
+        "key": "17a919e9bf5c3234848d19a552de7868e99551e8.gz",
+        "digest": "17a919e9bf5c3234848d19a552de7868e99551e8",
+        "suffixes": {
+          "fileId": null,
+          "extension": "gz"
+        },
+        "bucketContents": [
+          "17a919e9bf5c3234848d19a552de7868e99551e8.gz"
+        ]
+      }
+    },
+    {
+      "name": "content-type-override-ipynb",
+      "pins": "lib/util/file.js:28-30, config/default.yaml:236-237",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "bucket": "your-materials-bucket",
+        "key": "04cbb0110ad616b88b4b1779a5684049c78d4a89.ipynb",
+        "declaredContentType": "application/x-ipynb+json",
+        "storedContentType": "text/plain",
+        "overridden": true,
+        "whitelistEntry": "text/plain"
+      }
+    },
+    {
+      "name": "content-type-passthrough",
+      "pins": "lib/util/file.js:23, 28-30",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "bucket": "your-materials-bucket",
+        "key": "540e259e043e17dfb13cb27b4b6dfe4ebcf0d769.bin",
+        "declaredContentType": "application/octet-stream",
+        "storedContentType": "application/octet-stream",
+        "extension": "bin",
+        "whitelisted": false
+      }
+    },
+    {
+      "name": "swallowed-upload-error",
+      "pins": "lib/util/file.js:48-59",
+      "status": "passed",
+      "durationMs": 2,
+      "evidence": {
+        "key": "cf010878237a8f91f42a5ecf343b0cd8008a2fed.txt",
+        "loggedErrorCode": "MissingRequiredParameter",
+        "loggedCallCount": 1,
+        "callbackError": null,
+        "callbackResult": {
+          "host": "https://.parity.invalid",
+          "path": "cf010878237a8f91f42a5ecf343b0cd8008a2fed.txt",
+          "name": "cf010878237a8f91f42a5ecf343b0cd8008a2fed.txt",
+          "hash": "cf010878237a8f91f42a5ecf343b0cd8008a2fed",
+          "size": 45
+        },
+        "storedAnywhere": false,
+        "sourceUnlinked": true
+      }
+    },
+    {
+      "name": "temp-file-cleanup-both-paths",
+      "pins": "lib/util/file.js:52",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "successPathUnlinked": true,
+        "failurePathUnlinked": true,
+        "failureLogged": 1
+      }
+    },
+    {
+      "name": "materials-read",
+      "pins": "lib/util/file.js:80-89",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "bucket": "your-materials-bucket",
+        "key": "5d9f824c6e90f8b80a2156c3300263bc92b08653.txt",
+        "outcome": "served",
+        "readBytes": 105,
+        "readSha1": "5d9f824c6e90f8b80a2156c3300263bc92b08653",
+        "seededSha1": "5d9f824c6e90f8b80a2156c3300263bc92b08653",
+        "streamForm": "getObject(...).createReadStream()"
+      }
+    },
+    {
+      "name": "materials-read-missing",
+      "pins": "lib/util/file.js:80-89",
+      "status": "passed",
+      "durationMs": 251,
+      "evidence": {
+        "bucket": "your-materials-bucket",
+        "key": "parity-absent-material.txt",
+        "outcome": "missing",
+        "streamSettled": null,
+        "bytesDelivered": 0,
+        "uncaught": {
+          "code": "NoSuchKey",
+          "statusCode": 404
+        }
+      }
+    },
+    {
+      "name": "avatar-accept",
+      "pins": "lib/util/file.js:96-102",
+      "status": "passed",
+      "durationMs": 3,
+      "evidence": {
+        "image/png": {
+          "bucket": "your-avatars-bucket",
+          "key": "fea9d396f751d00b7469dda31a46aba650288aa7.png",
+          "contentType": "image/png",
+          "storedSha1": "fea9d396f751d00b7469dda31a46aba650288aa7",
+          "sourceUnlinked": true
+        },
+        "image/jpg": {
+          "bucket": "your-avatars-bucket",
+          "key": "fea9d396f751d00b7469dda31a46aba650288aa7.jpg",
+          "contentType": "image/jpg",
+          "storedSha1": "fea9d396f751d00b7469dda31a46aba650288aa7",
+          "sourceUnlinked": true
+        },
+        "image/jpeg": {
+          "bucket": "your-avatars-bucket",
+          "key": "fea9d396f751d00b7469dda31a46aba650288aa7.jpeg",
+          "contentType": "image/jpeg",
+          "storedSha1": "fea9d396f751d00b7469dda31a46aba650288aa7",
+          "sourceUnlinked": true
+        }
+      }
+    },
+    {
+      "name": "avatar-reject",
+      "pins": "lib/util/file.js:97-98",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "rejectedTypes": [
+          "image/gif",
+          "image/svg+xml",
+          "text/plain",
+          "image/pngx",
+          ""
+        ],
+        "errorMessage": "unsupported image type, must be png or jpg",
+        "uploadsAttempted": 0,
+        "sourceRetained": true
+      }
+    },
+    {
+      "name": "snapshot-exists",
+      "pins": "lib/util/file.js:105-122",
+      "status": "passed",
+      "durationMs": 1003,
+      "evidence": {
+        "bucket": "your-snapshots-bucket",
+        "key": "parity-snapshot.png",
+        "contentType": "image/png",
+        "storedSha1": "309a9fdfaa34a9b5b4872f5fbd743eb8e596f1fd",
+        "delayMs": 1003,
+        "sourceRetained": true
+      }
+    },
+    {
+      "name": "snapshot-missing",
+      "pins": "lib/util/file.js:108, 117-119",
+      "status": "passed",
+      "durationMs": 1001,
+      "evidence": {
+        "errorMessage": "Snapshot does not exists: /tmp/trinket-recon/parity-storage-lWT1xI/snapshots/parity-absent-snapshot.png",
+        "delayMs": 1001,
+        "uploadsAttempted": 0
+      }
+    },
+    {
+      "name": "snapshot-from-buffer",
+      "pins": "lib/util/file.js:124-130",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "bucket": "your-snapshots-bucket",
+        "key": "parity-buffer-snapshot.png",
+        "contentType": "image/png",
+        "storedSha1": "309a9fdfaa34a9b5b4872f5fbd743eb8e596f1fd",
+        "bodyType": "buffer",
+        "elapsedMs": 1
+      }
+    },
+    {
+      "name": "delete-basename-only",
+      "pins": "lib/util/file.js:132-147",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "containerArgument": "materials",
+        "resolvedBucket": "your-materials-bucket",
+        "suppliedValue": "https://cdn.parity.invalid/deep/nested/path/parity-delete-target.png",
+        "deletedKey": "parity-delete-target.png",
+        "existed": true,
+        "stillPresent": false
+      }
+    },
+    {
+      "name": "delete-missing-callback",
+      "pins": "lib/util/file.js:135-139",
+      "status": "passed",
+      "durationMs": 0,
+      "evidence": {
+        "suppliedValue": "https://cdn.parity.invalid/assets/parity-delete-nocallback.png",
+        "deletedKey": "parity-delete-nocallback.png",
+        "bucket": "your-materials-bucket",
+        "stillPresent": false
+      }
+    },
+    {
+      "name": "user-asset-upload",
+      "pins": "lib/util/file.js:149-194",
+      "status": "passed",
+      "durationMs": 5,
+      "evidence": {
+        "bucket": "your-user-assets-bucket",
+        "remoteName": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a-6a9a5183a6576771e95c873f.gif",
+        "documentId": "6a9a5183a6576771e95c873f",
+        "url": "https://your-assets-bucket.example.com/d5fceb6532643d0d84ffe09c40c481ecdf59e15a-6a9a5183a6576771e95c873f.gif",
+        "hash": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a",
+        "mime": "image/gif",
+        "size": 42,
+        "name": "parity-new-asset.gif",
+        "type": "embed",
+        "owner": "000000000000000000000101",
+        "storedSha1": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a",
+        "storedType": "image/gif",
+        "persistedUrl": "https://your-assets-bucket.example.com/d5fceb6532643d0d84ffe09c40c481ecdf59e15a-6a9a5183a6576771e95c873f.gif",
+        "sourceRetained": true
+      }
+    },
+    {
+      "name": "user-asset-argument-shift",
+      "pins": "lib/util/file.js:154-157",
+      "status": "passed",
+      "durationMs": 2,
+      "evidence": {
+        "bucket": "your-user-assets-bucket",
+        "remoteName": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a-6a9a5183a6576771e95c8742.gif",
+        "documentId": "6a9a5183a6576771e95c8742",
+        "callbackCalls": 1,
+        "replaceFileShifted": true
+      }
+    },
+    {
+      "name": "user-asset-replace-existing",
+      "pins": "lib/util/file.js:163-165, 178-179",
+      "status": "passed",
+      "durationMs": 3,
+      "evidence": {
+        "bucket": "your-user-assets-bucket",
+        "remoteName": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a-0000000000000000000005a1.gif",
+        "documentId": "0000000000000000000005a1",
+        "url": "https://your-assets-bucket.example.com/d5fceb6532643d0d84ffe09c40c481ecdf59e15a-0000000000000000000005a1.gif",
+        "documentCount": 1
+      }
+    },
+    {
+      "name": "user-asset-save-error-early-return",
+      "pins": "lib/util/file.js:181-182",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "errorName": "ValidationError",
+        "errorMessage": "File validation failed: _owner: Path `_owner` is required.",
+        "uploadsAttempted": 0,
+        "sourceRetained": true
+      }
+    },
+    {
+      "name": "user-asset-saved-before-upload",
+      "pins": "lib/util/file.js:181, 189-191",
+      "status": "passed",
+      "durationMs": 2,
+      "evidence": {
+        "bucket": "your-user-assets-bucket",
+        "remoteName": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a-0000000000000000000005a2.gif",
+        "documentId": "0000000000000000000005a2",
+        "persistedUrl": "https://your-assets-bucket.example.com/d5fceb6532643d0d84ffe09c40c481ecdf59e15a-0000000000000000000005a2.gif",
+        "objectStored": false,
+        "callbackError": {
+          "type": "Error",
+          "name": "InternalError",
+          "message": "parity fixture: forced upload failure"
+        }
+      }
+    },
+    {
+      "name": "user-asset-read",
+      "pins": "lib/util/file.js:196-212",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "bucket": "your-user-assets-bucket",
+        "key": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a-000000000000000000000503.gif",
+        "readBytes": 42,
+        "readSha1": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a",
+        "seededSha1": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a",
+        "absentKey": "parity-absent-user-asset.gif",
+        "rejectionCode": "NoSuchKey"
+      }
+    },
+    {
+      "name": "export-key-format",
+      "pins": "lib/workers/exports.js (processBulkExport, uploadToS3)",
+      "status": "passed",
+      "durationMs": 0,
+      "evidence": {
+        "bucket": "parity-exports",
+        "s3Key": "exports/000000000000000000000101/trinket-export-cd30c142e147.zip",
+        "filename": "trinket-export-cd30c142e147.zip",
+        "digestPrefix": "cd30c142e147",
+        "keySegments": [
+          "exports",
+          "000000000000000000000101",
+          "trinket-export-cd30c142e147.zip"
+        ],
+        "contentType": "application/zip",
+        "contentDisposition": "attachment; filename=\"trinket-export-cd30c142e147.zip\"",
+        "downloadUrl": "http://127.0.0.1:3010/parity-exports/exports/000000000000000000000101/trinket-export-cd30c142e147.zip",
+        "storedSha1": "b04f3ee8f5e43fa3b162981b50bb72fe1acabb33"
+      }
+    },
+    {
+      "name": "pre-migration-lookup",
+      "pins": "lib/util/file.js:178, 196-212, lib/models/file.js:41",
+      "status": "passed",
+      "durationMs": 2,
+      "evidence": {
+        "lookupField": "hash",
+        "lookupValue": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a",
+        "documentId": "000000000000000000000503",
+        "documentUrl": "https://your-assets-bucket.example.com/d5fceb6532643d0d84ffe09c40c481ecdf59e15a-000000000000000000000503.gif",
+        "documentHash": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a",
+        "resolvedKey": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a-000000000000000000000503.gif",
+        "readBytes": 42,
+        "readSha1": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a"
+      }
+    },
+    {
+      "name": "pre-migration-digest-drift",
+      "pins": "lib/util/file.js:66-78, AAP 0.6.7",
+      "status": "passed",
+      "durationMs": 2,
+      "evidence": {
+        "key": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a-000000000000000000000503.gif",
+        "recordHash": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a",
+        "originalSha1": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a",
+        "driftedSha1": "8829a62d0b401e45ab8d9e2bfbf6c4937d8527d7",
+        "readStillSucceeded": true,
+        "restoredSha1": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a"
+      }
+    },
+    {
+      "name": "pre-migration-rekey-orphans",
+      "pins": "lib/util/file.js:32-43, 178, AAP 0.6.7",
+      "status": "passed",
+      "durationMs": 1,
+      "evidence": {
+        "recordKey": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a-000000000000000000000503.gif",
+        "rekeyedKey": "8829a62d0b401e45ab8d9e2bfbf6c4937d8527d7-000000000000000000000503.gif",
+        "rejectionCode": "NoSuchKey",
+        "bytesIntactUnderNewKey": true,
+        "restoredSha1": "d5fceb6532643d0d84ffe09c40c481ecdf59e15a"
+      }
+    },
+    {
+      "name": "archive-sanitizer",
+      "pins": "lib/workers/exports.js (sanitizeFolderName)",
+      "status": "passed",
+      "durationMs": 0,
+      "evidence": {
+        "sanitized": [
+          "\"\" -> untitled",
+          "null -> untitled",
+          "undefined -> untitled",
+          "\"a-b_c\" -> a-b_c",
+          "\"a.b\" -> ab",
+          "\"a/b\" -> ab",
+          "\"../../etc\" -> etc",
+          "\"héllo\" -> hllo",
+          "\"emoji ❤\" -> emoji_",
+          "\"a  b\" -> a_b",
+          "\"a\\t\\nb\" -> a_b",
+          "\"a . b\" -> a_b",
+          "\"Parity  Blocks! (v2)\" -> Parity_Blocks_v2",
+          "\" a \" -> _a_"
+        ],
+        "truncatedLength": 50,
+        "basePaths": [
+          "python/My_Trinket_ABC123/",
+          "other/ABC123_ABC123/",
+          "python/untitled_/"
+        ]
+      }
+    },
+    {
+      "name": "archive-code-shapes",
+      "pins": "lib/workers/exports.js (parseCodeFiles)",
+      "status": "passed",
+      "durationMs": 0,
+      "evidence": {
+        "fallbackNames": [
+          "blocks -> main.xml",
+          "python -> main.py",
+          "R -> main.R",
+          "r -> main.txt",
+          "unknown-lang -> main.txt"
+        ],
+        "langExtensions": {
+          "python": ".py",
+          "python3": ".py",
+          "pygame": ".py",
+          "html": ".html",
+          "java": ".java",
+          "R": ".R",
+          "glowscript": ".py",
+          "blocks": ".xml",
+          "console": ".py",
+          "music": ".py",
+          "skulpt": ".py"
+        }
+      }
+    },
+    {
+      "name": "archive-layout",
+      "pins": "lib/workers/exports.js (createExportArchive, addTrinketToArchive)",
+      "status": "passed",
+      "durationMs": 20,
+      "evidence": {
+        "archiveBytes": 3006,
+        "archiveSha1": "0b24d472b946e1588e558be9755559022777f777",
+        "entries": [
+          "blocks/Parity_Blocks_v2_BBBBBB/main.xml",
+          "blocks/Parity_Blocks_v2_BBBBBB/metadata.json",
+          "html/Parity_Assets_DDDDDD/assets/derived.png",
+          "html/Parity_Assets_DDDDDD/assets/logo.gif",
+          "html/Parity_Assets_DDDDDD/main.html",
+          "html/Parity_Assets_DDDDDD/metadata.json",
+          "manifest.json",
+          "python/Parity_Python_AAAAAA/helper.py",
+          "python/Parity_Python_AAAAAA/main.py",
+          "python/Parity_Python_AAAAAA/metadata.json",
+          "ruby/CCCCCC_CCCCCC/main.txt",
+          "ruby/CCCCCC_CCCCCC/metadata.json"
+        ],
+        "basePaths": [
+          "python/Parity_Python_AAAAAA/",
+          "blocks/Parity_Blocks_v2_BBBBBB/",
+          "ruby/CCCCCC_CCCCCC/",
+          "html/Parity_Assets_DDDDDD/"
+        ],
+        "manifest": {
+          "totalTrinkets": 4,
+          "failedTrinkets": 0,
+          "trinkets": 4
+        },
+        "reader": {
+          "library": "adm-zip",
+          "version": "0.6.0",
+          "getDataUsable": true,
+          "crcVerified": 12,
+          "crcAbsent": 0
+        },
+        "writer": {
+          "archiver": "6.0.2",
+          "admZip": "0.6.0"
+        }
+      }
+    },
+    {
+      "name": "no-leftover-uploads",
+      "pins": "lib/util/file.js:52",
+      "status": "passed",
+      "durationMs": 0,
+      "evidence": {
+        "scratchEntries": [
+          ".parity-storage-owner",
+          "s3",
+          "snapshots"
+        ],
+        "leftovers": [],
+        "markerPresent": true
+      }
+    }
+  ],
+  "warnings": [],
+  "warningGate": {
+    "policy": "aap-0.9.3-zero-warnings",
+    "flags": {
+      "required": [
+        "--pending-deprecation",
+        "--trace-deprecation"
+      ],
+      "effective": [
+        "--pending-deprecation",
+        "--trace-deprecation"
+      ],
+      "fromEnv": [],
+      "missing": [],
+      "suppressors": [],
+      "complete": true
+    },
+    "gateApplies": true,
+    "ok": true,
+    "qualifying": true,
+    "notices": [],
+    "failures": []
+  },
+  "settlements": [],
+  "gate": {
+    "passed": true,
+    "failures": [],
+    "counts": {
+      "total": 0,
+      "case": 0,
+      "warning": 0,
+      "finding": 0,
+      "double-settlement": 0,
+      "teardown": 0,
+      "output": 0
+    }
+  },
+  "digest": {
+    "algorithm": "sha256",
+    "value": "a4c96245eb2101f51d16ae612ae5f31342e5666fb2287388a6a5a90268165026",
+    "over": "the result with appRoot, uri, durationMs, stack, digest removed"
+  }
+}

@@ -105,8 +105,8 @@ app:
 
 Each manager reads from `{language}/manager/config/`. The `node-config` library merges files:
 
-- `default.json` - Base configuration (local development)
-- `production.json` - Docker/production overrides
+- `default.json` - Base configuration (local development); every manager has one
+- `production.json` - Optional Docker/production overrides, merged only when `NODE_ENV=production`. Only the pygame manager ships one (`pygame/manager/config/production.json`); the Java, Python and R managers run on `default.json` plus the environment variables below
 - `custom-environment-variables.json` - Environment variable mappings
 
 **Environment Variables:**
@@ -118,7 +118,7 @@ Each manager reads from `{language}/manager/config/`. The `node-config` library 
 
 ### Scaling Shells
 
-To handle more concurrent users, run multiple shell containers and list them in the manager's `shells` array:
+To handle more concurrent users, run multiple shell containers and list them in the manager's `shells` array. Each shell listens on 8010 inside its own container, so the entries below differ by hostname rather than by port:
 
 ```json
 {
@@ -131,6 +131,8 @@ To handle more concurrent users, run multiple shell containers and list them in 
 ```
 
 The manager randomly selects a shell for each connection.
+
+Outside Docker the addresses differ — the committed `shells` arrays point at per-language localhost ports instead. See [Ports (Direct Host Development)](#ports-direct-host-development).
 
 ## Production Deployment
 
@@ -166,6 +168,51 @@ Then update nginx to use the SSL config:
 # In nginx/Dockerfile, change:
 COPY nginx-ssl.conf /etc/nginx/nginx.conf
 ```
+
+> **`nginx-ssl.conf` does not route pygame.** As committed it defines an HTTP-to-HTTPS redirect server plus `/health`, `/python3/`, `/python3-generated/`, `/java/`, `/java-generated/`, `/r/` and `/r-generated/`. The `/pygame/`, `/pygame-vnc/` and `/pygame-generated/` locations that `nginx.conf` provides are absent, so swapping the config in as-is leaves pygame trinkets — including the VNC stream they render through — unreachable over TLS.
+
+If you serve pygame over HTTPS, add these three locations to the `server { listen 443 ssl ... }` block in `nginx-ssl.conf` before building the image. They are the `nginx.conf` blocks unchanged, so HTTP and HTTPS route pygame identically:
+
+```nginx
+        # Pygame manager WebSocket
+        location /pygame/ {
+            set $pygame_upstream pygame-manager:8100;
+            rewrite ^/pygame/(.*) /$1 break;
+            proxy_pass http://$pygame_upstream;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 86400;
+            proxy_send_timeout 86400;
+        }
+
+        # Pygame VNC WebSocket (noVNC)
+        location /pygame-vnc/ {
+            set $pygame_vnc_upstream pygame-worker:6080;
+            rewrite ^/pygame-vnc/(.*) /$1 break;
+            proxy_pass http://$pygame_vnc_upstream;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_read_timeout 86400;
+            proxy_send_timeout 86400;
+        }
+
+        # Pygame generated files
+        location /pygame-generated/ {
+            alias /var/www/generated/pygame/;
+            expires 1h;
+            add_header Cache-Control "public, immutable";
+        }
+```
+
+Mount `pygame-generated` into the nginx container at `/var/www/generated/pygame` as `docker-compose.yml` already does, otherwise the `alias` above resolves to nothing.
 
 And in docker-compose.yml:
 
@@ -261,7 +308,6 @@ serverside/
 │   │   ├── package-lock.json
 │   │   └── config/
 │   │       ├── default.json
-│   │       ├── production.json
 │   │       └── custom-environment-variables.json
 │   └── shell/
 │       ├── Dockerfile
@@ -276,7 +322,7 @@ serverside/
 │   ├── manager/
 │   └── shell/
 └── pygame/
-    ├── manager/
+    ├── manager/         # the only manager whose config/ also holds production.json
     └── worker/          # Uses 'worker' (not 'shell') due to VNC components
 ```
 
@@ -293,8 +339,23 @@ These ports are internal to the Docker network. Only nginx port 8080 is exposed 
 | java-shell | 8010 | Code execution |
 | r-manager | 8300 | WebSocket routing |
 | r-shell | 8010 | Code execution |
-| pygame-manager | 8400 | WebSocket routing |
+| pygame-manager | 8100 | WebSocket routing |
 | pygame-worker | 8010, 6080 | Code execution + VNC |
+
+Numbers repeat because each container has its own network namespace: every shell and the pygame worker listen on 8010, and `python3-manager` and `pygame-manager` both listen on 8100. nginx tells them apart by service name — `python3-manager:8100`, `pygame-manager:8100`, `pygame-worker:6080`.
+
+## Ports (Direct Host Development)
+
+Running the managers and shells directly on a host puts them all in one namespace, where the numbers above do collide. These are the ports the committed configuration uses:
+
+| Language | Manager `manager.port` | Shell address the manager dials | Port the shell process binds |
+|----------|-----------------------|---------------------------------|------------------------------|
+| Python 3 | 8100 | `http://localhost:8110` (`shells`) | 8010 (`python/shell/trinket/server.js`) |
+| Java | 8200 | `http://localhost:8210` (`shells`) | 8010 (`java/shell/trinket/server.js`) |
+| R | 8300 | `http://localhost:8310` (`shells`) | 8010 (`r/shell/trinket/server.js`) |
+| Pygame | 8100 | `http://localhost:8010` (`manager.workerUrl`) | 8010 (`shell.port`, `pygame/worker/config/default.json`) |
+
+Two consequences: the Python 3 and pygame managers both default to 8100, so run one at a time or override `manager.port`; and the Python, Java and R shells bind 8010 rather than the 8110/8210/8310 addresses their managers dial, so point the `shells` array at `http://localhost:8010` — one shell per host, since they share that port.
 
 ## Troubleshooting
 
@@ -340,7 +401,9 @@ docker compose --profile python3 exec python3-manager \
 
 ## Generated File Cleanup
 
-When users run code that produces files (matplotlib plots, R graphics, etc.), these files are stored in Docker volumes and served via nginx. To prevent disk space exhaustion, each manager automatically cleans up old generated files.
+When users run code that produces files (matplotlib plots, R graphics, etc.), these files are stored in Docker volumes and served via nginx. To prevent disk space exhaustion, the Java, Python and R managers automatically clean up old generated files.
+
+> **The pygame manager does not.** `pygame/manager/manager.js` runs no cleanup scheduler and neither `pygame/manager/config/default.json` nor its `production.json` carries a `cleanup` block, so `pygame-generated` grows until it is cleared by hand — see [Manual Cleanup](#manual-cleanup).
 
 ### How It Works
 
@@ -350,7 +413,7 @@ When users run code that produces files (matplotlib plots, R graphics, etc.), th
 
 ### Configuration
 
-Each manager's cleanup is configured in its `config/default.json`:
+The Java, Python and R managers read their cleanup settings from `config/default.json`:
 
 ```json
 {
@@ -372,12 +435,14 @@ Each manager's cleanup is configured in its `config/default.json`:
 
 ### Monitoring
 
-Cleanup progress is logged to the manager's stdout:
+Cleanup progress is logged to the stdout of the Java, Python and R managers:
 
 ```
 [Cleanup] Starting cleanup of files older than 24 hours in /tmp/python-generated
 [Cleanup] Complete. Deleted 15 directories, 0 errors.
 ```
+
+The pygame manager logs nothing here, because it runs no cleanup.
 
 ### Manual Cleanup
 
@@ -385,15 +450,23 @@ To manually clear all generated files:
 
 ```bash
 # Clear all Python generated files
-docker compose exec python3-manager rm -rf /tmp/python-generated/*
+docker compose exec python3-manager sh -c 'rm -rf /tmp/python-generated/*'
 
-# Or from the host (if volumes are named)
-docker volume rm serverside_python-generated
-docker volume rm serverside_java-generated
-docker volume rm serverside_r-generated
+# Pygame has no automatic cleanup, so this is the only way to reclaim its volume
+docker compose exec pygame-manager sh -c 'rm -rf /tmp/pygame-generated/*'
 ```
 
-Note: Removing volumes requires restarting the containers.
+The `sh -c` is required: `docker compose exec` runs the command directly instead of through a shell, so without it the wildcard reaches `rm` unexpanded and `rm -f` exits 0 having deleted nothing.
+
+To discard the volumes instead of emptying them, note that each generated volume is attached to nginx and to its manager, so `docker volume rm` fails with `volume is in use` while those containers exist — stopping them is not enough, they have to be removed. Bring the stack down, remove the volumes, then start it again:
+
+```bash
+docker compose --profile python3 --profile java --profile r --profile pygame down
+docker volume rm serverside_python-generated serverside_java-generated \
+  serverside_r-generated serverside_pygame-generated
+```
+
+Adding `-v` to `docker compose down` does both steps at once, but it also removes the `*-sessions` volumes the same file declares.
 
 ### Shell timeouts
 
@@ -421,7 +494,7 @@ npm ci
 node manager.js  # Listens on port 8100, connects to shell
 ```
 
-Update `config/default.json` shell URLs to match your local setup.
+Update `config/default.json` shell URLs to match your local setup: the shell above binds 8010, not the `http://localhost:8110` the committed Python array dials. See [Ports (Direct Host Development)](#ports-direct-host-development) for every language.
 
 ## Pygame
 

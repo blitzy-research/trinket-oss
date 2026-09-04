@@ -78,10 +78,12 @@
 // deep merge, the overlay reader and the address layer are ITS implementations,
 // used here rather than copied.
 //
-// The application does not exit on its own. app.js:371 installs
-// `setInterval(detectLeaks, 60*1000)`, which holds the event loop open for the
-// life of the process, so shutdown is by signal and a polite wait alone would
-// hang. See SHUTDOWN.
+// The application does not exit on its own. app.js installs
+// `setInterval(detectLeaks, 60*1000)` at module scope, which holds the event
+// loop open for the life of the process, so shutdown is by signal and a polite
+// wait alone would hang. The application's own handler clears that interval and
+// closes its resources when it is signalled; the escalation here exists for the
+// cases that handler cannot cover. See SHUTDOWN.
 //
 // ===========================================================================
 // THE CONFIGURATION OVERLAY - external, layered, and deep-merged
@@ -141,11 +143,12 @@
 // which is the whole point of selecting the tree by path.
 //
 // NODE_CONFIG_RUNTIME_JSON is set, at a per-run path inside the run directory,
-// and that one is not tidiness. R-f says nothing may be written into the tree
-// under test, and PERSIST_ON_CHANGE=N alone does not achieve it - MEASURED, and
-// measured after this file first claimed otherwise. config 0.4.37 writes `{}`
-// into `<NODE_CONFIG_DIR>/runtime.json` whenever that file is missing or empty,
-// to give `fs.watch` something to watch, and it skips the write only when
+// and NODE_CONFIG_DISABLE_FILE_WATCH is set with it. Neither is tidiness. R-f
+// says nothing may be written into the tree under test, and PERSIST_ON_CHANGE=N
+// alone does not achieve it - MEASURED, and measured after this file first
+// claimed otherwise. config 0.4.37 writes `{}` into
+// `<NODE_CONFIG_DIR>/runtime.json` whenever that file is missing or empty, to
+// give `fs.watch` something to watch, and it skips the write only when
 // PERSIST_ON_CHANGE is 'N' AND DISABLE_FILE_WATCH is 'Y'
 // [node_modules/config/lib/config.js:867-880]. A first run against a clean
 // baseline worktree therefore created a file inside it.
@@ -154,9 +157,22 @@
 // configuration source, so a tree that accumulated one would feed run N+1
 // whatever run N happened to persist, and two runs of "the identical command"
 // would no longer be identical. Redirecting the path fixes it for both trees at
-// once, keeps the file watch behaving exactly as the application expects -
-// disabling it would be a behaviour change R-d does not permit - and makes the
-// top configuration layer a fresh, empty, deterministic `{}` on every run.
+// once and makes the top configuration layer a fresh, empty, deterministic `{}`
+// on every run; disabling the watch is what makes the file unnecessary at all,
+// so nothing is created even under a `config` that ignored the redirect.
+//
+// An earlier version of this paragraph said the watch must stay enabled because
+// disabling it would be a behaviour change R-d does not permit. That was
+// checked and is wrong for this application: nothing in the bootstrap, in lib/
+// or in config/ subscribes with `config.watch(...)`, so the notifications the
+// flag suppresses have no consumer, and in config 0.4.37 the flag reaches
+// exactly two places - the runtime.json creation above and the early return in
+// `watchForConfigFileChanges` [config/lib/config.js:470]. No configuration
+// VALUE is affected, so no observable application behaviour changes.
+//
+// Both variables, and the NODE_CONFIG_DIR reconciliation, come from ./mongo's
+// `applyConfigIsolation`: one implementation, so this launcher cannot drift
+// from the others again.
 //
 // With that, nothing under appRoot is written to and no configuration file is
 // edited, on either tree. Every deviation is external, so the identical command
@@ -186,14 +202,40 @@
 // FIXTURE INJECTION - the mechanism, and the environment contract
 // ===========================================================================
 // External effects are intercepted at the MODULE BOUNDARY, not over the
-// network, so the corpus is reproducible without a proxy. All three fixtures
+// network, so the corpus is reproducible without a proxy. All four fixtures
 // must therefore be in place before the application loads, which `--require`
 // guarantees: Node runs every preload before the entry point.
 //
 //   node <flags> --require <target>/test/parity/fixtures/aws.js \
 //                --require <target>/test/parity/fixtures/mail.js \
 //                --require <target>/test/parity/fixtures/http.js \
+//                --require <target>/test/parity/fixtures/model.js \
 //                <appRoot>/app.js
+//
+// Three of them intercept an EXTERNAL effect - S3, mail, outbound HTTP. The
+// fourth, model.js, intercepts an INTERNAL one, and it is here for a different
+// reason: the auth scheme's fifth outcome, `Boom.unauthorized('Auth error')`,
+// happens only when the `User` lookup itself fails, and no HTTP request can
+// make a healthy database fail. AAP §0.6.1 and §0.9.3 require all five outcomes
+// to be asserted independently, so that outcome needs a fault injected below
+// the model layer. It is a preload for the same reason the other three are: the
+// baseline worktree has no test/parity/ at all, so a hook compiled into the
+// application would exist on one tree and not the other, and R-a/R-d rule out
+// putting a test hook on the shipped request path in the first place.
+//
+// model.js differs from its siblings in two respects worth knowing before
+// reading it. It patches NOTHING at load time: it installs an accessor for the
+// global `User` that app.js assigns, wraps that export in place when the
+// assignment happens, and then puts the global back to a plain property.
+// Requiring the model from a preload would instead pull in
+// `mongoose-schema-extend`, whose Proxy polyfill replaces the global
+// `Object.getPrototypeOf` and makes `@hapi/hapi` unloadable (AAP §0.6.5
+// Defect 2, measured, and not fixed by the 21.4.10 bump) - the application
+// would die at startup with an error bearing no resemblance to its cause.
+//
+// And it is INERT unless armed. A run that never writes an arming gets the
+// application's own behaviour from it, which is why adding it as a fourth
+// unconditional preload changes nothing about every other gate.
 //
 // The fixture paths are ABSOLUTE and rooted at THIS file's directory, so they
 // load from the TARGET worktree while the application loads from `appRoot`.
@@ -202,7 +244,7 @@
 //
 // A preload cannot take command-line arguments, so every per-run path reaches
 // the fixtures through the environment. This is the authoritative list, and it
-// is reproduced from the three fixtures' own ENVIRONMENT CONTRACT headers so
+// is reproduced from the four fixtures' own ENVIRONMENT CONTRACT headers so
 // that they and this launcher cannot drift:
 //
 //   PARITY_APP_ROOT           All three. Absolute path of the worktree under
@@ -236,8 +278,25 @@
 //                             creates it with the initial profile already in it
 //                             and returns its path for capture.js to rewrite.
 //   PARITY_HTTP_LOG           fixtures/http.js, optional evidence file.
+//   PARITY_MODEL_FAULT_FILE   fixtures/model.js. The fault ARMING file, RE-READ
+//                             synchronously at the start of every intercepted
+//                             `User.findById`. Written DISARMED (`{}`) before
+//                             the child is spawned, so the path exists and
+//                             parses from the fixture's first read. This is how
+//                             a corpus case reaches the auth scheme's fifth
+//                             outcome - it arms the file, drives one request,
+//                             and disarms it - without restarting the server,
+//                             which is the same channel PARITY_HTTP_PROFILE_FILE
+//                             provides for OAuth profiles. Returned on the
+//                             start result as `modelFaultPath`.
+//   PARITY_MODEL_FAULT_LOG    fixtures/model.js evidence file. Every
+//                             intercepted lookup while an arming is in force is
+//                             appended as one JSON line, with the id it saw, so
+//                             "the fault landed on the auth-scheme lookup and
+//                             on nothing else" is backed by an artifact rather
+//                             than inferred from the response.
 //
-// The three evidence logs are set by default rather than left unset: the
+// The four evidence logs are set by default rather than left unset: the
 // commitment above is that a parity claim is backed by an artifact, and "the
 // fixture intercepted this call" is a claim. Every one is a strict no-op in the
 // fixture when unset, so a caller who wants them silent can clear them through
@@ -257,6 +316,45 @@
 // appRoot, or through an NODE_OPTIONS string: NODE_OPTIONS is one shell-quoted
 // scalar, and a path containing a space would silently split into two broken
 // flags. `spawn` with an argv array has no quoting layer at all.
+//
+// Three variables are REMOVED from the inherited environment rather than added
+// to it - NODE_OPTIONS, NODE_PATH and NODE_REPL_EXTERNAL_MODULE, named once in
+// ./mongo's PRELOAD_ENV_VARS. An inherited NODE_OPTIONS carrying `--require`,
+// `--import` or `--experimental-loader` would preload that module ahead of the
+// three fixtures above and could patch the very modules they intercept; an
+// inherited NODE_PATH would let the child resolve `@hapi/hapi`, `mongoose` or a
+// fixture from outside the tree `--app` selected, which is the
+// two-trees-configured-as-one failure this whole design exists to prevent. In
+// both cases the corpus, the replay comparison and the zero-warning stderr
+// would describe the ambient environment rather than the tree under test, and
+// would say nothing at all about it.
+//
+// So the ambient channel is closed and the explicit one is validated:
+// `--node-flags` accepts interpreter flags, refuses anything that does not
+// begin with `-`, and refuses the preload and loader flags by name. What was
+// removed is announced, recorded on `context.scrubbedEnv`, and returned on the
+// start result as `scrubbedEnv` beside the accepted `nodeFlags`, so a
+// provenance record states what could and could not influence the child.
+// `options.env` is applied after all of this and may clear anything, but
+// setting one of the three there is REJECTED rather than dropped: unlike an
+// inherited value it was written deliberately, and there is an approved channel
+// for it.
+//
+// Everything this launcher creates is owner-only: the per-run directory and its
+// subdirectories at 0700, and the PID file, the HTTP profile file and the two
+// captured logs at 0600. That directory accumulates session cookies in the
+// logs, uploaded request bodies under uploads/ and stored objects under s3/,
+// and a parity run is routinely performed on a shared host. A caller-supplied
+// `--run-dir` keeps its own mode - it belongs to the caller - while the files
+// written into it are still 0600.
+//
+// The four files this launcher NAMES but does not write - the three fixture
+// evidence logs above and the `config` package's runtime.json - are created
+// here, empty and 0600, before the child starts. `appendFileSync` and
+// `writeFileSync` apply a mode only when they create a file, so every write the
+// fixtures and `config` then make preserves it. Without that step the mail log,
+// which carries recipients and message bodies, and the HTTP log, which carries
+// intercepted OAuth exchanges, would be created at the default 0644.
 //
 // ===========================================================================
 // READINESS, EVIDENCE AND THE PORT
@@ -285,10 +383,22 @@
 // SHUTDOWN
 // ===========================================================================
 // `stop()` sends SIGTERM, waits a bounded interval, then SIGKILL, and is
-// idempotent. app.js installs no signal handler, so SIGTERM's default
-// disposition ends it; the SIGKILL exists for a child wedged in a syscall,
-// because the 60-second interval timer means a polite wait alone can hang
-// forever.
+// idempotent.
+//
+// app.js DOES install a SIGINT/SIGTERM handler, but only when it started a
+// listener - which is the mode this launcher runs it in. That handler clears
+// the leak-detect interval, stops the hapi listener, closes the job queues and
+// disconnects MongoDB, each stage individually bounded, and then re-raises the
+// signal with its own listeners removed so the child's wait status stays
+// "terminated by signal" exactly as it was before the handler existed. Measured
+// on this host: SIGTERM to exit in 57ms with all three stages closed, against
+// 108ms for the bare default disposition beforehand - so STOP_GRACE_MS below
+// has two orders of magnitude of headroom and the escalation path is not
+// reached in normal operation.
+//
+// The SIGKILL still exists, and still matters, for a child wedged in a syscall
+// or one signalled before app.js reached the point of installing its handler:
+// the 60-second interval timer means a polite wait alone can hang forever.
 //
 // It is wired to normal completion, a thrown error, SIGINT, SIGTERM and an
 // unhandled rejection in the launcher, plus a synchronous `process.on('exit')`
@@ -304,6 +414,16 @@
 //
 // The PID file is removed on clean shutdown. The captured logs are NOT: they are
 // the evidence, and a run that deleted them would have nothing to show.
+//
+// One branch keeps the PID file, and it is the branch that needs it. If the
+// child is STILL ALIVE after SIGKILL, the file, `state.child` and
+// `state.pidPath` are all retained, the failure is reported with the path and
+// the `kill -9` that ends it, and `stop()` returns false. The PID file exists
+// precisely so a supervising script can find a process this launcher could not
+// end, so removing it while that process still holds the port would destroy the
+// only recovery handle at the moment it became necessary. `stop()` stays
+// retryable, and the exit sweep - which distinguishes this case from a teardown
+// that never ran - makes one final synchronous attempt.
 //
 // ===========================================================================
 // INVOCATION
@@ -343,6 +463,22 @@
 //     test/parity/server-overlay.json, is explicitly non-production, and is
 //     fixed precisely so that session cookie values are reproducible across a
 //     baseline-capture / target-replay pair.
+//   No credential VALUE written where the run outlives it. The composed
+//     NODE_CONFIG carries the session password, the AWS key id and secret key,
+//     the OAuth and reCAPTCHA secrets, the mail password and the database
+//     password, and this process's stderr is captured to a file, archived
+//     beside a corpus and read by a gate. So `--print-config` prints the shape
+//     with credential values replaced, names the dotted paths it withheld - an
+//     absent secret must stay distinguishable from a hidden one - and prints a
+//     SHA-256 of the verbatim configuration, which is what still lets two runs
+//     be shown to have been configured identically. `redactConfigJson` is
+//     exported for the harnesses that PERSIST such a record, so capture.js's
+//     provenance sidecar withholds exactly the same set rather than a second
+//     copy of the rule. A URI is reported through `redactUri`, because
+//     `--mongo-uri` legitimately carries `user:password@`. The child still
+//     receives the verbatim string, and `start`'s result still returns it: the
+//     application has to be configured, and the seeder children are configured
+//     from it. Redaction is at the print and persist boundary and nowhere else.
 //   No network access beyond localhost. This process connects to exactly one
 //     address - the readiness probe, at the loopback origin it derived from the
 //     composed configuration. The child reaches no external service either:
@@ -382,10 +518,23 @@ var LOG_PREFIX = '[parity:server] ';
 var APP_ENTRY = 'app.js';
 
 // The preloads, in load order, resolved against THIS file's directory so they
-// always come from the target worktree. Order matters only in that all three
+// always come from the target worktree. Order matters only in that all four
 // must precede the entry point; between themselves they are independent, and
 // each patches a different module.
-var FIXTURE_FILES = ['aws.js', 'mail.js', 'http.js'];
+//
+// The fourth, model.js, is the deterministic model-boundary fault injector. It
+// is the gate AAP §0.9.3 needs for the FIFTH auth-scheme outcome: 'Auth error'
+// requires the `User` lookup itself to fail, which no request can cause, so
+// before this fixture existed the corpus recorded that outcome as unreachable
+// and cited a server-level injector that did not exist. Unlike the other three
+// it patches nothing at load: it installs an accessor for the global `User`
+// that app.js assigns and wraps that export in place, because requiring
+// `lib/models/user` from a preload would load `mongoose-schema-extend` before
+// `@hapi/hapi` and reproduce AAP §0.6.5 Defect 2. An earlier revision hooked
+// `Module.prototype.require` instead and was withdrawn: measured, that made
+// Node emit a DEP0040 warning a plain boot does not emit, inside the very
+// stderr stream the zero-warning gate inspects.
+var FIXTURE_FILES = ['aws.js', 'mail.js', 'http.js', 'model.js'];
 
 // Where the fixtures live. A run whose fixtures are missing is a broken
 // checkout, not a condition to work around, so their absence is a hard error.
@@ -423,6 +572,75 @@ var STDERR_TAIL_BYTES = 4000;
 var NODE_ENV_VALUE    = 'test';
 var PERSIST_ON_CHANGE = mongo.PERSIST_ON_CHANGE;
 
+// The interpreter flags `--node-flags` accepts, as an ALLOWLIST. A denylist was
+// tried first and is not defensible: node's startup surface is large and grows,
+// and several of its flags reach the same place `--require` does by a longer
+// route. `--env-file=<path>` is the decisive one - measured on Node 22, a file
+// it names can set NODE_OPTIONS and NODE_PATH, and the restored NODE_OPTIONS is
+// applied - so a denylist that refuses `--require` while accepting
+// `--env-file` refuses nothing at all. `--snapshot-blob` supplies a
+// pre-initialised heap, `--conditions`/`-C` changes which module a package
+// exports resolve to, and `--inspect` opens a channel over which arbitrary code
+// can be evaluated. Enumerating that set correctly, forever, is not a bet worth
+// taking, so the question is inverted: a flag runs only if it is named here.
+//
+// What is here, and why it is safe: every entry is a diagnostic or a limit.
+// None loads a module, changes module resolution, reads a file, or opens a port. The
+// first two are the flags AAP §0.9.3's zero-warning gate requires and are the
+// reason this option exists at all; the rest are the neighbouring diagnostics a
+// reader debugging a parity failure reaches for.
+//
+// To add one: satisfy yourself that it cannot introduce code or redirect
+// resolution, and add it with that reasoning. A flag taking a value must be
+// written `--flag=value`, because a bare value token is not an allowed flag.
+var ALLOWED_NODE_FLAGS = Object.freeze([
+  '--pending-deprecation',
+  '--trace-deprecation',
+  '--throw-deprecation',
+  '--no-deprecation',
+  '--trace-warnings',
+  '--no-warnings',
+  '--trace-exit',
+  '--trace-uncaught',
+  '--trace-sync-io',
+  '--enable-source-maps',
+  '--unhandled-rejections',
+  '--max-old-space-size',
+  '--max-semi-space-size',
+  '--stack-size',
+  '--stack-trace-limit',
+  '--zero-fill-buffers'
+]);
+
+// Configuration keys whose VALUES are credentials. Matched against the key
+// name, at any depth, wherever the composed configuration is printed or
+// persisted - never against what the child receives, which must stay verbatim.
+//
+// The set is drawn from what this application's configuration actually holds:
+// `app.plugins.session.password` (AAP §0.6.1), `aws.keyId` and `aws.secretKey`
+// (§0.6.7), `app.auth.google.clientID`/`clientSecret` (§0.4.2),
+// `app.recaptcha.secretkey`, `app.mail.auth.pass` and `db.mongo.pass`. The
+// anchored alternatives - `^key$`, `^keyid$`, `^pass$`, `^token$` - are what
+// keep `aws.keyId` matched without also matching every key ending in "key",
+// such as a bucket named `vendorassets`. Deliberately the same expression
+// test/parity/joi-matrix.js:506 uses, so the two records withhold the same set.
+var SECRET_KEY_PATTERN =
+  /(password|passwd|secret|secretkey|privatekey|credential|api[_-]?key|access[_-]?token|auth[_-]?token|^key$|^keyid$|^pass$|^token$)/i;
+
+// The replacement. Says what it is, names the tool that did it, and cannot
+// itself match a credential scanner's pattern.
+var REDACTED = '[redacted-by-parity-server]';
+
+// Modes for everything this launcher creates. The per-run directory holds the
+// composed configuration's effects: session cookies in the captured logs,
+// uploaded request bodies under uploads/, and stored objects under s3/. It is
+// owner-only, and so is every file written into it, because a parity run is
+// routinely performed on a shared host and none of that is other users'
+// business. A caller-supplied --run-dir is NOT re-permissioned - it belongs to
+// the caller - but the files this file writes inside it still are.
+var DIR_MODE  = 0o700;
+var FILE_MODE = 0o600;
+
 // The default profile name fixtures/http.js selects when PARITY_HTTP_PROFILE is
 // unset. Written into the profile file so the file is valid from the start and
 // the fixture never has to log a malformed read.
@@ -431,6 +649,12 @@ var DEFAULT_HTTP_PROFILE = 'default';
 // The `provisionMongo` default: adopt an inherited database address if one was
 // published into this process's environment, and provision one otherwise.
 var PROVISION_AUTO = 'auto';
+
+// The only option that may appear more than once: --node-flags concatenates,
+// which is how a caller passes `--pending-deprecation --trace-deprecation`
+// through in pieces. Every other option takes effect once, and a second
+// occurrence is a usage error rather than a silent last-one-wins.
+var REPEATABLE_OPTIONS = ['--node-flags'];
 
 var USAGE = [
   'Usage: node test/parity/server.js [options]',
@@ -466,6 +690,11 @@ var USAGE = [
   '  --node-flags <flags> Passed to the child node process before the preloads.',
   '                       Repeatable, and a single value may be space-separated:',
   '                       --node-flags "--pending-deprecation --trace-deprecation".',
+  '                       Validated: every value must begin with "-", and',
+  '                       module-preload and loader flags are refused because',
+  '                       they would run ahead of the parity fixtures. An',
+  '                       inherited NODE_OPTIONS or NODE_PATH is removed from',
+  '                       the child environment for the same reason.',
   '  --run-dir <dir>      Per-run directory for the PID file, the captured logs,',
   '                       the object store and the upload scratch space.',
   '                       Defaults to a fresh directory under the system temp.',
@@ -473,8 +702,16 @@ var USAGE = [
   '  --s3-seed <path>     PARITY_S3_SEED for fixtures/aws.js.',
   '  --http-profile <n>   PARITY_HTTP_PROFILE for fixtures/http.js.',
   '  --ready-timeout <ms> Readiness budget; default ' + READY_TIMEOUT_MS + '.',
-  '  --print-config       Also write the composed NODE_CONFIG to stderr.',
+  '  --print-config       Also write the composed NODE_CONFIG to stderr, with',
+  '                       credential values replaced, the withheld paths',
+  '                       named,',
+  '                       and a sha256 of the verbatim configuration.',
   '  -h, --help           Print this on stderr and exit 0.',
+  '',
+  'Option rules: --node-flags is the only repeatable option; any other option',
+  'given twice is a usage error rather than a last-one-wins. A value beginning',
+  'with "-" is a usage error, so a missing value cannot swallow the following',
+  'option - write --flag=-value when a value really begins with a dash.',
   '',
   'Runs until interrupted. SIGINT and SIGTERM bring the child down and exit.',
   '',
@@ -512,7 +749,15 @@ var state = {
   listeners         : [],     // Process listeners, for removal.
   sweepInstalled    : false,
   handlersInstalled : false,
-  failed            : false   // Raises a zero exit code on a teardown fault.
+  unstoppable       : false,  // True once a child has survived SIGKILL.
+  failed            : false,  // Raises a zero exit code on a teardown fault.
+  // Every teardown operation that did not complete, as {operation, message}.
+  // `state.failed` answers "did anything fail" for THIS process's exit code;
+  // this list answers "what failed" for the harnesses that embed the launcher -
+  // test/parity/{capture,replay,joi-matrix}.js - which call `stop()` from a
+  // `finally` and cannot read a boolean out of it without losing the result the
+  // run actually produced.
+  cleanupFailures   : []
 };
 
 // ---------------------------------------------------------------------------
@@ -603,6 +848,160 @@ function stderrTail(target, limit) {
   }
 
   return text.replace(/\s+$/, '');
+}
+
+/**
+ * Redacts credential values out of a serialized configuration.
+ *
+ * The composed NODE_CONFIG is the launcher's most sensitive value: it carries
+ * the session password (AAP §0.6.1), the AWS key id and secret key (§0.6.7),
+ * the Google OAuth client id and secret and the reCAPTCHA secret (§0.4.2), the
+ * mail transport credentials and the database password. It is also the value a
+ * reader most wants to see when a run behaved unexpectedly, and it is written
+ * into places that outlive the run - the captured stderr a gate archives, a
+ * CI log, a committed provenance sidecar.
+ *
+ * So it is redacted at the PRINT and PERSIST boundaries and nowhere else. The
+ * child receives the verbatim string, because the application has to be
+ * configured; `start`'s result carries the verbatim string, because the seeder
+ * children are configured from it. This function produces the copy that is
+ * safe to write down, and it returns three things rather than one:
+ *
+ *   json          the same configuration with every credential value replaced,
+ *                 so the shape - which is what a reader is actually reading -
+ *                 survives intact.
+ *   redactedKeys  the dotted paths whose values were withheld. Without this a
+ *                 reader cannot tell a redacted secret from an absent one, and
+ *                 "the overlay set no session password" and "the overlay set
+ *                 one and it is not shown" are very different diagnoses.
+ *   digest        SHA-256 of the VERBATIM input. This is what preserves the
+ *                 record's evidential value: two runs that report the same
+ *                 digest were configured identically, and a corpus captured at
+ *                 baseline can be shown to have used the same configuration as
+ *                 the replay against the target, without either artifact
+ *                 carrying a secret.
+ *
+ * A key that names a credential but holds nothing is left alone:
+ * `db.mongo.pass` is routinely null, and rewriting null to a placeholder
+ * would report a credential that was never set. Only a scalar with
+ * something in it is replaced, which keeps `redactedKeys` an honest list
+ * of what was withheld.
+ *
+ * Input that will not parse is returned with its own text replaced by a marker
+ * rather than passed through: this function's whole purpose is that its output
+ * is safe to write, and a caller must not be handed something unsafe merely
+ * because it was malformed.
+ *
+ * @param {(string|null|undefined)} serialized The composed NODE_CONFIG JSON.
+ * @returns {{json: string, redactedKeys: Array.<string>,
+ *            digest: (string|null)}}
+ */
+function redactConfigJson(serialized) {
+  var parsed;
+  var touched = [];
+
+  if (typeof serialized !== 'string' || serialized.length === 0) {
+    return { json: '', redactedKeys: [], digest: null };
+  }
+
+  try {
+    parsed = JSON.parse(serialized);
+  }
+  catch (err) {
+    return {
+      json         : JSON.stringify({ unparseable: REDACTED }),
+      redactedKeys : [],
+      digest       : configDigest(serialized)
+    };
+  }
+
+  function walk(node, trail) {
+    if (Array.isArray(node)) {
+      node.forEach(function (entry, index) {
+        walk(entry, trail.concat('[' + index + ']'));
+      });
+      return;
+    }
+
+    if (!isPlainObject(node)) {
+      return;
+    }
+
+    Object.keys(node).forEach(function (key) {
+      var here  = trail.concat(key);
+      var value = node[key];
+      var empty;
+
+      if (SECRET_KEY_PATTERN.test(key)) {
+        empty = value === null || value === undefined || value === '';
+
+        if (!empty && !isPlainObject(value) && !Array.isArray(value)) {
+          node[key] = REDACTED;
+          touched.push(here.join('.'));
+          return;
+        }
+      }
+
+      walk(value, here);
+    });
+  }
+
+  walk(parsed, []);
+
+  return {
+    json         : JSON.stringify(parsed),
+    redactedKeys : touched.sort(),
+    digest       : configDigest(serialized)
+  };
+}
+
+/**
+ * SHA-256 of a configuration string, as the identity a record can carry.
+ *
+ * @param {string} serialized
+ * @returns {string} Lower-case hex.
+ */
+function configDigest(serialized) {
+  return crypto.createHash('sha256').update(String(serialized), 'utf8')
+    .digest('hex');
+}
+
+/**
+ * Masks the userinfo in a URI, for a message or a record.
+ *
+ * `--mongo-uri mongodb://user:s3cret@host:27017/db` is a legitimate invocation,
+ * and every failure message about it used to echo it verbatim - into this
+ * process's stderr, which is captured to a file and read by a gate. The host,
+ * port and path are the useful part of such a message and are kept; the
+ * credentials are not and are replaced.
+ *
+ * Written with a regular expression rather than `new URL`, deliberately: this
+ * runs on the failure path for a URI that may well be unparseable, and a masker
+ * that threw on malformed input would replace the real error with its own.
+ * A value with no `@` before its first `/` is returned unchanged.
+ *
+ * THE MATCH IS GREEDY TO THE LAST `@` IN THE AUTHORITY, and that is a
+ * correctness requirement rather than a style choice. Node 22's WHATWG parser
+ * accepts raw `@` inside userinfo and treats the LAST one as the authority
+ * separator, so `mongodb://user:@secret@localhost:27017` is a valid address
+ * whose password is `@secret`. A mask that stopped at the first `@` would
+ * replace `user:` and print `@secret` verbatim - disclosing the credential in
+ * the very message the mask exists to make safe. `[^/?#]*@` consumes as far as
+ * it can inside the authority and then requires an `@`, which lands on the last
+ * one before the path, query or fragment begins.
+ *
+ * @param {*} raw The URI as supplied.
+ * @returns {string} The URI with any userinfo replaced.
+ */
+function redactUri(raw) {
+  var text = String(raw);
+
+  return text.replace(
+    /^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)([^/?#]*@)/,
+    function (match, scheme) {
+      return scheme + REDACTED + '@';
+    }
+  );
 }
 
 /**
@@ -770,6 +1169,67 @@ function splitFlags(value) {
   return out;
 }
 
+/**
+ * Validates the node flags a caller asked for, and returns them.
+ *
+ * `--node-flags` exists for one purpose - running the child under
+ * `--pending-deprecation --trace-deprecation` for AAP §0.9.3's zero-warning
+ * gate - and it is the launcher's only intentional channel for influencing the
+ * child interpreter. That makes it the channel worth constraining, now that the
+ * ambient one is closed, and it is constrained by an ALLOWLIST:
+ * ALLOWED_NODE_FLAGS carries the set and the reasoning for inverting the
+ * question. Anything not named there is refused rather than repaired, because a
+ * flag that was not understood must not be silently dropped either.
+ *
+ * A token that does not begin with `-` is reported separately, because in
+ * practice it is a quoting mistake - `--node-flags "--pending-deprecation
+ * app.js"` - and saying "not a flag" is more use than "not allowed".
+ *
+ * The accepted list is returned unchanged and is carried onto the start result,
+ * so provenance records exactly which flags the child ran with.
+ *
+ * @param {Array.<string>} flags Already split by `splitFlags`.
+ * @returns {Array.<string>} The same flags, once every one is acceptable.
+ * @throws {ToolError} On the first unacceptable flag.
+ */
+function validateNodeFlags(flags) {
+  var i;
+  var flag;
+  var name;
+
+  for (i = 0; i < flags.length; i++) {
+    flag = flags[i];
+    // `--flag=value` and `--flag` are the same flag to node, so the name is
+    // compared without any attached value.
+    name = flag.split('=')[0];
+
+    if (flag.charAt(0) !== '-') {
+      throw usageError('--node-flags received ' + JSON.stringify(flag) +
+        ', which is not a flag. Every value must begin with "-"; a bare word ' +
+        'would be handed to node as a second entry point, and a value for a ' +
+        'flag must be written --flag=value. If the flags came from a shell ' +
+        'variable, check the quoting.');
+    }
+
+    if (ALLOWED_NODE_FLAGS.indexOf(name) === -1) {
+      throw usageError('--node-flags received ' + JSON.stringify(flag) +
+        ', which is not one of the reviewed interpreter flags: ' +
+        ALLOWED_NODE_FLAGS.join(' ') + '. The list is an allowlist rather ' +
+        'than a denylist because several node flags introduce code or ' +
+        'redirect module resolution by an indirect route - --env-file can ' +
+        'restore NODE_OPTIONS and NODE_PATH, --snapshot-blob supplies a ' +
+        'pre-initialised heap, --conditions changes which module a package ' +
+        'resolves to, --inspect opens a channel that can evaluate code - and ' +
+        'any of them would take effect BEFORE the three parity fixtures in ' +
+        FIXTURE_DIR + ', so the run would record its behaviour as the ' +
+        'application\'s. If this flag is genuinely inert, add it to ' +
+        'ALLOWED_NODE_FLAGS with that reasoning.');
+    }
+  }
+
+  return flags;
+}
+
 
 // ---------------------------------------------------------------------------
 // Options
@@ -830,6 +1290,7 @@ function parseArguments(argv) {
   var options = defaultOptions();
   var args    = argv || [];
   var i       = 0;
+  var seen    = {};
   var token;
   var eq;
   var name;
@@ -840,7 +1301,16 @@ function parseArguments(argv) {
   // from the next argument otherwise. A flag whose value is missing is a usage
   // error and not an empty string: `--port --secure` must not silently bind
   // nothing.
-  function value() {
+  //
+  // AND A DASH-LEADING NEXT TOKEN IS EXACTLY THAT MISSING VALUE. `--port
+  // --secure` did not bind nothing, it bound the string "--secure" - which
+  // `parsePort` then rejected, but `--host --secure` and `--run-dir --secure`
+  // had no such check to save them, and both silently dropped the --secure pass
+  // the caller asked for. `allowDashes` is the one declared exception, for
+  // --node-flags, whose values are flags.
+  function value(allowDashes) {
+    var raw;
+
     if (hasInline) {
       return inlineValue;
     }
@@ -848,7 +1318,39 @@ function parseArguments(argv) {
     if (i >= args.length) {
       throw usageError(name + ' requires a value');
     }
-    return args[i];
+
+    raw = args[i];
+
+    if (!allowDashes && typeof raw === 'string' && raw.charAt(0) === '-' &&
+        raw !== '-') {
+      throw usageError(name + ' requires a value, and ' + JSON.stringify(raw) +
+        ' is an option. Write ' + name + '=' + JSON.stringify(raw) +
+        ' if the value really begins with a dash.');
+    }
+
+    return raw;
+  }
+
+  // A REPEATED OPTION IS A USAGE ERROR. The launcher's options are the run's
+  // identity - which port, which database, which overlay - and quietly keeping
+  // the last of two would start a server that is not the one the caller
+  // described while reporting the address it did give. --node-flags is the one
+  // exception and concatenates, which is why it is declared here rather than
+  // assumed at each call site.
+  function once(flag) {
+    if (REPEATABLE_OPTIONS.indexOf(flag) > -1) {
+      return flag;
+    }
+
+    if (seen[flag]) {
+      throw usageError(flag + ' was given more than once. Every option except ' +
+        REPEATABLE_OPTIONS.join(' and ') + ' takes effect once; two values ' +
+        'would mean this run silently discarded one of them.');
+    }
+
+    seen[flag] = true;
+
+    return flag;
   }
 
   while (i < args.length) {
@@ -857,6 +1359,8 @@ function parseArguments(argv) {
     hasInline   = token.slice(0, 2) === '--' && eq > 2;
     name        = hasInline ? token.slice(0, eq) : token;
     inlineValue = hasInline ? token.slice(eq + 1) : null;
+
+    once(name);
 
     switch (name) {
       case '-h':
@@ -916,7 +1420,9 @@ function parseArguments(argv) {
         break;
 
       case '--node-flags':
-        options.nodeFlags = options.nodeFlags.concat(splitFlags(value()));
+        // The one option whose values legitimately begin with a dash, and the
+        // one that may be given more than once.
+        options.nodeFlags = options.nodeFlags.concat(splitFlags(value(true)));
         break;
 
       case '--run-dir':
@@ -1078,10 +1584,13 @@ function fixturePaths() {
 
     if (!fs.existsSync(full)) {
       throw new ToolError('the parity fixture ' + full + ' is missing. All ' +
-        'three of ' + FIXTURE_FILES.join(', ') + ' are required: they ' +
+        'four of ' + FIXTURE_FILES.join(', ') + ' are required: three of them ' +
         'intercept S3, mail and outbound HTTP at the module boundary, and a ' +
         'run without one of them would reach a real external service or fail ' +
-        'in a way that looks like an application fault.');
+        'in a way that looks like an application fault. The fourth, model.js, ' +
+        'is the only way the auth scheme\'s lookup-error outcome can be ' +
+        'reached, so a run without it cannot assert all five outcomes ' +
+        'however the corpus is driven.');
     }
 
     out.push(full);
@@ -1131,31 +1640,171 @@ function createRunDirectory(requested) {
     s3LogPath       : path.join(base, 's3.log'),
     httpLogPath     : path.join(base, 'http.log'),
     httpProfilePath : path.join(base, 'http-profile.json'),
+    // The model-boundary fault injector's arming file and evidence log. The
+    // arming file is written DISARMED at start and is re-read by the fixture on
+    // every intercepted lookup, so a corpus case arms it, drives one request
+    // and disarms it again without restarting the server.
+    modelFaultPath  : path.join(base, 'model-fault.json'),
+    modelFaultLog   : path.join(base, 'model-fault.log'),
     // Where the `config` package's runtime.json goes, so that it does not go
     // into the tree under test. See THE CONFIGURATION OVERLAY in the header.
     runtimeJsonPath : path.join(base, 'runtime.json')
   };
 
-  makeDirectory(base);
-  makeDirectory(layout.s3Root);
-  makeDirectory(layout.uploadsDir);
+  makeDirectory(base, owned);
+  // Always owner-only, even under a caller-supplied --run-dir: these two hold
+  // uploaded request bodies and stored objects, which this launcher creates
+  // whoever chose the parent path.
+  makeDirectory(layout.s3Root, true);
+  makeDirectory(layout.uploadsDir, true);
+
+  reserveEvidenceFiles(layout);
 
   return layout;
 }
 
 /**
+ * Creates the four run files this launcher NAMES but does not write, at 0600.
+ *
+ * The three fixture evidence logs are written by the preloads inside the child,
+ * and `runtime.json` by the `config` package inside the child; all four paths
+ * are chosen here and handed over through the environment. Left to those
+ * writers they are created at the default mode - 0644 under the usual umask -
+ * and the mail log carries recipients and message bodies, the S3 log carries
+ * object keys, and the HTTP log carries intercepted OAuth and reCAPTCHA
+ * exchanges. That is the same evidence the launcher's own 0600 files hold, and
+ * a caller-supplied `--run-dir` does not narrow it.
+ *
+ * Creating them empty and owner-only here is what fixes it, and it works
+ * because of a property of the writers rather than an agreement with them:
+ * `appendFileSync` and `writeFileSync` apply a mode only when they CREATE a
+ * file, so a file that already exists keeps the mode it was created with, and
+ * every subsequent write - append or truncate - preserves 0600. Nothing in the
+ * fixtures has to know this happened, and none of them branches on the file's
+ * prior existence.
+ *
+ * `runtime.json` is initialised with `{}` rather than left empty: the `config`
+ * package reads the path it is given, and an empty file is not JSON. `{}` is
+ * exactly what a run produces there anyway - measured - so this is the state
+ * the file would have reached on its own.
+ *
+ * A failure is noted and not fatal. The run's evidence is still produced; only
+ * its permissions are wider than intended, and saying so is more use than
+ * refusing to start.
+ *
+ * @param {Object} layout From `createRunDirectory`.
+ * @returns {undefined}
+ */
+function reserveEvidenceFiles(layout) {
+  var reservations = [
+    { target: layout.mailLogPath, initial: '' },
+    { target: layout.s3LogPath, initial: '' },
+    { target: layout.httpLogPath, initial: '' },
+    { target: layout.runtimeJsonPath, initial: '{}\n' }
+  ];
+  var i;
+
+  for (i = 0; i < reservations.length; i++) {
+    try {
+      // 'w' truncates, which is correct for a reused --run-dir: a run must not
+      // append its evidence to the last one's, and the launcher's own logs are
+      // opened with 'w' for the same reason.
+      writeOwnedFile(reservations[i].target, reservations[i].initial);
+    }
+    catch (err) {
+      note('warning: could not create ' + reservations[i].target +
+        ' at mode 0600: ' + err.message + '. The child will create it at the ' +
+        'default mode, so this run\'s evidence is readable by anyone with ' +
+        'access to that path.');
+    }
+  }
+}
+
+/**
  * Creates one directory, parents included, tolerating an existing one.
  *
+ * `restrict` asks for DIR_MODE. It is passed for every directory this file
+ * creates for itself and withheld for a caller-supplied `--run-dir`, whose
+ * permissions are the caller's decision: a gate script may well have created it
+ * deliberately group-readable so a reviewer can read the evidence, and silently
+ * narrowing it would be this file overruling its caller.
+ *
+ * The mode is applied at creation AND with an explicit `chmod` afterwards,
+ * because `mkdirSync`'s mode is masked by the process umask - a umask of 0077
+ * is harmless here but a umask of 0027 would leave 0750 - and because a
+ * directory that already existed is not re-created at all. `chmod` failing is
+ * not fatal on a filesystem that does not implement it; the directory is still
+ * usable and the run still produces its evidence.
+ *
  * @param {string} dir
+ * @param {boolean} restrict Whether this file owns the directory's mode.
  * @returns {undefined}
  * @throws {ToolError} If it cannot be created.
  */
-function makeDirectory(dir) {
+function makeDirectory(dir, restrict) {
   try {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, restrict ? { recursive: true, mode: DIR_MODE }
+      : { recursive: true });
   }
   catch (err) {
     throw new ToolError('could not create ' + dir + ': ' + err.message);
+  }
+
+  if (!restrict) {
+    return;
+  }
+
+  try {
+    fs.chmodSync(dir, DIR_MODE);
+  }
+  catch (err) {
+    note('warning: could not set mode 0700 on ' + dir + ': ' + err.message +
+      '. The run continues; its evidence is readable by anyone with access ' +
+      'to that path.');
+  }
+}
+
+/**
+ * Opens a file this launcher owns, with FILE_MODE, truncating what was there.
+ *
+ * Every file the launcher writes goes through here or through `writeOwnedFile`,
+ * so the mode is decided once. `openSync`'s mode argument applies only when the
+ * file is CREATED, so an explicit `fchmod` follows for the case of a reused
+ * `--run-dir` whose files an earlier run left at a wider mode.
+ *
+ * @param {string} target
+ * @returns {number} The open descriptor. The caller owns closing it.
+ * @throws {Error} Whatever `fs` throws; callers wrap it with their own context.
+ */
+function openOwnedFile(target) {
+  var fd = fs.openSync(target, 'w', FILE_MODE);
+
+  try {
+    fs.fchmodSync(fd, FILE_MODE);
+  }
+  catch (err) {
+    note('warning: could not set mode 0600 on ' + target + ': ' + err.message);
+  }
+
+  return fd;
+}
+
+/**
+ * Writes one of the launcher's own files at FILE_MODE.
+ *
+ * @param {string} target
+ * @param {string} contents
+ * @returns {undefined}
+ * @throws {Error} Whatever `fs` throws; callers wrap it with their own context.
+ */
+function writeOwnedFile(target, contents) {
+  var fd = openOwnedFile(target);
+
+  try {
+    fs.writeFileSync(fd, contents, 'utf8');
+  }
+  finally {
+    fs.closeSync(fd);
   }
 }
 
@@ -1178,11 +1827,38 @@ function makeDirectory(dir) {
  */
 function writeProfileFile(target, profile) {
   try {
-    fs.writeFileSync(target, JSON.stringify({ profile: profile }) + '\n',
-      'utf8');
+    writeOwnedFile(target, JSON.stringify({ profile: profile }) + '\n');
   }
   catch (err) {
     throw new ToolError('could not write the HTTP fixture profile file ' +
+      target + ': ' + err.message);
+  }
+}
+
+/**
+ * Writes the model-boundary fault injector's arming file.
+ *
+ * `null` writes `{}`, which the fixture reads as disarmed. Anything else is
+ * written verbatim, so the arming document's shape stays the fixture's business
+ * and this launcher does not encode a second copy of it - callers build one
+ * with `fixtures/model.js`'s own `arming()` builder.
+ *
+ * The write is not atomic and does not need to be: the fixture parses the file
+ * on every intercepted lookup and treats an unparseable read as disarmed, so
+ * the worst a torn read can produce is one lookup that is not faulted, which
+ * the corpus case detects as a failed expectation rather than absorbing.
+ *
+ * @param {string} target The arming file.
+ * @param {(Object|null)} arming The arming document, or null to disarm.
+ * @returns {undefined}
+ * @throws {ToolError} If it cannot be written.
+ */
+function writeModelFaultFile(target, arming) {
+  try {
+    fs.writeFileSync(target, JSON.stringify(arming || {}) + '\n', 'utf8');
+  }
+  catch (err) {
+    throw new ToolError('could not write the model fault arming file ' +
       target + ': ' + err.message);
   }
 }
@@ -1203,7 +1879,7 @@ function writeProfileFile(target, profile) {
  */
 function writePidFile(target, pid) {
   try {
-    fs.writeFileSync(target, String(pid) + '\n', 'utf8');
+    writeOwnedFile(target, String(pid) + '\n');
   }
   catch (err) {
     throw new ToolError('could not write the PID file ' + target + ': ' +
@@ -1233,9 +1909,10 @@ function removePidFile(target) {
     }
   }
   catch (err) {
-    state.failed = true;
     note('ERROR: could not remove the PID file ' + target + ': ' +
       err.message);
+    recordCleanupFailure('remove the PID file ' + target,
+      'could not remove the PID file ' + target + ': ' + err.message);
   }
 }
 
@@ -1384,12 +2061,18 @@ function inheritedMongoAddress(inherited, override) {
  * An absent port defaults to 27017, mongod's own default, rather than being
  * left empty for config/db.js to interpolate as `host:undefined`.
  *
+ * Every message about the URI reports it through `redactUri`. A connection
+ * string legitimately carries `user:password@`, and these messages go to this
+ * process's stderr, which is captured to a file and read by a gate - so the
+ * host, port and path are echoed and the credentials are not.
+ *
  * @param {string} raw The URI.
  * @param {(string|null)} override A database name that wins over the path.
  * @returns {{host: string, port: number, database: string}}
  * @throws {ToolError} If the URI is unusable or names no database.
  */
 function parseMongoUri(raw, override) {
+  var shown = JSON.stringify(redactUri(raw));
   var parsed;
   var database;
 
@@ -1397,12 +2080,12 @@ function parseMongoUri(raw, override) {
     parsed = new URL(raw);
   }
   catch (err) {
-    throw usageError('--mongo-uri ' + JSON.stringify(raw) +
+    throw usageError('--mongo-uri ' + shown +
       ' is not a URL: ' + err.message);
   }
 
   if (!parsed.hostname) {
-    throw usageError('--mongo-uri ' + JSON.stringify(raw) + ' has no host');
+    throw usageError('--mongo-uri ' + shown + ' has no host');
   }
 
   database = override === null || override === undefined
@@ -1410,7 +2093,7 @@ function parseMongoUri(raw, override) {
     : override;
 
   if (!database) {
-    throw usageError('--mongo-uri ' + JSON.stringify(raw) + ' names no ' +
+    throw usageError('--mongo-uri ' + shown + ' names no ' +
       'database and --database was not given. config/db.js interpolates the ' +
       'name into the connection string, so it cannot be left to a default.');
   }
@@ -1712,8 +2395,12 @@ function assertPortFree(host, port) {
  * listed in the FIXTURE INJECTION section of the header, which is the
  * authoritative contract; this function is its implementation.
  *
- *   The configuration    NODE_ENV, NODE_CONFIG, NODE_CONFIG_PERSIST_ON_CHANGE.
- *   The fixture contract The eight PARITY_* variables the three preloads read.
+ *   The configuration    NODE_ENV, NODE_CONFIG, and the three isolation
+ *                        variables ./mongo's `applyConfigIsolation` sets -
+ *                        NODE_CONFIG_PERSIST_ON_CHANGE,
+ *                        NODE_CONFIG_DISABLE_FILE_WATCH and
+ *                        NODE_CONFIG_RUNTIME_JSON.
+ *   The fixture contract The ten PARITY_* variables the four preloads read.
  *   The scratch space    TMPDIR, TMP and TEMP, at the per-run uploads
  *                        directory, because hapi's payload `uploads` default is
  *                        `os.tmpdir()` and app.js hard-codes its `routes`
@@ -1731,6 +2418,19 @@ function assertPortFree(host, port) {
  * other tree's code and compare two trees while configured as one. Removing a
  * contaminant is not the same as setting a value, and the removal is announced.
  *
+ * ./mongo's PRELOAD_ENV_VARS are removed for a related but sharper reason, and
+ * this is the launcher where it matters most. An inherited
+ * `NODE_OPTIONS=--require <anything>` would preload that module into the
+ * application child BEFORE the three fixtures, letting it patch `aws-sdk`,
+ * `nodemailer`, `http` or `mongoose` ahead of the interception this file
+ * arranges; an inherited `NODE_PATH` would let the child resolve a `@hapi/hapi`
+ * or a fixture from outside the tree `--app` selected. Either way the corpus,
+ * the replay comparison and the zero-warning stderr would describe the ambient
+ * environment rather than the tree under test - and would say nothing about it.
+ * The removed names are recorded on `context.scrubbedEnv` and reported on the
+ * start result, so provenance states what was withheld rather than leaving a
+ * reader to assume nothing was.
+ *
  * @param {Object} context The assembled run context.
  * @returns {Object} A complete environment for spawn.
  */
@@ -1742,29 +2442,51 @@ function buildChildEnv(context) {
   var key;
   var expected;
   var inherited;
+  var scrubbed;
+  var isolation;
 
   for (i = 0; i < keys.length; i++) {
     env[keys[i]] = process.env[keys[i]];
   }
 
-  env.NODE_ENV                      = NODE_ENV_VALUE;
-  env.NODE_CONFIG                   = context.nodeConfig;
-  env.NODE_CONFIG_PERSIST_ON_CHANGE = PERSIST_ON_CHANGE;
-  // The one variable here that exists purely to protect the tree under test.
-  // Measured: PERSIST_ON_CHANGE=N alone does NOT stop config 0.4.37 creating
-  // runtime.json, and a first baseline run created the file inside a clean
-  // worktree. The header carries the mechanism and why it matters.
-  env.NODE_CONFIG_RUNTIME_JSON      = context.layout.runtimeJsonPath;
+  scrubbed = mongo.scrubPreloadVars(env);
+  context.scrubbedEnv = scrubbed;
+  if (scrubbed.length) {
+    note('removed ' + scrubbed.join(', ') + ' from the child environment: ' +
+      'each preloads code into the application or redirects its module ' +
+      'resolution, so a run that honoured them would record the ambient ' +
+      'environment\'s behaviour as the application\'s. Node flags belong on ' +
+      '--node-flags, which is validated.');
+  }
 
-  inherited = env.NODE_CONFIG_DIR;
-  if (inherited) {
-    expected = path.join(context.appRoot, 'config');
-    if (path.resolve(inherited) !== expected) {
-      delete env.NODE_CONFIG_DIR;
-      note('removed an inherited NODE_CONFIG_DIR of ' + inherited +
-        ', which does not belong to ' + context.appRoot + '. The child runs ' +
-        'in that tree, so `config` must read ' + expected + '.');
-    }
+  env.NODE_ENV    = NODE_ENV_VALUE;
+  env.NODE_CONFIG = context.nodeConfig;
+
+  // The three variables that exist purely to protect the tree under test, and
+  // the removal of an inherited NODE_CONFIG_DIR that belongs to another tree -
+  // all from ./mongo's one implementation, so this launcher and every other
+  // parity tool apply the identical rule rather than each carrying a version of
+  // it. They previously disagreed: this file and ./worker redirected the
+  // runtime path while ./mongo, ./manifest, ./storage, ./joi-matrix and every
+  // capture and replay child set persistence alone.
+  //
+  // Measured, and measured after this file first claimed otherwise:
+  // PERSIST_ON_CHANGE=N alone does NOT stop config 0.4.37 creating
+  // runtime.json, and a first baseline run created the file inside a clean
+  // worktree. `configDir: 'clean'` keeps this file's own decision not to SET
+  // the variable - the child's working directory is `appRoot`, so `config`
+  // finds that tree's config/ unaided - while still discarding a contaminant.
+  isolation = mongo.applyConfigIsolation(env, {
+    appRoot         : context.appRoot,
+    configDir       : 'clean',
+    runtimeJsonPath : context.layout.runtimeJsonPath
+  });
+
+  if (isolation.replaced) {
+    note('removed an inherited NODE_CONFIG_DIR of ' + isolation.replaced +
+      ', which does not belong to ' + context.appRoot + '. The child runs ' +
+      'in that tree, so `config` must read ' +
+      path.join(context.appRoot, 'config') + '.');
   }
 
   env.PARITY_APP_ROOT          = context.appRoot;
@@ -1774,6 +2496,16 @@ function buildChildEnv(context) {
   env.PARITY_HTTP_LOG          = context.layout.httpLogPath;
   env.PARITY_HTTP_PROFILE      = context.httpProfile;
   env.PARITY_HTTP_PROFILE_FILE = context.layout.httpProfilePath;
+  env.PARITY_MODEL_FAULT_FILE  = context.layout.modelFaultPath;
+  env.PARITY_MODEL_FAULT_LOG   = context.layout.modelFaultLog;
+
+  // An inherited arming from an unrelated run would make the very first
+  // authenticated request of this one fail its user lookup, and the failure
+  // would read as an application fault rather than as a harness leak.
+  // PARITY_MODEL_FAULT_FILE is authoritative whenever it is set - which is
+  // always, here - so this only closes the case where a caller cleared the
+  // file path through `options.env`.
+  delete env.PARITY_MODEL_FAULT;
 
   if (context.s3Seed) {
     env.PARITY_S3_SEED = context.s3Seed;
@@ -1793,6 +2525,23 @@ function buildChildEnv(context) {
     keys = Object.keys(extra);
     for (i = 0; i < keys.length; i++) {
       key = keys[i];
+
+      // The caller's `env` is applied last and can therefore override anything
+      // above it - including, without this, the scrub. A preload vector set
+      // here is REJECTED rather than dropped, because unlike an inherited one
+      // it was written deliberately and silence would be the wrong answer to a
+      // deliberate instruction. `--node-flags` is the channel, and it is
+      // validated.
+      if (mongo.PRELOAD_ENV_VARS.indexOf(key) !== -1 &&
+          extra[key] !== null && extra[key] !== undefined) {
+        throw usageError('the env option sets ' + key + ', which preloads ' +
+          'code into the application child or redirects its module ' +
+          'resolution. It would take effect before the parity fixtures and ' +
+          'the run would record its behaviour as the application\'s. Pass ' +
+          'interpreter flags through nodeFlags/--node-flags instead, which ' +
+          'is validated for exactly this.');
+      }
+
       if (extra[key] === null || extra[key] === undefined) {
         delete env[key];
       }
@@ -1870,8 +2619,11 @@ function spawnApplication(context) {
   state.stderrPath = context.layout.stderrPath;
 
   try {
-    state.stdoutFd = fs.openSync(context.layout.stdoutPath, 'w');
-    state.stderrFd = fs.openSync(context.layout.stderrPath, 'w');
+    // Owner-only: the captured streams carry session cookies, rendered pages
+    // and, on a failure, whatever the application logged about its
+    // configuration.
+    state.stdoutFd = openOwnedFile(context.layout.stdoutPath);
+    state.stderrFd = openOwnedFile(context.layout.stderrPath);
   }
   catch (err) {
     closeLogDescriptors();
@@ -2203,12 +2955,15 @@ async function waitForReady(url, timeoutMs) {
  * nothing left to do walks the same path and finds each step already done.
  * Calling it twice, or calling it before `start`, is not an error.
  *
- * SIGTERM first, then SIGKILL after a bounded wait. Both are needed.
- * app.js installs no signal handler, so SIGTERM's default disposition ends the
- * process promptly - but app.js:371's `setInterval(detectLeaks, 60*1000)` keeps
- * the event loop alive indefinitely, so a child that has somehow trapped or
- * deferred the signal would never exit on its own and a polite wait alone would
- * hang the gate that is waiting on this promise.
+ * SIGTERM first, then SIGKILL after a bounded wait. Both are needed. app.js's
+ * own handler runs the ordered close - listener, queues, MongoDB - and then
+ * re-raises the signal, which ends the process promptly (measured: 57ms). But
+ * that handler is installed only once the listener is up, and the
+ * `setInterval(detectLeaks, 60*1000)` at app.js module scope keeps the event
+ * loop alive indefinitely either way, so a child signalled before it got there,
+ * or one that has somehow trapped or deferred the signal, would never exit on
+ * its own and a polite wait alone would hang the gate that is waiting on this
+ * promise.
  *
  * The captured logs are deliberately NOT removed. They are the evidence AAP
  * §0.9.3 asserts against, and a teardown that deleted them would leave a failed
@@ -2238,6 +2993,69 @@ function stop() {
 }
 
 /**
+ * Records a teardown operation that did not complete.
+ *
+ * The note is NOT emitted here: every site that calls this already prints its
+ * own line, and those lines are the diagnostic evidence a reader acts on, so
+ * they are left exactly as they were. What this adds is the second half a gate
+ * needs - `state.failed` for this process's own exit code, and an entry a
+ * caller that embeds the launcher can fold into its verdict.
+ *
+ * @param {string} operation What was attempted, one phrase.
+ * @param {string} message The measured cause.
+ * @returns {Object} The recorded entry.
+ */
+function recordCleanupFailure(operation, message) {
+  var entry = { operation : operation, message : message };
+
+  state.failed = true;
+  state.cleanupFailures.push(entry);
+
+  return entry;
+}
+
+/**
+ * The teardown operations that did not complete, as `{operation, message}`.
+ *
+ * A COPY, for the same reason ./mongo's is: a caller must not be able to mutate
+ * the record it is reporting on. The database's own failures are folded in as
+ * they are observed, so a caller that provisioned MongoDB through this launcher
+ * reads ONE list and does not have to know which layer leaked.
+ *
+ * Read after `stop()` - or after `withServer()` - has returned.
+ *
+ * @returns {Array<{operation: string, message: string}>}
+ */
+function cleanupFailures() {
+  return state.cleanupFailures.map(function (entry) {
+    return { operation : entry.operation, message : entry.message };
+  });
+}
+
+/**
+ * Whether any teardown operation failed.
+ *
+ * @returns {boolean}
+ */
+function cleanupFailed() {
+  return state.cleanupFailures.length > 0;
+}
+
+/**
+ * Forgets the recorded teardown failures.
+ *
+ * `startInternal` calls it alongside its existing `state.failed = false`, so a
+ * caller that starts a second server in one process does not inherit the first
+ * one's record. Exported for the same reason ./mongo's is: a harness that reads
+ * the accessor between runs needs a defined way to clear it.
+ *
+ * @returns {undefined}
+ */
+function resetCleanupFailures() {
+  state.cleanupFailures = [];
+}
+
+/**
  * The body of `stop`, separated so `stop` stays a guard.
  *
  * The order is not interchangeable. The child goes first, because the run
@@ -2246,12 +3064,26 @@ function stop() {
  * connection errors in the captured stderr that a reader would then have to
  * recognise as the harness's own doing.
  *
+ * ONE BRANCH DELIBERATELY LEAVES STATE BEHIND. If the child is still alive
+ * after SIGKILL, the PID file, `state.child` and `state.pidPath` are all kept,
+ * and the teardown reports the path rather than tidying it away. The PID file
+ * exists for precisely this case - see `writePidFile`: it is the handle by
+ * which a supervising script finds a process this launcher could not end - and
+ * removing it while the process still holds the port would destroy the only
+ * recovery handle at the exact moment it became necessary. Every other step
+ * still runs: the descriptors close, the provisioned database stops, and the
+ * function returns false so the caller's exit code carries the failure. `stop`
+ * remains retryable, because `state.stopPromise` is cleared either way and a
+ * second call re-sends the signals to a PID this process still owns.
+ *
  * @returns {Promise<boolean>}
  */
 async function stopInternal() {
-  var child = state.child;
-  var ok    = true;
+  var child     = state.child;
+  var ok        = true;
+  var surviving = false;
   var exited;
+  var adopted;
 
   if (child && !state.exit) {
     note('stopping the application (pid ' + child.pid + ').');
@@ -2261,45 +3093,89 @@ async function stopInternal() {
 
     if (!exited) {
       note('WARNING: the application did not exit within ' + STOP_GRACE_MS +
-        'ms of SIGTERM; sending SIGKILL. Its event loop is held open by ' +
-        'app.js:371, so a longer wait would not have helped.');
+        'ms of SIGTERM; sending SIGKILL. Its ordered shutdown is bounded well ' +
+        'inside this window and its event loop is held open by the module-scope ' +
+        'leak-detect interval, so a longer wait would not have helped.');
       killChild('SIGKILL');
       exited = await waitForChildExit(STOP_GRACE_MS);
 
       if (!exited) {
         ok           = false;
+        surviving    = true;
         state.failed = true;
         note('ERROR: the application process ' + child.pid + ' survived ' +
-          'SIGKILL. It is still holding its port; end it by hand before the ' +
-          'next run, which will otherwise refuse to start.');
+          'SIGKILL and is still holding its port. Its PID file is KEPT at ' +
+          (state.pidPath || '(none)') + ' and the captured logs are in ' +
+          (state.runDir || '(unknown)') + ', so the process remains ' +
+          'findable: end it with `kill -9 ' + child.pid + '` before the next ' +
+          'run, which will otherwise refuse to start. Calling stop() again ' +
+          're-sends the signals to that same pid.');
+        recordCleanupFailure('stop the application',
+          'the application process ' + child.pid + ' survived SIGKILL and is ' +
+          'still holding its port');
       }
     }
   }
 
   closeLogDescriptors();
-  removePidFile(state.pidPath);
+
+  if (!surviving) {
+    removePidFile(state.pidPath);
+  }
 
   if (state.ownsMongo) {
     state.ownsMongo = false;
     try {
       if (!(await mongo.stop())) {
-        ok           = false;
-        state.failed = true;
+        ok = false;
+        // ./mongo has already printed the reason for each failed operation, so
+        // its own records are adopted rather than re-described: a caller
+        // reading this launcher's list must see WHICH database operation
+        // leaked, not just that one did. `adopted` counts only what this step
+        // contributed, so an earlier fault in this same teardown - a PID file
+        // that would not go - cannot make an unnamed database fault look
+        // accounted for.
+        adopted = 0;
+
+        mongo.cleanupFailures().forEach(function (entry) {
+          adopted++;
+          // Carried through with the operation phrased exactly as ./mongo
+          // phrased it - a bare verb phrase - so a caller that renders
+          // 'could not <operation>' reads one sentence and not two. The
+          // message already names the database.
+          recordCleanupFailure(entry.operation, entry.message);
+        });
+
+        if (!adopted) {
+          recordCleanupFailure('stop the provisioned MongoDB',
+            'mongo.stop() reported an unclean stop without naming an ' +
+            'operation, so the database may still be running');
+        }
       }
     }
     catch (err) {
-      ok           = false;
-      state.failed = true;
+      ok = false;
       note('ERROR: stopping the provisioned MongoDB failed: ' +
+        ((err && err.message) || err));
+      recordCleanupFailure('stop the provisioned MongoDB',
+        'stopping the provisioned MongoDB failed: ' +
         ((err && err.message) || err));
     }
   }
 
-  removeProcessListeners();
+  // The listeners and the child handle are released only when there is nothing
+  // left to act on. While a process survives SIGKILL both are still live
+  // information: the handle is what a retry signals, and the exit sweep is the
+  // last automatic attempt to end it.
+  if (!surviving) {
+    removeProcessListeners();
 
-  state.child        = null;
+    state.child   = null;
+    state.pidPath = null;
+  }
+
+  state.unstoppable  = surviving;
   state.info         = null;
-  state.pidPath      = null;
   state.startPromise = null;
   state.stopPromise  = null;
   state.stopping     = false;
@@ -2395,9 +3271,17 @@ function sweepSynchronously() {
     return;
   }
 
-  note('WARNING: the asynchronous teardown did not run; killing the ' +
-    'application (pid ' + child.pid + ') synchronously. The PID file and the ' +
-    'captured logs are left in ' + state.runDir + '.');
+  // Two different situations reach here and a reader must not be told the wrong
+  // one. `state.unstoppable` means the teardown DID run and could not end the
+  // child; anything else means an exit path was missed.
+  note(state.unstoppable
+    ? 'WARNING: the application (pid ' + child.pid + ') survived SIGKILL ' +
+      'during teardown; making one last synchronous attempt. Its PID file is ' +
+      'still at ' + (state.pidPath || '(none)') + ' and the captured logs ' +
+      'are in ' + state.runDir + '.'
+    : 'WARNING: the asynchronous teardown did not run; killing the ' +
+      'application (pid ' + child.pid + ') synchronously. The PID file and ' +
+      'the captured logs are left in ' + state.runDir + '.');
 
   try {
     child.kill('SIGKILL');
@@ -2614,6 +3498,11 @@ function resolveOptions(supplied) {
     options.nodeFlags = splitFlags(options.nodeFlags);
   }
 
+  // Validated here rather than at the CLI, so a library caller passing
+  // `nodeFlags` gets the same treatment as `--node-flags`: both routes reach
+  // this function and there is exactly one place the rule is enforced.
+  options.nodeFlags = validateNodeFlags(options.nodeFlags);
+
   if (options.config !== null && options.config !== undefined &&
       !isPlainObject(options.config)) {
     throw usageError('the config option must be a plain object');
@@ -2705,14 +3594,19 @@ function assertReadableFile(target, label) {
  * @param {(string|null)} [options.mongoUri] Use this address, provision nothing.
  * @param {boolean} [options.provisionMongo] Default true.
  * @param {(Array.<string>|string)} [options.nodeFlags] Flags for the child.
+ *   Validated: each must begin with `-`, and preload or loader flags are
+ *   refused because they would run ahead of the fixtures.
  * @param {(string|null)} [options.runDir] Per-run directory.
  * @param {(Object|null)} [options.config] An explicit top NODE_CONFIG layer.
  * @param {(string|null)} [options.s3Seed] PARITY_S3_SEED.
  * @param {(string|null)} [options.httpProfile] PARITY_HTTP_PROFILE.
  * @param {(Object|null)} [options.env] Extra child environment; null deletes.
+ *   Setting NODE_OPTIONS, NODE_PATH or NODE_REPL_EXTERNAL_MODULE here is
+ *   rejected; use `nodeFlags`.
  * @param {number} [options.readyTimeoutMs] Readiness budget.
  * @param {boolean} [options.installSignalHandlers] Default true.
- * @param {boolean} [options.printConfig] Echo the composed NODE_CONFIG.
+ * @param {boolean} [options.printConfig] Echo the composed NODE_CONFIG with
+ *   credential values redacted, the withheld paths named, and its sha256.
  * @returns {Promise<Object>} The start result; see `buildResult`.
  * @throws {ToolError} If anything prevents a ready server.
  */
@@ -2746,6 +3640,9 @@ async function startInternal(supplied) {
   var context;
 
   state.failed = false;
+  // A new server is a new teardown to account for; the previous run's records
+  // must not be reported against it.
+  resetCleanupFailures();
 
   try {
     context = await buildContext(options);
@@ -2804,6 +3701,13 @@ async function buildContext(options) {
 
   writeProfileFile(layout.httpProfilePath, options.httpProfile);
 
+  // Written DISARMED. The fixture treats an absent or empty file as disarmed
+  // too, but creating it here means the path exists and is valid JSON before
+  // the child loads, so the fixture's first read is a clean "nothing armed"
+  // rather than an ENOENT it has to report - and a harness that arms it later
+  // is overwriting a file it can see rather than creating one it must guess at.
+  writeModelFaultFile(layout.modelFaultPath, null);
+
   mongoResult     = await resolveMongo(options, inherited);
   state.ownsMongo = mongoResult.owned;
 
@@ -2821,7 +3725,11 @@ async function buildContext(options) {
     composed    : composed,
     nodeConfig  : JSON.stringify(composed),
     mongo       : mongoResult.address,
-    address     : describeEffectiveAddress(composed)
+    address     : describeEffectiveAddress(composed),
+    // Filled in by `buildChildEnv` with the preload vectors it removed from
+    // the inherited environment, and carried onto the start result so a
+    // provenance record states what was withheld from the child.
+    scrubbedEnv : []
   };
 
   context.childEnv = buildChildEnv(context);
@@ -2832,10 +3740,43 @@ async function buildContext(options) {
   await assertPortFree(context.address.bindHost, context.address.port);
 
   if (options.printConfig) {
-    note('NODE_CONFIG: ' + context.nodeConfig);
+    printComposedConfiguration(context.nodeConfig);
   }
 
   return context;
+}
+
+/**
+ * Writes the composed configuration to stderr, without its credentials.
+ *
+ * `--print-config` exists so a reader can see what the five layers actually
+ * produced - which layer won, whether `app.start` is true, which database the
+ * child will dial. None of that requires the credential VALUES, and this
+ * process's stderr is captured to a file, archived beside a corpus and read by
+ * a gate, so printing them verbatim would put the session password, the AWS
+ * secret key, the OAuth client secret and the mail password into evidence that
+ * outlives the run (CWE-532).
+ *
+ * Three lines rather than one, because a redaction that cannot be audited is
+ * its own problem: the shape, then the dotted paths whose values were withheld
+ * so an absent secret is distinguishable from a hidden one, then the SHA-256 of
+ * the verbatim configuration so two runs can be shown to have been configured
+ * identically without either disclosing what that configuration was.
+ *
+ * @param {string} serialized The verbatim composed NODE_CONFIG.
+ * @returns {undefined}
+ */
+function printComposedConfiguration(serialized) {
+  var safe = redactConfigJson(serialized);
+
+  note('NODE_CONFIG (credential values redacted): ' + safe.json);
+  note('NODE_CONFIG withheld ' + safe.redactedKeys.length + ' value(s)' +
+    (safe.redactedKeys.length ? ': ' + safe.redactedKeys.join(', ') : '') +
+    '. A key listed here holds a value that is not shown; a key absent from ' +
+    'the printed object was never set.');
+  note('NODE_CONFIG sha256: ' + safe.digest + ' (of the verbatim ' +
+    'configuration the child received, so two runs are comparable without ' +
+    'either printing a secret).');
 }
 
 /**
@@ -2902,12 +3843,18 @@ function buildResult(options, context) {
     origin    : originFor(context.address.probeHost, context.address.port),
 
     // Provenance, so a captured artifact can record which tree produced it.
-    appRoot   : context.appRoot,
-    nodeFlags : context.nodeFlags.slice(),
-    execPath  : process.execPath,
-    overlay   : options.overlay,
-    config    : context.composed,
-    mongo     : context.mongo,
+    // `nodeFlags` is the validated set the child actually ran with and
+    // `scrubbedEnv` the preload vectors that were removed from the inherited
+    // environment - together they state exactly what could and could not
+    // influence the interpreter, which is what makes the artifact's claim
+    // about the tree under test a claim about that tree alone.
+    appRoot     : context.appRoot,
+    nodeFlags   : context.nodeFlags.slice(),
+    scrubbedEnv : (context.scrubbedEnv || []).slice(),
+    execPath    : process.execPath,
+    overlay     : options.overlay,
+    config      : context.composed,
+    mongo       : context.mongo,
 
     // The run directory and everything in it.
     runDir          : context.layout.runDir,
@@ -2918,6 +3865,11 @@ function buildResult(options, context) {
     s3LogPath       : context.layout.s3LogPath,
     httpLogPath     : context.layout.httpLogPath,
     httpProfilePath : context.layout.httpProfilePath,
+    // The arming file capture.js and replay.js write between steps to reach the
+    // auth scheme's lookup-error outcome, and the log the fixture records every
+    // intercepted lookup in.
+    modelFaultPath  : context.layout.modelFaultPath,
+    modelFaultLog   : context.layout.modelFaultLog,
     runtimeJsonPath : context.layout.runtimeJsonPath,
     httpProfile     : context.httpProfile,
     s3Seed          : context.s3Seed
@@ -2999,6 +3951,11 @@ function reportStarted(result) {
 
   if (result.nodeFlags.length) {
     note('node flags     ' + result.nodeFlags.join(' '));
+  }
+
+  if (result.scrubbedEnv.length) {
+    note('scrubbed env   ' + result.scrubbedEnv.join(', ') +
+      '  (removed from the child; see --node-flags)');
   }
 }
 
@@ -3125,6 +4082,15 @@ module.exports = {
   info       : info,
   withServer : withServer,
 
+  // The teardown record, in the same shape ./mongo publishes. `stop()` is
+  // called from a `finally` by every embedding harness, so its boolean is
+  // routinely discarded; this is how a failed stop, a surviving PID file or a
+  // leaked provisioned mongod reaches the caller's verdict instead of only
+  // stderr.
+  cleanupFailures      : cleanupFailures,
+  cleanupFailed        : cleanupFailed,
+  resetCleanupFailures : resetCleanupFailures,
+
   // Building blocks, exported because each has a failure mode worth testing
   // directly rather than through a spawned process - a wrong layer order, a
   // port that is not free, a mis-parsed connection string.
@@ -3146,6 +4112,17 @@ module.exports = {
   assertPortFree                : assertPortFree,
   buildChildEnv                 : buildChildEnv,
   buildChildArgs                : buildChildArgs,
+  // Exported so capture.js and replay.js arm and disarm the model-boundary
+  // fault through one implementation instead of each writing the file itself.
+  writeModelFaultFile           : writeModelFaultFile,
+  validateNodeFlags             : validateNodeFlags,
+  // The redaction boundary, exported because the harnesses that PERSIST a
+  // record of a run - test/parity/capture.js's provenance sidecar above all -
+  // must withhold the same values this file withholds when it prints one, and
+  // must do it with one implementation rather than a second copy that drifts.
+  redactConfigJson              : redactConfigJson,
+  redactUri                     : redactUri,
+  configDigest                  : configDigest,
   parseMongoUri                 : parseMongoUri,
   inheritedMongoAddress         : inheritedMongoAddress,
   parsePort                     : parsePort,
@@ -3182,4 +4159,3 @@ module.exports = {
 if (require.main === module) {
   main();
 }
-

@@ -81,6 +81,13 @@ RUN mkdir -p /usr/local/node/trinket && chown trinket:trinket /usr/local/node/tr
 
 USER trinket
 
+# The `.` here is not the checkout -- it is whatever `.dockerignore` admits, and
+# that file is the definition of what enters this image. It is an allowlist:
+# every top-level entry is excluded and the tracked ones are re-admitted, so a
+# gitignored secret, a local dependency tree or any other host residue on the
+# builder's disk cannot reach this layer, and a new untracked path defaults to
+# staying out. A new tracked top-level entry, on the other hand, has to be added
+# there before it will arrive here.
 COPY --chown=trinket:trinket . /usr/local/node/trinket
 
 WORKDIR /usr/local/node/trinket
@@ -120,6 +127,15 @@ RUN npm ci
 # fetch (static/scss/_settings.scss imports from public/components). `build:css`
 # rather than `build`, because `build` chains fetch-components ahead of it and
 # that has already run.
+#
+# Verified on a no-cache build of this file: the step reports
+# `public/css/base.css 265.72 kB` and `public/css/embed.css 296.32 kB`, both
+# files are in the image at 265727 and 296352 bytes, and a container started
+# from it answers /css/base.css and /css/embed.css with 200 and
+# `Content-Type: text/css`, byte-identical to a host `npm run build`. Note that
+# `docker-compose up` bind-mounts the checkout over this directory, so what
+# Compose serves comes from the host's public/css and not from these copies --
+# GETTING_STARTED.md documents that difference and the command that resolves it.
 RUN npm run build:css
 
 ARG COMMIT_ID

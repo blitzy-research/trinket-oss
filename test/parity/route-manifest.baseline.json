@@ -1,0 +1,7276 @@
+{
+  "schema": 2,
+  "summary": {
+    "note": "SUMMARY, NOT THE GATE. Swapping auth between two routes leaves every figure here unchanged; the pass condition is the per-entry comparison performed by --compare.",
+    "routes": 233,
+    "declaredRoutes": 228,
+    "declarationSources": {
+      "config/routes.js": 112,
+      "config/api_routes.js": 116
+    },
+    "synthesized": 5,
+    "byMethod": {
+      "GET": 137,
+      "POST": 63,
+      "PUT": 19,
+      "DELETE": 13,
+      "PATCH": 1
+    },
+    "serverAuthDefault": {
+      "strategy": "session",
+      "mode": "try",
+      "source": "app.js"
+    },
+    "auth": {
+      "inherited": 126,
+      "session": 105,
+      "disabled": 2,
+      "other": 0
+    },
+    "routesWithPre": 161,
+    "preEntries": 288,
+    "preFunctionForms": {
+      "entries": 149,
+      "recovered": 148,
+      "unresolved": 1,
+      "unresolvedEntries": [
+        "POST /api/users/login pre[1]"
+      ]
+    },
+    "validationKeys": 102,
+    "validationKeysBySection": {
+      "params": 1,
+      "query": 26,
+      "payload": 75
+    },
+    "handlerKinds": {
+      "function": 226,
+      "options.handler": 2,
+      "missing-controller-fallback": 3,
+      "inert-directory": 2
+    },
+    "nonFunctionHandlers": 2,
+    "missingControllerFallbackRoutes": [
+      "GET /api/trinkets/active -> trinket.risingActive",
+      "GET /api/trinkets/popular -> trinket.mostActive",
+      "POST /api/interest -> pages.interest"
+    ],
+    "routesWithReplySpec": 5,
+    "routesWithCookie": 6,
+    "routesWithExt": 0,
+    "expected": {
+      "routes": 233,
+      "byMethod": {
+        "GET": 137,
+        "POST": 63,
+        "PUT": 19,
+        "DELETE": 13,
+        "PATCH": 1
+      },
+      "authInherited": 126,
+      "authSession": 105,
+      "authDisabled": 2,
+      "routesWithPre": 161,
+      "retainedValidate": 0,
+      "nonFunctionHandlers": 2,
+      "missingControllerFallback": 3,
+      "validationKeys": 102,
+      "declaredRoutes": 228,
+      "synthesizedRoutes": 5,
+      "cliTableDataRows": 112,
+      "preFunctionFormEntries": 149,
+      "preFunctionIdentitiesRecovered": 148,
+      "preFunctionIdentitiesUnresolved": 1
+    },
+    "unexpected": [],
+    "retainedParsedValidate": 0
+  },
+  "entries": [
+    {
+      "method": "DELETE",
+      "path": "/api/admin/featured-course/{courseId}",
+      "controller": "admin.removeFeaturedCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [
+        "params",
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}",
+      "controller": "course.deleteCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}/invitations/{invitationId}",
+      "controller": "course.removeInvitation",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}",
+      "controller": "course.deleteLesson",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}",
+      "controller": "course.deleteMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        },
+        {
+          "kind": "string",
+          "method": "hasMaterial(pre.lesson,params.materialId)",
+          "assign": "hasMaterial"
+        },
+        {
+          "kind": "string",
+          "method": "material(params.materialId)",
+          "assign": "material"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/courses/{courseId}/users/{userId}",
+      "controller": "course.removeUser",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/drafts/{trinketId}",
+      "controller": "trinket.discardDraft",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/folders/{folderId}",
+      "controller": "folders.deleteFolder",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "folder(params.folderId)",
+          "assign": "folder"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/trinkets/{lang}/list/{shortCode}",
+      "controller": "trinket.removeFromList",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/trinkets/{trinketId}",
+      "controller": "trinket.remove",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "string",
+          "method": "canEdit(pre.trinket,user)",
+          "assign": "canEdit"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/trinkets/{trinketId}/folder",
+      "controller": "trinket.removeFromFolder",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "string",
+          "method": "folder(payload.folderId)",
+          "assign": "folder"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users",
+      "controller": "users.remove",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users/assets/{fileId}",
+      "controller": "users.removeAsset",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "file(params.fileId)",
+          "assign": "file"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "index.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/.well-known/{path*}",
+      "controller": null,
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/R",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/R/R.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/R/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/R"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/R/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/R/R.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/R/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/R/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/about",
+      "controller": null,
+      "handlerKind": "options.handler",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/account",
+      "controller": "users.account",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "users/account.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/account-deleted",
+      "controller": "users.deleted",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/account/{accountPage}",
+      "controller": "users.account",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "users/account.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/activate-account",
+      "controller": "users.activateAccountForm",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {
+        "html": "users/activateaccount.html"
+      },
+      "fail": {
+        "redirect": "/{redirectTo}"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/admin",
+      "controller": "admin.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "admin/index.html"
+      },
+      "fail": {
+        "html": "login.html"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/admin/{adminPage*}",
+      "controller": "admin.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "admin/index.html"
+      },
+      "fail": {
+        "html": "login.html"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/classes/{userSlug}/{courseSlug}",
+      "controller": "classes.getClass",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        },
+        {
+          "kind": "string",
+          "method": "user(params.userSlug)",
+          "assign": "user"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.courseBySlug",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses",
+      "controller": "courses.getCourses",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}",
+      "controller": "course.getCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "populate(pre.course,query.with)",
+          "assign": "populate"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/accessCode",
+      "controller": "course.getAccessCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/dashboard",
+      "controller": "course.dashboardOverview",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/invitations",
+      "controller": "course.listInvitations",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}",
+      "controller": "course.getLesson",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}",
+      "controller": "course.getMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        },
+        {
+          "kind": "string",
+          "method": "hasMaterial(pre.lesson,params.materialId)",
+          "assign": "hasMaterial"
+        },
+        {
+          "kind": "string",
+          "method": "material(params.materialId)",
+          "assign": "material"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/dashboard",
+      "controller": "course.materialDashboard",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/submissions",
+      "controller": "course.getMaterialSubmissionsForAllUsers",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/users",
+      "controller": "course.listUsers",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/users/{userId}/materials/{materialId}/submissions",
+      "controller": "course.getUserSubmissionsForMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/courses/{courseId}/users/{userId}/submissions",
+      "controller": "course.getUserSubmissionsForCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "user(params.userId)",
+          "assign": "user"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/exports",
+      "controller": "users.listExports",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/exports/{exportId}",
+      "controller": "users.getExportStatus",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/exports/{exportId}/download",
+      "controller": "users.downloadExport",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/featured-courses",
+      "controller": "courses.featuredCourses",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/files/{fileId}/{fileName}",
+      "controller": "files.download",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "file(params.fileId)",
+          "assign": "file"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/folders",
+      "controller": "folders.list",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/folders/{folderId}/trinkets",
+      "controller": "folders.trinkets",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "folder(params.folderId)",
+          "assign": "folder"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": {
+        "data": [
+          {
+            "id": 1,
+            "metrics": 1,
+            "shortCode": 1,
+            "lang": 1,
+            "lastUpdated": 1,
+            "lastView": 1,
+            "name": 1,
+            "description": 1,
+            "snapshot": 1,
+            "assets": 1,
+            "settings": 1,
+            "folder": 1,
+            "_owner": 1,
+            "published": 1
+          }
+        ]
+      },
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/submissions/{materialId}",
+      "controller": "course.getUserSubmissionsForMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets",
+      "controller": "trinket.list",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": {
+        "data": [
+          {
+            "id": 1,
+            "metrics": 1,
+            "shortCode": 1,
+            "lang": 1,
+            "lastUpdated": 1,
+            "lastView": 1,
+            "name": 1,
+            "description": 1,
+            "snapshot": 1,
+            "assets": 1,
+            "settings": 1,
+            "folder": 1,
+            "_owner": 1,
+            "username": 1,
+            "slug": 1,
+            "published": 1
+          }
+        ]
+      },
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets/active",
+      "controller": "trinket.risingActive",
+      "handlerKind": "missing-controller-fallback",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        },
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets/popular",
+      "controller": "trinket.mostActive",
+      "handlerKind": "missing-controller-fallback",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        },
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets/search",
+      "controller": "trinket.search",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets/{lang}/list",
+      "controller": "trinket.namedList",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "namedTrinketList(params.lang, query.name)",
+          "assign": "namedTrinketList"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets/{trinketId}",
+      "controller": "trinket.getById",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": {
+        "data": {
+          "id": 1,
+          "code": 1,
+          "metrics": 1,
+          "shortCode": 1,
+          "lang": 1,
+          "lastUpdated": 1,
+          "lastView": 1,
+          "name": 1,
+          "description": 1,
+          "snapshot": 1,
+          "assets": 1,
+          "settings": 1,
+          "folder": 1,
+          "_owner": 1,
+          "username": 1,
+          "slug": 1,
+          "published": 1
+        }
+      },
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/trinkets/{trinketId}/interactions",
+      "controller": "trinket.interactions",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/assets",
+      "controller": "users.assetList",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/resendEmailChange",
+      "controller": "users.resendEmailChange",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/{userId}/avatar",
+      "controller": "users.getAvatar",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "user(params.userId)",
+          "assign": "user"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "{src}"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/{userId}/info",
+      "controller": "users.getInfo",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "user(params.userId)",
+          "assign": "user"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/assignment-embed-feedback/{lang}/{trinketId}",
+      "controller": "trinket.assignmentFeedback",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "embed/{lang}.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/assignment-embed-viewonly/{lang}/{trinketId}",
+      "controller": "trinket.viewOnly",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "embed/{lang}.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/assignment-embed/{lang}/{trinketId}",
+      "controller": "trinket.assignment",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "embed/{lang}.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/auth/google",
+      "controller": "auth.google",
+      "handlerKind": "function",
+      "auth": {
+        "declared": false,
+        "inherited": false,
+        "strategy": null,
+        "mode": "none"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/auth/google/callback",
+      "controller": "auth.googleCallback",
+      "handlerKind": "function",
+      "auth": {
+        "declared": false,
+        "inherited": false,
+        "strategy": null,
+        "mode": "none"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "{redirectTo}"
+      },
+      "fail": {
+        "redirect": "/signup"
+      },
+      "reply": null,
+      "cookie": true,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/blocks",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/blocks/blocks.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/blocks/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/blocks"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/blocks/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/blocks/blocks.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/blocks/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/blocks/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/cache-prefix-{timestamp}/{assetType}/{path*}",
+      "controller": null,
+      "handlerKind": "inert-directory",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/change-email",
+      "controller": "users.changeEmail",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {
+        "redirect": "account/email"
+      },
+      "fail": {
+        "redirect": "account/email"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/console",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/console/console.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/console/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/console"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/console/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/console/console.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/console/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/console/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/courses/accept/{token}",
+      "controller": "classes.acceptInvitation",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "classes/view.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/courses/join/{accessCode}",
+      "controller": "classes.joinFromLink",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "classes/view.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/courses/new",
+      "controller": "courses.creationForm",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "courses/create.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/docs/colors",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "docs/colors.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/embed/beta/{type}",
+      "controller": "trinket.beta",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "embed/beta/{type}.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/embed/blocks-iframe",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "embed/blocks-iframe.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/embed/glowscript-blocks-iframe",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "embed/glowscript-blocks-iframe.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/embed/{lang}",
+      "controller": "trinket.embed",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.getDefaultTrinket",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "embed/{lang}.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/embed/{lang}/{trinketId}",
+      "controller": "trinket.embed",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "embed/{lang}.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/forgot-pass",
+      "controller": "pages.forgotPasswordForm",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "users/forgotpass.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/glowscript/glowscript.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript-blocks",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/glowscript-blocks/glowscript-blocks.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript-blocks/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/glowscript-blocks"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript-blocks/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/glowscript-blocks/glowscript-blocks.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript-blocks/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript-blocks/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/glowscript"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/glowscript/glowscript.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/glowscript/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/help",
+      "controller": null,
+      "handlerKind": "options.handler",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/home",
+      "controller": "pages.home",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "home.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/html",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/html/html.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/html/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/html/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/html/html.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/html/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/html/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/java",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/java/java.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/java/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/java"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/java/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/java/java.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/java/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/java/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/library/folder/{slug}",
+      "controller": "folders.listView",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "trinket/library.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/library/trinkets/{path*}",
+      "controller": "trinket.library",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {
+        "html": "trinket/library.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/login",
+      "controller": "pages.login",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {
+        "html": "login.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/logout",
+      "controller": "users.logout",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "/"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": true,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/music",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/music/music.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/music/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/music"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/music/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/music/music.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/music/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/music/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/pygame",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/pygame/pygame.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/pygame/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/pygame"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/pygame/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/pygame/pygame.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/pygame/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/pygame/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/python/python.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/python"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/python/python.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python3",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/python3/python3.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python3/",
+      "controller": "pages.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "/python3"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python3/{shortCode}",
+      "controller": "trinket.getByShortCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findFeaturedTrinkets",
+          "assign": "featuredTrinkets"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "trinket/python3/python3.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python3/{shortCode}/",
+      "controller": "trinket.downloadMain",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/python3/{shortCode}/{path*}",
+      "controller": "trinket.downloadFile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/r",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "/R"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/r/{shortCode}",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "/R/{shortCode}"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/reset-pass",
+      "controller": "users.resetPasswordForm",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {
+        "html": "users/resetpass.html"
+      },
+      "fail": {
+        "redirect": "/forgot-pass"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/signup",
+      "controller": "pages.signup",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "html": "signup.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/skulpt",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "/python"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/skulpt/{hash}",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "/python/{hash}"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/tools/{version}/jekyll/embed/{lang}",
+      "controller": "trinket.embed",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.trinketTypeEnabled.method",
+          "assign": "trinketTypeEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "embed/{lang}.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/u/{username}/classes",
+      "controller": "classes.viewCourses",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.userByUsername",
+          "assign": "user"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "classes/courses.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/u/{username}/classes/{courseSlug}",
+      "controller": "classes.viewClass",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.userByUsername",
+          "assign": "user"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.courseBySlug",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "classes/view.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/verify-email",
+      "controller": "users.verifyEmail",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "query"
+      ],
+      "success": {
+        "redirect": "account/email"
+      },
+      "fail": {
+        "redirect": "account/email"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/vpython",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "/glowscript"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/vpython/{shortCode}",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "/glowscript/{shortCode}"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/webvpython",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "/glowscript"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/webvpython/{shortCode}",
+      "controller": "trinket.index",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {
+        "redirect": "/glowscript/{shortCode}"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/welcome",
+      "controller": "pages.welcome",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/{path*}",
+      "controller": null,
+      "handlerKind": "inert-directory",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "GET",
+      "path": "/{userSlug}/courses/{courseSlug}",
+      "controller": "courses.coursePage",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        },
+        {
+          "kind": "string",
+          "method": "user(params.userSlug)",
+          "assign": "user"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.courseBySlug",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "courses/view.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/{userSlug}/courses/{courseSlug}/download.zip",
+      "controller": "courses.download",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        },
+        {
+          "kind": "string",
+          "method": "user(params.userSlug)",
+          "assign": "user"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.courseBySlug",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/courses/{courseId}",
+      "controller": "course.archiveCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/activate-account",
+      "controller": "users.activateAccount",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {
+        "redirect": "/welcome"
+      },
+      "fail": {
+        "redirect": "/{redirectTo}"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/upload",
+      "controller": "admin.uploadUsers",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "html": "admin/index.html"
+      },
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/featured-course",
+      "controller": "admin.addFeaturedCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/featured-course/move",
+      "controller": "admin.moveFeaturedCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/user/{userId}",
+      "controller": "admin.updateUser",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/user/{userId}/grant",
+      "controller": "admin.grantRole",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/comments/{trinketId}",
+      "controller": "course.autosaveComments",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses",
+      "controller": "course.createCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/join",
+      "controller": "course.join",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/accessCode",
+      "controller": "course.generateAccessCode",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/copy",
+      "controller": "course.copyCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/invitations",
+      "controller": "course.sendInvitations",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons",
+      "controller": "course.addLesson",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload",
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials",
+      "controller": "course.addMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        }
+      ],
+      "validate": [
+        "payload",
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/acceptSubmission",
+      "controller": "course.acceptSubmission",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "trinket(payload.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/feedback",
+      "controller": "course.sendFeedback",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/startAssignment",
+      "controller": "course.startAssignment",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/submissions",
+      "controller": "course.submitAssignment",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/roles",
+      "controller": "course.updateRoles",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/userLookup",
+      "controller": "course.userLookup",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/users",
+      "controller": "course.addUser",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/courses/{courseId}/views",
+      "controller": "course.updateViews",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/exports",
+      "controller": "users.requestExport",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/feedback-comments/{trinketId}",
+      "controller": "course.autosaveFeedbackComments",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/files/{fileId}/thumbnail",
+      "controller": "files.setThumbnail",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "file(params.fileId)",
+          "assign": "file"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/folders",
+      "controller": "folders.create",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/interest",
+      "controller": "pages.interest",
+      "handlerKind": "missing-controller-fallback",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/ohnoes",
+      "controller": "admin.ohnoes",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {}
+    },
+    {
+      "method": "POST",
+      "path": "/api/submission-opt/{trinketId}",
+      "controller": "course.autosaveSubmissionOpt",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/submissions/{trinketId}",
+      "controller": "course.updateMySubmission",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets",
+      "controller": "trinket.create",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "payload",
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": true,
+        "payload": {
+          "maxBytes": 10485760
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/clientmetric",
+      "controller": "trinket.logClientMetric",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/codeerror",
+      "controller": "trinket.logError",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.validLang.method",
+          "assign": "validLang"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/download",
+      "controller": "trinket.downloadPostedZip",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 10485760
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/{shortCode}/list",
+      "controller": "trinket.addToList",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/autosave",
+      "controller": "trinket.autosave",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.findTrinket.method",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 10485760
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/draft",
+      "controller": "trinket.draft",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 10485760
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/email",
+      "controller": "trinket.email",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "function",
+          "method": "helpers.verifyEmailToken",
+          "assign": null
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/folder",
+      "controller": "trinket.addToFolder",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "string",
+          "method": "folder(payload.folderId)",
+          "assign": "folder"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/forks",
+      "controller": "trinket.createFork",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [
+        "payload",
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 10485760
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/grant",
+      "controller": "trinket.grant",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "isAdmin(user)",
+          "assign": "isAdmin"
+        },
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "string",
+          "method": "user(query.user)",
+          "assign": "user"
+        }
+      ],
+      "validate": [
+        "query"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/trinkets/{trinketId}/snapshot",
+      "controller": "trinket.snapshot",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        }
+      ],
+      "validate": [],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 10485760
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users",
+      "controller": "users.create",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.lowerUserFields",
+          "assign": null
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": true,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/assetFromURL",
+      "controller": "users.assetUploadFromURL",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/assets",
+      "controller": "users.assetUpload",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 5242880,
+          "output": "file"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/assets/restore",
+      "controller": "users.restoreAsset",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "file(payload.fileId)",
+          "assign": "file"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/assets/{fileId}",
+      "controller": "users.replaceAsset",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "file(params.fileId)",
+          "assign": "file"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 5242880,
+          "output": "file"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/email",
+      "controller": "users.sendEmailChange",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.lowerUserFields",
+          "assign": null
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/login",
+      "controller": "users.login",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.lowerUserFields",
+          "assign": null
+        },
+        {
+          "kind": "object-with-function",
+          "method": null,
+          "assign": "encryptRoles"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": true,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/password",
+      "controller": "users.changePassword",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/settings",
+      "controller": "users.updateSettings",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/settings/indentation",
+      "controller": "users.updateSettings",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/settings/lineWrapping",
+      "controller": "users.updateSettings",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/verify-email",
+      "controller": "users.sendEmailVerification",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/courses",
+      "controller": "courses.create",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {
+        "html": {
+          "redirect": "/{user.username}/courses/{course.slug}"
+        }
+      },
+      "fail": {
+        "redirect": "/courses/new"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/file",
+      "controller": "files.upload",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 10485760,
+          "output": "file"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/file/avatar",
+      "controller": "files.uploadAvatar",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": {
+        "host": true,
+        "path": true
+      },
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 5242880,
+          "output": "file"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/login",
+      "controller": "users.login",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.lowerUserFields",
+          "assign": null
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {
+        "redirect": "/home"
+      },
+      "fail": {
+        "redirect": "/login"
+      },
+      "reply": null,
+      "cookie": true,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/python",
+      "controller": "trinket.create",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/save-pass",
+      "controller": "users.savePassword",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {
+        "html": "users/savepass.html"
+      },
+      "fail": {
+        "redirect": "/forgot-pass"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/send-pass-reset",
+      "controller": "users.sendPassReset",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.lowerUserFields",
+          "assign": null
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {
+        "html": "users/sendpassreset.html"
+      },
+      "fail": {
+        "redirect": "/forgot-pass"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/users",
+      "controller": "users.create",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.lowerUserFields",
+          "assign": null
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {
+        "redirect": "/welcome"
+      },
+      "fail": {
+        "redirect": "/{formName}"
+      },
+      "reply": null,
+      "cookie": true,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/{userSlug}/courses/{courseSlug}/copy",
+      "controller": "courses.copy",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "object-with-function",
+          "method": "helpers.coursesEnabled.method",
+          "assign": "coursesEnabled"
+        },
+        {
+          "kind": "string",
+          "method": "user(params.userSlug)",
+          "assign": "user"
+        },
+        {
+          "kind": "object-with-function",
+          "method": "helpers.courseBySlug",
+          "assign": "course"
+        }
+      ],
+      "validate": [],
+      "success": {
+        "redirect": "{classPageUrl}"
+      },
+      "fail": {
+        "redirect": "/welcome"
+      },
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/invitations/{invitationId}/email",
+      "controller": "course.updateInvitation",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "invitation(params.invitationId)",
+          "assign": "invitation"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/invitations/{invitationId}/resend",
+      "controller": "course.updateInvitation",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "invitation(params.invitationId)",
+          "assign": "invitation"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/draft",
+      "controller": "course.updateLesson",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/assignment",
+      "controller": "course.updateMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        },
+        {
+          "kind": "string",
+          "method": "hasMaterial(pre.lesson,params.materialId)",
+          "assign": "hasMaterial"
+        },
+        {
+          "kind": "string",
+          "method": "material(params.materialId)",
+          "assign": "material"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/draft",
+      "controller": "course.updateMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        },
+        {
+          "kind": "string",
+          "method": "hasMaterial(pre.lesson,params.materialId)",
+          "assign": "hasMaterial"
+        },
+        {
+          "kind": "string",
+          "method": "material(params.materialId)",
+          "assign": "material"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "controller": "course.moveMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        },
+        {
+          "kind": "string",
+          "method": "hasMaterial(pre.lesson,params.materialId)",
+          "assign": "hasMaterial"
+        },
+        {
+          "kind": "string",
+          "method": "parent(payload.parent,pre.lesson)",
+          "assign": "parent"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/name",
+      "controller": "course.updateMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        },
+        {
+          "kind": "string",
+          "method": "hasMaterial(pre.lesson,params.materialId)",
+          "assign": "hasMaterial"
+        },
+        {
+          "kind": "string",
+          "method": "material(params.materialId)",
+          "assign": "material"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/patchContent",
+      "controller": "course.updateMaterial",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        },
+        {
+          "kind": "string",
+          "method": "hasMaterial(pre.lesson,params.materialId)",
+          "assign": "hasMaterial"
+        },
+        {
+          "kind": "string",
+          "method": "material(params.materialId)",
+          "assign": "material"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/move",
+      "controller": "course.moveLesson",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/lessons/{lessonId}/name",
+      "controller": "course.updateLesson",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        },
+        {
+          "kind": "string",
+          "method": "hasLesson(pre.course,params.lessonId)",
+          "assign": "hasLesson"
+        },
+        {
+          "kind": "string",
+          "method": "lesson(params.lessonId)",
+          "assign": "lesson"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/courses/{courseId}/metadata",
+      "controller": "course.updateCourse",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "course(params.courseId)",
+          "assign": "course"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/folders/{folderId}/name",
+      "controller": "folders.update",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "folder(params.folderId)",
+          "assign": "folder"
+        },
+        {
+          "kind": "string",
+          "method": "canEdit(pre.folder,user)",
+          "assign": "canEdit"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/code",
+      "controller": "trinket.update",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "string",
+          "method": "canEdit(pre.trinket,user)",
+          "assign": "canEdit"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false,
+        "payload": {
+          "maxBytes": 10485760
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/description",
+      "controller": "trinket.update",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "string",
+          "method": "canEdit(pre.trinket,user)",
+          "assign": "canEdit"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/metrics",
+      "controller": "trinket.updateMetrics",
+      "handlerKind": "function",
+      "auth": {
+        "declared": null,
+        "inherited": true,
+        "strategy": "session",
+        "mode": "try"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": {
+        "data": {
+          "metrics": 1
+        }
+      },
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/name",
+      "controller": "trinket.update",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "string",
+          "method": "canEdit(pre.trinket,user)",
+          "assign": "canEdit"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/published",
+      "controller": "trinket.update",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "string",
+          "method": "canEdit(pre.trinket,user)",
+          "assign": "canEdit"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/trinkets/{trinketId}/slug",
+      "controller": "trinket.updateSlug",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [
+        {
+          "kind": "string",
+          "method": "trinket(params.trinketId)",
+          "assign": "trinket"
+        },
+        {
+          "kind": "string",
+          "method": "canEdit(pre.trinket,user)",
+          "assign": "canEdit"
+        }
+      ],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/users/{userId}",
+      "controller": "users.updateProfile",
+      "handlerKind": "function",
+      "auth": {
+        "declared": "session",
+        "inherited": false,
+        "strategy": "session",
+        "mode": "required"
+      },
+      "pre": [],
+      "validate": [
+        "payload"
+      ],
+      "success": {},
+      "fail": {},
+      "reply": null,
+      "cookie": false,
+      "ext": false,
+      "options": {
+        "cors": false
+      }
+    }
+  ]
+}

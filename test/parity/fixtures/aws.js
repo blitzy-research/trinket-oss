@@ -12,19 +12,39 @@
 // ===========================================================================
 // Seven call sites reach Amazon S3 from inside the request path or the export
 // worker, and none of them can be exercised by the corpus without a
-// substitute. The inventory below was re-measured over the current tree with
-// `grep -rn "client\.[a-zA-Z]*(" lib/ config/` rather than taken on trust:
+// substitute:
 //
-//   putObject   (callback)        lib/util/file.js:12
-//   putObject   (callback)        lib/workers/exports.js:390
-//   getObject   (callback)        lib/util/file.js:200
-//   getObject   (callback)        lib/workers/exports.js:61
-//   getObject   (request object)  lib/util/file.js:83  -> .createReadStream()
-//   deleteObject(callback)        lib/util/file.js:143
-//   getSignedUrl(synchronous)     lib/controllers/users.js:1299
+//   putObject   (callback)        lib/util/file.js
+//   putObject   (callback)        lib/workers/exports.js
+//   getObject   (callback)        lib/util/file.js
+//   getObject   (callback)        lib/workers/exports.js
+//   getObject   (request object)  lib/util/file.js -> .createReadStream()
+//   deleteObject(callback)        lib/util/file.js
+//   getSignedUrl(synchronous)     lib/controllers/users.js
 //
-// The repository's eighth aws-sdk call site is AWS.config.update at
-// config/aws.js:8, which reconciles the "eight call sites" figure in AAP
+// THAT SUMMARY IS NOT THE AUTHORITY FOR ITSELF (BE-36). The authoritative form
+// is data and instrumentation, both below in this file:
+//
+//   AWS_SURFACE        the declared inventory, as a frozen constant - one
+//                      entry per (method, form, module) with its role, and no
+//                      line numbers, because a line number in a comment is
+//                      stale the moment a controller is edited.
+//   measureSurface()   scans lib/**/*.js and config/*.js for the call sites,
+//                      resolves their LINES at run time, classifies each
+//                      site's form, and reports the drift against
+//                      AWS_SURFACE. This is what a documentation generator or
+//                      a reviewer runs to produce the list; the prose above is
+//                      a summary that it verifies.
+//   surface()          what a run actually reached, from the call log, so
+//                      "nothing calls headObject" is a measurement rather than
+//                      a claim.
+//
+// The list above was itself produced that way and is kept only because a
+// reader opening this file should not have to run anything to know what it
+// answers. When it and the two functions disagree, the functions are right.
+//
+// The repository's eighth aws-sdk call site is AWS.config.update in
+// config/aws.js, which reconciles the "eight call sites" figure in AAP
 // 0.5.1.5 and 0.6.7: there is no eighth CLIENT method. Two corrections to the
 // fixture description in AAP 0.9.3 follow from the same measurement, and both
 // are owed to docs/baseline-parity.md (see NOTES below): it omits
@@ -166,6 +186,43 @@
 //                    reachable from any response: lib/util/file.js returns
 //                    `container.host` plus the object key, never a local path.
 //                    A relative value is resolved against process.cwd().
+//                    RE-READ ON EVERY STORE ACCESS, not once at load: the
+//                    variable is resolved inside ensureRoot(), and when the
+//                    value has changed the store is RE-BOUND to it - the
+//                    previous and new roots are recorded as a
+//                    'store-root-bound' entry in the call log, never as an
+//                    error, because a re-point is legitimate. restore()
+//                    UNBINDS the store, so a caller that runs two passes over
+//                    one required copy of this module - set the variable,
+//                    restore(), read - gets its OWN store per pass instead of
+//                    the previous pass's objects. verifyRoot(expected) is the
+//                    explicit assertion, and status().root always reports the
+//                    live value.
+//                    OWNERSHIP AND PERMISSIONS (SCR-F56). Whatever this file
+//                    creates it creates owner-only: <root>/objects and
+//                    <root>/meta are 0700, every object and sidecar is 0600,
+//                    and each is chmod'ed as well as created that way because
+//                    a mode is applied only at creation and is masked by the
+//                    umask. The root ITSELF is tightened only when this file
+//                    created it, because a harness that supplies this variable
+//                    usually creates the directory first and a borrowed
+//                    directory is not one to re-permission.
+//                    Lifecycle follows the same line. When this variable is
+//                    SET the store is the caller's artifact: it is retained
+//                    untouched at exit, which is required rather than polite -
+//                    test/parity/replay.js and test/parity/capture.js read the
+//                    stored objects after the run to collect their evidence.
+//                    When it is UNSET the per-process directory above is this
+//                    file's own, and it is REMOVED on 'exit'. Ownership is
+//                    recorded at the moment the directory is CREATED - derived
+//                    rather than supplied, and created by this file's own mkdir
+//                    - and every such directory is removed even if the variable
+//                    was later set and the store re-bound. A path this file did
+//                    not create is never removed, whatever its name looks like:
+//                    the default name is only os.tmpdir() plus this pid, which
+//                    another process can construct, and a recursive delete of
+//                    someone else's directory is not a risk worth taking for a
+//                    temporary-file tidy-up.
 //   PARITY_S3_SEED   Optional absolute path of a JSON pre-population manifest,
 //                    read ONCE at load. Required in practice: test/parity/seed.js
 //                    seeds a File document whose hash, url and name correspond
@@ -185,7 +242,12 @@
 //                    not handle, and evidence buffered in memory would be lost
 //                    exactly where it is most needed. Every write is guarded,
 //                    so a logging fault can never propagate into the
-//                    application.
+//                    application. The file is created 0600 and chmod'ed once to
+//                    0600 (SCR-F56): it names every bucket and key a run
+//                    touched, and it is a retained artifact whose path the
+//                    harness owns, so it is tightened and never removed. A
+//                    chmod failure here is recorded straight onto errors()
+//                    rather than through the log, which would recurse.
 //
 // ===========================================================================
 // SEED MANIFEST SCHEMA - deliberately minimal. The manifest is a JSON ARRAY of
@@ -199,12 +261,27 @@
 // `bucket` and `key` are required non-empty strings and are stored BYTE-EXACTLY.
 // `contentType` is optional. `contentDisposition` is optional and accepted for
 // symmetry with the export upload, which is the only site that supplies one.
-// Exactly one of `bytesBase64` or `file` must be present. Any other key, a
-// non-array manifest, a non-absolute `file`, an unreadable `file` or a
-// `bytesBase64` that is not valid base64 REJECTS THAT ENTRY: the reason is
-// recorded on errors() and the remaining entries are still loaded. Nothing
-// here throws, because this runs at preload time and a throwing preload takes
-// the server down before app.js loads.
+// Exactly one of `bytesBase64` or `file` must be present.
+//
+// `bytesBase64` must be CANONICAL base64 - the exact string
+// Buffer#toString('base64') produces for the bytes it decodes to. ASCII
+// whitespace is stripped first and is therefore allowed anywhere; after that
+// the value must use only the standard alphabet (so base64url is rejected),
+// carry at most two '=' and only as trailing padding, have a length that is a
+// multiple of four, and RE-ENCODE to itself. A charset test alone is not
+// enough: Buffer.from never fails, so 'A', 'a=', 'QQ=', 'Zm9v=' and 'Zm9='
+// each decode to something OTHER than the value they appear to name, and
+// because the S3 Key is the sha1 digest of the contents (AAP 0.6.7) that is a
+// silently different key rather than an error. The empty string is legal and
+// seeds a zero-byte object. The load record for each entry carries the sha1
+// digest of the bytes actually stored, so a report of "loaded" states which
+// bytes were loaded.
+//
+// Any other key, a non-array manifest, a non-absolute `file`, an unreadable
+// `file` or a non-canonical `bytesBase64` REJECTS THAT ENTRY: the reason names
+// the rule that failed, is recorded on errors() and the remaining entries are
+// still loaded. Nothing here throws, because this runs at preload time and a
+// throwing preload takes the server down before app.js loads.
 // ===========================================================================
 //
 // ===========================================================================
@@ -318,26 +395,43 @@
 //      value under committed configuration is the information-free constant
 //      'https://s3.amazonaws.com/'. The deterministic URL is identical in both
 //      worktrees and additionally proves which Bucket and Key reached the SDK.
-//   2. headObject is never called: grep over lib/ and config/ returns no
-//      occurrence. AAP 0.9.3 names it among the methods to replace and omits
-//      getSignedUrl; the corrected seven-site inventory at the top of this
-//      file is authoritative. A defensive stub is provided so that a future
-//      caller fails visibly and is recorded, and nothing in the harness relies
-//      on it.
+//   2. headObject is never called: a scan of lib/ and config/ returns no
+//      occurrence, which is now measurable rather than asserted -
+//      measureSurface() reports it as declaredWithoutSite and surface() would
+//      list it in stubsInvoked if a run ever reached it. AAP 0.9.3 names it
+//      among the methods to replace and omits getSignedUrl; AWS_SURFACE and
+//      the two functions in this file are authoritative for the real surface.
+//      A defensive stub is provided so that a future caller fails visibly and
+//      is recorded, and nothing in the harness relies on it.
+//      docs/baseline-parity.md:291 still carries the same wrong list -
+//      headObject present, getSignedUrl absent - and correcting that document
+//      is owed to the unit that owns it. This fixture emits the measurement
+//      and edits no documentation.
 //   3. A missing key in the request-object form leaves the application's
 //      PassThrough un-ended AND raises an unhandled 'error' event, because the
 //      application attaches no handler and Node's pipe attaches none to the
 //      source. That is the real SDK's behaviour, preserved deliberately; a
 //      harness case that drives it must expect the process-level signature
 //      rather than a response.
+//   4. test/parity/replay.js:4986 and test/parity/capture.js:4228 ASSIGN
+//      PARITY_S3_ROOT in their own process before requiring this module and do
+//      not put the previous value back afterwards, so a later reader in that
+//      process inherits whichever pass wrote last. This file now re-reads the
+//      variable on every store access and re-binds when it changes, which is
+//      what makes each pass read its own store without those callers changing
+//      (TST-73); restoring the variable they overwrote is still owed to those
+//      two files, which this fixture does not own and does not edit.
 //
 // ===========================================================================
 // PUBLIC API (consumed by test/parity/server.js, storage.js and worker.js)
 // ===========================================================================
 //   install()                     idempotent; returns status()
-//   restore()                     puts the genuine AWS.S3 back; returns status()
-//   status()                      what is patched, the resolved root, the seed
+//   restore()                     puts the genuine AWS.S3 back AND unbinds the
+//                                 store; returns status()
+//   status()                      what is patched, the LIVE root, the seed
 //                                 result and any diagnostic
+//   verifyRoot(expected)          rebinds, then {root, expected, ok} - the
+//                                 explicit per-pass root assertion
 //   reset()                       clears stored objects and the call log,
 //                                 without reinstalling
 //   put(bucket, key, body, opts)  store directly; returns the sidecar record
@@ -351,7 +445,16 @@
 //   errors()                      a copy of the recorded fixture errors
 //   flush()                       rewrite PARITY_S3_LOG from memory
 //   signedUrlFor(bucket, key, expires)
-//   root                          the resolved store root
+//   AWS_SURFACE                   the declared AWS surface, frozen: one entry
+//                                 per {method, form, module, role}
+//   surface()                     what this run reached: {declared, observed,
+//                                 stubsInvoked, undeclared}
+//   measureSurface(options)       scans lib/**/*.js and config/*.js for the
+//                                 real call sites and reports the drift
+//                                 against AWS_SURFACE: {ok, sites, drift,
+//                                 declaredWithoutSite}. Never runs at load,
+//                                 never throws, writes nothing
+//   root                          the currently bound store root, or null
 //   client()                      a fixture S3 client, for a direct require
 //                                 that does not want to go through the
 //                                 namespace
@@ -384,6 +487,99 @@ var PassThrough = require('stream').PassThrough;
 // aws-sdk internals and so a harness can assert it is talking to the fixture.
 var FIXTURE_MARKER = 'test/parity/fixtures/aws.js';
 
+// ---------------------------------------------------------------------------
+// The AWS surface, as DATA (BE-36).
+//
+// This is the authoritative inventory of the client methods this fixture has
+// to answer, and it exists as a frozen constant rather than only as prose
+// because a hand-written list is a list nothing can check: the fixture's own
+// header carried the corrected seven-site inventory while
+// docs/baseline-parity.md carried the wrong one, and neither could be verified
+// against the tree. Two functions close that gap - surface() reports what was
+// actually REACHED at run time from the call log, and measureSurface() scans
+// lib/ and config/ for the call sites and reports the drift between what is
+// declared here and what is really there. A documentation generator or a
+// reviewer runs measureSurface() to produce the list rather than transcribing
+// one.
+//
+// Deliberately NO line numbers: a line number recorded here is stale the
+// moment a controller or the worker is edited, and measureSurface() resolves
+// the lines at run time anyway. `module` is the file that carries the call, and
+// null means the method has no call site at all.
+//
+//   method  the client method the application calls.
+//   form    how it is called, which decides how a failure is delivered (R-e):
+//           'callback'       -> cb(err) as the first argument.
+//           'request-object' -> no callback; createReadStream() is called on
+//                               the returned request and the failure arrives
+//                               as an 'error' event on that stream.
+//           'synchronous'    -> returns its value directly and neither
+//                               validates nor throws.
+//   module  the application file that carries the call site, or null.
+//   role    what the call does, so a reader knows which behaviour a change
+//           would break.
+// ---------------------------------------------------------------------------
+var AWS_SURFACE = Object.freeze([
+  Object.freeze({
+    method : 'putObject',
+    form   : 'callback',
+    module : 'lib/util/file.js',
+    role   : 'upload: material, snapshot and user-asset writes, keyed on the ' +
+             'sha1 digest of the contents'
+  }),
+  Object.freeze({
+    method : 'putObject',
+    form   : 'callback',
+    module : 'lib/workers/exports.js',
+    role   : 'upload: the export archive, under exports/<userId>/<filename>'
+  }),
+  Object.freeze({
+    method : 'getObject',
+    form   : 'callback',
+    module : 'lib/util/file.js',
+    role   : 'download: the user asset, resolved to data.Body as a Buffer'
+  }),
+  Object.freeze({
+    method : 'getObject',
+    form   : 'callback',
+    module : 'lib/workers/exports.js',
+    role   : 'download: an asset appended into the export archive'
+  }),
+  Object.freeze({
+    method : 'getObject',
+    form   : 'request-object',
+    module : 'lib/util/file.js',
+    role   : 'download: the material file, piped from createReadStream() into ' +
+             'a PassThrough the route returns'
+  }),
+  Object.freeze({
+    method : 'deleteObject',
+    form   : 'callback',
+    module : 'lib/util/file.js',
+    role   : 'delete: removeFile, whose Key is the basename of a stored URL'
+  }),
+  Object.freeze({
+    method : 'getSignedUrl',
+    form   : 'synchronous',
+    module : 'lib/controllers/users.js',
+    role   : 'presign: the export download redirect, whose value reaches an ' +
+             'exactly-compared Location header'
+  }),
+  Object.freeze({
+    method : 'headObject',
+    form   : 'callback',
+    module : null,
+    role   : 'defensive-stub'
+  })
+]);
+
+// Operations that appear in the call log but are NOT client methods, and are
+// therefore not surface drift: 'seed' is the store's own pre-population
+// record, 'createReadStream' is the chained call the request-object form of
+// getObject records separately so the stream's outcome is visible, and
+// 'store-root-bound' is a store rebind.
+var NON_METHOD_OPERATIONS = ['seed', 'createReadStream', 'store-root-bound'];
+
 // Store layout. Data and metadata are separate directories so that an object
 // whose key ends in '.json' cannot collide with another object's sidecar.
 var OBJECTS_DIR = 'objects';
@@ -394,6 +590,28 @@ var META_DIR    = 'meta';
 var NAME_SEPARATOR   = '#';
 var MAX_FLAT_NAME    = 180;
 var TRUNCATED_PREFIX = 140;
+
+// Owner-only permissions for everything this file creates (SCR-F56). The store
+// holds uploaded material, avatars, snapshots and export archives seeded from
+// fixtures, and the call log names every bucket and key a run touched; both are
+// tool-owned state that no other user on the host has any reason to read, and
+// both were previously left at whatever the ambient umask produced - 0755 for
+// the directories and 0644 for the files.
+//
+// A mode passed to mkdir or to a write applies only when the entry is CREATED
+// and is further masked by the process umask, so each is followed by one
+// explicit chmod of the entries this file owns. That is not belt-and-braces: a
+// harness that created the store root first, a root reused from an earlier run,
+// or a run under a permissive umask each produce exactly the ambient mode the
+// finding reports.
+var STORE_DIR_MODE  = 0o700;
+var STORE_FILE_MODE = 0o600;
+
+// The name of the store root this file derives for itself when PARITY_S3_ROOT
+// is unset. It is a per-process directory under os.tmpdir(), and it is the ONE
+// path this file owns rather than borrows - which is what decides, at exit,
+// what may be removed and what must be left alone.
+var DEFAULT_ROOT_PREFIX = 'parity-s3-';
 
 // A fixed LastModified. No call site reads it - lib/util/file.js:209 takes
 // data.Body and lib/workers/exports.js:66 takes data.Body - but the real SDK
@@ -428,9 +646,17 @@ var SIGNED_URL_DEFAULT_OPERATION = 'getObject';
 // ends up absent while the manifest looks correct.
 var SEED_ENTRY_KEYS = ['bucket', 'key', 'contentType', 'contentDisposition', 'bytesBase64', 'file'];
 
-// Base64 with optional whitespace and padding. Used to reject a `bytesBase64`
-// that Buffer.from would silently truncate instead of failing.
-var BASE64_PATTERN = /^[A-Za-z0-9+/\s]*={0,2}$/;
+// The base64 alphabet, WITHOUT padding. Applied to a value whose ASCII
+// whitespace has already been stripped, so '-' and '_' (base64url) and an
+// interior '=' are rejected by it rather than silently re-interpreted.
+var BASE64_ALPHABET_PATTERN = /^[A-Za-z0-9+/]*$/;
+
+// ASCII whitespace, which the manifest schema documents as allowed inside a
+// `bytesBase64` value and which is therefore stripped before any other rule is
+// applied. Deliberately the ASCII set and not \s: \s also matches U+00A0 and
+// the Unicode space separators, and a non-breaking space in a manifest is a
+// typo that must be reported, not absorbed.
+var BASE64_WHITESPACE_PATTERN = /[ \t\n\r\f\v]/g;
 
 // AWS's own DNS-compatible bucket test, which is what decides virtual-hosted
 // versus path-style addressing in the real SDK and therefore here too.
@@ -447,12 +673,38 @@ var state = {
   awsModule  : null,   // the AWS namespace whose S3 was swapped
   awsPath    : null,   // the resolved path of config/aws, for status()
   originalS3 : null,   // the genuine AWS.S3, for restore()
-  root       : null,   // the resolved store root
+  root       : null,   // the currently bound store root, null when unbound
   rootReady  : false,  // whether <root>/objects and <root>/meta exist
+
+  // The last root this process bound, retained ACROSS restore() so that a
+  // rebind can be reported against the store it replaced. state.root is the
+  // live binding and is cleared by restore(); this is history, and it is the
+  // only reason a two-pass re-point is visible in the call log at all.
+  lastBoundRoot : null,
+
   diagnostic : null,   // why install() could not patch, if it could not
   seed       : null,   // the result of the PARITY_S3_SEED load
   calls      : [],     // one entry per intercepted call
-  errors     : []      // fixture-level faults: never thrown, always reported
+  errors     : [],     // fixture-level faults: never thrown, always reported
+
+  // Permission and lifecycle bookkeeping (SCR-F56). `tightened` records the
+  // mode this file has already applied to a path, so a chmod happens once per
+  // path rather than once per write; `modeFaultReported` keeps a systematic
+  // chmod failure to ONE error record; `exitCleanupInstalled` keeps the exit
+  // hook to one registration whatever mix of preload and direct require
+  // reached this module.
+  tightened            : {},
+  modeFaultReported    : false,
+  logModeFaults        : {},
+  exitCleanupInstalled : false,
+
+  // Every store root this process DERIVED AND CREATED for itself, in order.
+  // Append-only, and untouched by restore() and by every rebind: it is the
+  // proof of ownership the exit cleanup removes against, so a process that
+  // created its own root and was then re-pointed at a caller's still cleans up
+  // the one it made, and a directory this file did not create is never removed
+  // however its name looks. See rememberCreatedRoot().
+  createdRoots         : []
 };
 
 // ---------------------------------------------------------------------------
@@ -460,6 +712,46 @@ var state = {
 // here may emit to stdout or stderr: the zero-warning gate captures both
 // streams for the whole run (AAP 0.8).
 // ---------------------------------------------------------------------------
+
+// Tightens PARITY_S3_LOG to an owner-only mode (SCR-F56). Keyed by path, like
+// tighten(), because the variable is read on every write and a harness that
+// re-points it mid-process has a second file to tighten.
+//
+// Separate from tighten() for one reason: a failure here is recorded straight
+// into state.errors and NOT through fail(), because fail() calls record(),
+// record() appends to the very file whose permissions are in question, and a
+// destination that cannot be chmod'ed is frequently one that cannot be written
+// either - so routing it through the log would recurse.
+//
+// Marked on SUCCESS only, so a transient failure is retried on the next append
+// rather than abandoning a retained artifact at the ambient 0644; the REPORT is
+// what is deduplicated, once per path, so a permanently failing chmod cannot
+// fill the error list.
+function tightenLog(target) {
+  if (state.tightened[target] === STORE_FILE_MODE) {
+    return true;
+  }
+
+  try {
+    fs.chmodSync(target, STORE_FILE_MODE);
+    state.tightened[target] = STORE_FILE_MODE;
+    return true;
+  }
+  catch (e) {
+    if (!state.logModeFaults[target]) {
+      state.logModeFaults[target] = true;
+      state.errors.push({
+        event : 'log-mode-not-tightened',
+        detail: {
+          path  : target,
+          mode  : '0' + STORE_FILE_MODE.toString(8),
+          error : e && e.message ? e.message : String(e)
+        }
+      });
+    }
+    return false;
+  }
+}
 
 // Appends one record and, when PARITY_S3_LOG is set, writes it through
 // immediately. Writing per call rather than only on flush() is deliberate: the
@@ -475,7 +767,12 @@ function record(entry) {
   }
 
   try {
-    fs.appendFileSync(target, JSON.stringify(entry) + '\n');
+    // Owner-only (SCR-F56). The log names every bucket and key a run touched,
+    // and it is a retained artifact, so its mode is part of how the evidence is
+    // handled rather than an incidental of the umask. tightenLog() covers the
+    // case where the harness created the file first.
+    fs.appendFileSync(target, JSON.stringify(entry) + '\n', { mode: STORE_FILE_MODE });
+    tightenLog(target);
   }
   catch (e) {
     // A logging fault is not the application's problem. It is retained in
@@ -517,7 +814,9 @@ function flush() {
     var lines = state.calls.map(function(entry) {
       return JSON.stringify(entry);
     });
-    fs.writeFileSync(target, lines.length ? lines.join('\n') + '\n' : '');
+    fs.writeFileSync(target, lines.length ? lines.join('\n') + '\n' : '',
+      { mode: STORE_FILE_MODE });
+    tightenLog(target);
     return target;
   }
   catch (e) {
@@ -654,23 +953,159 @@ function resolveRoot() {
     return path.resolve(configured.trim());
   }
 
-  return path.join(os.tmpdir(), 'parity-s3-' + process.pid);
+  return defaultRoot();
 }
 
-// Creates <root>/objects and <root>/meta. Called at load and again before
-// every write, so a root removed between operations is recreated rather than
-// turning into a cascade of ENOENT. Returns a boolean and never throws: at
-// load time a throw would take the server down before app.js loads.
-function ensureRoot() {
-  if (state.rootReady) {
+// The root this file derives for itself, and therefore the only root it owns.
+// Kept as its own function so that the exit hook can recompute it and compare
+// rather than trusting a flag: a path is only ever removed when it is byte-
+// identical to this value (SCR-F56).
+function defaultRoot() {
+  return path.join(os.tmpdir(), DEFAULT_ROOT_PREFIX + process.pid);
+}
+
+// Whether PARITY_S3_ROOT is currently supplying the root. When it is, the root
+// is the caller's; when it is not, resolveRoot() derives the default and the
+// root is a candidate for ownership - which is only settled by having CREATED
+// it, in rememberCreatedRoot() below.
+function environmentRootSet() {
+  return typeof process.env.PARITY_S3_ROOT === 'string' &&
+         process.env.PARITY_S3_ROOT.trim() !== '';
+}
+
+// Records that this process CREATED a root of its own, which is the only proof
+// of ownership this file accepts (SCR-F56).
+//
+// Ownership is deliberately NOT inferred from the path's shape at exit. Two
+// measured failures follow from inferring it:
+//   * A process can derive its own default root, write into it, and later be
+//     re-pointed at a caller-supplied root. state.root then names the caller's
+//     directory, and a check against the LIVE root would leave the derived one
+//     behind - so the list below is append-only and survives every rebind.
+//   * A name-shaped check deletes a directory this file never created. The
+//     default name contains only os.tmpdir() and this pid, both of which
+//     another process can construct, and `rm -rf` on someone else's directory
+//     is not a mistake worth risking for a temporary-file tidy-up.
+// Both conditions are therefore required: the root came from the default rather
+// than from the environment, AND the mkdir that follows created it.
+function rememberCreatedRoot(target) {
+  if (state.createdRoots.indexOf(target) === -1) {
+    state.createdRoots.push(target);
+  }
+
+  return target;
+}
+
+// Tightens one directory or file to an owner-only mode, once per path per
+// process. A mode given to mkdir or to a write is applied only at creation and
+// is masked by the umask, so this is what actually holds SCR-F56's guarantee
+// for a root a harness created, a store reused from an earlier run, or a
+// permissive umask.
+//
+// A failure is recorded ONCE per bind through fail(), not once per file: it is
+// a genuine fixture fault - the evidence is readable by other users - and
+// test/parity/storage.js asserts errors() is empty, so it must be visible; but
+// a systematic failure must not push one record per object and drown the list.
+// Never throws.
+function tighten(target, mode) {
+  if (state.tightened[target] === mode) {
     return true;
   }
 
   try {
-    fs.mkdirSync(path.join(state.root, OBJECTS_DIR), { recursive: true });
-    fs.mkdirSync(path.join(state.root, META_DIR), { recursive: true });
-    state.rootReady = true;
+    fs.chmodSync(target, mode);
+    state.tightened[target] = mode;
     return true;
+  }
+  catch (e) {
+    if (!state.modeFaultReported) {
+      state.modeFaultReported = true;
+      fail('store-mode-not-tightened', {
+        path  : target,
+        mode  : '0' + mode.toString(8),
+        error : e && e.message ? e.message : String(e)
+      });
+    }
+    return false;
+  }
+}
+
+// Points the store at a resolved root. Nothing else in this file assigns
+// state.root, so this is the one place a store can change identity, and it
+// keeps the exported `root` value in step with it.
+//
+// A rebind that REPLACES a previously bound, different root is recorded as
+// evidence, because a store that changed identity mid-process is something a
+// reader of the call log has to be able to see. It goes through record() and
+// deliberately NOT through fail(): test/parity/storage.js:1896-1900 asserts
+// errors() deep-equals [] for most of its cases, and a legitimate re-point -
+// which is exactly what a two-pass caller performs - is not a fault. The
+// first bind of the process records nothing: there is no previous store to
+// report, and lastBoundRoot survives restore() precisely so that the pass
+// boundary is still visible after an unbind.
+function bindRoot(resolved) {
+  var previous = state.lastBoundRoot;
+
+  state.root          = resolved;
+  state.rootReady     = false;
+  state.lastBoundRoot = resolved;
+  module.exports.root = resolved;
+
+  if (previous !== null && previous !== resolved) {
+    record({
+      operation    : 'store-root-bound',
+      previousRoot : previous,
+      root         : resolved,
+      outcome      : 'rebound'
+    });
+  }
+
+  return resolved;
+}
+
+// Binds the store to whatever PARITY_S3_ROOT names NOW and creates
+// <root>/objects and <root>/meta. Every store accessor calls this first, so it
+// is the single choke point through which a root is resolved, and it re-reads
+// the environment on every call rather than trusting a value cached at load.
+//
+// That re-read is the whole of the cross-pass guarantee (TST-73).
+// test/parity/replay.js:4986 assigns PARITY_S3_ROOT the root of the pass it is
+// collecting evidence for and then re-uses this already-required module, so a
+// root resolved once at load would report the FIRST pass's objects as the
+// SECOND pass's evidence - no error, just the wrong store. Rebinding here also
+// means restore() can simply unbind, and the next store access picks up
+// whatever the caller has pointed the variable at.
+//
+// The fast path - the root is unchanged and its directories exist - is one
+// environment read and one string comparison, which is why this can sit in
+// front of every read rather than only before a write. A root removed between
+// operations is still recreated rather than turning into a cascade of ENOENT.
+// Returns a boolean and never throws: at load time a throw would take the
+// server down before app.js loads.
+function ensureRoot() {
+  var resolved = resolveRoot();
+  var derived  = !environmentRootSet();
+  var rootExisted;
+
+  if (state.root === resolved && state.rootReady) {
+    return true;
+  }
+
+  if (state.root !== resolved) {
+    bindRoot(resolved);
+  }
+
+  // Whether the root already existed decides ownership of the root ITSELF
+  // (SCR-F56): the two subdirectories below are always this file's, but the
+  // root is frequently a directory a harness created - test/parity/server.js,
+  // worker.js and storage.js each build one inside their own run directory -
+  // and a borrowed directory is not one to re-permission or remove.
+  rootExisted = directoryExists(state.root);
+
+  try {
+    fs.mkdirSync(path.join(state.root, OBJECTS_DIR), { recursive: true, mode: STORE_DIR_MODE });
+    fs.mkdirSync(path.join(state.root, META_DIR), { recursive: true, mode: STORE_DIR_MODE });
+    state.rootReady = true;
   }
   catch (e) {
     state.rootReady = false;
@@ -680,6 +1115,141 @@ function ensureRoot() {
     });
     return false;
   }
+
+  if (!rootExisted) {
+    tighten(state.root, STORE_DIR_MODE);
+
+    // Created by this call, and derived rather than supplied, so it is this
+    // file's to remove at exit - and that fact is recorded HERE, at the
+    // creation point, because nothing observable later can establish it.
+    if (derived) {
+      rememberCreatedRoot(state.root);
+    }
+  }
+
+  tighten(path.join(state.root, OBJECTS_DIR), STORE_DIR_MODE);
+  tighten(path.join(state.root, META_DIR), STORE_DIR_MODE);
+
+  installExitCleanup();
+
+  return true;
+}
+
+// Whether a path is an existing directory. Used only to decide whether this
+// file created the store root or borrowed it, so anything other than a
+// directory - absent, a file, unreadable - answers "not there, and mine if the
+// mkdir below succeeds". Never throws.
+function directoryExists(target) {
+  try {
+    return fs.statSync(target).isDirectory();
+  }
+  catch (e) {
+    return false;
+  }
+}
+
+// Registers the exit-time removal of the store roots this file CREATED, and
+// nothing else (SCR-F56). Registered once, from the first bind, so a process
+// that only ever talks to a caller-supplied root registers a hook that decides
+// to do nothing - which is cheaper and simpler than deciding whether to
+// register.
+//
+// What is removed is decided by state.createdRoots, recorded at the moment each
+// directory was created, and not by the live binding or by the shape of a path:
+// a process can create its own root and later be re-pointed at a caller's, and
+// a name-shaped test would both miss the first and risk deleting a directory
+// another process happened to create under the same name.
+//
+// A caller-supplied root is never touched: it is the artifact the harness asked
+// for, it frequently sits inside a run directory the harness also removes, and
+// test/parity/replay.js and test/parity/capture.js READ it after the run to
+// collect the stored-object evidence. Removing it would delete the evidence
+// this fixture exists to produce.
+//
+// Only 'exit' is used, for the same reason test/parity/fixtures/mail.js gives:
+// a signal listener would suppress Node's default termination and change the
+// signal behaviour of the application this file is preloaded into, and
+// test/parity/server.js owns graceful shutdown. Nothing here throws and nothing
+// prints, because neither is permitted from an exit handler in a measured run.
+function installExitCleanup() {
+  if (state.exitCleanupInstalled) {
+    return true;
+  }
+
+  state.exitCleanupInstalled = true;
+
+  try {
+    process.on('exit', function() {
+      try {
+        removeCreatedRoots();
+      }
+      catch (ignored) {
+        // removeCreatedRoots() has no throwing path; this is the last layer,
+        // and an exit handler is the one place where there is nothing left to
+        // report to.
+      }
+    });
+
+    return true;
+  }
+  catch (e) {
+    state.exitCleanupInstalled = false;
+    fail('exit-cleanup-not-installed', {
+      error: e && e.message ? e.message : String(e)
+    });
+    return false;
+  }
+}
+
+// Removes every store root this process created for itself. Returns the paths
+// removed, which is an EMPTY list for every harness in test/parity - all of
+// them supply PARITY_S3_ROOT, so nothing here is ever theirs to remove. Never
+// throws, and never removes a path that is not in state.createdRoots.
+function removeCreatedRoots() {
+  var removed = [];
+
+  state.createdRoots.forEach(function(target) {
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+      removed.push(target);
+    }
+    catch (e) {
+      // Nothing to report to: this runs from the exit handler, where the log
+      // and the error list are both already beyond anyone's reach.
+    }
+  });
+
+  return removed;
+}
+
+// The explicit check a caller performs when it has an expectation about which
+// store it is talking to - test/parity/worker.js:1123 and :2616 assert the
+// root, and a two-pass caller has a per-pass value to hold this file to.
+// Rebinds first, so the answer describes the store the NEXT operation will
+// use, and normalizes `expected` exactly as resolveRoot() normalizes the
+// environment value so that a trailing separator is not reported as a
+// mismatch.
+//
+// A mismatch IS a fault and goes through fail(): the caller has asserted a
+// root the store is not using, which means its evidence is about the wrong
+// directory. Returns {root, expected, ok}; `expected` is null when the
+// argument was not a usable path.
+function verifyRoot(expected) {
+  var bound  = ensureRoot();
+  var wanted = typeof expected === 'string' && expected.trim() !== ''
+    ? path.resolve(expected.trim())
+    : null;
+  var ok     = bound && wanted !== null && state.root === wanted;
+
+  if (!ok) {
+    fail('store-root-mismatch', {
+      root      : state.root,
+      expected  : wanted,
+      rootReady : state.rootReady
+    });
+  }
+
+  return { root: state.root, expected: wanted, ok: ok };
 }
 
 // ---------------------------------------------------------------------------
@@ -755,8 +1325,15 @@ function writeObject(bucket, key, body, options) {
     size               : body.length
   };
 
-  fs.writeFileSync(objectPath(bucket, key), body);
-  fs.writeFileSync(metaPath(bucket, key), JSON.stringify(sidecar, null, 2) + '\n');
+  // Owner-only, and tightened as well as created that way (SCR-F56): a write
+  // applies `mode` only when it creates the file, so an object overwritten in a
+  // store a harness reused would otherwise keep the 0644 the first run left.
+  fs.writeFileSync(objectPath(bucket, key), body, { mode: STORE_FILE_MODE });
+  fs.writeFileSync(metaPath(bucket, key), JSON.stringify(sidecar, null, 2) + '\n',
+    { mode: STORE_FILE_MODE });
+
+  tighten(objectPath(bucket, key), STORE_FILE_MODE);
+  tighten(metaPath(bucket, key), STORE_FILE_MODE);
 
   return sidecar;
 }
@@ -766,7 +1343,7 @@ function writeObject(bucket, key, body, options) {
 // the recoverable metadata is rebuilt from them, which matters because the
 // bytes are the contract and the metadata is not.
 function readObject(bucket, key) {
-  if (!state.rootReady && !ensureRoot()) {
+  if (!ensureRoot()) {
     return null;
   }
 
@@ -807,7 +1384,7 @@ function readObject(bucket, key) {
 }
 
 function hasObject(bucket, key) {
-  if (!state.rootReady && !ensureRoot()) {
+  if (!ensureRoot()) {
     return false;
   }
 
@@ -823,7 +1400,7 @@ function hasObject(bucket, key) {
 // Removes the bytes and the sidecar. Returns whether the object had been
 // present, which the call log records; the SDK reports success either way.
 function removeObject(bucket, key) {
-  if (!state.rootReady && !ensureRoot()) {
+  if (!ensureRoot()) {
     return false;
   }
 
@@ -851,7 +1428,7 @@ function removeObject(bucket, key) {
 // across runs and across filesystems. The keys come from the sidecars and are
 // therefore byte-exact.
 function allObjects() {
-  if (!state.rootReady && !ensureRoot()) {
+  if (!ensureRoot()) {
     return [];
   }
 
@@ -913,7 +1490,7 @@ function allObjects() {
 function clearStore() {
   var cleared = 0;
 
-  if (!state.rootReady && !ensureRoot()) {
+  if (!ensureRoot()) {
     return cleared;
   }
 
@@ -965,6 +1542,92 @@ function clearStore() {
 // remaining entries are still loaded, because a preload that throws takes the
 // server down before app.js loads.
 // ---------------------------------------------------------------------------
+
+// Decodes a `bytesBase64` value, accepting ONLY canonical base64 - the exact
+// string Buffer#toString('base64') produces for the bytes it yields. Returns
+// {ok:true, body:Buffer} or {ok:false, reason} naming the rule that failed.
+//
+// A charset test is not enough, which is what this replaced (API-F29,
+// SCR-F12). Buffer.from(value, 'base64') never fails: it discards what it
+// cannot use and stops where it cannot continue. Measured on Node v22.23.2,
+// every one of these passed the previous charset pattern and every one seeds
+// DIFFERENT bytes from the ones the manifest appears to name - 'A' yields 0
+// bytes, 'a=' 0 bytes, 'QQ=' 1 byte, 'Zm9v=' the 3 bytes of 'foo' with the
+// stray pad ignored, and 'Zm9=' the 2 bytes 'fo', whose own encoding is
+// 'Zm8='. Because the S3 Key is the sha1 digest of the CONTENTS (AAP 0.6.7),
+// different bytes are a different key, and a wrong key surfaces as nothing at
+// all: no error, just an object no lookup ever finds. The manifest is
+// therefore held to the encoding it claims to be, in this order:
+//
+//   1. ASCII whitespace is stripped, because the schema documents it as
+//      allowed - a manifest may wrap a long value across lines.
+//   2. At most two trailing '=' characters. Anything more, or any '=' that is
+//      not in that trailing run, means two concatenated encodings or a
+//      truncation rather than padding.
+//   3. Every remaining character is in the standard alphabet, so base64url
+//      ('-' and '_') is REJECTED instead of being decoded as something else.
+//   4. The compact length is a multiple of four, which is what rejects 'A',
+//      'a=', 'QQ=' and 'Zm9v='.
+//   5. The decoded bytes RE-ENCODE to the same string, which is what rejects
+//      'Zm9=' - the only rule that catches padding bits carrying values a
+//      canonical encoder never emits.
+//
+// The empty string stays legal and yields a zero-byte body: it satisfies both
+// the length and the round-trip rules, and a zero-byte object is a legitimate
+// thing to seed.
+function decodeCanonicalBase64(value) {
+  if (typeof value !== 'string') {
+    return { ok: false, reason: 'is not a string' };
+  }
+
+  var compact  = value.replace(BASE64_WHITESPACE_PATTERN, '');
+  var padMatch = /=+$/.exec(compact);
+  var padding  = padMatch ? padMatch[0].length : 0;
+  var payload  = padding ? compact.slice(0, compact.length - padding) : compact;
+
+  if (padding > 2) {
+    return {
+      ok     : false,
+      reason : 'carries ' + padding + ' trailing padding characters, and ' +
+               'canonical base64 carries at most two'
+    };
+  }
+
+  if (!BASE64_ALPHABET_PATTERN.test(payload)) {
+    return {
+      ok     : false,
+      reason : 'contains a character outside the base64 alphabet ' +
+               '(A-Z, a-z, 0-9, + and /) or an "=" that is not trailing ' +
+               'padding, so it is not the encoding it claims to be'
+    };
+  }
+
+  if (compact.length % 4 !== 0) {
+    return {
+      ok     : false,
+      reason : 'is ' + compact.length + ' characters long, which is not a ' +
+               'multiple of four, so Buffer.from would drop the remainder ' +
+               'and seed fewer bytes than the value names'
+    };
+  }
+
+  var decoded   = Buffer.from(compact, 'base64');
+  var canonical = decoded.toString('base64');
+
+  if (canonical !== compact) {
+    return {
+      ok     : false,
+      reason : 'is not canonical: it decodes to ' + decoded.length +
+               ' bytes which re-encode as ' +
+               (canonical.length > 32
+                 ? '"' + canonical.slice(0, 32) + '..." (' + canonical.length + ' characters)'
+                 : '"' + canonical + '"') +
+               ' rather than as the value supplied'
+    };
+  }
+
+  return { ok: true, body: decoded };
+}
 
 // Validates one entry and resolves its body. Returns
 // {ok:true, bucket, key, body, contentType, contentDisposition} or
@@ -1018,13 +1681,19 @@ function normalizeSeedEntry(entry, index) {
     if (typeof entry.bytesBase64 !== 'string') {
       return { ok: false, reason: where + ' has a non-string `bytesBase64`' };
     }
-    if (!BASE64_PATTERN.test(entry.bytesBase64)) {
-      // Buffer.from silently truncates at the first invalid character, which
-      // would seed the wrong bytes and therefore the wrong content digest -
-      // the one failure AAP 0.6.7 says surfaces as nothing but a lookup miss.
-      return { ok: false, reason: where + ' has a `bytesBase64` that is not valid base64' };
+
+    // The decode is the validation: a value Buffer.from would silently
+    // normalize seeds the wrong bytes and therefore the wrong content digest,
+    // which is the one failure AAP 0.6.7 says surfaces as nothing but a lookup
+    // miss. The reason names the rule that failed, because this string is what
+    // lands on errors() and in the evidence log.
+    var decoded = decodeCanonicalBase64(entry.bytesBase64);
+
+    if (!decoded.ok) {
+      return { ok: false, reason: where + ' has a `bytesBase64` that ' + decoded.reason };
     }
-    body = Buffer.from(entry.bytesBase64, 'base64');
+
+    body = decoded.body;
   }
   else {
     if (typeof entry.file !== 'string' || entry.file === '') {
@@ -1090,6 +1759,14 @@ function prepopulate(manifest) {
         key         : normalized.key,
         contentType : optionalString(normalized.contentType),
         bodyBytes   : normalized.body.length,
+        // The identity the storage contract keys on, carried by the record
+        // that reports the load (SCR-F12). "Loaded" without it is a claim
+        // about a byte count, and two different byte strings of the same
+        // length are indistinguishable in it - while lib/util/file.js:32-43
+        // derives the object Key from exactly this digest, so a seed that
+        // loaded the wrong bytes is only ever visible here. Derived from the
+        // bytes actually written, not from the manifest value.
+        bodySha1    : crypto.createHash('sha1').update(normalized.body).digest('hex'),
         outcome     : 'stored'
       });
     }
@@ -1781,6 +2458,22 @@ ParityS3.prototype.headObject = function(params, callback) {
 // takes the server down before app.js loads, so a failure is recorded on
 // errors() and reported through status() instead.
 function install() {
+  // Binding the store is the FIRST thing an install does, before the
+  // already-installed no-op, and it is the other half of TST-73. restore()
+  // unbinds the store, so a caller that installs once per pass - set
+  // PARITY_S3_ROOT, install(), read - would otherwise be holding the exported
+  // `root` value at null until some later store access happened to bind it,
+  // and a caller that re-pointed the variable WITHOUT restoring would not
+  // rebind at all here. Running it unconditionally makes "installed implies
+  // bound and published" a real invariant of this module rather than a
+  // property of the load order, and it is what keeps the exported `root` value
+  // in step with status().root, which resolves live. The fast path is one
+  // environment read and one string comparison; a failure to create the
+  // directories is already recorded by ensureRoot() through fail() and must
+  // not stop the namespace from being patched, because an unpatched namespace
+  // means the application reaches real S3.
+  ensureRoot();
+
   if (state.installed) {
     return status();
   }
@@ -1837,9 +2530,18 @@ function install() {
   return status();
 }
 
-// Puts the genuine AWS.S3 back. The retained original is used here and nowhere
-// else: no code path in this file ever constructs or calls it, which is what
-// keeps "no network access on any code path" true.
+// Puts the genuine AWS.S3 back AND unbinds the store. The retained original is
+// used here and nowhere else: no code path in this file ever constructs or
+// calls it, which is what keeps "no network access on any code path" true.
+//
+// Unbinding the store is not housekeeping, it is the other half of the same
+// guarantee (TST-73): the constructor patch and the object store are two
+// separate pieces of state, and a caller that restores between two passes -
+// test/parity/replay.js:4986-4999 sets PARITY_S3_ROOT, re-uses the cached
+// module, calls restore() and then reads the store - was previously left
+// holding the FIRST pass's directory with no error to show for it. After this
+// call nothing is bound, and the next store access binds whatever
+// PARITY_S3_ROOT names then, so each pass gets its own store.
 function restore() {
   if (state.awsModule && state.originalS3) {
     state.awsModule.S3 = state.originalS3;
@@ -1849,26 +2551,523 @@ function restore() {
   state.originalS3 = null;
   state.installed  = false;
 
+  // state.lastBoundRoot is deliberately NOT cleared: it is what lets the next
+  // bind report which store it replaced.
+  state.root          = null;
+  state.rootReady     = false;
+  module.exports.root = null;
+
   return status();
 }
 
 // What is patched, where, and what the store and the seed load produced.
-// Deliberately free of directory scans, so a harness can call it cheaply from
-// inside a run; objects() is the accessor that touches the filesystem.
+// Deliberately free of directory scans and of any mkdir, so a harness can call
+// it cheaply from inside a run; objects() is the accessor that touches the
+// filesystem.
+//
+// `root` reports the LIVE root - the directory the next store access will use -
+// rather than a value cached at load, which is what
+// test/parity/worker.js:1123 and :2616 assert against PARITY_S3_ROOT and
+// against the run layout, and what makes the answer meaningful to a caller
+// that has just re-pointed the variable or called restore(). `rootReady` is
+// true only when that live root is the bound one and its directories exist, so
+// the two fields cannot disagree.
 function status() {
+  var live = resolveRoot();
+
   return {
     installed  : state.installed,
     appRoot    : process.env.PARITY_APP_ROOT || process.cwd(),
     awsPath    : state.awsPath,
     patched    : !!(state.awsModule && state.awsModule.S3 &&
                     state.awsModule.S3.parityFixture === FIXTURE_MARKER),
-    root       : state.root,
-    rootReady  : state.rootReady,
+    root       : live,
+    rootReady  : state.root === live && state.rootReady,
     seed       : state.seed,
     calls      : state.calls.length,
     errors     : state.errors.length,
     diagnostic : state.diagnostic
   };
+}
+
+// ---------------------------------------------------------------------------
+// Surface inventory (BE-36). Two views of AWS_SURFACE, because a documented
+// surface that nothing measures is a surface that drifts: surface() reports
+// what a run actually REACHED, and measureSurface() reports what the tree
+// actually CONTAINS. The declared constant is the third view, and the point of
+// the pair is that any disagreement between the three is visible instead of
+// being a comment nobody re-checks.
+// ---------------------------------------------------------------------------
+
+// What this run reached, from the call log.
+//
+//   declared      AWS_SURFACE, unchanged and frozen.
+//   observed      {<operation>: <count>} over every recorded call, including
+//                 the fixture's own non-method operations, so the log's own
+//                 shape is not hidden.
+//   stubsInvoked  the defensive stubs that were actually called. `headObject`
+//                 appearing here is what would DISPROVE the "nothing calls it"
+//                 measurement, which is the claim docs/baseline-parity.md gets
+//                 wrong in the other direction.
+//   undeclared    an operation the fixture answered that AWS_SURFACE does not
+//                 declare - a call site the inventory has not caught up with.
+//
+// Cheap: it walks the in-memory call log and touches neither the filesystem
+// nor the tree.
+function surface() {
+  var declaredMethods = [];
+  var observed        = {};
+  var stubsInvoked    = [];
+  var undeclared      = [];
+
+  AWS_SURFACE.forEach(function(entry) {
+    if (declaredMethods.indexOf(entry.method) === -1) {
+      declaredMethods.push(entry.method);
+    }
+  });
+
+  state.calls.forEach(function(entry) {
+    if (!entry || typeof entry.operation !== 'string') {
+      // A fail() record is keyed on `event`, not on an operation, and is
+      // therefore not a call against the surface.
+      return;
+    }
+    observed[entry.operation] = (observed[entry.operation] || 0) + 1;
+  });
+
+  Object.keys(observed).forEach(function(operation) {
+    if (declaredMethods.indexOf(operation) === -1 &&
+        NON_METHOD_OPERATIONS.indexOf(operation) === -1) {
+      undeclared.push(operation);
+    }
+  });
+
+  AWS_SURFACE.forEach(function(entry) {
+    if (entry.role === 'defensive-stub' &&
+        observed[entry.method] &&
+        stubsInvoked.indexOf(entry.method) === -1) {
+      stubsInvoked.push(entry.method);
+    }
+  });
+
+  return {
+    declared     : AWS_SURFACE,
+    observed     : observed,
+    stubsInvoked : stubsInvoked,
+    undeclared   : undeclared
+  };
+}
+
+// The scan bounds. A tree this size needs none of them - lib/ and config/ hold
+// well under a hundred files - and they exist so that a symlink loop or an
+// unexpected tree cannot turn a documentation helper into an unbounded walk.
+var SCAN_MAX_FILES      = 2000;
+var SCAN_MAX_DIRS       = 500;
+var SCAN_MAX_FILE_BYTES = 4 * 1024 * 1024;
+var SCAN_CALL_WINDOW    = 4000;   // characters of one call expression
+var SCAN_CHAIN_WINDOW   = 40;     // characters after it, for a chained call
+
+// Directory names never descended into. `node_modules` is the one that
+// matters: aws-sdk's own source is full of these method names and would swamp
+// the measurement.
+var SCAN_SKIP_DIRS = ['node_modules', '.git'];
+
+// Measures the AWS surface the tree really contains, and is the generator
+// behind the inventory rather than a transcription of it (BE-36).
+//
+// Scans <appRoot>/lib recursively and <appRoot>/config non-recursively for
+// `.<method>(` call sites of the methods AWS_SURFACE declares, classifies each
+// site's form from the source around it, and compares the measured
+// (method, form, module) triples against the declared ones. `lib/` and
+// `config/` are the whole of the search space because those are the only trees
+// that reach the SDK - the receiver is not matched on its variable name, since
+// lib/util/store/*.js and config/redis.js call a Redis `client` with entirely
+// different methods and a name-based match would either miss a renamed
+// variable or collect those.
+//
+// Returns:
+//   {ok, appRoot, scanned, sites: [{method, form, file, line, source}],
+//    declaredWithoutSite: [...], drift: {undeclared: [...], missing: [...]},
+//    reason}
+//
+// `ok` describes the SCAN, not the comparison: it is true only when the walk
+// completed inside its bounds, every file was read, and at least one file was
+// found - so a measurement of the wrong tree or a partial one can never be
+// mistaken for a clean result, and `reason` says which of those happened. The
+// comparison's own verdict is `drift`, which a caller asserts separately.
+// `declaredWithoutSite` carries the methods AWS_SURFACE declares with no call
+// site - `headObject`, the defensive stub - which are deliberately NOT
+// reported as missing.
+//
+// It NEVER runs at load, NEVER throws, writes nothing, records nothing and
+// emits nothing on stdout or stderr, so it is safe to call from a
+// documentation generator, from a gate, or from a review session.
+function measureSurface(options) {
+  try {
+    return runSurfaceScan(options && typeof options === 'object' ? options : {});
+  }
+  catch (e) {
+    // A scan is a convenience, never a dependency: a caller gets a reason and
+    // decides for itself, and nothing propagates into a preloaded process.
+    return {
+      ok                  : false,
+      reason              : 'the surface scan failed: ' +
+                            (e && e.message ? e.message : String(e)),
+      appRoot             : null,
+      scanned             : 0,
+      sites               : [],
+      declaredWithoutSite : [],
+      drift               : { undeclared: [], missing: [] }
+    };
+  }
+}
+
+// The scan itself. Separated from measureSurface() only so that the guarantee
+// "never throws" is a single wrapper around a body written for clarity.
+function runSurfaceScan(options) {
+  var appRoot = options.appRoot ||
+                process.env.PARITY_APP_ROOT ||
+                process.cwd();
+  var methods = [];
+  var sites   = [];
+  var skipped = [];
+  var files;
+
+  AWS_SURFACE.forEach(function(entry) {
+    if (methods.indexOf(entry.method) === -1) {
+      methods.push(entry.method);
+    }
+  });
+
+  appRoot = path.resolve(appRoot);
+  files   = collectScanFiles(appRoot, skipped);
+
+  files.list.forEach(function(absolute) {
+    var text;
+
+    try {
+      if (fs.statSync(absolute).size > SCAN_MAX_FILE_BYTES) {
+        skipped.push({ file: absolute, reason: 'larger than the scan limit' });
+        return;
+      }
+      text = fs.readFileSync(absolute, 'utf8');
+    }
+    catch (e) {
+      skipped.push({
+        file   : absolute,
+        reason : e && e.message ? e.message : String(e)
+      });
+      return;
+    }
+
+    scanText(text, methods, relativeTo(appRoot, absolute)).forEach(function(site) {
+      sites.push(site);
+    });
+  });
+
+  sites.sort(function(a, b) {
+    if (a.file !== b.file) {
+      return a.file < b.file ? -1 : 1;
+    }
+    return a.line - b.line;
+  });
+
+  return buildSurfaceResult(appRoot, files, sites, skipped);
+}
+
+// Compares the measured sites against AWS_SURFACE and assembles the result.
+// The comparison key is method + form + module, not method + file: two of the
+// declared entries are getObject in lib/util/file.js and differ only by form,
+// and the form is what decides how a failure is delivered (R-e), so a site
+// whose form changed is drift even though its file did not.
+function buildSurfaceResult(appRoot, files, sites, skipped) {
+  var declaredKeys = [];
+  var withoutSite  = [];
+  var undeclared   = [];
+  var missing      = [];
+  var measuredKeys = sites.map(function(site) {
+    return surfaceKey(site.method, site.form, site.file);
+  });
+  var reason = null;
+
+  AWS_SURFACE.forEach(function(entry) {
+    if (entry.module === null) {
+      if (withoutSite.indexOf(entry.method) === -1) {
+        withoutSite.push(entry.method);
+      }
+      return;
+    }
+    declaredKeys.push(surfaceKey(entry.method, entry.form, entry.module));
+  });
+
+  measuredKeys.forEach(function(key) {
+    if (declaredKeys.indexOf(key) === -1 && undeclared.indexOf(key) === -1) {
+      undeclared.push(key);
+    }
+  });
+
+  declaredKeys.forEach(function(key) {
+    if (measuredKeys.indexOf(key) === -1 && missing.indexOf(key) === -1) {
+      missing.push(key);
+    }
+  });
+
+  if (skipped.length) {
+    reason = skipped.length + ' path(s) could not be scanned, so the ' +
+             'measurement is incomplete: ' + skipped.map(function(entry) {
+               return entry.file + ' (' + entry.reason + ')';
+             }).join('; ');
+  }
+  else if (files.truncated) {
+    reason = 'the scan hit its own bounds (' + SCAN_MAX_FILES + ' files, ' +
+             SCAN_MAX_DIRS + ' directories), so the measurement is incomplete';
+  }
+  else if (files.list.length === 0) {
+    // An absent lib/ and config/ is an ENOENT the walk deliberately swallows,
+    // so without this the caller would get ok:true, no sites and every
+    // declared entry reported missing - a clean-looking answer about the wrong
+    // tree. Measured: that is exactly what a wrong `appRoot` produces.
+    reason = 'no JavaScript file was found under ' + path.join(appRoot, 'lib') +
+             ' or ' + path.join(appRoot, 'config') + ', so the tree scanned ' +
+             'is not the application tree';
+  }
+
+  return {
+    ok                  : reason === null,
+    reason              : reason,
+    appRoot             : appRoot,
+    scanned             : files.list.length,
+    sites               : sites,
+    declaredWithoutSite : withoutSite,
+    drift               : { undeclared: undeclared, missing: missing }
+  };
+}
+
+function surfaceKey(method, form, module) {
+  return method + ' ' + form + ' ' + module;
+}
+
+// A repository-relative path with '/' separators, so a site reads the same way
+// on any host and can be compared against AWS_SURFACE's `module`.
+function relativeTo(appRoot, absolute) {
+  return path.relative(appRoot, absolute).split(path.sep).join('/');
+}
+
+// lib/**/*.js plus config/*.js. Iterative rather than recursive, with an
+// explicit stack and hard caps, so the walk cannot be driven off the end by a
+// symlink loop.
+function collectScanFiles(appRoot, skipped) {
+  var list      = [];
+  var truncated = false;
+  var stack     = [{ dir: path.join(appRoot, 'lib'), recurse: true }];
+  var visited   = 0;
+
+  stack.push({ dir: path.join(appRoot, 'config'), recurse: false });
+
+  while (stack.length) {
+    var current = stack.pop();
+    var entries;
+
+    if (visited >= SCAN_MAX_DIRS || list.length >= SCAN_MAX_FILES) {
+      truncated = true;
+      break;
+    }
+
+    visited += 1;
+
+    try {
+      entries = fs.readdirSync(current.dir, { withFileTypes: true });
+    }
+    catch (e) {
+      if (!e || e.code !== 'ENOENT') {
+        // An absent lib/ or config/ is a caller pointing at the wrong tree and
+        // is reported through `scanned`; anything else is a real fault.
+        skipped.push({
+          file   : current.dir,
+          reason : e && e.message ? e.message : String(e)
+        });
+      }
+      continue;
+    }
+
+    entries.forEach(function(entry) {
+      var absolute = path.join(current.dir, entry.name);
+
+      if (entry.isDirectory()) {
+        if (current.recurse && SCAN_SKIP_DIRS.indexOf(entry.name) === -1) {
+          stack.push({ dir: absolute, recurse: true });
+        }
+        return;
+      }
+
+      // Symlinks are not followed: a link is either a copy of a file already
+      // in the walk or a path outside the tree, and neither belongs in a
+      // measurement of this tree.
+      if (entry.isFile() && entry.name.slice(-3) === '.js') {
+        list.push(absolute);
+      }
+    });
+  }
+
+  return { list: list, truncated: truncated };
+}
+
+// Finds every declared method's call sites in one file's source and classifies
+// each one's form.
+//
+// The form is read from the source around the call rather than assumed, because
+// it is what decides how a failure is delivered and therefore which error
+// funnel the application reaches (R-e):
+//
+//   a chained `.createReadStream(` immediately after the call  -> request-object
+//   a function expression, an arrow, or a bare identifier as
+//     the final argument                                       -> callback
+//   anything else                                              -> synchronous
+//
+// The call's extent is found by balancing parentheses from its own opening one,
+// bounded by SCAN_CALL_WINDOW; a call that does not balance inside that window
+// is reported as 'unclassified' rather than guessed at, which then shows up as
+// drift instead of as a silently wrong form.
+function scanText(text, methods, file) {
+  var receivers = s3Receivers(text);
+  var patterns  = [
+    // The declared methods, wherever they are called. This is what resolves
+    // the lines and forms of the known surface.
+    new RegExp('\\.(' + methods.join('|') + ')\\s*\\(', 'g')
+  ];
+  var found = [];
+
+  // Every method called on an identifier this file has seen assigned from
+  // `new <ns>.S3(...)`, whether or not AWS_SURFACE declares it. Without this
+  // the scan could only ever confirm the list it started from, so a genuinely
+  // new call site - `client.copyObject(...)`, `client.upload(...)` - would be
+  // invisible and the drift report would be vacuous. That was the whole defect
+  // BE-36 names in the prose inventory, reproduced in code.
+  if (receivers.length) {
+    patterns.push(new RegExp('\\b(?:' + receivers.join('|') +
+      ')\\.([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(', 'g'));
+  }
+
+  patterns.forEach(function(pattern) {
+    var match;
+
+    while ((match = pattern.exec(text)) !== null) {
+      var openIndex = match.index + match[0].length - 1;
+      var extent    = callExtent(text, openIndex);
+      var lineStart = text.lastIndexOf('\n', match.index) + 1;
+      var lineEnd   = text.indexOf('\n', match.index);
+      var source    = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd).trim();
+      var line      = lineNumberAt(text, match.index);
+
+      // A line whose match sits inside a line comment or a block-comment
+      // continuation is prose about a call, not a call. Raw text is all a
+      // Node-core-only scanner has, so this is the one false-positive class
+      // worth excluding by rule rather than by parser: every real call site in
+      // this repository is code on its own line.
+      if (source.indexOf('//') === 0 || source.indexOf('*') === 0) {
+        continue;
+      }
+
+      if (found.some(function(site) {
+        return site.line === line && site.method === match[1];
+      })) {
+        continue;                              // both patterns matched one call
+      }
+
+      found.push({
+        method : match[1],
+        form   : classifyForm(text, openIndex, extent),
+        file   : file,
+        line   : line,
+        source : source
+      });
+    }
+  });
+
+  return found;
+}
+
+// The identifiers in one file that hold an S3 client, taken from their
+// assignment: `var client = new aws.S3(...)` at lib/util/file.js:11 and its
+// six siblings, which is the only way this application obtains one - there is
+// no shared instance (config/aws.js exports the namespace). Also accepts a bare
+// `new S3(` for a destructured namespace, which nothing does today.
+//
+// Deliberately not a general dataflow analysis: it reads assignments of the
+// exact shape the repository uses, and a receiver it cannot see simply falls
+// back to the declared-method scan above.
+function s3Receivers(text) {
+  var pattern = /(?:var|let|const)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*new\s+(?:[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*)?S3\s*\(/g;
+  var names   = [];
+  var match;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (names.indexOf(match[1]) === -1) {
+      names.push(match[1]);
+    }
+  }
+
+  return names;
+}
+
+// The index of the ')' that closes the '(' at openIndex, or -1 when it does not
+// close inside SCAN_CALL_WINDOW characters.
+function callExtent(text, openIndex) {
+  var depth = 0;
+  var limit = Math.min(text.length, openIndex + SCAN_CALL_WINDOW);
+  var i;
+
+  for (i = openIndex; i < limit; i += 1) {
+    if (text.charAt(i) === '(') {
+      depth += 1;
+    }
+    else if (text.charAt(i) === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        return i;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function classifyForm(text, openIndex, closeIndex) {
+  if (closeIndex === -1) {
+    return 'unclassified';
+  }
+
+  var args  = text.slice(openIndex + 1, closeIndex);
+  var chain = text.slice(closeIndex + 1, closeIndex + 1 + SCAN_CHAIN_WINDOW);
+
+  if (/^\s*\.\s*createReadStream\s*\(/.test(chain)) {
+    return 'request-object';
+  }
+
+  if (/\bfunction\s*[A-Za-z_$]*\s*\(/.test(args) || /=>/.test(args)) {
+    return 'callback';
+  }
+
+  // A named callback passed by reference - `client.deleteObject({...}, cb)` at
+  // lib/util/file.js is the measured example.
+  if (/,\s*[A-Za-z_$][A-Za-z0-9_$.]*\s*$/.test(args)) {
+    return 'callback';
+  }
+
+  return 'synchronous';
+}
+
+function lineNumberAt(text, index) {
+  var line = 1;
+  var i;
+
+  for (i = 0; i < index; i += 1) {
+    if (text.charAt(i) === '\n') {
+      line += 1;
+    }
+  }
+
+  return line;
 }
 
 // ---------------------------------------------------------------------------
@@ -1978,9 +3177,18 @@ module.exports = {
 
   signedUrlFor : signedUrlFor,
 
-  // The resolved store root. Present as a value because it is fixed for the
-  // life of the process, and repeated in status() for a harness that reports
-  // one object.
+  // Asserts which store this fixture is bound to. Rebinds first, so the answer
+  // describes the store the next operation will use, and records a mismatch as
+  // a fault - a caller checking a root that is not the one in use has evidence
+  // about the wrong directory.
+  verifyRoot : verifyRoot,
+
+  // The currently BOUND store root, or null when nothing is bound - which is
+  // the state restore() leaves behind. It is a value rather than an accessor
+  // because a bind is the only thing that changes it, and status().root is the
+  // accessor to use for the live root: a caller that has just re-pointed
+  // PARITY_S3_ROOT and not yet touched the store sees the new root there and
+  // the old binding here, which is the honest description of that moment.
   root : null,
 
   // A fixture client without touching the namespace, for a direct require that
@@ -1993,23 +3201,41 @@ module.exports = {
 
   // The frozen LastModified every getObject and headObject returns, so an
   // assertion can reference it instead of restating the literal.
-  fixedLastModified : FIXED_LAST_MODIFIED
+  fixedLastModified : FIXED_LAST_MODIFIED,
+
+  // The declared AWS surface, frozen. Authoritative for what this fixture has
+  // to answer, and the thing measureSurface() is compared against.
+  AWS_SURFACE : AWS_SURFACE,
+
+  // What this run reached, from the call log: the declared surface, the
+  // observed operation counts, any defensive stub that was actually invoked,
+  // and any operation the inventory does not declare.
+  surface : surface,
+
+  // What the tree contains: the generator that produces the documented surface
+  // from real call sites, with the drift against AWS_SURFACE. Never runs at
+  // load, never throws and writes nothing.
+  measureSurface : measureSurface
 };
 
 // ---------------------------------------------------------------------------
-// Load. The store root is resolved and created, PARITY_S3_SEED is loaded and
-// the namespace is patched, in that order - the seed has to be on disk before
-// the application can read it, and the application cannot read anything until
-// the namespace is patched.
+// Load. The store root is bound and created, PARITY_S3_SEED is loaded and the
+// namespace is patched, in that order - the seed has to be on disk before the
+// application can read it, and the application cannot read anything until the
+// namespace is patched.
+//
+// The bind happens through ensureRoot() rather than by assigning state.root
+// here, so the load takes exactly the path every later store access takes and
+// there is only one place a root is ever resolved (TST-73). It is also why
+// this is not the last word on the root: the variable is re-read on every
+// store access, so a caller that re-points it later gets the store it asked
+// for rather than this one.
 //
 // Wrapped so that nothing here can throw out of the load: this module is
 // required before app.js, and a throw at this point would take the server down
 // before it ever started. Every failure is on errors() and in status().
 // ---------------------------------------------------------------------------
 try {
-  state.root = resolveRoot();
-  module.exports.root = state.root;
-
   ensureRoot();
   state.seed = loadSeedFromEnvironment();
 
@@ -2028,4 +3254,3 @@ catch (e) {
       ' (secondary failure: ' + (ignored && ignored.message ? ignored.message : String(ignored)) + ')';
   }
 }
-

@@ -4,10 +4,14 @@
   
 FROM amazoncorretto:8
 
-RUN yum -y install --allowerasing python3 \
+# curl is intentionally not requested here: the base image already provides
+# /usr/bin/curl through its preinstalled curl-minimal package, and asking for
+# the full curl package conflicts with it, so yum exits 1. That conflict was
+# what --allowerasing silenced, at the cost of letting yum replace or remove
+# already-installed packages. Do not add curl back to this list.
+RUN yum -y install python3 \
     python3-pip \
     shadow-utils \
-    curl \
     tar \
     gzip
 

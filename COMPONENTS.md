@@ -8,8 +8,8 @@ The components come from a single pinned release asset, retrieved by `scripts/fe
 
 - `https://github.com/trinketapp/trinket-oss/releases/download/v1.1.0/public-components.tgz` - the archive
 - `58422c0d0c7d25c1e6fdd1e014ff690f41c899257703e416e85a0fb0a926181f` - its expected SHA-256, verified before anything is extracted
-- Extraction is staged in a temporary directory and published atomically, and partial files are deleted on failure - `public/components/` is only ever absent or complete
-- A destination that already matches exits 0 without re-downloading, so re-running the script is cheap and safe
+- Extraction is staged in a temporary directory and published atomically, and partial files are deleted on failure - `public/components/` is only ever absent or complete. Work paths that an interrupted earlier run left behind are swept before anything else happens; one that cannot be removed, or that belongs to a run still in progress, stops the script with a non-zero exit naming it rather than being reported as success
+- A destination that already matches exits 0 without re-downloading, so re-running the script is cheap and safe. Matching is decided on two things, not one: the archive digest recorded beside the installed tree, and the installed files themselves, hashed and compared against the file-by-file manifest the publishing run recorded - roughly half a second for this bundle. A component tree that has been deleted, truncated, edited in place or replaced by a symbolic link is therefore refetched rather than trusted
 - The host and the Docker build run this same script, so the artifact is fetched once and verified identically - it replaces an inline `curl | tar` step in the Dockerfile that performed no integrity check at all
 
 ## Components by Feature
@@ -52,7 +52,7 @@ Additional components:
 | closure-library | [google/closure-library](https://github.com/google/closure-library) | v20180204 | Blockly dependency |
 | midi | [trinketapp/MIDI.js](https://github.com/trinketapp/MIDI.js) | master | Music embed |
 | Processing.js | ? | ? | Processing embed |
-| viewerjs | [nickvergessen/ViewerJS](https://github.com/nickvergessen/ViewerJS) | v0.2.1 | Document viewer |
+| viewerjs | [kogmbh/ViewerJS](https://github.com/kogmbh/ViewerJS) | v0.2.1 | Document viewer |
 
 ### Skulpt Extension Modules (`.sk`)
 These are Python modules that run in Skulpt:

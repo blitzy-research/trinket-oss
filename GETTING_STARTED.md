@@ -20,6 +20,11 @@ cd trinket-oss
 # Copy the example local config
 cp config/local.example.yaml config/local.yaml
 
+# Build the stylesheets into the checkout - Compose serves them from there,
+# not from the image. See "Building CSS" below for why.
+docker-compose run --rm --user root app npm run build
+# or, with Node 22 on the host: npm ci && npm run build
+
 # Start the services
 docker-compose up
 ```
@@ -27,6 +32,8 @@ docker-compose up
 Wait for the services to start. You'll see `Server started on port:` when ready.
 
 Open **http://localhost:3000** in your browser.
+
+The CSS step is not optional under Compose, and the reason is the volume layout rather than the build: `docker-compose.yml` mounts your checkout over the application directory, so `/css/base.css` and `/css/embed.css` are served from `public/css/` **in the checkout** and not from the copies the image built. Both files are generated and gitignored, so a fresh clone does not have them and those two requests answer 404 until the build above has run - measured on a clean checkout. The image itself does contain them, so running it without mounting your source over it (`docker run`, or any deployment that does not bind-mount the checkout) needs no extra step.
 
 ## Frontend Components
 
@@ -58,11 +65,13 @@ The project uses SCSS for stylesheets. To compile:
 
 ```bash
 # One-time build
-docker-compose exec app npm run build:css
+docker-compose exec --user root app npm run build:css
 
 # Watch mode (recompiles on changes)
-docker-compose exec app npm run watch:css
+docker-compose exec --user root app npm run watch:css
 ```
+
+`--user root` is required and is not a convenience: the container runs as the unprivileged `trinket` user (uid 999), the checkout it writes into belongs to whoever cloned it, and `public/components` is a named volume owned by the image's user. Without it the build fails with `EACCES` - either writing Vite's bundled config beside `vite.config.mjs`, or copying `public/components` while preparing the output directory. Both failures were measured; as root the build writes both stylesheets into the mounted checkout. The files then belong to root on your host, which is the price of building this way; the host build below does not have that effect.
 
 The same scripts run on the host:
 
@@ -77,9 +86,9 @@ npm run build:css
 npm run watch:css
 ```
 
-Either way the outputs are `public/css/base.css` and `public/css/embed.css`, both gitignored build artifacts.
+Either way the outputs are `public/css/base.css` and `public/css/embed.css`, both gitignored build artifacts. Measured on a clean checkout: `npm ci` then `npm run build` exits 0 and writes 265,727 and 296,352 bytes respectively, and the SCSS compile prints several hundred Sass deprecation notices from the vendored Foundation tree in `public/components` on the way - they are expected, and the artifacts are correct.
 
-A container built from the current `Dockerfile` already contains both stylesheets, because the image build runs `npm run build:css`. Earlier images shipped neither, which is why compiling the CSS after startup was a required step; the commands above remain what you want for watch mode and after editing SCSS.
+A container built from the current `Dockerfile` contains both stylesheets, because the image build runs `npm run build:css`; a clean image build was verified to produce the same two files, byte for byte, and to serve them at `/css/base.css` and `/css/embed.css` with `Content-Type: text/css`. Earlier images shipped neither. **That does not carry over to `docker-compose up`**, because the bind mount described in the Quick Start puts your checkout's `public/css/` in front of the image's - so under Compose these commands, or the host build, are what produce the stylesheets, and the image's copies are what you get when nothing is mounted over them. The application serves the files from disk as they are requested, so a build while the container is running takes effect without a restart.
 
 ### Viewing Logs
 
@@ -140,12 +149,12 @@ trinket-oss/
 
 ### CSS not loading?
 
-Run the CSS build:
+A 404 for `/css/base.css` under Compose means the checkout has no generated stylesheets, because that is where the bind mount makes the application look. Build them:
 ```bash
-docker-compose exec app npm run build:css
+docker-compose exec --user root app npm run build:css
 ```
 
-On the host, use `npm run build` instead - it fetches the frontend components first, which is what the SCSS compile needs.
+On the host, use `npm run build` instead - it fetches the frontend components first, which is what the SCSS compile needs. Either way no restart is required: the files are read from disk per request.
 
 ### Container won't start?
 
@@ -180,10 +189,16 @@ app:
   plugins:
     session:
       cookieOptions:
-        password: 'your-32-character-secret-here!!'
+        password: 'replace-me-with-a-32-character-minimum-secret'
 ```
 
 Production requires a real secret and refuses to start without one, while development and test generate an ephemeral secret when none is set - so sessions there do not survive a restart until you set your own.
+
+The placeholder above is 45 characters, and its length is the point: the guard rejects anything shorter than 32, so a 31-character example copied verbatim would make a production process exit 1 at startup. Generate a real one rather than editing the placeholder:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
 
 ## Email (SMTP)
 

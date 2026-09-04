@@ -20,8 +20,12 @@
  *   2. atomicity    the tree is staged inside the repository and then moved
  *                   into place with rename(2), so public/components/ is only
  *                   ever absent or complete, never half-populated
- *   3. idempotence  a matching stamp file short-circuits the run before any
- *                   network access happens at all
+ *   3. idempotence  a stamp that matches the pinned archive AND an installed
+ *                   tree that still matches the manifest recorded with it
+ *                   short-circuit the run before any network access at all
+ *   4. no litter    work paths left by an interrupted earlier run are swept
+ *                   before that short-circuit is even considered, and a
+ *                   survivor ends the run non-zero rather than quietly
  *
  * Exit codes:
  *   0        bundle published, or already present and verified (no-op)
@@ -30,6 +34,8 @@
  *   3        SHA-256 mismatch -- nothing was extracted
  *   4        extraction failed
  *   5        publish failed -- public/components/ was left untouched
+ *   6        the work this script owns was done, but a temporary path it
+ *            created could not be removed and is still in the repository
  *   130/143  interrupted by SIGINT / SIGTERM, after removing temporary files
  */
 
@@ -85,6 +91,20 @@ var DESTINATIONS = [PRIMARY_DESTINATION];
 // never be committed by accident.
 var STAMP_NAME = '.fetch-components.json';
 
+// The stamp carries a digest of the extracted tree as well as of the archive
+// (see computeTreeManifest), and this string names the format that digest was
+// produced by. It is compared exactly before the fast path is taken, so any
+// future change to the manifest's entry set, field order or separators must
+// come with a new value here: the alternative is a silent digest mismatch that
+// reads to a caller as a corrupted bundle rather than as a format change.
+var TREE_MANIFEST_ALGORITHM = 'sha256-tree-v1';
+
+// Files are hashed through one reusable buffer of this size rather than read
+// whole, so peak memory stays at a megabyte no matter how large a single
+// member is -- this release ships a 22 MB member, and nothing should depend on
+// that staying the biggest.
+var MANIFEST_CHUNK_BYTES = 1024 * 1024;
+
 // Working paths, all inside the repository tree. Inside, for two independent
 // reasons: rename(2) is only atomic within a single filesystem, and a staging
 // directory under os.tmpdir() is very likely a different filesystem inside a
@@ -92,7 +112,9 @@ var STAMP_NAME = '.fetch-components.json';
 // outside the repository, since the Docker build runs it as an unprivileged
 // user. They carry the pid and a distinctive prefix so that a leftover is
 // immediately recognisable as a bug in this script -- .gitignore is not in
-// scope and is deliberately not touched, so cleanup is guaranteed instead.
+// scope and is deliberately not touched, so cleanup is instead confirmed on
+// the filesystem and a path that survives it ends the run non-zero (see
+// cleanupWorkspace and main).
 var WORK_PREFIX = '.fetch-components';
 var DOWNLOAD_PATH = path.join(REPO_ROOT, WORK_PREFIX + '-download-' + process.pid + '.tgz');
 var STAGING_PATH = path.join(REPO_ROOT, WORK_PREFIX + '-staging-' + process.pid);
@@ -103,6 +125,7 @@ var EXIT_DOWNLOAD = 2;
 var EXIT_DIGEST = 3;
 var EXIT_EXTRACT = 4;
 var EXIT_PUBLISH = 5;
+var EXIT_CLEANUP = 6;
 var EXIT_SIGINT = 130;
 var EXIT_SIGTERM = 143;
 
@@ -159,8 +182,47 @@ function isDirectory(target) {
 }
 
 /**
- * Remove a file or directory tree, reporting rather than throwing. Used from
- * cleanup paths, where a failure to tidy up must not mask the real error.
+ * Name what is actually at a path, for messages and for the layout checks.
+ *
+ * lstat, not stat, and that is the entire point of having it alongside
+ * isDirectory(): a symbolic link pointing at some other directory answers
+ * "symbolic link" here, where stat() would happily report a swapped link as a
+ * perfectly good directory and a verification built on it would pass.
+ */
+function describePathType(target) {
+  var stats;
+
+  try {
+    stats = fs.lstatSync(target);
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+      return 'missing';
+    }
+    throw failure(EXIT_ENVIRONMENT, 'could not inspect ' + target + ': ' + err.message);
+  }
+
+  if (stats.isDirectory()) {
+    return 'directory';
+  }
+  if (stats.isSymbolicLink()) {
+    return 'symbolic link';
+  }
+  if (stats.isFile()) {
+    return 'file';
+  }
+  return 'special file';
+}
+
+/**
+ * Remove a file or directory tree, reporting rather than throwing, and return
+ * whether the path is gone.
+ *
+ * It still does not throw, because a failure to tidy up must never mask the
+ * real error a caller is already handling -- but it no longer ends the story
+ * there. rmSync stops at the first child it cannot unlink (a read-only parent
+ * directory, an immutable file, a busy mount), so the answer is taken from the
+ * filesystem afterwards rather than from the absence of an exception, and it is
+ * taken with lstat so a dangling symbolic link counts as present.
  */
 function removeQuietly(target) {
   try {
@@ -168,15 +230,215 @@ function removeQuietly(target) {
   } catch (err) {
     console.error('fetch-components: could not remove ' + target + ': ' + err.message);
   }
+
+  try {
+    return describePathType(target) === 'missing';
+  } catch (err) {
+    // Cleanup must not throw -- it runs from the signal handler too -- so a
+    // path that cannot even be inspected counts as still there, which is the
+    // conservative answer and the one that gets it reported.
+    console.error('fetch-components: could not confirm ' + target + ' is gone: ' + err.message);
+    return false;
+  }
 }
 
 /**
- * Remove the downloaded archive and the staging tree. Synchronous on purpose:
- * it has to be usable from a signal handler as well as from a finally block.
+ * Remove the downloaded archive and the staging tree, and return the ones that
+ * are still there. Synchronous on purpose: it has to be usable from a signal
+ * handler as well as from the outcome logic in main().
+ *
+ * Both paths are created by this script, inside the repository, and named after
+ * its own pid -- so anything still here afterwards is this script's litter in
+ * somebody's checkout, and main() is what decides that this is not a success.
  */
 function cleanupWorkspace() {
-  removeQuietly(DOWNLOAD_PATH);
-  removeQuietly(STAGING_PATH);
+  var surviving = [];
+
+  [DOWNLOAD_PATH, STAGING_PATH].forEach(function (target) {
+    if (!removeQuietly(target)) {
+      surviving.push(target);
+    }
+  });
+
+  return surviving;
+}
+
+/**
+ * One stderr block naming every script-owned path that is still in the
+ * repository, with the one instruction that resolves it. Each path on its own
+ * line, because the names carry a pid and run together unreadably otherwise.
+ */
+function describeSurvivors(surviving) {
+  return 'these paths were created by this script and could not be removed:\n' +
+    surviving.map(function (target) {
+      return '    ' + path.relative(REPO_ROOT, target);
+    }).join('\n') +
+    '\n  Remove them by hand before building; they are inside the repository.';
+}
+
+// ---------------------------------------------------------------------------
+// Work paths left by EARLIER runs.
+//
+// The paths above carry this process's pid, so cleaning them up only ever
+// settles the run that is happening now. A run that was killed between
+// creating a workspace and removing it -- SIGKILL, a lost container, a build
+// agent that went away -- leaves a `.fetch-components-*` path behind under
+// somebody else's pid, and nothing in a later run would look at it: the
+// verified fast path returns before any cleanup at all, so the script would
+// report "nothing to do", exit 0, and leave a partial download or a
+// several-hundred-megabyte replaced bundle sitting in the repository
+// indefinitely. That is the same silent-litter outcome as an unremovable path
+// in the current run, reached by a different route, so it gets the same
+// verdict: swept before anything else is decided, and non-zero if a survivor
+// remains.
+//
+// The shapes are recognised rather than guessed at, and the pid in the name is
+// what makes the sweep safe: a path belonging to a process that is still
+// running is another run's workspace, and deleting it would corrupt that run,
+// so it is reported and left exactly where it is.
+// ---------------------------------------------------------------------------
+
+var WORK_PATH_SHAPES = [
+  { pattern: /^\.fetch-components-download-(\d+)\.tgz$/, what: 'a partial download' },
+  { pattern: /^\.fetch-components-staging-(\d+)$/, what: 'an extraction workspace' },
+  { pattern: /^\.fetch-components-old-(\d+)-/, what: 'a replaced bundle' }
+];
+
+/**
+ * Whether a pid parsed out of a work path belongs to a process that is still
+ * running, in which case the path is in use and must not be touched.
+ *
+ * Two tests, because the cheap one is ambiguous in exactly the environment
+ * this script runs in most often. `/proc/<pid>/cmdline` is read first where it
+ * exists: inside a container this script is pid 1, so a leftover named `-1`
+ * copied out of one (through a bind mount, say) would otherwise look like a
+ * live init process on the host and block every later build. Requiring the
+ * command line to name this script removes that whole class of false
+ * positive. Where /proc is absent -- macOS -- it falls back to signal 0, whose
+ * EPERM means "exists but is not ours", and a pid that has since been reused
+ * is then reported rather than deleted. Conservative in the direction that
+ * cannot destroy another run's work.
+ */
+function isWorkPathInUse(pid) {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) {
+    return false;
+  }
+
+  try {
+    var commandLine = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8');
+    return commandLine.indexOf('fetch-components') !== -1;
+  } catch (err) {
+    if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR' && err.code !== 'EACCES') {
+      throw failure(EXIT_ENVIRONMENT, 'could not inspect process ' + pid + ': ' + err.message);
+    }
+    if (err.code === 'EACCES') {
+      // The process exists and belongs to another user; that is enough.
+      return true;
+    }
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+/**
+ * Every `.fetch-components-*` work path in the two directories this script
+ * writes to, excluding the ones belonging to this run.
+ *
+ * Only names beginning with `WORK_PREFIX + '-'` are considered, which is what
+ * keeps the published stamp -- `.fetch-components.json`, a dot where these
+ * have a hyphen -- out of the sweep. A name that starts with the prefix but
+ * matches none of the known shapes still counts: it is this script's litter by
+ * construction, and since no pid can be read from it there is no run to
+ * protect.
+ */
+function findEarlierWorkPaths() {
+  var directories = [REPO_ROOT];
+
+  DESTINATIONS.forEach(function (destination) {
+    var parent = path.dirname(path.join(REPO_ROOT, destination));
+    if (directories.indexOf(parent) === -1) {
+      directories.push(parent);
+    }
+  });
+
+  var found = [];
+
+  directories.forEach(function (directory) {
+    var names;
+
+    try {
+      names = fs.readdirSync(directory);
+    } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+        return;
+      }
+      throw failure(EXIT_ENVIRONMENT, 'could not read ' + directory + ': ' + err.message);
+    }
+
+    names.forEach(function (name) {
+      if (name.indexOf(WORK_PREFIX + '-') !== 0) {
+        return;
+      }
+
+      var target = path.join(directory, name);
+      if (target === DOWNLOAD_PATH || target === STAGING_PATH) {
+        // This run's own paths. cleanupWorkspace() owns them.
+        return;
+      }
+
+      var pid = null;
+      var what = 'a work path';
+
+      WORK_PATH_SHAPES.some(function (shape) {
+        var match = shape.pattern.exec(name);
+        if (match === null) {
+          return false;
+        }
+        pid = Number(match[1]);
+        what = shape.what;
+        return true;
+      });
+
+      found.push({ target: target, pid: pid, what: what });
+    });
+  });
+
+  return found;
+}
+
+/**
+ * Remove the work paths earlier runs abandoned, and return the ones still
+ * there afterwards -- whether because removal failed or because another run is
+ * using them.
+ */
+function sweepEarlierWorkPaths() {
+  var surviving = [];
+
+  findEarlierWorkPaths().forEach(function (entry) {
+    var relative = path.relative(REPO_ROOT, entry.target);
+    var owner = entry.pid === null ? '' : ' (process ' + entry.pid + ')';
+
+    if (isWorkPathInUse(entry.pid)) {
+      console.error('fetch-components: ' + relative + ' is ' + entry.what +
+        ' belonging to process ' + entry.pid + ', which is still running; leaving it untouched.');
+      surviving.push(entry.target);
+      return;
+    }
+
+    console.log('fetch-components: removing ' + relative + ' -- ' + entry.what +
+      ' left behind by an earlier run' + owner + '.');
+
+    if (!removeQuietly(entry.target)) {
+      surviving.push(entry.target);
+    }
+  });
+
+  return surviving;
 }
 
 /**
@@ -215,27 +477,373 @@ function installSignalHandlers() {
           console.error('fetch-components: could not stop tar: ' + err.message);
         }
       }
-      cleanupWorkspace();
+      var surviving = cleanupWorkspace();
 
       // Written synchronously, and the process ended immediately afterwards: an
       // in-flight download or extraction has to stop here, so there is no
       // opportunity for an asynchronous stderr write to be flushed first.
-      fs.writeSync(2, 'fetch-components: interrupted by ' + signal.name +
-        '; temporary files removed.\n');
+      //
+      // The exit code stays the signal's -- a caller reading it wants to know
+      // it interrupted the run, not how tidy the exit was -- but the message
+      // has to say what is left, because the human who pressed Ctrl-C is
+      // watching this line and nothing else will tell them.
+      if (surviving.length === 0) {
+        fs.writeSync(2, 'fetch-components: interrupted by ' + signal.name +
+          '; temporary files removed.\n');
+      } else {
+        fs.writeSync(2, 'fetch-components: interrupted by ' + signal.name + '; ' +
+          describeSurvivors(surviving) + '\n');
+      }
+
       process.exit(signal.code);
     });
   });
 }
 
+// ---------------------------------------------------------------------------
+// The extracted-tree manifest.
+//
+// The archive digest proves what was downloaded; on a repeat run it proves
+// nothing about what is still on disk. Between two runs a component file can be
+// deleted, truncated, edited, or replaced by a symbolic link pointing somewhere
+// else entirely, and the stamp beside it stays valid -- so a stamp-only fast
+// path trusts that tree and hands it straight to `npm run build` and into the
+// image, with nothing having looked at a single installed byte.
+//
+// So a successful publish records a manifest of what it published, and a repeat
+// run recomputes that manifest over the installed tree and compares digests.
+// Both sides walk the same relative paths with the same code, so the comparison
+// is of content, not of the walker.
+//
+// Full content hashing, not a stat-only check on size and mtime: an in-place
+// edit that preserves the byte count is precisely the tampering a stat check
+// cannot see, and mtime is not preserved across a `cp -a`-style copy of a
+// checkout or a container layer in any way worth relying on. Measured on this
+// release -- 6722 files, 435 MB -- the whole check costs about half a second
+// with the page cache warm, against the ~166 MB download it avoids, and each
+// run reports its own figure so the cost is never a guess. That is the right
+// trade for a build step, and it is why the fast path stays worth taking.
+// ---------------------------------------------------------------------------
+
 /**
- * The SHA-256 recorded by the last successful run, or null when the destination
- * is absent, carries no stamp, or carries one that cannot be read.
+ * Hash one file in fixed-size chunks through a caller-supplied buffer.
  *
- * A public/components/ that exists without a stamp -- left by the old inline
- * `curl | tar`, or by a bower checkout -- is unverifiable, so it deliberately
- * counts as "does not match": fetching and replacing it is the safe outcome.
+ * Synchronous like everything around it -- the layout assertion, the stamp
+ * writer, the signal handler's cleanup -- because 6722 promises buy nothing
+ * here, and chunked rather than readFileSync so that memory does not scale with
+ * the largest member of the bundle.
  */
-function readPublishedDigest() {
+function hashFileContents(absolute, buffer) {
+  var hash = crypto.createHash('sha256');
+  var descriptor = fs.openSync(absolute, 'r');
+
+  try {
+    for (;;) {
+      var read = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (read === 0) {
+        break;
+      }
+      hash.update(buffer.subarray(0, read));
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+
+  return hash.digest('hex');
+}
+
+/**
+ * Convert a platform path to the manifest's own separator, so a manifest
+ * recorded on one platform compares byte-for-byte with one recomputed on
+ * another. The archive's own member names use '/', which settles the choice.
+ */
+function toManifestPath(relative) {
+  return relative.split(path.sep).join('/');
+}
+
+/**
+ * Collect one directory's entries into `records`, recursing depth-first.
+ *
+ * lstatSync throughout: a symbolic link is recorded as a link with its target,
+ * never followed. Following one would both hide a swapped link -- the tree
+ * would hash as whatever it points at -- and risk walking out of the repository
+ * or around a cycle.
+ *
+ * An entry that vanishes mid-walk (ENOENT, or ENOTDIR because a parent was
+ * replaced under us) is simply left out of the manifest. The verdict that
+ * follows is then a mismatch, which is the correct one: the tree is being
+ * modified while it is being verified, so it is not the tree that was recorded.
+ */
+function collectTreeEntries(rootDirectory, relativeDirectory, excludedPath, buffer, records) {
+  var names;
+
+  try {
+    names = fs.readdirSync(path.join(rootDirectory, relativeDirectory));
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+      return;
+    }
+    throw failure(EXIT_ENVIRONMENT, 'could not read ' +
+      path.join(rootDirectory, relativeDirectory) + ': ' + err.message);
+  }
+
+  names.forEach(function (name) {
+    var relative = path.join(relativeDirectory, name);
+    var absolute = path.join(rootDirectory, relative);
+    var manifestPath = toManifestPath(relative);
+
+    // The one exclusion, and it has to be exactly one: the stamp holds the
+    // digest of this manifest, so a manifest that covered the stamp could
+    // never be reproduced. Everything else the archive placed under a
+    // destination is covered.
+    if (manifestPath === excludedPath) {
+      return;
+    }
+
+    var stats;
+    try {
+      stats = fs.lstatSync(absolute);
+    } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+        return;
+      }
+      throw failure(EXIT_ENVIRONMENT, 'could not inspect ' + absolute + ': ' + err.message);
+    }
+
+    if (stats.isDirectory()) {
+      records.push({ path: manifestPath, line: 'directory\u0000' + manifestPath });
+      collectTreeEntries(rootDirectory, relative, excludedPath, buffer, records);
+      return;
+    }
+
+    if (stats.isSymbolicLink()) {
+      var target;
+      try {
+        target = fs.readlinkSync(absolute);
+      } catch (err) {
+        if (err.code === 'ENOENT') {
+          return;
+        }
+        throw failure(EXIT_ENVIRONMENT, 'could not read the link ' + absolute + ': ' + err.message);
+      }
+      records.push({
+        path: manifestPath,
+        symlink: true,
+        line: 'symlink\u0000' + manifestPath + '\u0000' + toManifestPath(target)
+      });
+      return;
+    }
+
+    if (!stats.isFile()) {
+      // A socket, fifo or device node cannot be hashed without blocking, and
+      // this archive contains none. Recording the type alone still makes one
+      // appearing a mismatch rather than an invisible addition.
+      records.push({ path: manifestPath, line: 'special\u0000' + manifestPath });
+      return;
+    }
+
+    var digest;
+    try {
+      digest = hashFileContents(absolute, buffer);
+    } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+        return;
+      }
+      throw failure(EXIT_ENVIRONMENT, 'could not read ' + absolute + ': ' + err.message);
+    }
+
+    records.push({
+      path: manifestPath,
+      file: true,
+      bytes: stats.size,
+      line: 'file\u0000' + manifestPath + '\u0000' + stats.size + '\u0000' + digest
+    });
+  });
+}
+
+/**
+ * Reduce a tree to one digest plus the cheap counts that make a mismatch
+ * reportable in specific terms.
+ *
+ * Determinism comes from two decisions. Entries are sorted by their manifest
+ * path as raw bytes -- readdir order is a filesystem detail, and a locale-aware
+ * comparison would make the digest depend on the environment. And the fields
+ * within a line are separated by NUL, which is the one byte a POSIX path cannot
+ * contain, so no member name can forge a field or line boundary.
+ *
+ * `rootDirectory` is the staging tree at publish time and the repository root
+ * on the verification path; DESTINATIONS are walked in declaration order and
+ * the relative paths are identical either side of the publishing rename, which
+ * is what makes the two digests comparable at all.
+ */
+function computeTreeManifest(rootDirectory) {
+  var buffer = Buffer.allocUnsafe(MANIFEST_CHUNK_BYTES);
+  var excludedPath = toManifestPath(path.join(PRIMARY_DESTINATION, STAMP_NAME));
+  var records = [];
+
+  DESTINATIONS.forEach(function (destination) {
+    records.push({
+      path: toManifestPath(destination),
+      line: 'directory\u0000' + toManifestPath(destination)
+    });
+    collectTreeEntries(rootDirectory, destination, excludedPath, buffer, records);
+  });
+
+  records.sort(function (left, right) {
+    return Buffer.compare(Buffer.from(left.path, 'utf8'), Buffer.from(right.path, 'utf8'));
+  });
+
+  var hash = crypto.createHash('sha256');
+  var files = 0;
+  var symlinks = 0;
+  var bytes = 0;
+
+  records.forEach(function (record) {
+    hash.update(record.line + '\n');
+    if (record.file) {
+      files += 1;
+      bytes += record.bytes;
+    } else if (record.symlink) {
+      symlinks += 1;
+    }
+  });
+
+  return {
+    algorithm: TREE_MANIFEST_ALGORITHM,
+    digest: hash.digest('hex'),
+    entries: records.length,
+    files: files,
+    directories: records.length - files - symlinks,
+    symlinks: symlinks,
+    bytes: bytes
+  };
+}
+
+/**
+ * Say what changed, in the most specific terms the recorded counts support.
+ *
+ * The counts exist for this message alone: "3 files missing" or "total size
+ * differs" tells a reader whether they are looking at a half-deleted tree or at
+ * edited content, where a bare digest mismatch tells them nothing. When the
+ * counts and the total size all agree the difference is in file content or in a
+ * path, and the message says so rather than guessing which.
+ */
+function describeTreeDifference(recorded, actual) {
+  var differences = [];
+
+  [
+    { singular: 'file', plural: 'files', recorded: recorded.files, actual: actual.files },
+    {
+      singular: 'directory',
+      plural: 'directories',
+      recorded: recorded.directories,
+      actual: actual.directories
+    },
+    {
+      singular: 'symbolic link',
+      plural: 'symbolic links',
+      recorded: recorded.symlinks,
+      actual: actual.symlinks
+    }
+  ].forEach(function (count) {
+    if (typeof count.recorded !== 'number' || count.recorded === count.actual) {
+      return;
+    }
+
+    var difference = Math.abs(count.recorded - count.actual);
+    var noun = difference === 1 ? count.singular : count.plural;
+
+    if (count.actual < count.recorded) {
+      differences.push(difference + ' ' + noun + ' missing');
+    } else {
+      differences.push(difference + ' unrecorded ' + noun + ' present');
+    }
+  });
+
+  if (typeof recorded.bytes === 'number' && recorded.bytes !== actual.bytes) {
+    differences.push('total size differs (recorded ' + recorded.bytes + ' bytes, found ' +
+      actual.bytes + ')');
+  }
+
+  if (differences.length === 0) {
+    return 'content differs (' + actual.files + ' files, ' + actual.directories +
+      ' directories and ' + actual.bytes + ' bytes as recorded, but the content or a path changed)';
+  }
+
+  return differences.join('; ');
+}
+
+/**
+ * Check the installed tree against the manifest the stamp recorded, returning
+ * null when it matches and otherwise the reason it does not.
+ *
+ * A reason, not an exception: a tree that fails to verify is handled exactly as
+ * a stamp that records the wrong archive has always been handled -- log what is
+ * wrong and re-fetch -- rather than through a new failure mode that would stop
+ * a build a download can fix. An I/O error of a different kind, an unreadable
+ * file or a permission problem, does still throw from the walk below: that is
+ * not a stale bundle and re-downloading it would not help.
+ *
+ * The layout check comes first and is the installed-side counterpart of
+ * assertStagedLayout: public/components can be a regular file or a symbolic
+ * link to somewhere else, and a stamp read through it would still parse.
+ */
+function verifyPublishedTree(recorded) {
+  if (recorded === null || typeof recorded !== 'object') {
+    return 'it records no tree manifest';
+  }
+
+  if (recorded.algorithm !== TREE_MANIFEST_ALGORITHM) {
+    return 'it records tree manifest format "' + String(recorded.algorithm) + '", not "' +
+      TREE_MANIFEST_ALGORITHM + '"';
+  }
+
+  if (typeof recorded.digest !== 'string' || recorded.digest === '') {
+    return 'its tree manifest records no digest';
+  }
+
+  var layoutProblem = null;
+  DESTINATIONS.forEach(function (destination) {
+    if (layoutProblem !== null) {
+      return;
+    }
+    var type = describePathType(path.join(REPO_ROOT, destination));
+    if (type !== 'directory') {
+      layoutProblem = '"' + destination + '" is ' +
+        (type === 'missing' ? 'missing' : 'a ' + type + ', not a directory');
+    }
+  });
+  if (layoutProblem !== null) {
+    return layoutProblem;
+  }
+
+  var startedAt = Date.now();
+  var actual = computeTreeManifest(REPO_ROOT);
+
+  if (actual.digest !== recorded.digest.toLowerCase()) {
+    return describeTreeDifference(recorded, actual);
+  }
+
+  // Logged rather than silent, because this is the one cost the fast path adds
+  // and a reader watching a slow build is owed the number.
+  console.log('fetch-components: verified ' + actual.files + ' files and ' + actual.directories +
+    ' directories (' + actual.bytes + ' bytes) against the recorded tree manifest in ' +
+    (Date.now() - startedAt) + ' ms');
+
+  return null;
+}
+
+/**
+ * The stamp written by the last successful run, or null when the destination is
+ * absent, carries no stamp, or carries one that cannot be read or records no
+ * archive digest.
+ *
+ * A public/components/ that exists without a usable stamp -- left by the old
+ * inline `curl | tar`, or by a bower checkout -- is unverifiable, so it
+ * deliberately counts as "does not match": fetching and replacing it is the
+ * safe outcome.
+ */
+function readPublishedStamp() {
   var stampPath = path.join(REPO_ROOT, PRIMARY_DESTINATION, STAMP_NAME);
   var raw;
 
@@ -251,7 +859,13 @@ function readPublishedDigest() {
   try {
     var stamp = JSON.parse(raw);
     if (stamp && typeof stamp.sha256 === 'string') {
-      return stamp.sha256.toLowerCase();
+      return {
+        sha256: stamp.sha256.toLowerCase(),
+        // Absent on a stamp written before the tree manifest existed, which
+        // verifyPublishedTree treats as unverifiable -- the same verdict a
+        // stamp without a sha256 gets here.
+        tree: stamp.tree === undefined ? null : stamp.tree
+      };
     }
     console.log('fetch-components: ' + STAMP_NAME + ' records no sha256; re-fetching.');
     return null;
@@ -263,25 +877,49 @@ function readPublishedDigest() {
 }
 
 /**
- * True when the bundle already on disk is the one this script pins, in which
- * case the caller returns success without touching the network.
+ * True when the bundle already on disk is the one this script pins AND the
+ * files themselves still match what was published, in which case the caller
+ * returns success without touching the network.
+ *
+ * Both halves are required. The archive digest answers "which release is this
+ * meant to be"; the tree manifest answers "is that what is actually here". On
+ * the first alone, a deleted, truncated, edited or symlink-swapped component
+ * tree with an intact stamp beside it is trusted on every repeat run, and flows
+ * from there into the CSS build and into the image.
  */
 function isAlreadyPublished() {
-  var publishedDigest = readPublishedDigest();
+  var stamp = readPublishedStamp();
 
-  if (publishedDigest === EXPECTED_SHA256.toLowerCase()) {
-    return true;
+  if (stamp === null) {
+    // A missing destination is the ordinary first run and says nothing worth
+    // printing. Anything else present under that name is worth naming, because
+    // a regular file or a link there is why the stamp could not be read.
+    var type = describePathType(path.join(REPO_ROOT, PRIMARY_DESTINATION));
+    if (type === 'directory') {
+      console.log('fetch-components: ' + PRIMARY_DESTINATION +
+        ' exists but carries no verified stamp; replacing it.');
+    } else if (type !== 'missing') {
+      console.log('fetch-components: ' + PRIMARY_DESTINATION + ' is a ' + type +
+        ', not a directory; replacing it.');
+    }
+    return false;
   }
 
-  if (publishedDigest !== null) {
+  if (stamp.sha256 !== EXPECTED_SHA256.toLowerCase()) {
     console.log('fetch-components: ' + PRIMARY_DESTINATION + ' holds a different archive (sha256 ' +
-      publishedDigest + '); replacing it.');
-  } else if (isDirectory(path.join(REPO_ROOT, PRIMARY_DESTINATION))) {
-    console.log('fetch-components: ' + PRIMARY_DESTINATION +
-      ' exists but carries no verified stamp; replacing it.');
+      stamp.sha256 + '); replacing it.');
+    return false;
   }
 
-  return false;
+  var treeProblem = verifyPublishedTree(stamp.tree);
+  if (treeProblem !== null) {
+    console.log('fetch-components: ' + PRIMARY_DESTINATION +
+      ' does not match the tree manifest in ' + STAMP_NAME + ' -- ' + treeProblem +
+      '; replacing it.');
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -494,19 +1132,31 @@ function assertStagedLayout() {
  * stamp become visible in the same rename(2). A stamp written after publishing
  * could be lost to a crash in between, leaving a perfectly good tree that the
  * next run would needlessly re-download.
+ *
+ * The manifest is taken over the STAGED tree, which is the last moment the
+ * published content is known-good: it came out of an archive whose digest was
+ * verified and it has passed assertStagedLayout, and the walk happens before
+ * this function writes the stamp into it. The stamp path is excluded from the
+ * manifest in any case, so the digest recorded here is the one a later run
+ * recomputes over the installed tree.
  */
 function writeStamp() {
+  var tree = computeTreeManifest(STAGING_PATH);
   var stamp = {
     url: ARCHIVE_URL,
     sha256: EXPECTED_SHA256.toLowerCase(),
     version: RELEASE_TAG,
-    fetchedAt: new Date().toISOString()
+    fetchedAt: new Date().toISOString(),
+    tree: tree
   };
 
   fs.writeFileSync(
     path.join(STAGING_PATH, PRIMARY_DESTINATION, STAMP_NAME),
     JSON.stringify(stamp, null, 2) + '\n'
   );
+
+  console.log('fetch-components: recorded a tree manifest of ' + tree.files + ' files and ' +
+    tree.directories + ' directories (' + tree.bytes + ' bytes)');
 }
 
 /**
@@ -545,6 +1195,12 @@ function renameOrFail(from, to, what) {
  *      non-empty directory, so it cannot simply be renamed over
  *   B  rename each staged tree into place; on failure, undo B and then A
  *   C  only once every destination is published, remove the set-aside trees
+ *
+ * Returns the set-aside trees that phase C could not remove. They hold the
+ * previous bundle, so leaving one behind loses nothing -- but it leaves a
+ * multi-hundred-megabyte `.fetch-components-old-*` directory in a checkout, and
+ * the caller is what turns that into a non-zero exit rather than a log line
+ * nobody reads.
  */
 function publishDestinations() {
   var asides = [];
@@ -583,9 +1239,14 @@ function publishDestinations() {
     throw err;
   }
 
+  var surviving = [];
   asides.forEach(function (entry) {
-    removeQuietly(entry.aside);
+    if (!removeQuietly(entry.aside)) {
+      surviving.push(entry.aside);
+    }
   });
+
+  return surviving;
 }
 
 /**
@@ -626,15 +1287,44 @@ function rollbackPublish(published, asides) {
 async function main() {
   installSignalHandlers();
 
+  // Nothing is decided before the repository is clear of this script's own
+  // litter, and that ordering is the point: the verified fast path below
+  // returns success without touching anything, so a sweep placed after it
+  // would let a run report "nothing to do", exit 0, and leave an earlier run's
+  // partial download or replaced bundle in the tree for good.
+  //
+  // Two sources, one verdict. Paths from earlier runs are recognised by name
+  // and removed unless the pid they carry is still running; paths from this
+  // run's own pid mean a hard-killed predecessor whose pid has since been
+  // reused. A survivor from either is fatal here rather than reported at the
+  // end, and it is fatal before any network access: the archive would
+  // otherwise be extracted INTO a staging directory that already holds someone
+  // else's content, and a foreign public/components/ inside it would satisfy
+  // assertStagedLayout and be published as if it had come out of the verified
+  // archive. Refusing costs a 166 MB download that would have been unsafe.
+  var leftovers = sweepEarlierWorkPaths().concat(cleanupWorkspace());
+  if (leftovers.length > 0) {
+    throw failure(EXIT_ENVIRONMENT, 'work from another run of this script is in the way and ' +
+      describeSurvivors(leftovers) + '\n' +
+      '  If a message above says one of them belongs to a running process, wait for that\n' +
+      '  run to finish instead. Nothing was downloaded: extracting into a staging tree\n' +
+      '  that already has content in it could publish files this script never verified.');
+  }
+
   if (isAlreadyPublished()) {
     console.log('fetch-components: ' + PRIMARY_DESTINATION + ' is already at ' + RELEASE_TAG +
       ' and verified; nothing to do.');
     return EXIT_OK;
   }
 
-  // Guard against a leftover from an earlier run that was killed hard enough to
-  // skip its own cleanup and whose pid has since been reused.
-  cleanupWorkspace();
+  // The outcome is computed rather than returned from a `finally`, and that is
+  // load-bearing: a `return` or a `throw` inside a finally block replaces
+  // whatever the body was already reporting, which is precisely how a cleanup
+  // failure would come to mask a download or publish error. So the body's
+  // error is captured, cleanup runs unconditionally, and then one place decides
+  // -- the primary error always wins, and cleanup can only add to its message.
+  var primaryError = null;
+  var surviving = [];
 
   try {
     var download = await downloadArchive();
@@ -646,11 +1336,29 @@ async function main() {
     await extractArchive();
     assertStagedLayout();
     writeStamp();
-    publishDestinations();
+    surviving = publishDestinations();
 
     console.log('fetch-components: published ' + DESTINATIONS.join(', ') + ' from ' + RELEASE_TAG);
-  } finally {
-    cleanupWorkspace();
+  } catch (err) {
+    primaryError = err;
+  }
+
+  surviving = surviving.concat(cleanupWorkspace());
+
+  if (primaryError !== null) {
+    if (surviving.length > 0) {
+      primaryError.message += '\n  Additionally, ' + describeSurvivors(surviving);
+    }
+    throw primaryError;
+  }
+
+  if (surviving.length > 0) {
+    // The bundle is published and correct, so this is not a publish failure --
+    // but the run is not a success either, because it ends with this script's
+    // own temporary paths sitting in the repository, and a build that reads
+    // exit codes must not be told everything is fine.
+    throw failure(EXIT_CLEANUP, 'the bundle was published from ' + RELEASE_TAG + ', but ' +
+      describeSurvivors(surviving));
   }
 
   return EXIT_OK;
@@ -677,4 +1385,3 @@ main().then(function (exitCode) {
   }
   process.exitCode = EXIT_ENVIRONMENT;
 });
-

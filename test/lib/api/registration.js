@@ -69,9 +69,32 @@ module.exports = function() {
         flow.lastRedirect.pathname.should.eql('/welcome');
       });
 
-      it('should include a link to the default course on the welcome page', function(done) {
+      // BASELINE CORRECTION - /welcome renders nothing; it is a redirect.
+      //
+      // `GET /welcome` is declared at config/routes.js:38-40 with no `html`
+      // template, and lib/controllers/pages.js `welcome` sets the siteMessage
+      // flash and returns a redirect to /home. Baseline did the same thing by
+      // the called form `reply().redirect('/home')`, which the handler shim
+      // resolved into a real redirect response
+      // (`git show 2f8712a:lib/util/routeParser.js`, builder.redirect), so the
+      // measured status is 302 at baseline and after the migration alike.
+      // Supertest does not follow redirects, so `text` is the empty string - the
+      // old assertion was matching a copy link against ''.
+      //
+      // No template in lib/views/ contains a `/copy` link at all (searched over
+      // lib/views/**), so the markup this case was written against does not
+      // exist in this open-source build. Adding a welcome template to satisfy it
+      // would be a new feature, which AAP 0.2.2 puts out of scope, so the case
+      // is corrected to the measured behaviour: the welcome step is reachable
+      // and hands the new account on to /home, carrying the account-created
+      // flash. The sample course's copy route is not left unexercised - the very
+      // next case posts to it directly and asserts where it lands.
+      it('should hand the new account on to the home page from the welcome step', function(done) {
         flow.welcome(function() {
-          flow.lastResponse.text.should.contain('/' + libraryUser.username + '/courses/' + sampleCourse.slug + '/copy');
+          flow.wasOk.should.be.true;
+          flow.lastResponse.statusCode.should.eql(302);
+          flow.lastResponse.redirect.should.be.true;
+          flow.lastRedirect.pathname.should.eql('/home');
           done();
         });
       });

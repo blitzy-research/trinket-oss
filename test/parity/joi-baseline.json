@@ -6,9 +6,10 @@
     "version": 2,
     "describes": "test/parity/joi-matrix.js validation accept/reject parity matrix",
     "roles": {
-      "baseline-capture": "A recording. `--compare` replays the inputs it holds against another tree and diffs the result against it.",
-      "target-replay": "The matrix a `--compare` run drove, having replaced its generated inputs with the ones the recording holds.",
-      "schema-only": "Enumeration, case construction and the local schema proof, with no HTTP outcome. NOT the full gate."
+      "baseline": "Measured on a worktree at the base commit (AAP §0.10.3). In `capture` mode this is the recording `--compare` replays the inputs of against another tree, diffing the result against it.",
+      "target": "Measured on the migrated tree. In `compare` mode this is the matrix a live replay drove, having replaced its generated inputs with the ones the recording holds.",
+      "analysis": "Derived by reading a tree, with no application executed - which is what `--schema-only` produces: enumeration, case construction and the local schema proof, with no HTTP outcome. NOT a side of this gate.",
+      "unreviewed": "Measured on a tree that is neither, through the explicit --allow-nonbaseline escape. Every gate declines it."
     },
     "topLevel": {
       "generator": "string - the tool that wrote it",
@@ -35,7 +36,8 @@
       "flashFollow": "object - rendered-validation evidence and its applicable set",
       "crossCheck": "object|null - replay/divergence record of a --compare run",
       "targetComparison": "object|null - the completed target-side comparison",
-      "targets": "object[] - one per validation target, keyed `<METHOD> <path> <key>`"
+      "targets": "object[] - one per validation target, keyed `<METHOD> <path> <key>`",
+      "provenance": "object - the SHARED provenance block from test/parity/manifest.js, embedded by provenance.attach and hash-linked to everything above it by its own `payloadDigest`, which is taken over this artifact WITHOUT this key. It is what makes the artifact self-authenticating: schema version, the generator identified by its git blob with the commit that holds it, the analysed tree, the delivered head, the base commit, the runtime, and this tool's own facts under `detail` - the mode, the joi/hapi/mongoose versions resolved in the tree under test, whether reCAPTCHA was configured, whether the server ran secure, the seed selection, a digest of the composed configuration, and - once --record-into has run - `comparisonEmbedded`, naming the report and target matrix the embedded comparison came from and which keys it wrote. Written last, and outside the compared region by construction: compareMatrices diffs the named summary blocks and the per-target records, so two sides that necessarily describe different trees here cannot produce a difference out of saying so"
     },
     "target": {
       "key": "string - `<METHOD> <path> <validateKey>`, unique",
@@ -62,17 +64,17 @@
       "http": "object - one outcome per Accept mode: html, json"
     },
     "sidecar": {
+      "what": "A RUN OUTPUT, written beside every artifact this tool produces and NOT part of the delivery. The artifact carries the provenance block embedded under its own `provenance` key, which is the committed record and what authenticates it; a reader needs no companion file, and readRecording treats an absent sidecar as the normal case. What the sidecar adds is a digest of the exact bytes written plus the facts that may not be committed - see `warningGate` and `run`.",
       "path": "<this artifact>.provenance.json - always the SIBLING of the artifact it describes, including the target matrix a --compare run writes to <report>.target.json, whose sidecar is <report>.target.json.provenance.json and not <report>.provenance.json",
-      "role": "string - the same value as this artifact's `role`; a mismatch between the two is refused, so a sidecar moved beside the wrong matrix is detectable",
+      "artifactDigest": "object - the contract's digest record over the exact bytes written, from provenance.sidecar",
       "artifact.digest": "string - sha256 over the exact bytes of the artifact as sealed",
-      "artifact.payloadDigest": "string - sha256 over the artifact re-serialized with targetComparison and crossCheck set to null. Stable across --record-into, which is what a comparison report links a baseline by.",
+      "artifact.payloadDigest": "string - sha256 over the artifact re-serialized with targetComparison and crossCheck set to null and its `provenance` block removed. Stable across --record-into AND across the re-attachment of the block afterwards, which is what lets a comparison report link a baseline by it.",
       "artifact.bytes": "number - byte length of the sealed artifact",
-      "tool.digest": "string - sha256 over the generator file AS IT RAN, so the recording can be tied to the tool bytes that produced it rather than only to a commit",
-      "tool.dirty": "boolean|null - whether the generator differed from `tool.head` when it ran. A `true` here means the commit named does NOT contain the tool that produced this artifact; null means git could not answer",
-      "comparisonEmbedded": "object|null - present when --record-into has written a completed comparison into the artifact after sealing, naming the report and target matrix it came from"
+      "warningGate": "object|null - the zero-warning gate's verdict for this run. Here and never in the artifact: it names the absolute paths of the stderr files it read, and the artifact is diffed field-for-field against a recording whose own install legitimately emits notices this tree suppresses",
+      "run": "object - this run's own addressing: the tree it read, the server's origin, port, pid, run directory and database, and the composed NODE_CONFIG less its secret-labelled values. Every one of them identifies the RUN rather than the experiment, which is why the block records a digest of the configuration and `server.secure` alone"
     },
     "contracts": [
-      "A recording cannot be compared without its sidecar: --compare parses it, checks the generator and the role, and requires the artifact to digest to the EXACT bytes `artifact.digest` sealed - with no exception for a recording --record-into has since embedded a comparison into, because --record-into re-seals the sidecar as it writes. `payloadDigest` links a report to the baseline it compared; it is never accepted in place of the exact digest, since the blocks it excludes are the blocks that assert a comparison was performed. It also refuses a self-comparison outright, and refuses two recordings from one application HEAD or one joi major unless --allow-same-tree says so and the report records that it did. Without those checks a zero-difference report could be produced by comparing one file with itself.",
+      "A recording is compared only if it AUTHENTICATES ITSELF. --compare runs the shared contract's validator over the block embedded in the artifact: the schema version, the artifact the block claims to describe, the role, the payload digest recomputed over the artifact without its block, the generator blob and commit resolved as objects in THIS repository, that the delivered generator is still the one that produced it, and - of anything claiming the baseline role - that the tree it measured was the base commit and was clean. A recording whose outcomes were edited after capture fails the payload digest, and one whose block was copied in from another run fails it too. A sidecar is a run output and is not required; where one is present its digest over the exact bytes is reconciled, because a pair that disagrees cannot be read together. The tool's own `payloadDigest` links a report to the baseline it compared and is never an integrity seal. --compare also refuses a self-comparison outright, refuses a baseline side that was not produced in `capture` mode, and refuses two recordings from one application HEAD or one joi major unless --allow-same-tree says so and the report records that it did. Without those checks a zero-difference report could be produced by comparing one file with itself.",
       "`cases` is an ordered three-element array - one per kind, in the order accepting, rejecting, coercion - and assertCaseProofs fails the run if a target carries a different count or a different order. It is an array rather than an object keyed by kind BECAUSE the order is asserted: two artifacts are compared case by case at the same index, so the order is part of the comparison rather than an accident of serialization.",
       "Every target carries three case records even when a kind is inapplicable; an inapplicable case carries a reason and a determination, never an absence.",
       "`--compare` checks the field lists this block names in `compared`, per target, per case and per Accept mode. Nothing else is compared, and what is deliberately not compared is named in `summary.notCompared`."
@@ -180,21 +182,22 @@
       "enforcement": "assertFieldCoverage walks every serialized record and fails the run if any field present is not in exactly one of these four places, or if a compared field appears on no record. So this block cannot drift from what the comparator actually checks, and a field added to the artifact cannot be shipped as evidence without being either compared or excused with a reason. The measured result is in `summary.fieldCoverage`."
     }
   },
-  "role": "baseline-capture",
+  "role": "baseline",
   "mode": "capture",
   "joiVersion": "17.13.3",
   "notes": {
     "proves": "Every case in this artifact was DRIVEN against a running application at the joi named in `joiVersion`, in both Accept modes, and the response was recorded as measured. A `targetComparison` block, when present, carries the completed comparison against the other side of the gate; when it is null this artifact is one side only.",
     "reproduce": {
-      "thisRun": "node test/parity/joi-matrix.js --capture --app /tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-023/baseline-2f8712a --port 20231 --database joimatrix_f5b --overwrite --out /tmp/blitzy/trinket-oss/blitzy-94fb8942-119f-4be8-abfa-00828e472cd3-w-023_4ccd25/test/parity/joi-baseline.json >/dev/null 2>/dev/null",
+      "thisRun": "node test/parity/joi-matrix.js --capture --app ephemeral:aap-base --port 20501 --overlay ephemeral:overlay-joi.json --overwrite --out tool:test/parity/joi-baseline.json >/dev/null 2>/dev/null",
+      "paths": "Every path in `thisRun` is a symbolic label: `tool:<relative>` is relative to the repository root and `ephemeral:<basename>` was a scratch location whose directory is this run's own machine state - substitute your own. The tree that was MEASURED is named by commit in `provenance.analysedTree`, which is the reproducible form of it; `baselineCapture` below is how that tree is created.",
       "credentials": "Any credential a `--mongo-uri` carried is REDACTED as \"[redacted-by-joi-matrix]\" here, in `databaseAlignment.seederUri` and in every diagnostic; supply your own. Host, port, database and the non-secret parameters are recorded in full.",
       "baselineCapture": "node test/parity/joi-matrix.js --capture --app <baseline worktree at the base commit, with its OWN npm ci> --port <free port> --database <isolated name> --out <baseline.json> >/dev/null 2>/dev/null",
       "targetComparison": "node test/parity/joi-matrix.js --compare <baseline.json> --port <free port> --database <isolated name> --out <report.json> >/dev/null 2>/dev/null   # writes <report.json>, <report.json>.target.json and <report.json>.target.json.provenance.json",
-      "recordComparison": "add `--record-into <baseline.json> --overwrite` to the comparison above to write the completed `targetComparison` block and the replay `crossCheck` back into the baseline recording and re-seal its sidecar. Refused unless the report's baseline payload digest equals that recording's.",
+      "recordComparison": "add `--record-into <baseline.json> --overwrite` to the comparison above to write the completed `targetComparison` block and the replay `crossCheck` back into the baseline recording, re-attach its provenance block over the new bytes and re-seal. Refused unless the report's baseline payload digest equals that recording's.",
       "offlineRecompare": "node test/parity/joi-matrix.js --compare <a.json> <b.json> --out <report.json> --allow-same-tree   # two recordings, no application. --allow-same-tree is required because both come from one tree, and the report records that it was used. Comparing a file with itself is refused unconditionally.",
       "streams": "BOTH streams must be discarded by the caller and the artifact read from disk: proving the parser deletes `validate` loads every controller, which prints the in-memory-queue line on stdout, and a baseline tree prints the AWS SDK v2 notice on stderr."
     },
-    "digests": "The sidecar beside this file records sha256 over its exact bytes (`artifact.digest`) and, separately, sha256 over the same artifact re-serialized with `targetComparison` and `crossCheck` set to null (`artifact.payloadDigest`). A comparison report links a baseline by payloadDigest precisely so that embedding the comparison result back into the recording afterwards - which writes exactly those keys - cannot invalidate the link, and --record-into asserts that invariant before it writes. Recompute the payload digest with: node -e \"const m=require('./<artifact>.json');m.targetComparison=null;m.crossCheck=null;console.log(require('crypto').createHash('sha256').update(JSON.stringify(m,null,2)+String.fromCharCode(10)).digest('hex'))\". The whole-file digest is the same command without the nulling, over the file's own bytes: sha256sum <artifact>.json."
+    "digests": "TWO digests cover this file, and they answer different questions. `provenance.payloadDigest`, embedded above, is the shared contract's seal: sha256 over the canonical form of this artifact WITHOUT its `provenance` key, so an edited outcome or a block copied in from another run fails it, and `--compare` recomputes it before consuming this file. The run-output sidecar, when one is beside it, additionally records sha256 over the exact bytes (`artifact.digest`) and sha256 over the artifact re-serialized with `targetComparison` and `crossCheck` set to null AND its `provenance` block removed (`artifact.payloadDigest`). A comparison report links a baseline by that second one precisely so that embedding the comparison result back into the recording afterwards - which writes exactly those keys and then re-attaches the block - cannot invalidate the link, and --record-into asserts that invariant before it writes. Recompute it with: node -e \"const m=require('./<artifact>.json');m.targetComparison=null;m.crossCheck=null;delete m.provenance;console.log(require('crypto').createHash('sha256').update(JSON.stringify(m,null,2)+String.fromCharCode(10)).digest('hex'))\". The whole-file digest is sha256sum <artifact>.json."
   },
   "summary": {
     "targets": 102,
@@ -225,6 +228,8 @@
     "rejectingUnresolved": 0,
     "flashProofMismatches": 0,
     "unexpectedFlashes": 0,
+    "proofMismatches": 0,
+    "proofMismatchesUnclassified": 0,
     "notCompared": "Every other field on a record IS compared; a field that is neither compared nor listed here fails the run (assertFieldCoverage). Not compared, by level - target: nothing; case: attempts, generatorNotes, leafPlan, refinementRounds, reviewed; outcome: identity, location, order. Join fields, which hold two records together rather than being compared: key (target). Compared element by element rather than as one value: cases (target) and http (case).",
     "fieldCoverage": {
       "target": {
@@ -342,9 +347,9 @@
   "databaseAlignment": {
     "source": "provisioned mongodb-memory-server",
     "host": "127.0.0.1",
-    "port": 41207,
-    "database": "joimatrix_f5b",
-    "seederUri": "mongodb://127.0.0.1:41207/joimatrix_f5b",
+    "port": 43455,
+    "database": "parity_672855_mtnfdz9x_143384",
+    "seederUri": "mongodb://127.0.0.1:43455/parity_672855_mtnfdz9x_143384",
     "agreedAcross": [
       "this process's composed NODE_CONFIG db.mongo.{host,port,database}",
       "the address handed to the application under test",
@@ -860,87 +865,51 @@
     ],
     "oracle": "A rejecting case is applicable when its target declares a fail.redirect, the redirect template interpolates from the case's own input to a path a GET route declares, that route names a template, and the template chain renders flash.validation.<field> outside a <script> block for a field the whole-block proof says the case will flash. Each condition is a fact about the declarations and the templates of the tree under test, so the applicable set is the same on both sides of the gate."
   },
-  "crossCheck": {
-    "origin": "the target replay recorded in `targetComparison`; the recorded inputs of THIS file, re-generated and re-proved against joi 18.2.5 in the tree at c6ecfd160ec35680c4697efa51384dda608f8c43",
-    "replayed": 231,
-    "divergences": [],
-    "missing": []
-  },
-  "targetComparison": {
-    "performed": true,
-    "comparedAt": "2026-09-04T02:44:50.558Z",
-    "generator": "test/parity/joi-matrix.js",
-    "verdict": "Accept/reject parity HOLDS across every target, every case and both Accept modes. joi 17.13.3 and joi 18.2.5 accepted and rejected the same bytes with the same messages, and the application answered identically.",
-    "baseline": {
-      "role": "baseline-capture",
-      "appHead": "2f8712a112db46f923918c4507c75abc732d83d0",
-      "joiVersion": "17.13.3",
-      "path": "/tmp/blitzy/trinket-oss/blitzy-94fb8942-119f-4be8-abfa-00828e472cd3-w-023_4ccd25/test/parity/joi-baseline.json",
-      "payloadDigest": "9ca52c2d7668fd4340a4e44f549663b440eb7fadb1a3482a365f97d3ef6af216"
-    },
-    "target": {
-      "role": "target-replay",
-      "appHead": "c6ecfd160ec35680c4697efa51384dda608f8c43",
-      "joiVersion": "18.2.5",
-      "matrixPath": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-023/f5-cmp.json.target.json",
-      "matrixDigest": "1de6dae86d578284e692c45a0e72ce128a752cf22a72efe61e3706e2ac4d548d",
-      "sidecarPath": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-023/f5-cmp.json.target.json.provenance.json",
-      "sidecarDigest": "82303029a55b1cad0f5824a84b36cea832a342c769c64f2c18d64bd481670aae",
-      "reportPath": "/tmp/blitzy/scratch/94fb8942-119f-4be8-abfa-00828e472cd3/w-023/f5-cmp.json",
-      "reportDigest": "bb63c4ff97c475a08f0538dff675fff436821cadebeb52b6aea970fa50f216a8"
-    },
-    "comparability": {
-      "checked": [
-        "same-path",
-        "same-application-head",
-        "same-joi-major"
+  "warnings": [
+    {
+      "name": "DeprecationWarning",
+      "code": "DEP0005",
+      "message": "Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.",
+      "origin": [
+        "at module.exports (analysed:node_modules/iconv-lite/lib/extend-node.js:10:46)",
+        "at Object.<anonymous> (analysed:node_modules/iconv-lite/lib/index.js:139:29)"
       ],
-      "relaxed": [],
-      "note": "The two sides are distinct files, from distinct application HEADs, produced by distinct joi majors. No check was waived."
+      "attribution": "dependency"
     },
-    "tooling": {
-      "baseline": {
-        "head": "c6ecfd160ec35680c4697efa51384dda608f8c43",
-        "digest": "a748edad23354cc1ac0161644889a8004a61b24b1b58f931fa5bb50be6294b73",
-        "dirty": false
+    {
+      "name": "NOTE",
+      "message": "The AWS SDK for JavaScript (v2) has reached end-of-support.\nIt will no longer receive updates or releases.\n\nPlease migrate your code to use AWS SDK for JavaScript (v3).\nFor more information, check the blog post at https://a.co/cUPnyil",
+      "origin": [
+        "at emitWarning (analysed:node_modules/aws-sdk/lib/maintenance_mode_message.js:38:13)",
+        "at Timeout._onTimeout (analysed:node_modules/aws-sdk/lib/maintenance_mode_message.js:46:5)"
+      ],
+      "attribution": "dependency"
+    }
+  ],
+  "proofMismatches": {
+    "matrix": "target",
+    "outcomesExamined": 462,
+    "mismatches": 0,
+    "classified": 0,
+    "unclassified": [],
+    "byRule": [
+      {
+        "id": "object-level-error-path",
+        "matched": 0,
+        "reason": "the flash carries the empty key ``, which is where lib/util/routeParser.js:412,416 puts a joi error whose path is empty - an object-level error such as `\"value\" must be of type object`. The block validates every declared section into one flash (:401-418), and the route declares another section besides the one under test, so the error comes from validating that other section with nothing sent for it. A leaf-path proof cannot predict a path-less error."
       },
-      "target": {
-        "head": "c6ecfd160ec35680c4697efa51384dda608f8c43",
-        "digest": "a748edad23354cc1ac0161644889a8004a61b24b1b58f931fa5bb50be6294b73",
-        "dirty": false
-      },
-      "oneToolDroveBothSides": true
-    },
-    "replaySource": "The live --compare replay named in `target`: this recording's inputs were re-generated and re-proved against that tree's joi, and the result is on this artifact's top-level `crossCheck`.",
-    "compared": {
-      "targets": 102,
-      "cases": 306,
-      "outcomes": 462,
-      "fields": 15678
-    },
-    "differencesByScope": {},
-    "schemaLevelDifferences": 0,
-    "generatedInputDifferences": 0,
-    "differences": [],
-    "onlyInBaseline": [],
-    "onlyInTarget": [],
-    "targetSummary": {
-      "drives": 462,
-      "drivesTimedOut": 2,
-      "timeoutsUnreviewed": 0,
-      "applicationCrashes": 0,
-      "applicationRestarts": 0,
-      "stateRestores": 386,
-      "rejectingReached": 100,
-      "rejectingUnreached": 1,
-      "rejectingUnresolved": 0,
-      "flashProofMismatches": 0,
-      "unexpectedFlashes": 0,
-      "applicableFollows": 3,
-      "renderedFollows": 3
-    },
-    "notCompared": "Every other field on a record IS compared; a field that is neither compared nor listed here fails the run (assertFieldCoverage). Not compared, by level - target: nothing; case: attempts, generatorNotes, leafPlan, refinementRounds, reviewed; outcome: identity, location, order. Join fields, which hold two records together rather than being compared: key (target). Compared element by element rather than as one value: cases (target) and http (case)."
+      {
+        "id": "file-output-transport-payload",
+        "matched": 0,
+        "reason": "the route declares `payload: {output: 'file'}`, so hapi replaces the parsed body with its own descriptor and the handler never sees what the case sent. The flash therefore reports hapi's keys (path, bytes) as not allowed and the schema's own key as required, while any path the local proof predicted for the undelivered body is absent. Measured on POST /file, POST /file/avatar, POST /api/users/assets and POST /api/users/assets/{fileId}."
+      }
+    ],
+    "rulesChecked": false,
+    "rulesMatchingNothing": [],
+    "classifications": []
   },
+  "crossCheck": null,
+  "targetComparison": null,
   "targets": [
     {
       "key": "POST /api/courses payload",
@@ -26723,7 +26692,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/account/email",
+              "location": "http://127.0.0.1:20501/account/email",
               "locationRelative": "/account/email",
               "renderedMessages": [],
               "validationFlash": null,
@@ -27286,7 +27255,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/account/email",
+              "location": "http://127.0.0.1:20501/account/email",
               "locationRelative": "/account/email",
               "renderedMessages": [],
               "validationFlash": null,
@@ -30662,7 +30631,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/login",
+              "location": "http://127.0.0.1:20501/login",
               "locationRelative": "/login",
               "renderedMessages": [],
               "validationFlash": null,
@@ -30781,7 +30750,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/login",
+              "location": "http://127.0.0.1:20501/login",
               "locationRelative": "/login",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31061,7 +31030,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/aaa",
+              "location": "http://127.0.0.1:20501/aaa",
               "locationRelative": "/aaa",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31094,7 +31063,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/aaa",
+              "location": "http://127.0.0.1:20501/aaa",
               "locationRelative": "/aaa",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31232,7 +31201,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/signup",
+              "location": "http://127.0.0.1:20501/signup",
               "locationRelative": "/signup",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31768,7 +31737,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/testing/courses/aaa",
+              "location": "http://127.0.0.1:20501/testing/courses/aaa",
               "locationRelative": "/testing/courses/aaa",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31895,7 +31864,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/courses/new",
+              "location": "http://127.0.0.1:20501/courses/new",
               "locationRelative": "/courses/new",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32361,7 +32330,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/forgot-pass",
+              "location": "http://127.0.0.1:20501/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32481,7 +32450,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/forgot-pass",
+              "location": "http://127.0.0.1:20501/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32644,7 +32613,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/forgot-pass",
+              "location": "http://127.0.0.1:20501/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32755,7 +32724,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/forgot-pass",
+              "location": "http://127.0.0.1:20501/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32944,7 +32913,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/forgot-pass",
+              "location": "http://127.0.0.1:20501/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33064,7 +33033,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/forgot-pass",
+              "location": "http://127.0.0.1:20501/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33338,7 +33307,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/{redirectTo}",
+              "location": "http://127.0.0.1:20501/{redirectTo}",
               "locationRelative": "/%7BredirectTo%7D",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33515,7 +33484,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/activate-account",
+              "location": "http://127.0.0.1:20501/activate-account",
               "locationRelative": "/activate-account",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33632,7 +33601,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20231/{redirectTo}",
+              "location": "http://127.0.0.1:20501/{redirectTo}",
               "locationRelative": "/%7BredirectTo%7D",
               "renderedMessages": [],
               "validationFlash": null,
@@ -34950,5 +34919,104 @@
         }
       ]
     }
-  ]
+  ],
+  "provenance": {
+    "provenanceSchema": 2,
+    "artifact": "joi-baseline.json",
+    "role": "baseline",
+    "generator": {
+      "path": "test/parity/joi-matrix.js",
+      "blob": "a75d1041ce224057fb99fd15505c8689d2a2a648",
+      "commit": "bec7fa47e1c5b982e460748b0991a0107fba64ca",
+      "commitState": "contains-this-exact-source",
+      "verified": true,
+      "deliveredHead": "bec7fa47e1c5b982e460748b0991a0107fba64ca",
+      "deliveredHeadShort": "bec7fa4",
+      "matchesDeliveredHead": true
+    },
+    "analysedTree": {
+      "head": "2f8712a112db46f923918c4507c75abc732d83d0",
+      "headShort": "2f8712a",
+      "subject": "chore: extend catalog tags (security, web-app)",
+      "isBaselineCommit": true,
+      "worktreeState": "clean"
+    },
+    "delivered": {
+      "head": "bec7fa47e1c5b982e460748b0991a0107fba64ca",
+      "headShort": "bec7fa4",
+      "subject": "Send each parity login from its own loopback address",
+      "isBaselineCommit": false,
+      "worktreeState": "dirty"
+    },
+    "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+    "runtime": {
+      "node": "v22.23.2",
+      "platform": "linux"
+    },
+    "detail": {
+      "mode": "capture",
+      "artifactSchema": 2,
+      "versions": {
+        "joi": "17.13.3",
+        "hapi": "20.3.0",
+        "mongoose": "6.13.9"
+      },
+      "recaptchaConfigured": false,
+      "server": {
+        "secure": false
+      },
+      "databaseAlignment": {
+        "source": "provisioned mongodb-memory-server",
+        "agreedAcross": [
+          "this process's composed NODE_CONFIG db.mongo.{host,port,database}",
+          "the address handed to the application under test",
+          "the URI the seeder connects with"
+        ]
+      },
+      "seed": {
+        "selected": [
+          "users",
+          "files",
+          "trinkets",
+          "course",
+          "folders",
+          "exports"
+        ],
+        "created": [
+          "Course",
+          "Export",
+          "File",
+          "Folder",
+          "Lesson",
+          "Material",
+          "Snippet",
+          "User"
+        ]
+      },
+      "configuration": {
+        "NODE_ENV": "test",
+        "nodeConfigKeys": [
+          "app",
+          "aws",
+          "db"
+        ],
+        "nodeConfigDigest": {
+          "algorithm": "sha256",
+          "canonicalization": "secret-labelled values replaced with <redacted>, address-labelled values dropped, URI userinfo removed, then JSON with object keys sorted lexicographically and no whitespace",
+          "value": "b127c3b665a0f7d56989febca890bea31ed2244803a01ffb3360faed5a94ed54"
+        },
+        "nodeConfigDir": "analysed:config",
+        "redactedKeys": [
+          "app.plugins.session.cookieOptions.password"
+        ]
+      },
+      "normalization": "Only the ORIGIN of an absolute Location header is removed, into locationRelative; the verbatim header is recorded beside it. Nothing else is normalized.",
+      "redaction": "The composed NODE_CONFIG is recorded as `configuration.nodeConfigDigest` and not verbatim. Before it is hashed, every secret-labelled value is replaced and every address-labelled value dropped, and `configuration.redactedKeys` lists the paths this tool had already withheld under SECRET_KEY_PATTERN. The child process received the real configuration - the redaction applies to this record only. The values come from the committed overlay (test/parity/server-overlay.json) and any --overlay the caller passed, which are where a reviewer reproduces them from."
+    },
+    "payloadDigest": {
+      "algorithm": "sha256",
+      "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
+      "value": "02925c73d007c8e9907f9bfbd5293d57ae04891ed120eab8c89b3e9bc2e8eeb2"
+    }
+  }
 }

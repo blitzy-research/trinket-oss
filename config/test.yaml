@@ -4,12 +4,32 @@ app:
   log:
     level: error
   trinketLibraryUser: testlibraryuser
-  # Fixed test-only session secret (52 characters; app.js:50-51 requires >= 32).
-  # Deliberately hard-coded rather than generated so session cookie values are
-  # reproducible across a baseline-capture / target-replay pair. This is not a
-  # credential and has no bearing on production, where app.js keeps its
-  # fail-fast for NODE_ENV === 'production'.
-  # Only `password` is set: default.yaml:37-47 supplies isSecure, domain,
+  # Mail is a deployment-supplied credential: default.yaml ships `from` and
+  # `host` empty, so lib/util/mailer.js's `isConfigured` reports mail
+  # unavailable and every mail-sending handler short-circuits before it reaches
+  # `mailer.send` - lib/controllers/users.js and lib/controllers/trinket.js
+  # answer their own "not available" payload instead. Five suite cases drive a
+  # route THROUGH that send (four in test/lib/api/forgot_pass.js, which read the
+  # reset token the send path stores, and the share-with-token case in
+  # test/lib/api/trinket.js), so with mail unconfigured they never reach the
+  # behaviour they assert.
+  #
+  # Supplying the credential here is provisioning, not a behaviour change: the
+  # suite stubs the transport itself (test/helpers/mail.js replaces
+  # `mailer.send`), so no SMTP connection is ever opened, and no assertion
+  # anywhere reads the "not configured" payload. It is the same shape
+  # test/parity/server-overlay.json already uses for the parity server, which is
+  # why the corpus was captured against configured mail. default.yaml keeps its
+  # empty production defaults; only NODE_ENV=test sees these.
+  mail:
+    from: 'test@localhost'
+    host: '127.0.0.1'
+  # Fixed test-only session secret; the bootstrap requires at least 32 characters.
+  # It is fixed rather than generated so session cookie values are reproducible
+  # across a capture / replay pair. It is not a credential and has no bearing on
+  # production, which supplies its own secret and where the bootstrap still fails
+  # fast without one.
+  # Only `password` is set here: default.yaml supplies isSecure, domain,
   # maxCookieSize, name and cache, and the config deep merge preserves them.
   plugins:
     session:
@@ -22,7 +42,7 @@ db:
     database: test
   # Redis is OPTIONAL and is disabled for tests, so lib/util/queues.js uses its
   # in-memory queue instead of constructing Bull against localhost:6379.
-  # Only `enabled` is set: default.yaml:377-389 supplies app, exports,
+  # Only `enabled` is set here: default.yaml supplies app, exports,
   # bullqueues: [exports] and sandbox, which the deep merge keeps.
   redis:
     enabled: false

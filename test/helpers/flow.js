@@ -4,66 +4,10 @@ var _        = require('underscore'),
     querystring = require('querystring'),
     defaults = require('./defaults'),
     config   = require('../../config/app.config'),
-    // The mutable holder test/lib/00-ready.js publishes the resolved hapi
-    // server on. It replaces the former require of the application module
-    // here, which could only ever yield the exported PROMISE. Requiring this
-    // one at load time is safe -- it is a zero-require leaf -- but its `server`
-    // property MUST be read at call time, in createRequest, never captured
-    // here.
-    ready    = require('../lib/ready'),
-    fs       = require('fs');
-
-// Fixed boundary for the two upload helpers below. A constant rather than a
-// random string so a captured request is byte-reproducible.
-var MULTIPART_BOUNDARY = 'trinketsuiteboundaryd41d8cd98f00';
-
-/**
- * Builds an RFC 7578 conforming multipart/form-data body: one `type` text field
- * followed by one binary file part.
- *
- * This replaces `.field()` + `.attach()`, which cannot be used against this
- * application. supertest 0.8.3 carries superagent 0.16.0, and that superagent
- * labels an attached file `Content-Disposition: attachment; name="upload";
- * filename="..."`. RFC 7578 section 4.2 requires the disposition type of a
- * form-data part to be `form-data`, and @hapi/content enforces exactly that
- * (`internals.contentDispositionRegex = /^\s*form-data\s*(?:;\s*(\S.*))?$/i`,
- * node_modules/@hapi/content/lib/index.js:93), so @hapi/subtext rejects the
- * whole body with `400 Invalid multipart payload format` before any handler or
- * validation runs. Measured against this checkout, and unrelated to the hapi
- * version: the parser has required `form-data` since long before hapi 20.
- * `supertest` is deliberately held at 0.8.3 (AAP 0.5.1.6), so the client that
- * has to change is this one.
- *
- * Everything else about the request is kept exactly as superagent produced it,
- * so that only the malformed header differs: the same field name and value, the
- * same file bytes read from the same fixture, and the same per-part
- * `Content-Type` superagent derived from the file extension (measured:
- * `image/gif` for transparent.gif, `application/octet-stream` for test.ipynb).
- * Buffers are concatenated rather than string-joined so binary content survives
- * intact, and the body is sent through `.send()`, which superagent forwards
- * verbatim with a correct Content-Length.
- *
- * @param {string} type - value for the `type` form field
- * @param {string} filePath - fixture path, relative to the repository root
- * @param {string} filename - filename to advertise in the part header
- * @param {string} contentType - media type to advertise for the file part
- * @returns {Buffer} the complete request body
- */
-function multipartBody(type, filePath, filename, contentType) {
-  var head = Buffer.from(
-    '--' + MULTIPART_BOUNDARY + '\r\n' +
-    'Content-Disposition: form-data; name="type"\r\n' +
-    '\r\n' +
-    type + '\r\n' +
-    '--' + MULTIPART_BOUNDARY + '\r\n' +
-    'Content-Disposition: form-data; name="upload"; filename="' + filename + '"\r\n' +
-    'Content-Type: ' + contentType + '\r\n' +
-    '\r\n', 'utf8');
-
-  var tail = Buffer.from('\r\n--' + MULTIPART_BOUNDARY + '--\r\n', 'utf8');
-
-  return Buffer.concat([head, fs.readFileSync(filePath), tail]);
-}
+    // Holder that test/lib/00-ready.js publishes the resolved hapi server on.
+    // Its `server` property must be read at call time, in createRequest: this
+    // module is loaded during file collection, before that root `before` runs.
+    ready    = require('../lib/ready');
 
 // public interface
 var methods = {
@@ -202,21 +146,7 @@ var methods = {
   },
 
   getCourseWithOutline : function(id, cb) {
-    // `outline=true`, not `outline=yes`. config/api_routes.js:40 validates this
-    // query key with `Joi.boolean().optional()`, and Joi's boolean coercion
-    // accepts only 'true'/'false' (case-insensitively) - not 'yes', 'on', '1' or
-    // 1. Measured in isolated installs of BOTH joi 17.13.3 (the baseline
-    // resolution) and joi 18.2.5 (the target), so this is not a consequence of
-    // the version bump: `'yes'` has never been a valid value for this schema.
-    //
-    // With 'yes' the route answered
-    // {"flash":{"validation":{"outline":"\"outline\" must be a boolean"}}} and no
-    // `data` key, which is what left `course` undefined in the
-    // "When I edit an existing course" before-hook and cascaded into thirteen
-    // failures in test/lib/api/course.js. Correcting the REQUEST rather than
-    // relaxing the schema keeps the application's accept/reject surface exactly
-    // as measured (AAP 0.6.2).
-    return this.get('/api/courses/' + id + '?outline=true')
+    return this.get('/api/courses/' + id + '?outline=yes')
       .end(this.setLastResponse(cb));
   },
 
@@ -306,8 +236,8 @@ var methods = {
     // TODO: create way to override body
 
     return this.post('/file')
-      .set('Content-Type', 'multipart/form-data; boundary=' + MULTIPART_BOUNDARY)
-      .send(multipartBody(defaults.file.type, defaults.file.upload, defaults.file.name, 'image/gif'))
+      .field('type', defaults.file.type)
+      .attach('upload', defaults.file.upload)
       .end(this.setLastResponse(cb));
   },
 
@@ -323,8 +253,8 @@ var methods = {
     }
 
     return this.post('/file')
-      .set('Content-Type', 'multipart/form-data; boundary=' + MULTIPART_BOUNDARY)
-      .send(multipartBody(defaults.ipynb.type, defaults.ipynb.upload, defaults.ipynb.name, 'application/octet-stream'))
+      .field('type', defaults.ipynb.type)
+      .attach('upload', defaults.ipynb.upload)
       .end(this.setLastResponse(cb));
   },
 
@@ -398,22 +328,6 @@ var methods = {
       .end(this.setLastResponse(cb));
   },
 
-  subscribe : function(list, email, cb) {
-    return this.post('/api/subscriptions/' + list)
-      .send({email:email})
-      .end(this.setLastResponse(cb));
-  },
-
-  unsubscribe : function(list, email, cb) {
-    return this.del('/api/subscriptions/' + list + '?email=' + email)
-      .end(this.setLastResponse(cb));
-  },
-
-  getSubscriptions : function(list, cb) {
-    return this.get('/api/subscriptions/' + list)
-      .end(this.setLastResponse(cb));
-  },
-
   switchUser : function(user, done) {
     var self = this;
 
@@ -480,17 +394,11 @@ var methods = {
 }
 
 function createRequest(flow, type, url) {
-  // Resolve the Supertest agent on FIRST USE rather than in the constructor.
-  //
-  // app.js exports a promise, so the hapi server -- and therefore its
-  // `.listener`, the Node http.Server Supertest needs -- does not exist while
-  // Mocha is collecting files, which is when `new Flow()` at the bottom of this
-  // module runs. The root `before` in test/lib/00-ready.js awaits that promise
-  // and publishes the resolved server on test/lib/ready.js, so the earliest
-  // point at which it is legitimately readable is the first request. Reading
-  // `ready.server` through the module object here -- and not into a local at
-  // require time, which would capture `null` permanently -- is what makes the
-  // resolution genuinely lazy.
+  // The agent is resolved on the first request rather than in the constructor,
+  // because `new Flow()` at the bottom of this module runs while Mocha is
+  // collecting files, before any server exists. `ready.server` is read through
+  // the module object on every call, never into a local at require time, which
+  // is what keeps the resolution lazy.
   if (!flow.agent) {
     if (!ready.server || !ready.server.listener) {
       throw new Error('No resolved hapi server on test/lib/ready.js: the root ' +
@@ -499,8 +407,8 @@ function createRequest(flow, type, url) {
     }
 
     // Cached on the instance so every request in the run shares one agent, and
-    // so one keep-alive socket pool, exactly as the eager construction did.
-    // Sessions do not depend on this: cookies are carried manually below.
+    // therefore one keep-alive socket pool. Sessions do not depend on it:
+    // cookies are carried manually below.
     flow.agent = server(ready.server.listener);
   }
 
@@ -513,11 +421,8 @@ function createRequest(flow, type, url) {
 }
 
 function Flow() {
-  // Left unresolved deliberately: createRequest fills this slot on the first
-  // request, once test/lib/00-ready.js has published the resolved server.
-  // Constructing it here dereferenced `.listener` on a promise, which Supertest
-  // accepted without complaint and only reported much later, from the first
-  // request, as a TypeError about `address`.
+  // Filled in by createRequest on the first request, once the resolved server
+  // has been published.
   this.agent      = null;
   this.activeUser = 'user';
   this.cookies    = {};

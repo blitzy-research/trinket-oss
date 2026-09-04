@@ -1,167 +1,83 @@
 #!/usr/bin/env node
 'use strict';
 
-// The baseline corpus recorder.
+// Captures the request corpus from a running application and writes it as the
+// artifact a replay is judged against.
 //
-// Drives a scenario corpus against a RUNNING application and records what came
-// back, so that `test/parity/replay.js` has something to compare the migrated
-// tree against. Its whole reason for existing is ordering: the parity tooling
-// is created BY this migration and does not exist at the base commit, so
-// "capture the baseline first" means running this tool - from the target
-// worktree - against a `git worktree` at 2f8712a with its own `npm ci`, before
-// any behaviour-changing work. That is what `--app` is for.
+// Drives a fixed scenario set against a server it either launches through
+// ./server or attaches to with --base-url, records every response, and writes
+// the corpus with its provenance and annotation sidecars. --app names the
+// worktree whose install serves the requests, so a baseline corpus is this tool
+// driving a checkout of the base commit.
 //
-// ===========================================================================
-// RULES
-// ===========================================================================
-// `review_rules` returns exactly "No user rules provided." for this project,
-// which AAP 0.7 and 0.10.1 independently record. No rules are invented here and
-// their absence is not read as licence to lower the bar - enterprise practice
-// governs. The request's own RULES block is binding and is not that document:
+// INVOCATION
+//   node test/parity/capture.js --app <worktree> --out <corpus.json>
+//   node test/parity/capture.js --app <worktree> --out <corpus.json> --target
+//   --help prints every option and the exit codes.
+//   Diagnostics and progress go to stderr; nothing is written to stdout, so the
+//   child's own output - the in-memory queue line, and the AWS notice on a
+//   baseline tree - cannot contaminate an artifact stream.
 //
-//   R-a  The diff must read as migration work only. This file is new tooling
-//        the migration requires; it changes no application module, edits no
-//        configuration and writes nothing outside its --out artifact and the
-//        per-run directory the launcher owns.
-//   R-b  No route excluded. Coverage is accounted against every entry in the
-//        233-route manifest and the capture FAILS on an unrepresented route.
-//        An entry that genuinely cannot be driven is recorded with a stated
-//        reason, never dropped.
-//   R-d  Behaviour improvements are prohibited. Every mandatory quirk case
-//        below exists so that a silent "fix" cannot pass unnoticed - the
-//        never-settling image download, the cross-request fail.redirect leak,
-//        the authenticated /login 500, the OAuth account-created-then-failed
-//        path. Each carries a declared baseline expectation which is CHECKED
-//        and recorded rather than assumed.
-//   R-e  Error-to-response mappings must survive unchanged, which is why
-//        failure-path cases are captured beside the success sweep and why the
-//        log-and-continue and resolve-on-later-callback dispositions get cases
-//        of their own.
-//   R-f  Baseline observed behaviour at 2f8712a is the tie-breaker, which is
-//        why every corpus CARRIES its provenance - the analysed tree's commit,
-//        this tool's own blob and the commit verified to contain it - embedded
-//        under one top-level key, and why `--expect-baseline` refuses to run
-//        against any tree other than that commit. A baseline claim about
-//        whichever worktree happened to be passed to --app is not evidence,
-//        and the only escape records the artifact as `unreviewed`.
+// ARTIFACT
+//   <out>                   the corpus: schema, summary, gate, coverage,
+//                           definitionCoverage, ordering, merge, notes,
+//                           evidence, evidenceHealth, applicationDied,
+//                           sessions, the unreachable/undriven/unmet/timed-out
+//                           lists, thisRun, scenarios, and a provenance key.
+//   <out>.provenance.json   a run output: that block plus a digest of the
+//                           bytes written.
+//   <out>.annotations.json  the scenario definitions as authored; driving
+//                           replaces each step with its request-and-response
+//                           record; replay.js --annotations rejoins them.
+//   A step record holds its label, the request as sent, the response as
+//   received, and any modelFault armed for it - a step replayed unfaulted
+//   against a faulted baseline reports a harness difference as an application
+//   one.
 //
-// ===========================================================================
-// WHY THE DRIVER IS node:http AND NEVER global fetch
-// ===========================================================================
-// This is not a style preference, it is a correctness constraint that was
-// MEASURED. `fixtures/http.js` in this directory auto-installs on first
-// require and patches `globalThis.fetch`, and an endpoint it has no recording
-// for does not fall through to the network - it REJECTS. So a driver built on
-// global fetch would have every one of its own requests to localhost rejected
-// the moment that catalogue was required. This file therefore:
+// THE SCENARIO MODEL. A scenario is not a route key. It is a route taken from
+// the generated manifest plus the identity driving it, the Accept mode, the
+// intended path through the handler, the fixture profile in force and, where a
+// case needs cross-request state, an ordered sequence of steps - modelled as
+// separate scenarios, such a case could be reordered by a replay. Wildcard and
+// static paths are materialized to concrete values from the seeder's frozen ids
+// and recorded slugs rather than to invented identifiers, which is what keeps
+// the volatile set narrow. Mutating routes carry recorded minimal payloads
+// satisfying their declared validation and run after the read-only cases, the
+// destructive ones last and against freshly reseeded fixtures, so no case
+// decides what a later one observes.
 //
-//   1. drives every request through node:http / node:https, and
-//   2. requires the fixture catalogue only for its frozen reference data, then
-//      calls restore() immediately, so this process is left unpatched.
+// Every case has a finite per-step budget, and A TIMEOUT IS A RECORDED RESULT
+// rather than an error: that is how a never-settling branch is captured without
+// stalling the run, and it is checked against the expectation the scenario
+// declares like any other outcome.
 //
-// The fixtures that matter run in the CHILD process - the launcher preloads
-// them - so the two cross-process channels this file uses are the ones their
-// environment contracts publish: the profile file for switching profiles
-// without a restart, and the PARITY_*_LOG JSONL files for evidence.
+// DETERMINISM. Re-capturing one tree yields a reviewable diff rather than a
+// reshuffle: scenario order is fixed by construction, every map a response
+// decides is sorted, elapsed time is bucketed, and the session cookie's VALUE
+// is replaced by its digest at capture time while every attribute of it is kept
+// in full, because those are what a replay compares.
 //
-// ===========================================================================
-// WHAT THIS FILE DELIBERATELY DOES NOT DO
-// ===========================================================================
-//   - It requires no application source. `app.js`, `config` and `lib` are
-//     never in this process's module graph: the application is a child process
-//     owned by `server.js` beside this file, the route manifest is read as an
-//     artifact (or produced by spawning `manifest.js`, which does load them, in
-//     a process of its own), and fixture creation is delegated to `seed.js`'s
-//     own `seed()` in a spawned child. The independence proof is mechanical, so
-//     the two directories that must not appear in a require here - the suite's
-//     own helper directory and its spec directory - are written unjoined
-//     throughout, and the legacy URL parser is never named at all. Both would
-//     otherwise satisfy a grep while proving nothing.
-//   - It creates no fixtures of its own. `seed.js` owns them, and `reset` under
-//     the suite's own db helper stays an empty-database operation.
-//   - It reaches no real network. Every external effect is intercepted at the
-//     module boundary by the three isolation fixtures - aws, mail and http. A
-//     fourth preload, `fixtures/model.js`, replaces no external effect: it is
-//     the fault injector this file arms for the one case that needs a data-store
-//     failure, and it is inert on every other case.
-//   - It never silently drops a case. A case that cannot be driven is recorded
-//     with its reason and counted as a failure.
+// Sessions are established by driving the real login form, never by forging a
+// cookie: session state lives on the server, and the login flow is part of the
+// surface under test. A required identity that cannot authenticate STOPS the
+// sweep, because the alternative is a corpus of unauthenticated responses
+// labelled with the identity that was asked for.
 //
-// ===========================================================================
-// THE TWO GAPS THIS FILE CLOSES, AND WHY IT IS THE RIGHT PLACE
-// ===========================================================================
-//   1. The OAuth handlers guard on `config.app.auth.google.clientID` and
-//      short-circuit to `request.fail` without it, and the declared contract of
-//      the server overlay does not include `app.auth.google`. The fixture's own
-//      header assigns the fix to "the overlay owner or capture.js", so this
-//      file supplies that layer through the launcher's explicit top NODE_CONFIG
-//      layer. The values are obviously fake and are not credentials: the token
-//      endpoint is intercepted, so nothing authenticates against anything.
-//   2. The fixture's seeding contract asks that `identities.existing` be seeded
-//      as a user, and the seeder does not seed it - there is no such address in
-//      it. `setIdentityEmails` runs only inside the child, and the environment
-//      contract has no identity variable, so neither file can be aligned from
-//      here. Rather than edit a sibling artifact, the existing-user branch is
-//      reached as an ORDERED TWO-STEP SEQUENCE: step 1 takes the new-user
-//      branch, which creates the account precisely BECAUSE of the quirk under
-//      test, and step 2 then finds it and takes the existing-user branch.
-//      `findByMultiple` is an `$or` over email, username and google id, so the
-//      account step 1 persists is the one step 2 matches. One case, two steps,
-//      no fixture edit, and the quirk's own side effect is what makes the
-//      second branch reachable.
+// ISOLATION AND EVIDENCE. The driver uses node:http, never global fetch: the
+// http fixture patches globalThis.fetch and rejects any endpoint it has no
+// recording for, so a fetch-based driver would have its own localhost requests
+// refused. The fixtures that intercept external effects - aws, mail, http and
+// the model-boundary fault injector - run in the CHILD and publish JSONL
+// evidence logs this tool reads afterwards. An unreadable or unsound channel
+// fails the capture: a response is reproducible only together with the fixture
+// state that produced it. No application source enters this process - the
+// manifest is read as an artifact or generated by a spawned child, and the
+// fixtures are created by the seeder in a child.
 //
-// ===========================================================================
-// WHAT THE ARTIFACT MAY CLAIM ABOUT ITSELF
-// ===========================================================================
-// A corpus is read later as evidence for the parity gate, so the one thing it
-// must never do is overstate its own reach. Four rules follow from that, and
-// each of them is enforced rather than documented:
-//
-//   1. COVERAGE DESCRIBES THE ARTIFACT THAT WAS WRITTEN, not the scenario set
-//      that could have been driven. `--only` and `--no-quirks` reduce what is
-//      captured, so they reduce the coverage the artifact reports. The full
-//      defined surface is reported separately, as `definitionCoverage`, and is
-//      labelled as a definition count so it cannot be mistaken for a capture.
-//   2. GATE QUALIFICATION IS A COMPUTED FIELD WITH ITS REASONS ATTACHED. An
-//      artifact qualifies only when every manifest route and every mandatory
-//      quirk, error-edge and auth-outcome group is present in it, every case
-//      drove, the fixture evidence was sound and nothing was excused. Anything
-//      else writes `gate.qualifies: false` and lists why, so a partial capture
-//      cannot be handed to a reviewer as a full-surface one.
-//   3. AN EMPTY SELECTION IS A FAULT, NOT A RUN. `--only` matching nothing
-//      exits before the launcher starts: a corpus of zero scenarios that
-//      claimed 233 routes is precisely the misrepresentation rule 1 exists to
-//      prevent.
-//   4. THE ANNOTATIONS SURVIVE A CAPTURE, AND AN APPROVED DEVIATION HAS TO
-//      MATERIALIZE AS APPROVED. `expectedDeviation` and `unreachableReason` are
-//      part of the scenario DEFINITION - the first is the only thing that
-//      distinguishes AAP 0.7's approved change from a regression, the second is
-//      what keeps an unreachable route explained rather than dropped - so they
-//      are carried on the captured scenario, are re-attached from the existing
-//      definition by `--append`, and are written to a `<out>.annotations.json`
-//      sidecar that `replay.js --annotations` consumes directly. The marker
-//      approves ONE response, not "a difference", so the marked case also
-//      carries a machine-checkable `targetExpectation` and `--target` excuses
-//      the difference only when what was captured satisfies it.
-//
-// ===========================================================================
-// DETERMINISM
-// ===========================================================================
-// Re-capturing the same tree must produce a reviewable diff, not a reshuffle.
-// Scenario order is fixed by construction and runs in three dependency phases -
-// read-only, then non-destructive mutations, then the destructive ones, with a
-// forced reseed before each destructive case so that a delete never decides
-// what a later case observes; object keys are emitted in a declared order and
-// every dynamic map (headers, cookie attributes) is sorted; no clock or random
-// value reaches
-// an artifact except the ones recorded as timing, which are bucketed. The one
-// value normalized AT CAPTURE TIME is the session cookie's value, replaced by
-// its digest: it is already in the enumerated volatile set, so nothing
-// comparable is lost, and it keeps live session tokens out of a committed
-// artifact. Every attribute of that cookie - name, HttpOnly, Secure, SameSite,
-// Path, Domain, Max-Age and the presence and horizon of Expires - is preserved
-// in full, because those ARE compared and are the only way a silent no-op in
-// the private-field cookie patch is detectable.
+// Coverage and every summary field are accounted over the scenarios actually
+// WRITTEN, so --only and --no-quirks reduce what is claimed; the reach of the
+// scenario tables is reported separately as definitionCoverage, gate.qualifies
+// carries its reasons, and an --only matching nothing is a usage fault.
 
 var http         = require('http');
 var https        = require('https');
@@ -177,11 +93,24 @@ var mongo    = require('./mongo');
 var seed     = require('./seed');
 var manifest = require('./manifest');
 
+// The comparator, required for exactly two things it OWNS and this file must
+// not restate: the write-time redaction rules (`redactForRecording`) and the
+// list of them (`recordingRedactions`). Three recorded values may not be
+// committed - a bcrypt hash, a signed share token and the per-request upload
+// path, which is an absolute path on the capturing machine - and the
+// placeholder written in their place has to be exactly the one replay.js
+// normalizes a live response to, or every redacted field becomes a difference.
+// Two copies of those three regular expressions is a drift waiting to happen,
+// so there is one copy and it lives with the volatile set that justifies it.
+// Nothing else is taken from here, and the dependency is acyclic: replay.js
+// does not require this file.
+var comparison = require('./replay');
+
 // Applied BEFORE the fixture catalogues below, because ./fixtures/mail requires
 // lib/util/mailer.js, which requires the npm `config` package at module scope -
-// so merely requiring THIS file loads `config`, and without the isolation
-// `config` 0.4.37 then creates config/runtime.json inside the checkout it is
-// resolving from. Measured.
+// so merely requiring THIS file loads `config`, and without the isolation the
+// `config` package creates config/runtime.json inside the checkout it is
+// resolving from.
 //
 // `appRoot: TOOL_ROOT` is the second half and is not optional: the config this
 // PROCESS loads is this tool's own tree, and `config` resolves its directory
@@ -201,18 +130,19 @@ mongo.isolateRuntimeConfig({
 });
 
 // The fixture catalogues. `httpFixture` is required for its profile catalogue
-// and its two frozen identities, and is IMMEDIATELY restored - see the note on
-// the driver above. `awsFixture` is required lazily, after PARITY_S3_ROOT has
-// been pointed at the launcher's store, because it resolves its root at load.
+// and its two frozen identities, and is IMMEDIATELY restored, so this process
+// drives localhost through an unpatched node:http rather than through the
+// fixture's `globalThis.fetch`. `awsFixture` is required lazily, after
+// PARITY_S3_ROOT has been pointed at the launcher's store, because it resolves
+// its root at load.
 var httpFixture = require('./fixtures/http');
 var mailFixture = require('./fixtures/mail');
 
 // The model-boundary fault fixture, required for its `arming()` builder ONLY:
 // the arming document's field names live in that fixture and are not duplicated
 // here. It is restored immediately, like the two above. Requiring it is safe in
-// this process for the reason its header gives - it loads no application module
-// and patches nothing until something requires lib/models/user, which this
-// process never does.
+// this process because it loads no application module and patches nothing until
+// something requires lib/models/user, which this process never does.
 var modelFixture = require('./fixtures/model');
 
 var awsFixture = null;
@@ -342,13 +272,27 @@ var EVIDENCE_CHANNELS = ['http', 'mail', 's3'];
 // The fixture log records that carry an `event` field and are NOT faults.
 //
 // `profile-changed` is the http fixture acknowledging the profile file this
-// tool writes between cases; `send` is the mail fixture's record of a captured
+// tool writes between cases; `identities-aligned` is the same fixture
+// acknowledging the OAuth identity map this tool supplies as
+// PARITY_HTTP_IDENTITIES, which every run of this file now sets - see
+// `alignIdentitiesToSeeder`; `send` is the mail fixture's record of a captured
 // message; `adopted-existing-patch` is the mail fixture recognizing its own
 // patch rather than layering a second one. Every other `event` any of the three
 // fixtures emits names something that did not work, which is why this list is
 // an allow-list: a fault event added to a fixture later fails the capture
 // without anyone having to remember to teach this file about it.
-var BENIGN_FIXTURE_EVENTS = ['profile-changed', 'send', 'adopted-existing-patch'];
+//
+// Note which identity events are NOT here, deliberately: `identities-malformed`
+// and `identities-rejected` mean the map did NOT apply, and
+// `identity-contract-unverified` means the address being served is one the
+// fixture cannot see in the seeded set. Each of those inverts an OAuth branch
+// silently, so each stays a fault.
+var BENIGN_FIXTURE_EVENTS = [
+  'profile-changed',
+  'identities-aligned',
+  'send',
+  'adopted-existing-patch'
+];
 
 // The one fixture event whose disposition depends on WHAT IT SAYS rather than
 // on its name, so it belongs on neither list.
@@ -396,19 +340,43 @@ var PHASE_DESTRUCTIVE = 'destructive';
 var PHASE_ORDER = [PHASE_READ_ONLY, PHASE_MUTATING, PHASE_DESTRUCTIVE];
 
 // The groups an artifact must contain before it can stand as gate evidence.
-// The route sweep alone proves only that 233 routes answer something; these are
-// the cases that make the corpus evidence for R-d, R-e and the session
-// contract, which is why an artifact without them does not qualify however
-// complete its route coverage is. Matched as prefixes because each expands into
-// several concrete groups (quirk.reply-chain.*, error-edge.*).
-var MANDATORY_GROUP_PREFIXES = ['quirk.', 'error-edge.', 'auth-outcome'];
+// The route sweep alone proves only that every registered route answers
+// something; these groups are what carry the preserved quirks, the error edges
+// and the session-contract outcomes, so an artifact without them does not
+// qualify however complete its route coverage is. Matched as prefixes because
+// each expands into several concrete groups (quirk.reply-chain.*,
+// error-edge.*).
+var MANDATORY_GROUP_PREFIXES = [
+  'quirk.',
+  'error-edge.',
+  'auth-outcome',
+  // The production-client contract cases. Mandatory for the same reason the
+  // quirk cases are: each one exists because the minimal payload table drives a
+  // route in a shape NO shipped client sends, and a corpus that dropped them
+  // would go back to recording a request the application never actually
+  // receives while presenting it as the route's behaviour. See
+  // buildClientContractScenarios.
+  'client-contract.'
+];
 
-// AAP 0.7's approved deviation, carried on the one scenario it applies to.
+// The fixed multipart boundary every upload case uses.
+//
+// Fixed rather than generated, because the corpus has to be byte-reproducible:
+// a random boundary would change the request - and therefore the recorded
+// payload - on every capture, and test/parity/replay.js re-sends the RECORDED
+// payload string verbatim, so a boundary that differed between the two runs
+// would make every upload case a difference. It is deliberately not a value any
+// real client would pick, so it cannot be mistaken for captured data.
+var MULTIPART_BOUNDARY = '----trinketParityBoundaryDoNotRandomise';
+
+var MULTIPART_TYPE = 'multipart/form-data; boundary=' + MULTIPART_BOUNDARY;
+
+// The one approved deviation, carried on the single scenario it applies to.
 //
 // This is the entire deviation-control mechanism for the parity gate: replay.js
 // treats a difference as a FAILURE unless the scenario carries this marker, and
 // then checks the difference against what the marker approved. The wording is
-// the wording of the decision, so that the artifact and the record in
+// the wording of the approval itself, so that the artifact and the record in
 // `docs/preserved-quirks.md` say the same thing.
 var IMAGE_DOWNLOAD_DEVIATION = Object.freeze({
   approvedBy: 'AAP 0.7',
@@ -428,10 +396,12 @@ var IMAGE_DOWNLOAD_DEVIATION = Object.freeze({
     'and R-b is unqualified about routes serving.'
 });
 
-// Why the fifth auth-scheme outcome is recorded rather than driven. R-b permits
-// an entry that cannot be driven only when it is listed WITH ITS REASON, and
-// this is that reason - carried on the scenario so a capture cannot turn a
-// documented exclusion into an unexplained hole.
+// The reference wording for an entry no HTTP request can reach: an entry like
+// that is recorded WITH ITS REASON rather than dropped, so a capture cannot
+// turn a documented exclusion into an unexplained hole. This corpus drives the
+// auth scheme's lookup-error outcome through the model-boundary fault fixture,
+// so the text is exported as a reference value rather than attached to a
+// scenario here.
 var AUTH_LOOKUP_ERROR_UNREACHABLE =
   'The "Auth error" outcome of the auth scheme [app.js:243-281] needs the User ' +
   'lookup itself to fail, which no HTTP request can cause - it takes a ' +
@@ -442,7 +412,7 @@ var AUTH_LOOKUP_ERROR_UNREACHABLE =
   'which can inject the fault.';
 
 // Content types recorded as text. Everything else is recorded as a length and a
-// digest, which is what AAP 0.9.3 compares for binary and stream bodies.
+// digest, which is what a binary or stream body is compared on.
 var TEXTUAL_TYPE = /^(?:text\/|application\/(?:json|javascript|xml|xhtml\+xml|x-www-form-urlencoded|graphql)|[a-z-]+\/[a-z0-9.+-]*\+(?:json|xml))/i;
 
 // The identities a scenario may name. `missingRecord` is not a seeded user: it
@@ -675,10 +645,18 @@ function defaultPayloads(ids, fixtures) {
   set('DELETE /api/trinkets/{trinketId}/folder', { folderId: ids.folder });
   set('PUT /api/trinkets/{trinketId}/slug', { slug: 'parity-renamed-trinket' });
   set('PUT /api/trinkets/{trinketId}/published', { published: 'true' });
+  // The shipped form's full field set (public/js/embed/embed.js:1711-1716),
+  // not a subset of it. Both added keys are optional in the schema and both are
+  // sent empty, which is what the form submits when the hidden token field was
+  // never populated - so the recorded outcome is the one this entry already
+  // produced, and the recorded REQUEST is now the shape a client sends.
+  // `client-contract.share-email` drives the token-bearing variants.
   set('POST /api/trinkets/{trinketId}/email', {
     email: 'parity-recipient@example.com',
     name: 'parity sender',
-    replyTo: user.email
+    replyTo: user.email,
+    token: '',
+    'g-recaptcha-response': ''
   });
   set('POST /api/trinkets/download', { files: JSON.stringify([{ name: 'main.py', content: 'print(1)' }]) });
   set('POST /api/trinkets/codeerror', {
@@ -692,6 +670,11 @@ function defaultPayloads(ids, fixtures) {
     attempt: '1',
     lang: trinket.lang
   });
+  // Deliberately WITHOUT the embed's `attempt` key, which the schema does not
+  // declare: this entry is the minimal payload that SATISFIES the declared
+  // validation, so it stays the success capture for this route.
+  // `client-contract.client-metric.production-fields` drives the shape the
+  // shipped embed sends, `attempt` included.
   set('POST /api/trinkets/clientmetric', {
     lang: trinket.lang,
     event_type: 'run',
@@ -733,16 +716,14 @@ function defaultQueries(ids, fixtures) {
   var user = seed.credentials.user;
 
   return {
-    // MEASURED CORRECTION. This was `{ format: 'zip' }`, which the route's own
-    // schema REJECTS: config/routes.js declares
-    // `format : Joi.string().valid('md', 'html').required()`, and the parser's
-    // hand-rolled validation block runs BEFORE the handler is called
-    // (lib/util/routeParser.js) and returns request.fail on failure. So every
-    // scenario driving this route with `format=zip` recorded the
-    // validation-failure path and never reached `courses.download` at all -
-    // which silently voided three committed scenarios, including the
-    // header-resolved reply-chain quirk gate below that exists to prove the
-    // archive response. `md` is the cheaper of the two accepted values.
+    // `md` because the route's own schema in config/routes.js declares
+    // `format : Joi.string().valid('md', 'html').required()`, and the
+    // hand-rolled validation block in lib/util/routeParser.js runs BEFORE the
+    // handler and answers through request.fail on failure. Any other value
+    // records the validation-failure path without reaching
+    // `courses.download` - which would also void the header-resolved
+    // reply-chain quirk case below, whose whole subject is the archive
+    // response. `md` is the cheaper of the two accepted values.
     'GET /{userSlug}/courses/{courseSlug}/download.zip': { format: 'md' },
     'GET /reset-pass': { key: 'parity-absent-reset-key' },
     'GET /api/trinkets/popular': { lang: 'python' },
@@ -773,23 +754,31 @@ var USAGE = [
   '  --app <dir>          Worktree to drive. Becomes the child\'s working',
   '                       directory, so its own node_modules and config/ load.',
   '                       Defaults to the current directory.',
-  '  --out <path>         Corpus artifact. A sibling <out>.provenance.json is',
-  '                       always written beside it. REQUIRED unless',
-  '                       ' + ARTIFACT_DIR_ENV + ' names a directory, in which',
-  '                       case it is <dir>/' + CORPUS_ARTIFACT_NAME + '. There',
-  '                       is no repository default: writing the committed',
-  '                       baseline is --out test/parity/' + CORPUS_ARTIFACT_NAME,
-  '                       spelled out.',
-  '                       under one top-level `provenance` key, so the corpus',
-  '                       says which tree it measured on its own. A sibling',
-  '                       <out>.provenance.json is also written as a run',
-  '                       output - it adds a digest of the exact bytes and is',
+  '  --out <path>         Corpus artifact. REQUIRED unless ' + ARTIFACT_DIR_ENV,
+  '                       names a directory, in which case it is',
+  '                       <dir>/' + CORPUS_ARTIFACT_NAME + '. There is no',
+  '                       repository default: writing the committed baseline is',
+  '                       --out test/parity/' + CORPUS_ARTIFACT_NAME + ' spelled',
+  '                       out. Provenance is written twice, on purpose: embedded',
+  '                       in the corpus under one top-level `provenance` key, so',
+  '                       a delivered corpus says which tree it measured with no',
+  '                       companion file, and again as a sibling',
+  '                       <out>.provenance.json, which is a run output adding a',
+  '                       digest over the exact bytes for a scratch run that',
+  '                       compares two corpora outside the compared region.',
   '  --manifest <path>    Route manifest to account coverage against. Read from',
   '                       test/parity/' + MANIFEST_ARTIFACT_NAME + ' when it is',
-  '                       there. When it is not, one is generated by spawning',
-  '                       manifest.js - into ' + ARTIFACT_DIR_ENV + ' or a fresh',
-  '                       temporary directory, never into the worktree unless',
-  '                       this flag named a path inside it.',
+  '                       there AND its provenance shows it describes --app;',
+  '                       coverage is measured against it, so a manifest of',
+  '                       another tree would make every coverage claim a claim',
+  '                       about the wrong HTTP surface. When it is missing, or',
+  '                       cannot be bound to that tree, one is generated by',
+  '                       spawning manifest.js - into ' + ARTIFACT_DIR_ENV + ' or',
+  '                       a fresh temporary directory, never into the worktree',
+  '                       unless this flag named a path inside it. Naming a path',
+  '                       explicitly makes an unbindable manifest FATAL instead,',
+  '                       because an explicit path is an instruction and must',
+  '                       not be silently substituted.',
   '  --only <pattern>     Drive only scenarios whose id, route key or group',
   '                       matches. A /regex/ is treated as one, anything else',
   '                       as a case-insensitive substring. Repeatable. A',
@@ -851,20 +840,17 @@ var USAGE = [
   '  --exploratory        The explicit opt-out from the baseline oracle: no',
   '                       unmet expectation is fatal. The artifact records the',
   '                       opt-out and does not qualify as gate evidence.',
-  '  --expect-baseline    Accepted for compatibility and now the DEFAULT: a',
-  '                       declared baseline expectation that was not met fails',
-  '                       the capture unless --target or --exploratory says so.',
-  '                       then record whatever an unseeded tree returns.',
-  '  --no-quirks          Drive only the route sweep. Coverage still applies.',
   '  --expect-baseline    Declare that --app IS the base commit ' +
     manifest.provenance.BASELINE_HEAD.slice(0, 7) + '.',
   '                       Refuses to run against any other tree, so a',
   '                       mis-pointed --app costs nothing instead of producing',
   '                       an artifact indistinguishable from a baseline',
-  '                       capture. Also makes an unmet baseline expectation',
-  '                       fatal. Leave it off against the migrated tree, where',
-  '                       the approved deviation on the image download changes',
-  '                       a recorded timeout into a 200 by design.',
+  '                       capture. It is ONLY that assertion: a declared',
+  '                       expectation that was not met is fatal on every run,',
+  '                       with or without this flag, and --target and',
+  '                       --exploratory above are the only things that change',
+  '                       that. Leave it off against the migrated tree, which is',
+  '                       what --target is for.',
   '  --allow-nonbaseline  The only escape from that check, and it is not free:',
   '                       the corpus records role `unreviewed`, which no gate',
   '                       accepts as baseline evidence. Meaningful only',
@@ -988,18 +974,29 @@ function parseArguments(argv) {
     seedFixtures: true,
     quirks: true,
     reseedBeforeDestructive: true,
-    // The baseline oracle is ON by default. A capture whose whole purpose is to
-    // BE the R-f reference cannot treat its own declared expectations as
-    // optional: an unmet expectation means the tree did not behave as the
-    // corpus says it does, and an artifact recording that while exiting 0 is a
-    // silent false baseline. The two ways out are explicit and are recorded in
-    // the artifact - `--target`, which excuses only an approved deviation, and
-    // `--exploratory`, which excuses everything and forfeits gate qualification.
-    expectBaseline: true,
+    // The baseline oracle is ON by default. A capture whose artifact is the
+    // reference other trees are compared against cannot treat its own declared
+    // expectations as optional: an unmet expectation means the tree did not
+    // behave as the corpus says it does, and an artifact recording that while
+    // exiting 0 is a silent false baseline. The two ways out are explicit and
+    // are recorded in the artifact - `--target`, which excuses only an approved
+    // deviation, and `--exploratory`, which excuses everything and forfeits
+    // gate qualification.
     target: false,
     exploratory: false,
+    // `--expect-baseline` IS A DIFFERENT THING FROM THE ORACLE ABOVE, and
+    // conflating the two is what put two `expectBaseline` keys in this object
+    // with opposite values - one carrying the oracle's description, the other
+    // the value every run actually took. What this flag declares is that
+    // `--app` IS the base commit: `resolveRole` hands it to
+    // `provenance.assertBaseline`, which REFUSES any other tree, so a
+    // mis-pointed --app costs nothing instead of producing an artifact
+    // indistinguishable from a baseline capture. It is therefore opt-in and
+    // false by default - a default of true would send every capture of the
+    // MIGRATED tree, which is most of them, straight into that refusal - and
+    // nothing about the oracle depends on it.
     expectBaseline: false,
-    // The escape from the baseline-HEAD assertion. False by default, because
+    // The escape from that baseline-HEAD assertion. False by default, because
     // the assertion exists precisely so that a baseline claim cannot be made
     // by accident.
     allowNonBaseline: false,
@@ -1026,9 +1023,9 @@ function parseArguments(argv) {
 
   // A REPEATED OPTION IS A USAGE ERROR, not a last-one-wins. Two `--out`
   // paths, or an `--app` given twice, means the command line says two things
-  // and the tool silently acted on one of them - which for a gate is the worst
-  // shape available: the artifact lands somewhere the caller did not ask for
-  // and the run still exits 0. The two exceptions are declared, not inferred:
+  // and the tool silently acted on one of them: the artifact lands somewhere
+  // the caller did not ask for and the run still exits 0. The two exceptions
+  // are declared, not inferred:
   // --only accumulates a selection and --node-flags accumulates flags, and both
   // are documented as repeatable.
   function once(flag) {
@@ -1147,11 +1144,10 @@ function parseArguments(argv) {
       options.exploratory = true;
     }
     else if (arg === '--expect-baseline') {
-      // Now the default. Still accepted, and deliberately so: replay.js's own
-      // remedy message and this repository's documentation both spell this
-      // invocation out, and a flag that used to mean "check the expectations"
-      // must not become an unrecognized-argument failure the moment checking
-      // them became unconditional.
+      // Checking the expectations is unconditional, so this flag asserts only
+      // the baseline HEAD. It stays accepted because replay.js's own remedy
+      // message and this repository's documentation both spell the invocation
+      // out, and it must not become an unrecognized-argument failure.
       options.expectBaseline = true;
     }
     else if (arg === '--allow-nonbaseline') {
@@ -1549,7 +1545,16 @@ function recordHeaders(raw) {
       return;
     }
 
-    out[lower] = Array.isArray(value) ? value.slice() : value;
+    // Every other header value goes through the same write-time redaction the
+    // body does. A Location carrying a share token is the case that motivates
+    // it - the token is signed, so it is a credential wherever the signing
+    // secret is shared - and the rule set is replay.js's, so the placeholder
+    // recorded here is the one a live header is normalized to.
+    out[lower] = Array.isArray(value)
+      ? value.map(function(entry) {
+        return comparison.redactForRecording(entry).value;
+      })
+      : comparison.redactForRecording(value).value;
   });
 
   return sortedKeys(out);
@@ -1834,6 +1839,7 @@ function drive(spec, timeoutMs) {
         var rawCookies = response.headers['set-cookie'] || [];
         var contentType = response.headers['content-type'];
         var textual = isTextualType(contentType);
+        var redactions;
         var body = {
           encoding: textual ? 'text' : 'binary',
           length: buffer.length,
@@ -1849,6 +1855,22 @@ function drive(spec, timeoutMs) {
           }
           else {
             body.text = buffer.toString('utf8');
+          }
+
+          // Three classes of value are redacted BEFORE the recording exists,
+          // for the reason replay.js's `redactForRecording` states: a bcrypt
+          // hash and a signed share token are credential-format values and the
+          // per-request upload path is an absolute path on this machine, and
+          // this artifact is tracked and world-readable. `length` and `digest`
+          // above are computed from the RAW buffer and stay raw, so the record
+          // still says how large the real response was and what it hashed to;
+          // the comparator demotes both to observations whenever a volatile
+          // rule fired, which is exactly when this redaction fires.
+          redactions = comparison.redactForRecording(body.text);
+          body.text = redactions.value;
+
+          if (redactions.applied.length) {
+            body.redacted = redactions.applied;
           }
         }
 
@@ -2050,8 +2072,8 @@ Jar.prototype.request = async function(identity, spec, timeoutMs) {
       contentType: encoded.contentType,
       payloadEncoding: encoded.encoding,
       // The exact payload that was sent, recorded beside its response so a
-      // reviewer can see what produced it. This is the payload evidence AAP
-      // 0.9.3 requires of every mutating case.
+      // reviewer can see what produced it. Every mutating case carries its
+      // payload for that reason.
       payload: spec.payload === undefined ? null : spec.payload
     }
   };
@@ -2286,11 +2308,11 @@ function materializePath(entry, data) {
       case 'path':
         return token(name, wildcardTailFor(routePath), false);
       default:
-        // Unreachable for the 233 routes measured, and deliberately loud rather
-        // than substituting something plausible: a new wildcard token added to
-        // the route surface must be given a seeded value on purpose, not
-        // silently filled in with a placeholder that then gets captured as
-        // though it meant something.
+        // No route in the current surface reaches here, and the branch is
+        // deliberately loud rather than substituting something plausible: a new
+        // wildcard token added to the route surface must be given a seeded
+        // value on purpose, not silently filled in with a placeholder that then
+        // gets captured as though it meant something.
         notes.push('the wildcard {' + raw + '} has no materialization rule, so ' +
           'this case was driven against a literal placeholder and must be given ' +
           'a seeded value before its capture is trusted');
@@ -2335,16 +2357,16 @@ function materializePath(entry, data) {
  *
  *   `expectedDeviation` is the only thing that tells a replay that a difference
  *   was APPROVED. Exactly one case carries it - the never-settling image
- *   download, AAP 0.7's approved deviation - and without it that case's change
- *   from a recorded timeout to a 200 reads as a regression and fails the parity
- *   gate. A capture that dropped the field would silently disarm the deviation
- *   control, so it is carried here, re-attached by `--append` from the existing
- *   definition, and written to the annotations sidecar.
+ *   download - and without it that case's change from a recorded timeout to a
+ *   200 reads as a regression and fails the parity gate. A capture that dropped
+ *   the field would silently disarm the deviation control, so it is carried
+ *   here, re-attached by `--append` from the existing definition, and written to
+ *   the annotations sidecar.
  *
  *   `unreachableReason` is what keeps an explained gap distinguishable from a
- *   dropped route. R-b allows an entry that genuinely cannot be driven only
- *   when it is recorded WITH ITS REASON, so a capture that dropped the reason
- *   would turn a documented exclusion into an unexplained hole.
+ *   dropped route. An entry that genuinely cannot be driven is recorded WITH
+ *   ITS REASON, so a capture that dropped the reason would turn a documented
+ *   exclusion into an unexplained hole.
  *
  * @param {Object} spec
  * @returns {Object} the scenario definition
@@ -2400,11 +2422,10 @@ function isDestructiveScenario(item) {
 /**
  * Whether a scenario belongs to one of the mandatory groups.
  *
- * The route sweep exercises success paths. Everything that makes this corpus
- * evidence rather than decoration - the quirks R-d protects, the error edges
- * R-e protects, the auth outcomes the session contract protects - lives in the
- * groups named by MANDATORY_GROUP_PREFIXES, and an artifact missing them cannot
- * support the gate's claim however many routes it touched.
+ * The route sweep exercises success paths. The preserved quirks, the error
+ * edges and the auth-scheme outcomes live in the groups named by
+ * MANDATORY_GROUP_PREFIXES, and an artifact missing them cannot support the
+ * gate's claim however many routes it touched.
  *
  * @param {Object} item
  * @returns {boolean}
@@ -2432,8 +2453,7 @@ function routeKeyOf(method, routePath) {
 /**
  * A stable, readable, unique scenario id.
  *
- * Two properties of this route surface make the obvious slug WRONG, and both
- * were caught by driving the real 233 rather than by inspection:
+ * Two properties of this route surface make the obvious slug WRONG:
  *
  *   A trailing slash selects a different route with a different controller -
  *   `/python` renders the language index while `/python/` renders the site
@@ -2571,6 +2591,29 @@ function isMutatingEntry(entry) {
  * @param {Object} context {entries, data, payloads, queries}
  * @returns {Array.<Object>} scenarios
  */
+/**
+ * The routes whose baseline does not answer at all, with the measurement.
+ *
+ * A stall is a RECORDABLE RESULT here - AAP 0.9.3 says so - but only when the
+ * case declares it. An undeclared stall is reported as a finding and
+ * disqualifies the artifact, which is right: a route that quietly stopped
+ * answering must not pass as a captured success. So a stall that has been
+ * measured and understood is declared HERE, by route key, and the case is
+ * built with `intent: 'timeout'` and the note that says why.
+ *
+ * This table is not a suppression: the step is still driven, still bounded by
+ * `--timeout`, and its recorded outcome is still compared field for field. A
+ * target that ANSWERS one of these routes is a difference on `outcome`, which
+ * is exactly the finding the declaration leaves visible.
+ */
+var MEASURED_STALLS = {
+  'POST /api/users/email': 'measured on the base commit: the handler does ' +
+    'not settle, so the request reaches its budget with no response. The ' +
+    'stall was recorded by two independent captures of that tree, and the ' +
+    'case is declared as a timeout rather than reported as an undeclared ' +
+    'one - which is what an unrecognized stall in a captured corpus would be.'
+};
+
 function buildRouteSweep(context) {
   var scenarios = [];
 
@@ -2601,6 +2644,14 @@ function buildRouteSweep(context) {
 
     if (materialized.absent.length) {
       intent = 'failure';
+    }
+
+    // Last, so it wins: a route that does not answer produces no status at
+    // all, which is neither a success nor a validation failure however its
+    // payload was resolved.
+    if (Object.prototype.hasOwnProperty.call(MEASURED_STALLS, key)) {
+      intent = 'timeout';
+      notes.push(MEASURED_STALLS[key]);
     }
 
     modes = entry.path.indexOf('/api/') === 0
@@ -2639,15 +2690,14 @@ function buildRouteSweep(context) {
 // ---------------------------------------------------------------------------
 // The mandatory quirk cases
 // ---------------------------------------------------------------------------
-// Each of these exists so that a silent behaviour change cannot pass. They are
-// the reason this corpus is evidence rather than decoration, and every one
-// carries a declared baseline expectation that is CHECKED on every run and that
-// fails the capture when it is not met.
+// Each of these exists so that a silent behaviour change cannot pass, and every
+// one carries a declared baseline expectation that is CHECKED on every run and
+// that fails the capture when it is not met.
 //
 // Their expectations describe BASELINE behaviour at the base commit. Against
 // the migrated tree exactly one of them is expected to differ - the
-// never-settling image download becomes a 200 stream by the approved deviation
-// in AAP 0.7 - and that case additionally carries a `targetExpectation`
+// never-settling image download becomes a 200 stream under the one approved
+// deviation - and that case additionally carries a `targetExpectation`
 // stating what the deviation approved. `--target` excuses the difference only
 // when the captured response satisfies that statement, so the artifact records
 // the change from a timeout to a 200 as evidence of an approved deviation while
@@ -2689,12 +2739,10 @@ function markRemainingUndriven(scenarios, from, reason) {
  * against one is then a finding for whoever started it.
  *
  * This exists because of what a dead server does to a corpus. A crash mid-run
- * turns every remaining case into a transport failure, and 100 recorded
- * ECONNREFUSED responses look like data while meaning nothing at all - the
- * first full sweep of this tool produced exactly that, and the artifact gave no
- * hint that a single route had killed the server on case 287 of 383. Detecting
- * it is the difference between an artifact that reports a crash and one that
- * silently misrepresents it.
+ * turns every remaining case into a transport failure, and a run of recorded
+ * ECONNREFUSED responses looks like data while meaning nothing at all.
+ * Detecting it is the difference between an artifact that reports a crash and
+ * one that silently misrepresents it.
  *
  * @param {(Object|null)} info the launcher's start result
  * @returns {boolean}
@@ -2805,11 +2853,10 @@ function buildQuirkScenarios(context) {
       : null;
     var entry = entryFor(context.entries, method, routePath);
     // Two of the three carry an isAdmin pre-handler, which forbids the request
-    // BEFORE the handler - and therefore before the fallback - ever runs.
-    // Driven anonymously they answer 403 and the branch under test is never
-    // reached, which is what the first run of this case actually recorded.
-    // The identity is taken from the route's own pre-handler list rather than
-    // hard-coded, so it stays right if the surface changes.
+    // BEFORE the handler - and therefore before the fallback - ever runs, so
+    // driven anonymously they answer 403 and the branch under test is never
+    // reached. The identity is taken from the route's own pre-handler list
+    // rather than hard-coded, so it stays right if the surface changes.
     var identity = requiresAdmin(entry) ? IDENTITY_ADMIN : IDENTITY_ANONYMOUS;
     var identityNote = requiresAdmin(entry)
       ? 'driven as the seeded admin because this route carries an isAdmin ' +
@@ -2855,7 +2902,7 @@ function buildQuirkScenarios(context) {
   // turns into a 500. The existing smoke check asserts 200 for both but probes
   // them unauthenticated, which is why nothing has ever detected this.
   //
-  // Driven while logged in, which is the whole point. Note that the
+  // Driven while logged in, which is what selects that branch. The
   // `request.yar.set('next', ...)` call lives in the ELSE branch and does not
   // precede the throw.
   // -------------------------------------------------------------------------
@@ -2932,13 +2979,26 @@ function buildQuirkScenarios(context) {
       '/signup, and a build that redirected step 2 to /login would have fixed ' +
       'a documented quirk',
       'the two Location values must be compared to EACH OTHER, not only to the ' +
-      'baseline recording - that comparison is what detects the fix'
+      'baseline recording - that comparison is what detects the fix',
+      'step 3 sends the value the SHIPPED FORM sends. ' +
+      'lib/views/signup.html:18 posts a hidden formName of `sign-up`, not the ' +
+      '`signup` the payload table uses, so a real failed signup would be ' +
+      'redirected to /sign-up - a path with no route - if the template were ' +
+      'still its own. It is not, because step 1 burned it, so this step ' +
+      'redirects to /signup as well, and that is the production consequence of ' +
+      'the leak: the value the browser submits never reaches its own target ' +
+      'and the user is sent wherever the first failure of the process went. ' +
+      'It is a step of THIS scenario rather than a scenario of its own ' +
+      'because a separate case would compete with this one to burn the ' +
+      'template, and which value burned it is exactly what steps 1 and 2 assert'
     ],
     expectation: {
-      description: 'both requests redirect to step 1\'s target, /signup',
+      description: 'all three requests redirect to step 1\'s target, /signup, ' +
+        'including the one sending the shipped form\'s own formName',
       steps: [
         { index: 0, status: 302, locationEndsWith: '/signup' },
-        { index: 1, status: 302, locationEndsWith: '/signup' }
+        { index: 1, status: 302, locationEndsWith: '/signup' },
+        { index: 2, status: 302, locationEndsWith: '/signup' }
       ],
       cross: { locationsEqual: [0, 1] }
     },
@@ -2956,6 +3016,13 @@ function buildQuirkScenarios(context) {
         target: '/users',
         accept: ACCEPT_HTML,
         payload: { formName: 'login' }
+      },
+      {
+        label: 'third-failure-formName-sign-up-as-the-form-sends-it',
+        method: 'POST',
+        target: '/users',
+        accept: ACCEPT_HTML,
+        payload: { formName: 'sign-up' }
       }
     ]
   }));
@@ -2991,18 +3058,27 @@ function buildQuirkScenarios(context) {
       'with an empty list and the trinket listing is never invoked',
       'step 2 carries a query, which makes the injected URL well formed so the ' +
       'folder filter does apply',
+      'step 2\'S QUERY IS THE ONE THE SHIPPED CLIENT SENDS, and it did not use ' +
+      'to be. public/js/library/trinkets/list/folder-list-controller.js:28-68 ' +
+      'builds `{limit: 20}` and adds from, offset, sort and user, then calls ' +
+      '`$scope.folder.customGETLIST(\'trinkets\', trinketParams)` - every one ' +
+      'of those keys is declared on GET /api/trinkets. This step previously ' +
+      'sent `published=true`, which that route does NOT declare, so the ' +
+      'injected URL carried an undeclared query key, the INNER route failed ' +
+      'its own validation, and the case measured a validation refusal while ' +
+      'appearing to measure the folder filter. That is what the paragraph ' +
+      'below used to record as an unexplained empty result',
       'the ASSERTED invariant is the queryless empty list, because that is the ' +
       'measured, documented baseline behaviour and it is what a conversion ' +
       'would accidentally fix by passing the folder through in both cases',
       'the pair is recorded so replay.js compares BOTH bodies between the two ' +
-      'trees. Whether step 2 returns a non-empty list depends on the folder ' +
-      'membership being visible to the folder-filtered query, which is a ' +
-      'fixture property rather than a property of this quirk - measured on the ' +
-      'target tree, step 2 also came back empty even though the folder ' +
-      'listing reports a trinket in that folder, and that is recorded as a ' +
-      'finding rather than asserted here. Asserting "the two bodies differ" ' +
-      'would make this case fail for a reason that has nothing to do with the ' +
-      'behaviour under test.'
+      'trees. MEASURED with the production query: step 2 returns a NON-EMPTY ' +
+      'data list where step 1 returns an empty one, so the two halves of this ' +
+      'quirk now differ observably and the folder filter is genuinely ' +
+      'exercised - which it was not while the query key was one the inner ' +
+      'route rejects. Step 2 still asserts only its status, because the ' +
+      'membership it returns is a fixture property rather than a property of ' +
+      'this quirk, and replay compares its body between the trees anyway.'
     ],
     expectation: {
       description: 'the queryless case answers 200 with an empty data list, ' +
@@ -3023,7 +3099,7 @@ function buildQuirkScenarios(context) {
       {
         label: 'query-bearing',
         method: 'GET',
-        target: '/api/folders/' + ids.folder + '/trinkets?published=true',
+        target: '/api/folders/' + ids.folder + '/trinkets?limit=20',
         accept: ACCEPT_JSON,
         payload: null
       }
@@ -3035,12 +3111,13 @@ function buildQuirkScenarios(context) {
   scenarios = scenarios.concat(buildOAuthScenarios(context));
   scenarios = scenarios.concat(buildAuthOutcomeScenarios(context));
   scenarios = scenarios.concat(buildErrorEdgeScenarios(context));
+  scenarios = scenarios.concat(buildClientContractScenarios(context));
 
   return scenarios;
 }
 
 /**
- * All eight reply chains, in the three categories they were measured in.
+ * All eight reply chains, in the three categories their outcomes fall into.
  *
  * The builder the shim returns resolves the deferred on `.code()`, `.header()`,
  * `.redirect()` and `.view()` but NOT on `.type()` or `.bytes()`, so what a
@@ -3110,10 +3187,11 @@ function buildReplyChainScenarios(context) {
   // that the current enum would reject. That fixture exists for this case.
   //
   // Recorded as an EXPECTED timeout on a short budget. This is the one case
-  // where preservation collides with "every route serves", and AAP 0.7 decides
-  // it for the target in favour of serving; the corpus is what turns that into
-  // evidence, by recording the baseline timeout so the target's 200 reads as an
-  // approved change rather than an unexplained difference.
+  // where preserving the baseline collides with the requirement that every
+  // route serves, and it is the one approved deviation: the migrated tree
+  // serves the stream. The corpus is what turns that into evidence, by
+  // recording the baseline timeout so the target's 200 reads as an approved
+  // change rather than an unexplained difference.
   chain({
     key: 'never-settles.image-download',
     category: 'never-settles',
@@ -3142,16 +3220,16 @@ function buildReplyChainScenarios(context) {
     },
     // The approved deviation, attached to the scenario rather than left in a
     // separate document. This marker is what lets a replay read the target's
-    // 200 as the change AAP 0.7 approved instead of as a regression, and it is
-    // the only such marker in the corpus - which is exactly why a capture that
-    // dropped it would disarm the deviation control without anything failing.
+    // 200 as an approved change instead of as a regression, and it is the only
+    // such marker in the corpus - which is exactly why a capture that dropped
+    // it would disarm the deviation control without anything failing.
     expectedDeviation: IMAGE_DOWNLOAD_DEVIATION,
-    // And what it approved, stated so a machine can check it. AAP 0.7 approves
-    // ONE response here: the stream response its sibling branch four lines
-    // below already returns, carrying the file's own mime type and byte length,
-    // minus the Content-Disposition the image branch deliberately omits. A
-    // 500, an empty body, a different content type or a transport failure are
-    // not that response and are not approved by this marker.
+    // And what it approved, stated so a machine can check it. ONE response is
+    // approved here: the stream response the sibling non-image branch already
+    // returns, carrying the file's own mime type and byte length, minus the
+    // Content-Disposition the image branch deliberately omits. A 500, an empty
+    // body, a different content type or a transport failure are not that
+    // response and are not approved by this marker.
     //
     // The values come from the seeded fixture rather than being restated, so
     // the check cannot drift from the bytes the seeder plants.
@@ -3172,9 +3250,9 @@ function buildReplyChainScenarios(context) {
   // --- Category 2: header-resolved and working. Four chains. ----------------
   //
   // Each of these continues to `.header(...)`, which DOES resolve the deferred,
-  // so all four return real hapi responses today. They are captured so they
-  // cannot become collateral damage of the deviation applied to the branch
-  // above: the fix there must not disturb these.
+  // so all four return real hapi responses. They are captured so that they
+  // cannot become collateral damage of the approved deviation on the branch
+  // above: these four must answer identically whatever happens there.
   chain({
     key: 'header-resolved.file-download-attachment',
     category: 'header-resolved',
@@ -3273,8 +3351,8 @@ function buildReplyChainScenarios(context) {
   // client receives depends on whether the deferred had already been resolved
   // earlier in the request; where hapi did receive the builder it serialized to
   // an empty object, because JSON.stringify drops function-valued properties.
-  // The measured status, content type and body are captured here because after
-  // the conversion the mechanism is gone.
+  // The status, content type and body are captured here because after the
+  // conversion the mechanism is gone.
   chain({
     key: 'builder-returned.download-main',
     category: 'builder-returned',
@@ -3469,11 +3547,11 @@ function buildPreHandlerScenarios(context) {
  * the new-user case asserts the persistence side effect as well as the status,
  * because a status code alone would not record that an account was created.
  *
- * Reaching the existing-user branch takes a two-step sequence, for the reason
- * given in the header: the fixture's `existing` identity is not seeded, and
- * neither file can be aligned from this process. Step 1 takes the new-user
- * branch and creates the account precisely because of the quirk under test;
- * step 2 then finds it. The account's existence between the steps is the
+ * Reaching the existing-user branch takes a two-step sequence, because the http
+ * fixture's `existing` identity is not one of the seeder's users and the
+ * seeder's identity list is not reachable from this process. Step 1 takes the
+ * new-user branch and creates the account precisely because of the quirk under
+ * test; step 2 then finds it. The account's existence between the steps is the
  * fixture, and the quirk supplies it.
  *
  * @param {Object} context
@@ -3549,29 +3627,35 @@ function buildOAuthScenarios(context) {
     fixtureProfile: 'oauth:success-existing-user',
     notes: [
       'the profile serves ' + JSON.stringify(identities.existing) + ', which ' +
-      'the seeder does not seed - the fixture\'s seeding contract asks for it ' +
-      'but no such address exists in the seeder, and the alignment call runs ' +
-      'only inside the server process',
-      'so this is an ORDERED SEQUENCE rather than a single request: step 1 ' +
-      'takes the new-user branch and creates the account as a side effect of ' +
-      'the quirk itself, and step 2 - the case under test - then finds it and ' +
-      'takes the existing-user branch',
-      'the user lookup is an $or over email, username and google id, so the ' +
-      'account step 1 persists is the one step 2 matches',
-      'step 2 is the assertion; step 1 is recorded as its precondition so a ' +
-      'reviewer can see where the account came from'
+      'test/parity/seed.js creates as `fixtures.oauthExisting` with ' +
+      '`profiles.google.id` and an avatar already populated - so the ' +
+      'existing-user branch performs NO WRITE and the case is independent of ' +
+      'order. The address is the seeder\'s own published map, applied to the ' +
+      'fixture by alignIdentitiesToSeeder before any scenario is built',
+      'the user lookup is an $or over email, username and google id, so all ' +
+      'three arms of it match this one document',
+      'the DISCRIMINATOR is the Location, and it is measured rather than ' +
+      'assumed: this branch answers 302 to /home, while the new-user branch ' +
+      'in the sibling case answers 302 to /signup because it throws after ' +
+      'persisting. Both are empty 302 bodies, so a body comparison ' +
+      'distinguishes nothing - which is what the clause below used to ask for',
+      'two steps rather than one, each on a fresh session, because a repeat ' +
+      'sign-in is the property that proves the branch is idempotent: the ' +
+      'account is already linked, so the second callback must answer exactly ' +
+      'as the first did'
     ],
     expectation: {
-      description: 'step 2 takes the existing-user branch and differs from step 1',
+      description: 'both callbacks take the existing-user branch, which ' +
+        'answers 302 to /home and leaves the account untouched',
       steps: [
-        { index: 0, statusIn: [200, 302] },
-        { index: 1, statusIn: [200, 302] }
+        { index: 0, status: 302, locationEndsWith: '/home' },
+        { index: 1, status: 302, locationEndsWith: '/home' }
       ],
-      cross: { bodiesDiffer: [0, 1] }
+      cross: { locationsEqual: [0, 1] }
     },
     steps: [
       {
-        label: 'precondition-create-the-account-through-the-new-user-branch',
+        label: 'callback-existing-user',
         method: 'GET',
         target: callbackTarget,
         accept: ACCEPT_HTML,
@@ -3579,7 +3663,7 @@ function buildOAuthScenarios(context) {
         resetSessionBefore: true
       },
       {
-        label: 'callback-existing-user',
+        label: 'callback-existing-user-again-on-a-fresh-session',
         method: 'GET',
         target: callbackTarget,
         accept: ACCEPT_HTML,
@@ -4137,7 +4221,583 @@ function buildErrorEdgeScenarios(context) {
 }
 
 // ---------------------------------------------------------------------------
-// Notes owed to docs/baseline-parity.md
+// The production-client contract cases
+// ---------------------------------------------------------------------------
+// WHY THIS GROUP EXISTS. `defaultPayloads` supplies each route a MINIMAL
+// payload that satisfies its declared validation, and `buildRouteSweep` drives
+// every route with it. That is the right table for a success sweep and it is
+// not a model of the shipped clients: several routes are reached in production
+// with a body, an encoding or a field set that the minimal payload does not
+// have, and for those routes the sweep records the behaviour of a request no
+// client sends while the request clients DO send goes unrecorded. A corpus in
+// that state cannot detect a change on the path real traffic takes, which is
+// the one path it is supposed to be evidence about.
+//
+// Each case below therefore drives a route in the shape a NAMED first-party
+// client produces, cited to the file and line that produces it, and records
+// whatever comes back. Recording is the whole job: several of these shapes are
+// rejected by the route they are sent to, and that rejection is the contract
+// mismatch this group makes visible rather than something to be corrected here.
+// Nothing in this file changes application behaviour, and none of these cases
+// asserts what a route OUGHT to answer - only what it does.
+//
+// TWO OF THE EIGHT ARE NOT IN THIS FUNCTION, and both are here by name so that
+// a reader looking for them does not conclude they were dropped:
+//
+//   * the signup form's `formName`. lib/views/signup.html:18 posts
+//     `sign-up`, not the `signup` the payload table sends, and it only matters
+//     on the failure path, where `fail.redirect: '/{formName}'` would take the
+//     browser to `/sign-up` - a path with no route. It CANNOT be a separate
+//     scenario: `POST /users`'s fail template is consumed in place by the first
+//     validation failure of the process (the `fail.redirect` leak), so a second
+//     scenario driving that route into failure would burn the template before
+//     or after the leak case depending on ordering, and the leak case's whole
+//     assertion is which value burned it. It is therefore a third step INSIDE
+//     `quirk.fail-redirect-leak.post-users`, where the order is fixed.
+//
+//   * the folder trinket listing's query. `quirk.folders-trinkets` drives the
+//     query-bearing half of that quirk, and its query is what the production
+//     client sends there - see the note on that scenario for what it used to
+//     send and why that voided the case.
+
+/**
+ * One `multipart/form-data` body, built from parts, with the fixed boundary.
+ *
+ * CRLF between every line and after the closing delimiter, because that is what
+ * RFC 7578 requires and what the payload parser on the other end expects to
+ * find; a body joined with bare newlines is not a multipart body and would fail
+ * for the wrong reason.
+ *
+ * The parts carry TEXT content, and that is a constraint rather than a
+ * shortcut. Both this file and test/parity/replay.js encode a string payload
+ * with `Buffer.from(payload, 'utf8')`, so a body holding raw image bytes would
+ * not survive the round trip and the replayed request would differ from the
+ * captured one. It costs nothing here: what these cases test is the ENCODING -
+ * whether a route declaring `payload.output: 'file'` without `multipart: true`
+ * accepts a multipart body at all - which is decided before any part's content
+ * is looked at. The part's own `Content-Type` still declares what the shipped
+ * client declares, so the request is shaped like the real one.
+ *
+ * @param {Array.<Object>} parts {name, filename, type, content}
+ * @returns {string} the body, ready to send with MULTIPART_TYPE
+ */
+function multipartBody(parts) {
+  var lines = [];
+
+  parts.forEach(function(part) {
+    lines.push('--' + MULTIPART_BOUNDARY);
+    lines.push('Content-Disposition: form-data; name="' + part.name + '"' +
+      (part.filename ? '; filename="' + part.filename + '"' : ''));
+
+    if (part.type) {
+      lines.push('Content-Type: ' + part.type);
+    }
+
+    lines.push('');
+    lines.push(part.content);
+  });
+
+  lines.push('--' + MULTIPART_BOUNDARY + '--');
+  lines.push('');
+
+  return lines.join('\r\n');
+}
+
+/**
+ * The production-client contract scenarios.
+ *
+ * @param {Object} context {data, entries}
+ * @returns {Array.<Object>} scenarios
+ */
+function buildClientContractScenarios(context) {
+  var ids = context.data.ids;
+  var fixtures = context.data.fixtures;
+  var user = seed.credentials.user;
+  var trinket = fixtures.trinkets.trinketPython;
+  var scenarios = [];
+
+  // -------------------------------------------------------------------------
+  // 1. The four upload routes, driven with a real multipart body.
+  //
+  // All four declare `payload: { output: 'file' }` and NONE declares
+  // `multipart: true` - config/routes.js:337-352 for /file and :353-367 for
+  // /file/avatar, config/api_routes.js:1238-1252 for the asset upload and
+  // :1253-1268 for the replace. Every shipped client that reaches them sends
+  // `multipart/form-data`: public/js/plugins/asset-browser.js:270-271
+  // constructs a Dropzone against `/api/users/assets`, and Dropzone posts
+  // multipart with its default `paramName` of `file`, which is exactly the key
+  // those two routes declare required.
+  //
+  // The payload table has no entry for any of the four, so the sweep drives
+  // them with an EMPTY body and labels them `unknown-payload`. That records a
+  // route's response to a request with no file in it - which no uploader ever
+  // sends - and leaves the encoding question, the only interesting thing about
+  // an upload route, unasked.
+  // -------------------------------------------------------------------------
+  [
+    {
+      suffix: 'api-user-assets',
+      method: 'POST',
+      path: '/api/users/assets',
+      target: '/api/users/assets',
+      accept: ACCEPT_JSON,
+      client: 'the Dropzone at public/js/plugins/asset-browser.js:270-271',
+      parts: [{
+        name: 'file',
+        filename: fixtures.bytes.assetGif.filename,
+        type: fixtures.bytes.assetGif.mime,
+        content: 'parity multipart asset part'
+      }]
+    },
+    {
+      suffix: 'api-user-assets-replace',
+      method: 'POST',
+      path: '/api/users/assets/{fileId}',
+      target: '/api/users/assets/' + ids.userAssetFile,
+      accept: ACCEPT_JSON,
+      client: 'the same asset browser, replacing an existing asset',
+      parts: [{
+        name: 'file',
+        filename: fixtures.bytes.assetGif.filename,
+        type: fixtures.bytes.assetGif.mime,
+        content: 'parity multipart replacement part'
+      }]
+    },
+    {
+      suffix: 'page-file-upload',
+      method: 'POST',
+      path: '/file',
+      target: '/file',
+      accept: ACCEPT_JSON,
+      client: 'the editor file uploader, which posts a form to /file',
+      // `type` is declared `valid('embed','download').optional()`, so a real
+      // uploader sends it as a second part rather than in the query.
+      parts: [
+        { name: 'type', content: 'embed' },
+        {
+          name: 'upload',
+          filename: fixtures.bytes.materialText.filename,
+          type: fixtures.bytes.materialText.mime,
+          content: 'parity multipart upload part'
+        }
+      ]
+    },
+    {
+      suffix: 'page-file-avatar',
+      method: 'POST',
+      path: '/file/avatar',
+      target: '/file/avatar',
+      accept: ACCEPT_JSON,
+      client: 'the profile avatar uploader, which posts a form to /file/avatar',
+      parts: [{
+        name: 'upload',
+        filename: fixtures.bytes.assetGif.filename,
+        type: fixtures.bytes.assetGif.mime,
+        content: 'parity multipart avatar part'
+      }]
+    }
+  ].forEach(function(upload) {
+    scenarios.push(scenario({
+      id: 'client-contract.multipart-upload.' + upload.suffix,
+      group: 'client-contract.multipart-upload',
+      method: upload.method,
+      path: upload.path,
+      identity: IDENTITY_USER,
+      accept: upload.accept,
+      intent: 'failure',
+      mutating: true,
+      notes: [
+        upload.method + ' ' + upload.path + ' is reached in production by ' +
+          upload.client + ', which sends multipart/form-data',
+        'the route declares payload.output: \'file\' and does NOT declare ' +
+          'multipart: true, so this case records what the payload parser does ' +
+          'with a multipart body on a route that has not enabled multipart',
+        'the payload table has no entry for this route, so the route sweep ' +
+          'drives it with an EMPTY body - a request no uploader sends - which ' +
+          'is why the encoding is recorded here instead',
+        'the body uses a fixed boundary and text parts so the recorded request ' +
+          'replays byte for byte; what is under test is the encoding, which is ' +
+          'decided before any part content is read',
+        'MEASURED: 415 Unsupported Media Type, from the payload parser, before ' +
+          'the handler or the route\'s own validation runs. So every upload a ' +
+          'shipped client makes is refused at the encoding, and the route sweep ' +
+          'never showed it because an empty body is not multipart'
+      ],
+      expectation: {
+        description: 'the multipart body a shipped uploader sends is refused ' +
+          'with 415 by the payload parser',
+        steps: [{
+          index: 0,
+          status: 415,
+          contentTypeIs: 'application/json',
+          bodyIncludes: '"error":"Unsupported Media Type"'
+        }]
+      },
+      steps: [{
+        label: 'multipart-body',
+        method: upload.method,
+        target: upload.target,
+        accept: upload.accept,
+        payload: multipartBody(upload.parts),
+        contentType: MULTIPART_TYPE
+      }]
+    }));
+  });
+
+  // -------------------------------------------------------------------------
+  // 2. Creating a folder whose name already exists - RECORDED, NOT DRIVEN.
+  //
+  // public/js/library/components/folders/new-folder-directive.js:19 posts
+  // `{name}` from a free-text field, so a name that already exists is an
+  // ordinary thing for a user to send, and the directive has a branch for the
+  // answer: `else if (response.message)` shows it as an alert. The payload
+  // table sends a name that cannot collide, so that branch is never reached.
+  //
+  // It is not driven because of what driving it does. lib/models/folder.js:164
+  // declares a unique compound index on `{_owner, slug}` and the slug is
+  // derived from the name, so the second folder raises a duplicate-key error;
+  // lib/controllers/folders.js `create` then calls `request.catch`, which this
+  // application does not define, INSIDE a mongoose save callback, where the
+  // TypeError is re-emitted as an unhandled 'error' event and TERMINATES THE
+  // PROCESS - measured against a running server, with the client getting no
+  // response at all. A capture that drove it would lose every case ordered
+  // after it, so it is recorded with its reason, which is what R-b requires of
+  // an entry that cannot be driven, and is the same disposition
+  // AUTH_LOOKUP_ERROR_UNREACHABLE takes for the auth scheme's fifth outcome.
+  // -------------------------------------------------------------------------
+  scenarios.push(scenario({
+    id: 'client-contract.folder-duplicate-name.post-api-folders',
+    group: 'client-contract.folder-duplicate-name',
+    method: 'POST',
+    path: '/api/folders',
+    identity: IDENTITY_USER,
+    accept: ACCEPT_JSON,
+    intent: 'failure',
+    mutating: true,
+    notes: [
+      'the production client posts a free-text folder name ' +
+        '(public/js/library/components/folders/new-folder-directive.js:19) and ' +
+        'handles a `message` in the response, so a colliding name is a real ' +
+        'client request with a real client branch waiting for the answer',
+      'the payload table sends a name that cannot collide, so neither the ' +
+        'duplicate-key path nor that client branch is exercised anywhere in ' +
+        'this corpus',
+      'the colliding name would be ' + JSON.stringify(fixtures.folder.name) +
+        ', which test/parity/seed.js has already created for this owner'
+    ],
+    unreachableReason: 'Driving it terminates the application. ' +
+      'lib/models/folder.js declares a unique compound index on {_owner, slug} ' +
+      'and derives the slug from the name, so a colliding name raises a ' +
+      'duplicate-key error inside the folder.save callback in ' +
+      'lib/controllers/folders.js create, where the handler calls ' +
+      '`request.catch` - a decoration this application never defines. Mongoose ' +
+      'catches what a save callback throws and re-emits it as an \'error\' ' +
+      'event on the model; nothing listens for it and nothing listens for ' +
+      'uncaughtException, so the process exits and the client receives no ' +
+      'response. Measured against a running server. Every case ordered after ' +
+      'this one would be lost, so it is recorded here with its reason rather ' +
+      'than driven, and rather than replaced by a request that would reach a ' +
+      'different branch and be recorded as though it were this one.',
+    steps: []
+  }));
+
+  // -------------------------------------------------------------------------
+  // 3. A material patch that does not apply.
+  //
+  // public/js/courseEditor/controllers/materialControl.js:321-325 autosaves by
+  // sending a JsDiff patch with its header stripped, and reads
+  // `result.status === 'error'` off the answer - the conflict branch, which is
+  // what it shows the author when the page was edited in another window. The
+  // route is absent from the payload table entirely, so the sweep drives it
+  // with an empty payload, `request.payload.patch` is undefined, the patch
+  // branch is skipped and the case records a plain save.
+  //
+  // lib/controllers/course.js `updateMaterial` returns `request.fail({data})`
+  // from INSIDE a `.then`, so on a conflict the hapi response it builds becomes
+  // the next stage's `savedMaterial` and is handed to `request.success` as
+  // `{material: <response object>}`. Whatever that produces is what a
+  // conflicting autosave receives today, and this is the only case that
+  // records it.
+  // -------------------------------------------------------------------------
+  scenarios.push(scenario({
+    id: 'client-contract.material-patch-conflict.put-patch-content',
+    group: 'client-contract.material-patch-conflict',
+    method: 'PUT',
+    path: '/api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/patchContent',
+    identity: IDENTITY_USER,
+    accept: ACCEPT_JSON,
+    intent: 'failure',
+    mutating: true,
+    notes: [
+      'the production client sends a header-stripped JsDiff patch ' +
+        '(public/js/courseEditor/controllers/materialControl.js:321-325) and ' +
+        'branches on `result.status === \'error\'` for the conflict case',
+      'sent as JSON because that is what the client sends: the editor reaches ' +
+        'this route through Restangular, and ' +
+        'public/js/courseEditor/app.js:34 sets a default Content-Type of ' +
+        'application/json for every request it makes',
+      'this patch\'s context lines cannot match any material content, so ' +
+        'lib/controllers/course.js applyLegacyPatch returns false and the ' +
+        'conflict branch is taken - verified by executing that function ' +
+        'against both empty and non-empty content',
+      'the conflict branch returns request.fail from inside a .then, so its ' +
+        'hapi response becomes the next stage\'s savedMaterial and reaches ' +
+        'request.success as {material: <response object>}; this case records ' +
+        'what a conflicting autosave actually receives',
+      'MEASURED: 500 with the generic Internal Server Error body, not the ' +
+        '{status: "error"} shape the editor branches on. So the friendly ' +
+        '"this page may have been modified in another window" message the ' +
+        'handler composes never reaches the author, and the branch that would ' +
+        'show it is unreachable',
+      'no material is written on this path: the conflict branch returns before ' +
+        'material.save() is called, so it does not disturb the fixtures'
+    ],
+    expectation: {
+      description: 'a conflicting patch answers 500 with the generic error ' +
+        'body rather than the {status: "error"} shape the editor expects',
+      steps: [{
+        index: 0,
+        status: 500,
+        contentTypeIs: 'application/json',
+        bodyIncludes: '"statusCode":500'
+      }]
+    },
+    steps: [{
+      label: 'conflicting-patch',
+      method: 'PUT',
+      target: '/api/courses/' + ids.course + '/lessons/' + ids.lesson +
+        '/materials/' + ids.material + '/patchContent',
+      accept: ACCEPT_JSON,
+      contentType: JSON_TYPE,
+      payload: {
+        patch: '@@ -1,3 +1,3 @@\r\n' +
+          ' parity conflict context line that cannot be present\r\n' +
+          '-PARITY-CONFLICT-EXPECTED-LINE\r\n' +
+          '+PARITY-CONFLICT-REPLACEMENT-LINE\r\n' +
+          ' parity trailing context that is equally absent\r\n'
+      }
+    }]
+  }));
+
+  // -------------------------------------------------------------------------
+  // 4. The share-email form's complete field set.
+  //
+  // public/js/embed/embed.js:1711-1716 posts five keys - email, name, replyTo,
+  // token and g-recaptcha-response. The payload table sends the first three, so
+  // every recorded request on this route is missing both of the ones that
+  // decide which branch of the pre-handler answers.
+  //
+  // `helpers.verifyEmailToken` (lib/util/helpers.js:258-283) takes the token
+  // from the payload, falls back to the session, and has two distinct failure
+  // funnels: no token at all throws Boom.badRequest, and a token that will not
+  // verify lets jwt.verify throw synchronously into the route catch-all. Both
+  // are reachable with a fixed payload and both are driven here, in one
+  // sequence so their order is fixed.
+  //
+  // The third sub-path - a token that VERIFIES - is not driven, and the reason
+  // is recorded rather than worked around: the token is signed with
+  // `config.app.mail.secret` plus the trinket's shortCode, which this file
+  // cannot read (it is forbidden from requiring config/**), and the other way
+  // to obtain one is to make lib/controllers/trinket.js:546 store a minted
+  // token in the session by sending a referer under `config.url + '/library'` -
+  // a value composed at run time by `refererFor`, and a per-step header, which
+  // `driven.sent` does not record and replay therefore cannot reproduce.
+  // -------------------------------------------------------------------------
+  scenarios.push(scenario({
+    id: 'client-contract.share-email.post-api-trinket-email',
+    group: 'client-contract.share-email',
+    method: 'POST',
+    path: '/api/trinkets/{trinketId}/email',
+    identity: IDENTITY_USER,
+    accept: ACCEPT_JSON,
+    intent: 'failure',
+    mutating: true,
+    notes: [
+      'the production client posts email, name, replyTo, token and ' +
+        'g-recaptcha-response (public/js/embed/embed.js:1711-1716); the ' +
+        'payload table sends only the first three',
+      'step 1 sends the production field set with an EMPTY token, which is ' +
+        'what the form submits when the hidden field was never populated: the ' +
+        'pre-handler finds no token in the payload or the session and throws ' +
+        'Boom.badRequest',
+      'step 2 sends the production field set with a token that will not ' +
+        'verify, which is what a stale or tampered form submits: jwt.verify ' +
+        'throws synchronously and the throw reaches the route catch-all',
+      'a token that VERIFIES is not driven here. It is signed with ' +
+        'config.app.mail.secret plus the trinket shortCode, which this file ' +
+        'cannot read, and the alternative - a referer under config.url + ' +
+        '"/library" so lib/controllers/trinket.js:546 mints one into the ' +
+        'session - needs a per-step header, and headers are not part of the ' +
+        'recorded request, so replay could not reproduce it',
+      'MEASURED: 400 for the empty token and 500 for the unverifiable one. ' +
+        'Two different statuses from one form field, and the payload table\'s ' +
+        'three-field request only ever reached the first of them'
+    ],
+    expectation: {
+      description: 'the empty token answers 400 from the pre-handler and the ' +
+        'unverifiable token answers 500 from the route catch-all',
+      steps: [
+        { index: 0, status: 400, contentTypeIs: 'application/json' },
+        { index: 1, status: 500, contentTypeIs: 'application/json' }
+      ]
+    },
+    steps: [
+      {
+        label: 'production-fields-empty-token',
+        method: 'POST',
+        target: '/api/trinkets/' + ids.trinketPython + '/email',
+        accept: ACCEPT_JSON,
+        payload: {
+          email: 'parity-recipient@example.com',
+          name: 'parity sender',
+          replyTo: user.email,
+          token: '',
+          'g-recaptcha-response': ''
+        }
+      },
+      {
+        label: 'production-fields-unverifiable-token',
+        method: 'POST',
+        target: '/api/trinkets/' + ids.trinketPython + '/email',
+        accept: ACCEPT_JSON,
+        payload: {
+          email: 'parity-recipient@example.com',
+          name: 'parity sender',
+          replyTo: user.email,
+          token: 'parity.not-a-verifiable.token',
+          'g-recaptcha-response': ''
+        }
+      }
+    ]
+  }));
+
+  // -------------------------------------------------------------------------
+  // 5. Removing a trinket from a folder the way the client removes it.
+  //
+  // public/js/library/app.js:40 registers `removeFromFolder` as a Restangular
+  // `remove`, so the request the browser issues is a DELETE carrying `folderId`
+  // in the QUERY STRING and no body at all. The route declares
+  // `validate.payload.folderId` required and a pre-handler on
+  // `payload.folderId` (config/api_routes.js:1048-1057), so the production
+  // request and the declaration disagree.
+  //
+  // The payload table hides the disagreement by hand-writing a body no client
+  // sends. This case sends what the client sends.
+  // -------------------------------------------------------------------------
+  scenarios.push(scenario({
+    id: 'client-contract.delete-trinket-folder.query-shape',
+    group: 'client-contract.delete-trinket-folder',
+    method: 'DELETE',
+    path: '/api/trinkets/{trinketId}/folder',
+    identity: IDENTITY_USER,
+    accept: ACCEPT_JSON,
+    intent: 'failure',
+    mutating: true,
+    notes: [
+      'Restangular\'s `remove` puts its parameters in the query string and ' +
+        'sends no body (public/js/library/app.js:40, called from ' +
+        'public/js/library/trinkets/detail/detail-controller.js:222), so this ' +
+        'is the shape the browser issues',
+      'the route declares validate.payload.folderId as required and resolves ' +
+        'its second pre-handler from payload.folderId, neither of which a ' +
+        'query parameter satisfies',
+      'the payload table sends a hand-written body instead, so the recorded ' +
+        'request is one no client produces and the disagreement is invisible ' +
+        'in the corpus',
+      'MEASURED: 400 Bad Request, raised by the `folder(payload.folderId)` ' +
+        'PRE-HANDLER - lib/util/helpers.js findById returns Boom.badRequest ' +
+        'for a falsy id - so the request is refused before the handler and ' +
+        'before the route\'s own validation block runs, and the folderId the ' +
+        'client did send in the query is never looked at by either'
+    ],
+    expectation: {
+      description: 'the shape the client sends is refused with 400 at the ' +
+        'payload.folderId pre-handler, before the handler runs',
+      steps: [{
+        index: 0,
+        status: 400,
+        contentTypeIs: 'application/json'
+      }]
+    },
+    steps: [{
+      label: 'restangular-remove-shape',
+      method: 'DELETE',
+      target: '/api/trinkets/' + ids.trinketPython + '/folder?folderId=' +
+        ids.folder,
+      accept: ACCEPT_JSON,
+      payload: null
+    }]
+  }));
+
+  // -------------------------------------------------------------------------
+  // 6. The client metric the embed actually posts.
+  //
+  // public/js/embed/server.js:140-148 reports a connect_error through
+  // `logClientMetric` with an `attempt` counter, and public/js/embed/embed.js
+  // :1836-1845 adds `lang` and `trinketId` before posting. The route's schema
+  // (config/api_routes.js:1199-1211) declares lang, event_type, duration,
+  // trinketId, message and session - and no `attempt`.
+  //
+  // The payload table sends lang, event_type and duration only, so it passes,
+  // and the corpus records a metric post that succeeds while the metric the
+  // embed sends most often is unrecorded. Driven anonymously because that is
+  // where an embedded trinket runs: the route inherits `mode: 'try'`, and an
+  // embed on a third-party page usually carries no session.
+  // -------------------------------------------------------------------------
+  scenarios.push(scenario({
+    id: 'client-contract.client-metric.production-fields',
+    group: 'client-contract.client-metric',
+    method: 'POST',
+    path: '/api/trinkets/clientmetric',
+    identity: IDENTITY_ANONYMOUS,
+    accept: ACCEPT_JSON,
+    intent: 'failure',
+    mutating: true,
+    notes: [
+      'the embed posts an `attempt` counter with every connect_error ' +
+        '(public/js/embed/server.js:140-148, through logClientMetric at ' +
+        'public/js/embed/embed.js:1836-1845, which adds lang and trinketId)',
+      'the route schema declares lang, event_type, duration, trinketId, ' +
+        'message and session, and no `attempt`',
+      'the payload table sends only lang, event_type and duration, so it ' +
+        'passes; this case records what the shipped embed sends',
+      'MEASURED: 200, with the payload echoed back and a validation flash of ' +
+        '{attempt: "\\"attempt\\" is not allowed"}. So the metric is REJECTED ' +
+        'and the embed cannot tell, because the hand-rolled validation block ' +
+        'answers a rejected API request with 200 - and the embed posts inside ' +
+        'a try/catch with an empty `.done()`, so nothing would look anyway'
+    ],
+    expectation: {
+      description: 'the metric the embed sends is rejected for its `attempt` ' +
+        'key and the rejection is reported as 200',
+      steps: [{
+        index: 0,
+        status: 200,
+        contentTypeIs: 'application/json',
+        bodyIncludes: '\\"attempt\\" is not allowed'
+      }]
+    },
+    steps: [{
+      label: 'production-fields-with-attempt',
+      method: 'POST',
+      target: '/api/trinkets/clientmetric',
+      accept: ACCEPT_JSON,
+      payload: {
+        lang: trinket.lang,
+        event_type: 'connect_error',
+        duration: '12',
+        message: 'parity connect error',
+        attempt: '1',
+        trinketId: ids.trinketPython
+      }
+    }]
+  }));
+
+  return scenarios;
+}
+
+// ---------------------------------------------------------------------------
+// Corpus notes
 // ---------------------------------------------------------------------------
 // Facts a reader of the corpus needs and cannot derive from it. They travel
 // with the artifact rather than only in prose, so the reason a branch is absent
@@ -4324,8 +4984,8 @@ function accountCoverage(entries, scenarios) {
  * Decides whether the written artifact may stand as gate evidence, and lists
  * every reason it may not.
  *
- * The gate AAP 0.9.3 describes is a claim about the whole surface: every route
- * represented, every mandatory case present, every response reproducible. A
+ * The parity gate is a claim about the whole surface: every route represented,
+ * every mandatory case present, every response reproducible. A
  * capture can legitimately be less than that - a re-capture of one case, a
  * sweep with the quirks off, a run against a server someone else started - and
  * none of those is a fault. What IS a fault is an artifact that cannot tell the
@@ -4372,9 +5032,9 @@ function evaluateGate(state) {
   if (!state.mandatoryPresent.length) {
     // An absolute check, not a relative one. `--no-quirks` never DEFINES a
     // mandatory case, so nothing can be missing relative to its own
-    // definitions - and an artifact holding only the success sweep still
-    // cannot support a gate whose subject is the quirks R-d protects, the
-    // edges R-e protects and the session contract.
+    // definitions - and an artifact holding only the success sweep still cannot
+    // support a gate whose subject is the preserved quirks, the error edges and
+    // the session contract.
     disqualify('mandatory-scenarios-absent', 'the artifact holds no quirk, ' +
       'error-edge or auth-outcome scenario at all, so it cannot evidence the ' +
       'behaviour those cases exist to hold in place');
@@ -4512,8 +5172,8 @@ function accountArtifact(scenarios, options) {
     }
 
     // An unreachable entry is one carrying its stated reason or one a run
-    // skipped for having no steps; both are explained records rather than gaps,
-    // which is the distinction R-b turns on.
+    // skipped for having no steps; both are explained records rather than
+    // gaps, which is what an unrepresented route is.
     if (item.unreachableReason || (driven && driven.skipped)) {
       unreachable.push(item.id);
       return;
@@ -4630,8 +5290,9 @@ function hasRecordedResponse(item) {
  * actually captured.
  *
  * The result is ALWAYS recorded, and an unmet expectation is FATAL by default:
- * the corpus is the R-f reference, so a tree that does not behave as these
- * cases say it does cannot be recorded as though it did. The artifact is still
+ * the corpus is the reference other trees are compared against, so a tree that
+ * does not behave as these cases say it does cannot be recorded as though it
+ * did. The artifact is still
  * written first, because a tool that refused to write it could not evidence
  * what it found. Two modes narrow that: `--target` excuses a case whose
  * approved deviation materialized exactly as approved - see
@@ -4650,9 +5311,9 @@ function evaluateExpectation(item) {
  * approved to produce - against what was actually captured.
  *
  * Separate from the baseline expectation because the two describe different
- * trees, and because approval has to be earned. AAP 0.7 does not approve "this
- * case may differ"; it approves one response: a 200 stream carrying the file's
- * own mime type and byte length and no Content-Disposition. A target-mode
+ * trees, and because approval has to be earned. The deviation does not approve
+ * "this case may differ"; it approves one response: a 200 stream carrying the
+ * file's own mime type and byte length and no Content-Disposition. A target-mode
  * capture that accepted any difference on the marked case would approve a 500,
  * an empty body or a transport failure just as readily, and the parity gate
  * would then pass on the strength of a marker rather than on the response the
@@ -5098,8 +5759,7 @@ function recordStep(step, driven) {
   // record, so a captured step that has lost its `modelFault` is replayed
   // UNFAULTED against a baseline that was captured faulted - the request comes
   // back 200 and the comparison reports a difference in the application, when
-  // what actually changed is that the harness stopped injecting. Measured
-  // exactly that way before this line existed.
+  // what actually changed is that the harness stopped injecting.
   if (step.modelFault) {
     out.modelFault = step.modelFault;
   }
@@ -5135,9 +5795,8 @@ async function runScenario(item, context) {
   if (!item.steps.length) {
     // A scenario with no steps. It carries its reason in `notes` and is counted
     // as covered, not as a fault - which is the difference between an explained
-    // gap and a silent one. Nothing in the corpus is in this state today: the
-    // auth scheme's fifth outcome was, until fixtures/model.js made it
-    // drivable.
+    // gap and a silent one. Every case the corpus defines has steps; a case
+    // arrives here only when a route cannot be driven at all.
     item.driven.skipped = true;
     return item;
   }
@@ -5163,8 +5822,8 @@ async function runScenario(item, context) {
     }
 
     // Arm for a step that declares a fault, and disarm as soon as the step
-    // after it does not. The file is only written when the state changes, so
-    // the 380-odd scenarios that never arm anything pay nothing for this.
+    // after it does not. The file is only written when the state changes, so a
+    // scenario that never arms anything pays nothing for this.
     if (step.modelFault || faultArmed) {
       try {
         selectModelFault(context.faultFile, step.modelFault || null);
@@ -5327,22 +5986,69 @@ function gitHead(root) {
  * named the path, the generated copy goes to the scratch directory (see
  * manifestDestination).
  *
+ * THE MANIFEST IS BOUND TO THE TREE IT IS ABOUT TO BE COUNTED AGAINST, and that
+ * is not a formality. `options.manifestPath` defaults to the COMMITTED
+ * `test/parity/route-manifest.json`, which test/parity/replay.js also defaults
+ * to, and this tool consumes it whenever it happens to exist. A manifest of
+ * ANOTHER tree left at that path is a structurally valid manifest - the two
+ * trees share its shape and differ only in identity - so an unverified read
+ * cannot tell them apart, and every coverage claim in the corpus would then be
+ * measured against the wrong tree's HTTP surface with nothing to notice it.
+ * `manifest.readManifestForApp` is the read that refuses that, by digesting
+ * every input which determines the manifest in `options.appRoot` and comparing
+ * it with what the artifact's sidecar recorded.
+ *
+ * A REFUSAL OF THE IMPLICIT DEFAULT IS NOT FATAL, because there is a correct
+ * answer available: generate a manifest for the tree under test, which is
+ * exactly what this function already does when the artifact is absent. A
+ * delivered artifact reaches this point unbound for ordinary reasons - a
+ * different checkout generated it, or the generator itself has since changed,
+ * which counts as an input because it decides what the manifest says - and in
+ * every one of those cases a manifest measured from the tree in front of us is
+ * better evidence than the one on disk. The refusal is said out loud and the
+ * generated replacement is what the provenance then names.
+ *
+ * `--manifest <path>` IS fatal, and the asymmetry is the point: an explicitly
+ * named manifest is an instruction, and silently counting coverage against a
+ * different file than the one the caller named would be the same class of
+ * substitution this check exists to prevent.
+ *
  * @param {Object} options
  * @returns {Object} the parsed manifest
- * @throws {ToolError} If it can be neither read nor generated.
+ * @throws {ToolError} If it can be neither read nor generated, or if an
+ *   explicitly named manifest does not describe `options.appRoot`.
  */
 function resolveManifest(options) {
   var generated;
   var env;
   var target;
+  var refused = null;
 
   if (fs.existsSync(options.manifestPath)) {
-    return manifest.readManifest(options.manifestPath);
+    try {
+      return manifest.readManifestForApp(options.manifestPath, options.appRoot);
+    }
+    catch (err) {
+      if (options.manifestExplicit) {
+        throw new ToolError('--manifest ' + options.manifestPath + ' cannot be ' +
+          'counted against ' + options.appRoot + ': ' + reasonOf(err) +
+          ' Coverage in this corpus is measured against the manifest, so a ' +
+          'manifest of another tree would make every coverage claim in it a ' +
+          'claim about the wrong HTTP surface. Generate one for that tree, or ' +
+          'leave --manifest off and let this run generate its own.');
+      }
+
+      refused = reasonOf(err);
+    }
   }
 
   target = manifestDestination(options);
-  note('no route manifest at ' + options.manifestPath + '; generating one at ' +
-    target);
+  note(refused === null
+    ? 'no route manifest at ' + options.manifestPath + '; generating one at ' +
+      target
+    : 'the route manifest at ' + options.manifestPath + ' does not describe ' +
+      options.appRoot + ', so it is NOT being used: ' + refused +
+      ' Generating one for that tree at ' + target);
 
   env = Object.assign({}, process.env, {
     NODE_ENV: 'test',
@@ -5391,10 +6097,15 @@ function resolveManifest(options) {
   }
 
   // Recorded so the provenance names the file that was actually read rather
-  // than the path that was looked for and missing.
+  // than the path that was looked for and found missing or unbound.
   options.manifestPath = target;
 
-  return manifest.readManifest(target);
+  // Bound even though this run generated it. The check is over the artifact
+  // that reached disk, and a generator that wrote a manifest attributable to
+  // some other tree is exactly the fault it exists to catch - it just spawned
+  // with `--app options.appRoot`, so anything else is a defect rather than a
+  // stale file.
+  return manifest.readManifestForApp(target, options.appRoot);
 }
 
 /**
@@ -5470,9 +6181,8 @@ function resolveArtifactPath(basename, flag) {
  * absent, a download route asks the store for a key it does not hold, the
  * fixture raises its NoSuchKey on the returned stream, and nothing in the
  * application listens for `error` on that stream. The result is an unhandled
- * error event that takes the whole server down mid-corpus. That is exactly what
- * happened on the first dry run of this tool, and every case after it recorded
- * ECONNREFUSED.
+ * error event that takes the whole server down mid-corpus, after which every
+ * remaining case records a transport failure.
  *
  * The manifest is built in a CHILD because the seeder resolves bucket names
  * through the configuration, and requiring `config` here is precisely what this
@@ -5611,11 +6321,9 @@ function prepareS3Seed(options, scratchDir) {
  * application as a second piped child. A `spawnSync` here blocks this event
  * loop for the whole seeding window, so neither pipe is drained; `mongod` then
  * blocks on its own log writes and stops completing handshakes, and the
- * seeder's connection dies of server selection after 30s against a database
- * that is running and reachable. Measured: identical child, identical URI and
- * identical environment, seeding fails under `spawnSync` and succeeds under an
- * awaited spawn. The `spawnSync` calls elsewhere in this file are safe because
- * they all run BEFORE the launcher starts.
+ * seeder's connection then dies of server selection against a database that is
+ * running and reachable. The `spawnSync` calls elsewhere in this file are safe
+ * because they all run BEFORE the launcher starts.
  *
  * SEEDING IS ALSO VERIFIED, NOT MERELY ATTEMPTED. The seeder's own `verify()`
  * runs in the same child and its result is reported back, because an exit code
@@ -5641,14 +6349,13 @@ function seedFixtures(info, options) {
     'var mongoose = require("mongoose");',
     'var seeder = require(' + JSON.stringify(path.join(__dirname, 'seed.js')) + ');',
     'mongoose.set("strictQuery", true);',
-    // The disconnect runs on EVERY path. Written as one `finish` both branches
-    // call, which is the ES5 shape of a `finally` and is what the earlier
-    // chain lacked: it disconnected only after a successful seed, so a
-    // rejection AFTER connect - a duplicate key, a validation error, a
-    // dropped connection mid-write - left this child holding an open
-    // connection whose socket kept its event loop alive. The child then never
-    // exited, `close` never fired, and the parent below waited on it forever
-    // while still owning a mongod and a live application server.
+    // The disconnect runs on EVERY path, through one `finish` both branches
+    // call - the ES5 shape of a `finally`. Disconnecting only after a
+    // successful seed would leave a rejection AFTER connect - a duplicate key,
+    // a validation error, a dropped connection mid-write - holding an open
+    // connection whose socket keeps this child's event loop alive: the child
+    // never exits, `close` never fires, and the parent below waits on it
+    // forever while still owning a mongod and a live application server.
     'function finish(code) {',
     '  process.exitCode = code;',
     '  return mongoose.disconnect().catch(function(err) {',
@@ -5699,11 +6406,11 @@ function seedFixtures(info, options) {
   // which `mongoose` and which models it loads. See mongo.PRELOAD_ENV_VARS.
   mongo.scrubPreloadVars(env);
 
-  // The full isolation contract, not persistence alone: `config` 0.4.37 creates
-  // its runtime JSON unless persistence is off AND the file watch is disabled,
-  // this child requires `config` through the seeder, and `appRoot: TOOL_ROOT`
-  // points it at the config/ of the tree it runs in instead of an inherited
-  // directory from another one.
+  // The full isolation contract, not persistence alone: the `config` package
+  // creates its runtime JSON unless persistence is off AND the file watch is
+  // disabled, this child requires `config` through the seeder, and
+  // `appRoot: TOOL_ROOT` points it at the config/ of the tree it runs in
+  // instead of an inherited directory from another one.
   mongo.applyConfigIsolation(env, { appRoot: TOOL_ROOT, configDir: 'set' });
 
   return new Promise(function (resolve) {
@@ -6025,19 +6732,19 @@ function readEvidenceLog(target) {
 }
 
 /**
- * The fault records among a fixture's evidence.
+ * Reads the install handshake and reports every health field that failed.
  *
- * A record about an intercepted CALL carries the call's own fields - an
- * endpoint, an operation, a send. A record about the FIXTURE carries `event`,
- * and every one of those names something that did not work: an install that
- * failed, a mechanism left unpatched, a profile file that could not be read, an
- * object the store could not write, a log line that could not be appended. The
- * benign exceptions are enumerated rather than pattern-matched, so a new fault
- * event added to a fixture is treated as a fault here by default instead of
- * being silently tolerated because it did not match a regular expression.
+ * The `install` record is a STATUS record rather than a fault, so its
+ * disposition depends on what it says: the interception is sound only when the
+ * fixture installed, took every mechanism the tree required of it, verified the
+ * application root it was told to serve, holds the provider identity contract
+ * and recorded no diagnostic. Anything else means responses in this corpus may
+ * have reached the real network, so each failed field becomes its own sentence
+ * naming what is not established. A handshake with no document at all is itself
+ * a fault, because then nothing about the interception is established.
  *
- * @param {Array.<Object>} records
- * @returns {Array.<Object>} {event, detail} for each fault, in log order
+ * @param {(Object|null|undefined)} detail the handshake record's detail document
+ * @returns {Array.<string>} one sentence per failed field, empty when healthy
  */
 function handshakeFaults(detail) {
   var reasons = [];
@@ -6098,6 +6805,23 @@ function handshakeFaults(detail) {
   return reasons;
 }
 
+/**
+ * The fault records among a fixture's evidence.
+ *
+ * A record about an intercepted CALL carries the call's own fields - an
+ * endpoint, an operation, a send. A record about the FIXTURE carries `event`,
+ * and every one of those names something that did not work: an install that
+ * failed, a mechanism left unpatched, a profile file that could not be read, an
+ * object the store could not write, a log line that could not be appended. The
+ * benign exceptions are enumerated rather than pattern-matched, so a new fault
+ * event added to a fixture is treated as a fault here by default instead of
+ * being silently tolerated because it did not match a regular expression. The
+ * install handshake is the one event judged on its contents, through
+ * `handshakeFaults`.
+ *
+ * @param {Array.<Object>} records the log's parsed records
+ * @returns {Array.<Object>} {event, detail, error} for each fault, in log order
+ */
 function faultRecords(records) {
   return records.filter(function(record) {
     if (!record || typeof record.event !== 'string') {
@@ -6148,6 +6872,7 @@ function collectEvidence(info) {
   var mailLog;
   var s3Log;
   var modelLog;
+  var priorS3Root;
   var stored = { available: false, objects: [], reason: null };
 
   if (info === null) {
@@ -6164,10 +6889,23 @@ function collectEvidence(info) {
   modelLog = readEvidenceLog(info.modelFaultLog);
 
   // The object store is a directory on disk, so it can be read directly from
-  // here. The fixture resolves its root AT LOAD from this variable, which is
-  // why it is set before the require and why the require is lazy. It is
-  // restored immediately afterwards for the same reason the http fixture is:
-  // nothing in this process should stay patched.
+  // here. The fixture resolves its root from this variable on every store
+  // access, which is why it is set before the require and why the require is
+  // lazy.
+  //
+  // BOTH pieces of state are put back, and only one of them used to be. The
+  // fixture's own patch is undone by `restore()` below; the ENVIRONMENT
+  // variable is undone in the `finally`, and leaving it set was not harmless.
+  // `process.env` is inherited by every child this tool spawns - the manifest
+  // generator, the seeder, the launcher - so a root left behind here is a root
+  // some later child binds its object store to, and a run that drove two
+  // servers would have its second pass reading the first pass's objects with
+  // nothing to show for it. Restored rather than deleted when it was already
+  // set, because a caller who supplied one is entitled to get it back.
+  priorS3Root = Object.prototype.hasOwnProperty.call(process.env, 'PARITY_S3_ROOT')
+    ? process.env.PARITY_S3_ROOT
+    : null;
+
   try {
     process.env.PARITY_S3_ROOT = info.s3Root;
 
@@ -6204,6 +6942,14 @@ function collectEvidence(info) {
       reason: 'the object store at ' + info.s3Root + ' could not be listed: ' +
         reasonOf(err)
     };
+  }
+  finally {
+    if (priorS3Root === null) {
+      delete process.env.PARITY_S3_ROOT;
+    }
+    else {
+      process.env.PARITY_S3_ROOT = priorS3Root;
+    }
   }
 
   return {
@@ -6267,11 +7013,10 @@ function collectEvidence(info) {
  * A response is only reproducible together with the fixture state that produced
  * it, so an unsound fixture does not merely leave a gap in the evidence - it
  * puts responses in the artifact that no later run can reproduce, and they look
- * exactly like sound ones. Everything here was previously COLLECTED and written
- * into the artifact while the exit code ignored it, which is the same as not
- * having checked: a malformed evidence log, a store that could not be listed, a
- * fixture that failed to install, a seeder whose own contract checks failed -
- * every one of them could pass.
+ * exactly like sound ones. So each of these is a finding that fails the
+ * capture rather than a field written into the artifact and ignored by the exit
+ * code: a malformed evidence log, a store that could not be listed, a fixture
+ * that failed to install, a seeder whose own contract checks failed.
  *
  * Each finding is returned with its channel and its own sentence, because the
  * remedies differ and a single "evidence unsound" line would send a reader
@@ -6303,15 +7048,14 @@ function evaluateEvidenceHealth(state) {
    * Whether a fault event is the fixture reporting an EXPECTED state of the
    * tree under test rather than something that went wrong.
    *
-   * There is exactly one, and it needed deciding rather than assuming: the http
-   * fixture patches two mechanisms, the application's own `request` package and
-   * global fetch, and it logs `request-mechanism-inactive` when the first is
-   * not resolvable. On the MIGRATED tree that package is removed and every
-   * former call site now uses fetch, so an inactive request mechanism cannot
-   * leave an external effect unintercepted - the fixture's own header calls
-   * this the expected outcome. On the BASELINE tree the package is present with
-   * four live call sites, so the same event means real HTTP could have escaped
-   * to the network, which is a fault and must fail the capture.
+   * There is exactly one. The http fixture patches two mechanisms, the
+   * application's own `request` package and global fetch, and it logs
+   * `request-mechanism-inactive` when the first is not resolvable. On the
+   * MIGRATED tree that package is removed and every former call site uses
+   * fetch, so an inactive request mechanism cannot leave an external effect
+   * unintercepted. On the BASELINE tree the package is present with live call
+   * sites, so the same event means real HTTP could have escaped to the network,
+   * which is a fault and must fail the capture.
    *
    * The two are told apart by asking the same question the fixture asked - is
    * the package resolvable from the tree under test - rather than by matching
@@ -6497,8 +7241,8 @@ function evaluateEvidenceHealth(state) {
  *          the fixture loads AT INSTALL and records one line per entry. So with
  *          entries prepared, an s3 log must exist; if it does not, the fixture
  *          did not install or could not write, and the object keys - content
- *          digests, the thing AAP 0.6.7 says silently orphans every stored
- *          object when it changes - were never recorded.
+ *          digests, so a change to the digest silently orphans every stored
+ *          object - were never recorded.
  *   http - this file writes the fixture's profile file before every scenario
  *          and resets it at the end, and the fixture records each change it
  *          reads. So with a profile file configured, an http log must exist.
@@ -6623,21 +7367,18 @@ function pathLabelFor(target, appRoot) {
  * A recorded reason, made reproducible wherever it is not.
  *
  * A reason is prose and prose is portable, with two exceptions that are fatal
- * at write time: a child's error message embeds an absolute path - `ENOENT: no
- * such file or directory, open '/tmp/parity-run-8123/stderr.log'` - and some
- * embed a wall clock. The contract's guard rejects a value that CONTAINS
- * either, not merely one that starts with one, so the whole block is lost to a
- * throw after the corpus has already been driven.
+ * at write time: a child's error message embeds an absolute path - an ENOENT
+ * quotes the file it could not open - and some embed a wall clock. The
+ * contract's guard rejects a value that CONTAINS either, not merely one that
+ * starts with one, so the whole block would be lost to a throw after the corpus
+ * has already been driven.
  *
- * Delegated to `provenance.portableText` rather than matched here. The local
- * implementation this replaced tested `/^(?:\/|[A-Za-z]:[\\/])/` and relabelled
- * only the FIRST whitespace-delimited token, which is the same anchoring
- * limitation the contract's own guard had: a path in the middle of a sentence -
- * which is where a filesystem error puts it - passed through untouched, and an
- * ISO instant was not handled at all. `portableText` replaces every embedded
+ * Delegated to `provenance.portableText` rather than matched here, because a
+ * local matcher anchored at the start of the value cannot reach the place a
+ * filesystem error actually puts a path - the middle of a sentence - and would
+ * not handle an embedded instant at all. `portableText` replaces every embedded
  * path with the label `pathLabel` would give it and every instant with a
- * marker, keeping the words that say what happened; leading paths are covered
- * by the same pass, so nothing local is left to add.
+ * marker, keeping the words that say what happened.
  *
  * @param {*} value
  * @param {string} appRoot the analysed tree, for the `analysed:` labels
@@ -6653,16 +7394,16 @@ function portableReason(value, appRoot) {
 /**
  * What the run can actually establish about the fake Google client.
  *
- * This field used to be the literal `googleClientInjected: true`, asserted
- * because the launcher was ASKED for the layer a few lines above. Two ways that
- * was untrue: under `--base-url` nothing is launched and nothing is injected,
- * and a launcher whose layer was overridden would still have been reported as
- * injected. Both matter, because the OAuth handlers short-circuit to
- * `request.fail` without a configured client - so a corpus that claims the
- * OAuth branches while the client was absent is a corpus of short-circuited
- * handlers wearing the labels of captured branches.
+ * Asking the launcher for the stub layer does not establish that the child got
+ * it: under `--base-url` nothing is launched and nothing is injected, and a
+ * launcher whose layer was overridden would still report as asked. Both matter,
+ * because the OAuth handlers short-circuit to `request.fail` without a
+ * configured client - so a corpus that claims the OAuth branches while the
+ * client was absent is a corpus of short-circuited handlers wearing the labels
+ * of captured branches.
  *
- * Two independent observations replace the assertion, and both are recorded:
+ * So the field carries two independent observations rather than an assertion,
+ * and both are recorded:
  *
  *   the CHILD'S EFFECTIVE CONFIGURATION, which the launcher returns on
  *   `info.config`, checked for the stub's own client id rather than for the
@@ -6782,46 +7523,41 @@ function isOAuthScenario(item) {
  *
  * "Captured at baseline" means captured by TARGET-worktree tooling against a
  * BASELINE install, and this block is what makes that claim checkable rather
- * than asserted. It is built by the contract in `./manifest`, which is what
- * gives it the three properties this record used to lack:
+ * than asserted. It is built by the contract in `./manifest`, which gives it
+ * three properties:
  *
  *   the tool is named by the git BLOB that actually ran plus the commit
- *   verified to contain that blob, instead of by the HEAD of whichever
- *   worktree happened to execute it;
+ *   verified to contain that blob, rather than by the HEAD of whichever
+ *   worktree executed it;
  *
- *   the analysed tree is named by its COMMIT and nothing else - the absolute
- *   `appRoot` is gone, because a path is where a tree sat on one machine while
- *   the commit is what it contained; and
+ *   the analysed tree is named by its COMMIT and nothing else, because a path
+ *   is where a tree sat on one machine while the commit is what it contained;
+ *   and
  *
- *   no value is run-local. The launcher's per-run directory, its PID, its
- *   port, its stdout and stderr paths, its Mongo settings and its database
- *   name were all in this record and are all gone: what is left of the server
- *   is the shape of the run - launched or attached, secure or not, which node
- *   flags, which fixture profile - plus labels and digests for everything else.
- *   The contract's own guard THROWS on any of them, which is what keeps this
- *   from regressing.
+ *   no value is run-local. What is recorded of the server is the shape of the
+ *   run - launched or attached, secure or not, which node flags, which fixture
+ *   profile - plus labels and digests for everything else, and never the
+ *   per-run directory, PID, port, stream paths, Mongo settings or database
+ *   name. The contract's own guard THROWS on any of them.
  *
  * The block is embedded in the corpus by the caller, so the corpus says which
  * tree it measured without a companion file, and the sidecar remains a run
  * output.
  *
- * @param {Object} state {options, info, manifestDocument, profiles, tree,
- *   role, scenarios, evidence, seeded, s3Seed}
- *
  * THE COMPOSED CONFIGURATION IS RECORDED WITHOUT ITS CREDENTIALS. This
  * sidecar is committed beside the corpus, so a verbatim `nodeConfig` would put
- * the session password (AAP §0.6.1), the AWS key id and secret key (§0.6.7),
- * the Google OAuth client secret and the reCAPTCHA secret (§0.4.2), the mail
- * transport password and the database credentials into the repository and into
- * every archive of it. What the record actually needs is the ability to prove
- * two runs were configured identically, and `server.redactConfigJson` provides
- * exactly that: the shape with credential VALUES replaced, the dotted paths
- * whose values were withheld - so an absent secret stays distinguishable from
- * a hidden one - and a SHA-256 of the verbatim configuration, which is the
- * comparison key. The child still receives the verbatim string; only this
- * written record is redacted.
+ * the session password, the AWS key id and secret key, the Google OAuth client
+ * secret, the reCAPTCHA secret, the mail transport password and the database
+ * credentials into the repository and into every archive of it. What the record
+ * needs is the ability to prove two runs were configured identically, and
+ * `server.redactConfigJson` provides exactly that: the shape with credential
+ * VALUES replaced, the dotted paths whose values were withheld - so an absent
+ * secret stays distinguishable from a hidden one - and a SHA-256 of the
+ * verbatim configuration, which is the comparison key. The child still receives
+ * the verbatim string; only this written record is redacted.
  *
- * @param {Object} state {options, info, manifestDocument, profiles}
+ * @param {Object} state {options, info, manifestDocument, profiles, tree,
+ *   role, scenarios, evidence, seeded, s3Seed}
  * @returns {Object}
  */
 function buildProvenance(state) {
@@ -6873,18 +7609,18 @@ function buildProvenance(state) {
         //
         // Through configurationDigest over the PARSED object, never
         // provenance.digest over the raw string. Hashing the string verbatim
-        // did neither of the two things this field exists for: the overlay's
-        // port and database name moved the digest on every run, so the field
-        // identified the RUN rather than the configuration and two correct
-        // captures of one tree disagreed for a reason that says nothing about
-        // the tree; and a session password or a provider secret inside the
-        // overlay became an unsalted sha256 in a committed artifact, which is
-        // an offline oracle for any value cheap enough to guess - and a test
-        // password is exactly that cheap. configurationDigest replaces every
-        // secret-labelled scalar with `<redacted>`, drops address-labelled
-        // ones, strips URI userinfo, and records what it did in the digest's
-        // own `canonicalization`, so the value stays comparable between two
-        // runs of one configuration and confirms no guess.
+        // does neither of the two things this field exists for: the overlay's
+        // port and database name move the digest on every run, so the field
+        // would identify the RUN rather than the configuration and two correct
+        // captures of one tree would disagree for a reason that says nothing
+        // about the tree; and a session password or a provider secret inside
+        // the overlay would become an unsalted sha256 in a committed artifact,
+        // which is an offline oracle for any value cheap enough to guess - and
+        // a test password is exactly that cheap. configurationDigest replaces
+        // every secret-labelled scalar with `<redacted>`, drops
+        // address-labelled ones, strips URI userinfo, and records what it did
+        // in the digest's own `canonicalization`, so the value stays comparable
+        // between two runs of one configuration and confirms no guess.
         //
         // The same `safeParseJson(...) || {}` fallback as the key list beside
         // it, so the two fields never describe different inputs. This tool
@@ -6908,10 +7644,27 @@ function buildProvenance(state) {
       },
       configuration: {
         secure: options.secure,
-        // Derived from two observations rather than asserted. See
-        // googleClientEvidence for why the literal `true` this replaced was
-        // not a fact about the run.
+        // Derived from two observations rather than asserted, for the reason
+        // `googleClientEvidence` gives: asking the launcher for the layer does
+        // not establish that the child received it.
         googleClient: googleClientEvidence(state),
+        // WHICH addresses the two OAuth profiles served, and therefore which
+        // database branch each OAuth case reached. Recorded because it decides
+        // the meaning of two scenarios and cannot be inferred from a status
+        // code: it is the seeder's published map, applied to the fixture in
+        // this process and in the application - see alignIdentitiesToSeeder.
+        oauthIdentities: {
+          existing: httpFixture.identities.existing,
+          new: httpFixture.identities.new,
+          source: 'test/parity/seed.js oauthIdentities',
+          appliedToChild: !!(state.identityAlignment &&
+            state.identityAlignment.PARITY_HTTP_IDENTITIES)
+        },
+        // The write-time redactions in force, by name and placeholder, so a
+        // reader of the artifact knows which recorded values are placeholders
+        // and which rule produced each one. Read from replay.js, which owns
+        // both the rules and the normalization that makes them comparable.
+        redactions: comparison.recordingRedactions(),
         seeded: {
           attempted: !!(state.seeded && state.seeded.attempted),
           ok: !!(state.seeded && state.seeded.ok),
@@ -6973,25 +7726,24 @@ function safeParseJson(text) {
  * NEW ordering for anything it contains and from the old artifact otherwise, so
  * an append cannot reshuffle what it did not touch.
  *
- * THE ANNOTATIONS ARE NOT OVERWRITTEN, AND THAT IS THE POINT OF THIS FUNCTION
- * RATHER THAN AN INCIDENTAL PROPERTY OF IT. A fresh capture supplies
- * observations; `expectedDeviation` and `unreachableReason` are DEFINITIONS,
- * and the committed artifact is where they are authored and reviewed. Replacing
- * a scenario wholesale therefore used to remove exactly one thing from the
- * corpus each time the image-download case was re-captured: the marker that
- * says AAP 0.7 approved its change. The subsequent replay then read the
- * approved 200 as a regression, with nothing anywhere saying an annotation had
- * been dropped. So an annotation present in the existing definition and absent
- * from the fresh capture is carried FORWARD, and every such restoration is
- * reported so the artifact and the log both say it happened.
+ * THE ANNOTATIONS ARE NOT OVERWRITTEN, which is what this function is for. A
+ * fresh capture supplies observations; `expectedDeviation` and
+ * `unreachableReason` are DEFINITIONS, and the committed artifact is where they
+ * are authored and reviewed. Replacing a scenario wholesale would drop the
+ * marker that approves the image-download case's change, after which a replay
+ * reads the approved 200 as a regression with nothing saying an annotation went
+ * missing. So an annotation present in the existing definition and absent from
+ * the fresh capture is carried FORWARD, and every such restoration is reported
+ * so the artifact and the log both say it happened.
  *
  * @param {string} target the existing artifact path
  * @param {Array.<Object>} scenarios the freshly captured scenarios
  * @returns {Object} {scenarios, fresh, added, carriedForward, annotationsRestored}
  * @throws {ToolError} If the existing artifact cannot be read.
  */
-function mergeCorpus(target, scenarios) {
+function mergeCorpus(target, scenarios, appRoot) {
   var existing;
+  var existingText;
   var byId = {};
   var order = [];
   var merged = [];
@@ -7000,9 +7752,11 @@ function mergeCorpus(target, scenarios) {
   var carriedForward = [];
   var restored = [];
   var freshIds = {};
+  var parent;
 
   try {
-    existing = JSON.parse(fs.readFileSync(target, 'utf8'));
+    existingText = fs.readFileSync(target, 'utf8');
+    existing = JSON.parse(existingText);
   }
   catch (err) {
     throw new ToolError('--append was given but ' + target +
@@ -7013,6 +7767,19 @@ function mergeCorpus(target, scenarios) {
     throw new ToolError('--append was given but ' + target +
       ' has no `scenarios` array');
   }
+
+  // THE PARENT IS AUTHENTICATED BEFORE ITS RESPONSES ARE ADOPTED. Everything
+  // the merged artifact says about the entries it carries forward - that they
+  // are baseline observations of the frozen tree, recorded by this tool -
+  // rests entirely on the file this reads, and it used to rest on nothing but
+  // the file parsing as JSON with a `scenarios` array. A parent captured from
+  // the migrated tree, from a sibling clone at another commit, or edited by
+  // hand between two appends was adopted silently, and the merged corpus then
+  // presented those responses under ITS provenance, which says baseline and
+  // names the frozen head. The chain recorded below is the other half: a
+  // reader of a merged corpus can follow every generation back by digest
+  // instead of taking the youngest artifact's word for its ancestors.
+  parent = authenticateMergeParent(existing, existingText, target, appRoot);
 
   existing.scenarios.forEach(function(item) {
     byId[item.id] = item;
@@ -7067,7 +7834,148 @@ function mergeCorpus(target, scenarios) {
     fresh: fresh,
     added: added,
     carriedForward: carriedForward,
-    annotationsRestored: restored
+    annotationsRestored: restored,
+    parent: parent
+  };
+}
+
+/**
+ * Authenticates the corpus an `--append` run is merging into.
+ *
+ * The requirements, and why each one is a requirement rather than a nicety:
+ *
+ *   - A provenance block, with a baseline or analysis role. An artifact that
+ *     cannot say which tree it measured cannot contribute observations to one
+ *     that does.
+ *   - Its recorded generator must be `test/parity/capture.js`, and its blob
+ *     and commit must resolve as objects in THIS repository, verified to hold
+ *     the source that ran. A parent produced by a tool nobody can retrieve is
+ *     an unfalsifiable claim.
+ *   - Its `payloadDigest` must recompute from its own bytes. This is what
+ *     detects a parent edited between two appends, and it is reproducible
+ *     here because capture.js wrote it with this same canonicalization -
+ *     measured, `manifest.provenance.digest(parent minus provenance)`
+ *     reproduces the recorded value exactly.
+ *   - It must have measured the SAME tree this run is capturing. Merging
+ *     observations of two different trees into one artifact produces a corpus
+ *     that is a baseline of neither.
+ *   - A sidecar beside it, when present, must agree with its bytes. Absence
+ *     is not a failure: a sidecar is a run output and an intermediate corpus
+ *     in a capture campaign may legitimately have none, while the payload
+ *     digest above already binds the content either way.
+ *
+ * @param {Object} existing the parsed parent corpus
+ * @param {string} existingText its bytes, for the sidecar reconciliation
+ * @param {string} target its path
+ * @param {(string|null)} appRoot the tree this run is capturing
+ * @returns {Object} the chain entry for this parent
+ * @throws {ToolError} When a requirement is not met.
+ */
+function authenticateMergeParent(existing, existingText, target, appRoot) {
+  var block = existing.provenance === undefined ? null : existing.provenance;
+  var payload = {};
+  var sidecar = null;
+  var sidecarPath = target + '.provenance.json';
+  var expectedGenerator;
+  var identity;
+  var verdict;
+  var chain;
+
+  if (!block || typeof block !== 'object') {
+    throw new ToolError('--append was given but ' + target + ' carries no ' +
+      'provenance block, so nothing attributes the ' +
+      existing.scenarios.length + ' response(s) it holds to a tool or a ' +
+      'tree. Re-capture it rather than merging into it.');
+  }
+
+  Object.keys(existing).forEach(function(key) {
+    if (key !== 'provenance') {
+      payload[key] = existing[key];
+    }
+  });
+
+  try {
+    sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
+  }
+  catch (err) {
+    if (!err || err.code !== 'ENOENT') {
+      throw new ToolError('--append was given but the provenance sidecar ' +
+        'beside ' + target + ' cannot be read: ' + reasonOf(err) +
+        '. A sidecar that cannot be reconciled with its artifact is not ' +
+        'skippable evidence; repair or remove it.');
+    }
+  }
+
+  verdict = manifest.provenance.validate(block, {
+    artifact                : target,
+    roles                   : ['baseline', 'analysis'],
+    requireGeneratorVerified: true,
+    payload                 : payload,
+    repositoryRoot          : TOOL_ROOT,
+    sidecar                 : sidecar || undefined,
+    artifactText            : sidecar ? existingText : undefined
+  });
+
+  if (!verdict.ok) {
+    throw new ToolError('--append was given but ' + target + ' does not ' +
+      'carry provenance this capture can rely on, so its responses cannot ' +
+      'be adopted into an artifact that claims to be a baseline ' +
+      'recording:\n  - ' + verdict.failures.join('\n  - ') +
+      '\nRe-capture it from the frozen tree rather than merging into it.');
+  }
+
+  expectedGenerator = path.relative(TOOL_ROOT, __filename).split(path.sep)
+    .join('/');
+
+  if (block.generator.path !== expectedGenerator) {
+    throw new ToolError('--append was given but ' + target + ' records its ' +
+      'generator as ' + JSON.stringify(block.generator.path) + ' rather ' +
+      'than ' + JSON.stringify(expectedGenerator) + '. A corpus is merged ' +
+      'only into a corpus this tool wrote.');
+  }
+
+  if (appRoot) {
+    identity = manifest.provenance.treeIdentity(appRoot);
+
+    if (block.analysedTree && block.analysedTree.head &&
+        identity.head && block.analysedTree.head !== identity.head) {
+      throw new ToolError('--append was given but ' + target + ' measured ' +
+        String(block.analysedTree.head).slice(0, 7) + ' and this run is ' +
+        'capturing ' + String(identity.head).slice(0, 7) + '. Merging ' +
+        'observations of two trees into one artifact produces a baseline of ' +
+        'neither.');
+    }
+  }
+
+  // The parent's own lineage, read from the TOP-LEVEL `merge` record where
+  // this tool writes it - not from inside the provenance block, which is
+  // where a first attempt looked and found nothing, so a four-generation
+  // campaign recorded a one-generation chain and the two oldest artifacts
+  // stayed unattributed. Each append overwrites its parent in place, so the
+  // intermediate artifacts do not survive the campaign and the accumulated
+  // chain is the only record of them there will ever be.
+  chain = (existing.merge && Array.isArray(existing.merge.chain))
+    ? existing.merge.chain.slice()
+    : [];
+
+  return {
+    entry: {
+      scenarios: existing.scenarios.length,
+      role: block.role,
+      analysedTree: block.analysedTree
+        ? block.analysedTree.head
+        : null,
+      generator: {
+        path: block.generator.path,
+        blob: block.generator.blob,
+        commit: block.generator.commit
+      },
+      payloadDigest: block.payloadDigest ? block.payloadDigest.value : null,
+      bytesDigest: manifest.provenance.digest(existingText).value,
+      sidecar: sidecar ? 'reconciled' : 'absent',
+      checks: verdict.checks.length
+    },
+    chain: chain
   };
 }
 
@@ -7127,20 +8035,21 @@ function buildCorpus(options, manifestDocument) {
 
   scenarios = orderScenarios(scenarios);
 
-  // Two coverage accounts, and the distinction between them is the whole point.
+  // Two coverage accounts, and they answer different questions.
   //
-  // `definitionCoverage` is what the DEFINITIONS reach: 233/233 by
-  // construction, and a property of this file's tables rather than of any
-  // capture. It is worth reporting - it is how a missing table entry is caught -
-  // but it says nothing about what was driven, so it is labelled as a
-  // definition count and is never the coverage the artifact claims.
+  // `definitionCoverage` is what the DEFINITIONS reach - the whole route
+  // surface, by construction - and it is a property of this file's tables
+  // rather than of any capture. It is worth reporting, because it is how a
+  // missing table entry is caught, but it says nothing about what was driven,
+  // so it is labelled as a definition count and is never the coverage the
+  // artifact claims.
   //
   // The coverage the artifact claims is accounted later, in `writeArtifacts`,
   // over the scenarios that were actually WRITTEN - after `--only` narrows the
-  // selection and after `--append` merges. Computing it here, over the full set,
-  // is what let a `--only` run of one case write 233/233 into a corpus holding
-  // one scenario: the artifact then overstated its own reach by two orders of
-  // magnitude while every field in it was internally consistent.
+  // selection and after `--append` merges. Accounting it here instead, over the
+  // full set, would let a `--only` run of one case write full-surface coverage
+  // into a corpus holding one scenario, internally consistent and overstating
+  // its own reach.
   definitionCoverage = accountCoverage(manifestDocument.entries, scenarios);
 
   // The definitions, snapshotted BEFORE anything is driven, because driving
@@ -7154,10 +8063,10 @@ function buildCorpus(options, manifestDocument) {
   selected = filter ? scenarios.filter(filter) : scenarios;
 
   if (!selected.length) {
-    // Before the launcher, before the seeder, before anything is written. An
-    // --only that matches nothing used to start a server, drive zero cases and
-    // write an artifact whose coverage claimed the full route set, then exit 0 -
-    // a corpus that proves nothing while reading as a clean run.
+    // Before the launcher, before the seeder, before anything is written: an
+    // --only that matches nothing must not start a server, drive zero cases and
+    // write an artifact claiming the full route set, then exit 0 - a corpus
+    // that proves nothing while reading as a clean run.
     throw usageError('--only ' + options.only.map(function(pattern) {
       return JSON.stringify(pattern);
     }).join(' ') + ' matched none of the ' + scenarios.length +
@@ -7189,14 +8098,14 @@ function buildCorpus(options, manifestDocument) {
  * Without `--expect-baseline` the role simply FOLLOWS the tree: the base
  * commit yields `baseline`, anything else `target`. With it, the caller has
  * asserted which tree this is, and the assertion is checked rather than
- * believed - `--app` pointed one directory sideways used to produce an
- * artifact indistinguishable from a baseline capture.
+ * believed, because `--app` pointed one directory sideways would otherwise
+ * produce an artifact indistinguishable from a baseline capture.
  *
  * The assertion has TWO refusals, not one. Being at the base commit is
- * necessary and not sufficient: a DIRTY worktree at 2f8712a holds the base
- * commit plus edits nobody can retrieve, so a capture of it measures those
- * edits while reading exactly like a clean baseline capture. The contract
- * refuses that case with its own message, and `--allow-nonbaseline` is the one
+ * necessary and not sufficient: a DIRTY worktree there holds the base commit
+ * plus edits nobody can retrieve, so a capture of it measures those edits while
+ * reading exactly like a clean baseline capture. The contract refuses that case
+ * with its own message, and `--allow-nonbaseline` is the one
  * escape from either - it costs the `unreviewed` role, which no gate accepts.
  * The corpus records `analysedTree.worktreeState` regardless, and replay's
  * strict consumer refuses a corpus whose analysed tree is dirty at the base
@@ -7215,14 +8124,13 @@ function buildCorpus(options, manifestDocument) {
 function resolveRole(options, tree) {
   if (!options.expectBaseline) {
     // A tree at the base commit WITH uncommitted changes is not the base
-    // commit's content, so it may not be labelled `baseline` here either. The
-    // documented "role follows the tree" rule stands; what changed is that a
-    // dirty base tree is no longer one of the trees that yields a baseline
-    // claim. Without --expect-baseline the caller made no assertion, so this
-    // is a label rather than a refusal: `unreviewed`, which no gate accepts.
-    // Consumers already refuse such a corpus on `baseline-tree-clean`; this
-    // stops the artifact making the claim in the first place, so the two ends
-    // agree instead of one relying on the other.
+    // commit's content, so it is not labelled `baseline` here either: the role
+    // follows the tree, and a dirty base tree is not one of the trees that
+    // yields a baseline claim. Without --expect-baseline the caller made no
+    // assertion, so this is a label rather than a refusal - `unreviewed`, which
+    // no gate accepts. Consumers also refuse such a corpus on
+    // `baseline-tree-clean`, so the artifact and its readers agree rather than
+    // one relying on the other.
     if (tree.isBaselineCommit) {
       return tree.worktreeState === 'dirty' ? 'unreviewed' : 'baseline';
     }
@@ -7287,6 +8195,12 @@ async function capture(options) {
   // note below for the same reason.
   var tree = manifest.provenance.treeIdentity(options.appRoot);
   var role = resolveRole(options, tree);
+  // The identity map, applied before any scenario is BUILT. The builders read
+  // `httpFixture.identities` to compose the OAuth cases and their notes, so
+  // the alignment cannot wait for the launcher options - see
+  // `alignIdentitiesToSeeder`. Calling it in both places is deliberate and
+  // costs nothing: applying the same map twice is a no-op.
+  var identityAlignment = alignIdentitiesToSeeder();
   var manifestDocument;
   var built;
   var info = null;
@@ -7331,15 +8245,19 @@ async function capture(options) {
         'will accept it as baseline evidence'
       : ''));
 
-  manifestDocument = resolveManifest(options);
-  built = buildCorpus(options, manifestDocument);
-
   // Resolved BEFORE the manifest is read or a server is launched, so a run
   // with nowhere to write its corpus fails in the first second rather than
   // after driving 233 routes. A programmatic caller does not come through
   // parseArguments, which is the other reason the destination policy is
   // applied here: without it a missing `out` would surface much later as a
   // write to "undefined".
+  //
+  // This ordering is the whole value of the block, and it was previously
+  // defeated by a duplicated pair of the two lines below sitting ABOVE it: the
+  // manifest was resolved - spawning the generator when the artifact was
+  // unusable - and the corpus built, both before the destination was known, and
+  // then both were done again. A run with nowhere to write paid for a generator
+  // child and two full scenario builds before saying so.
   if (!options.out) {
     options.out = resolveArtifactPath(CORPUS_ARTIFACT_NAME, '--out');
   }
@@ -7570,6 +8488,10 @@ async function capture(options) {
       // assertion above was made about.
       tree: tree,
       role: role,
+      // The OAuth identity map that was in force, carried the same way: it
+      // decides which database branch each OAuth profile reached, so the
+      // artifact records it rather than leaving a reader to infer it.
+      identityAlignment: identityAlignment,
       // Collected after the last case and before the server is stopped, so the
       // per-run directory is still there to be read.
       evidence: collectEvidence(info)
@@ -7580,9 +8502,9 @@ async function capture(options) {
       try {
         // THE BOOLEAN, NOT ONLY THE THROW. ./server's `stop` RESOLVES `false`
         // for an unclean stop rather than rejecting - so that a caller's real
-        // result still reaches the shell - which means this `catch` never saw
-        // the case it was written for. Both channels are read, plus each
-        // module's own named records, which say which operation leaked.
+        // result still reaches the shell - so the `catch` below alone would
+        // never see it. Both channels are read, plus each module's own named
+        // records, which say which operation leaked.
         if ((await server.stop()) === false) {
           note('warning: the server did not stop cleanly: ' +
             'test/parity/server.js reported an unclean stop');
@@ -7627,9 +8549,8 @@ async function capture(options) {
     }
   }
 
-  // THE TEARDOWN REACHES THE EXIT CODE. Every line above is still printed - the
-  // stderr diagnostic is the evidence and none of it was the defect - but a
-  // failed stop or removal now also decides what this function returns. It
+  // THE TEARDOWN REACHES THE EXIT CODE. Every diagnostic above is printed, and
+  // a failed stop or removal also decides what this function returns. It
   // answers EXIT_ERROR rather than EXIT_DIFFERENCE, and never lowers a code
   // already set: a live application process, a leaked mongod or a surviving
   // scratch directory holding the object store means the run could not be
@@ -7664,8 +8585,46 @@ async function capture(options) {
  * "no overlay" and IS passed through.
  *
  * @param {Object} options this tool's resolved options
+ * @param {(string|null)} s3SeedPath the object-store pre-population manifest
+ *   `prepareS3Seed` wrote, passed to the launcher as `s3Seed`
  * @returns {Object} the launcher's options
  */
+/**
+ * Applies the seeder's published OAuth identity map, here and in the child.
+ *
+ * `test/parity/seed.js` creates the two OAuth accounts and exports
+ * `oauthIdentities` in exactly the shape `setIdentityEmails()` takes;
+ * `test/parity/fixtures/http.js` serves whichever addresses it holds. Nothing
+ * was applying the map, so the two artifacts agreed only by coincidence - and
+ * they had already stopped agreeing: the fixture served an address the seeder
+ * does not create, which sent the profile named `oauth:success-existing-user`
+ * down the NEW-user branch and left the existing-user branch unexercised while
+ * appearing to cover it.
+ *
+ * The map is therefore applied rather than assumed, in both processes that need
+ * it: here, because the scenario builders read `httpFixture.identities`, and in
+ * the application through PARITY_HTTP_IDENTITIES, which the fixture reads at
+ * load. It travels as an environment variable because a PRELOAD may not require
+ * the seeder - that would pull lib/models/** and therefore
+ * mongoose-schema-extend into the process, which is AAP 0.6.5 defect 2.
+ *
+ * @returns {Object} the environment pair the launcher passes to the child
+ */
+function alignIdentitiesToSeeder() {
+  var published = seed.oauthIdentities || {};
+  var map = { existing: published.existing, new: published.new };
+
+  if (!map.existing || !map.new) {
+    throw new ToolError('test/parity/seed.js published no OAuth identity map, ' +
+      'so the http fixture cannot be aligned to the accounts the seeder ' +
+      'creates and the two OAuth database branches cannot be told apart');
+  }
+
+  httpFixture.setIdentityEmails(map);
+
+  return { PARITY_HTTP_IDENTITIES: JSON.stringify(map) };
+}
+
 function buildLauncherOptions(options, s3SeedPath) {
   var launcher = {
     appRoot: options.appRoot,
@@ -7679,11 +8638,17 @@ function buildLauncherOptions(options, s3SeedPath) {
     mongoUri: options.mongoUri,
     nodeFlags: options.nodeFlags,
     readyTimeoutMs: DEFAULT_READY_TIMEOUT_MS,
-    // The layer that makes the OAuth branches reachable at all. See the
-    // header: the handlers short-circuit without a client, the overlay
-    // declares none, and the fixture's contract assigns this to whoever drives
-    // the corpus.
-    config: { app: { auth: { google: GOOGLE_STUB } } }
+    // The layer that makes the OAuth branches reachable at all: the handlers
+    // short-circuit to `request.fail` without a configured client, and the
+    // server overlay declares none, so the corpus driver supplies it. The
+    // values are stubs rather than credentials, because the token and profile
+    // endpoints are intercepted at the module boundary.
+    config: { app: { auth: { google: GOOGLE_STUB } } },
+    // And the layer that decides WHICH database branch each OAuth profile
+    // reaches: the seeder's own identity map, applied to the fixture inside
+    // the application. `options.env` is applied last by the launcher, so this
+    // is additive to the fixture contract it builds.
+    env: alignIdentitiesToSeeder()
   };
 
   if (options.overlay !== undefined) {
@@ -7740,11 +8705,10 @@ function refererFor(info, baseUrl) {
  * `/login` or an unauthenticated projection. Those are real responses, they
  * differ from the authenticated ones the corpus is supposed to hold, and the
  * artifact labels them with the identity that was ASKED FOR rather than the one
- * that drove them. Well over a hundred cases in a full sweep name a session
- * identity, so a single unlanded login silently re-labels a third of the corpus
- * and every one of those entries then reads as evidence about a route's
- * authenticated behaviour. Failing here costs one run; not failing costs a
- * corpus that is wrong in a way no later reader can detect.
+ * that drove them. A large part of a full sweep names a session identity, so a
+ * single unlanded login silently re-labels that whole share of the corpus, and
+ * every one of those entries then reads as evidence about a route's
+ * authenticated behaviour that no later reader can detect as wrong.
  *
  * @param {Jar} jar
  * @param {Array.<Object>} scenarios
@@ -7871,12 +8835,12 @@ function writeArtifacts(state) {
 
   // The merge happens FIRST, because everything below has to describe the
   // artifact that is actually written. Computing the summary and the coverage
-  // from the fresh selection and then writing a merged `scenarios` array
-  // produced a corpus that contradicted itself: 383 scenarios listed, one
-  // scenario counted, and coverage claiming a surface the counted case never
+  // from the fresh selection and then writing a merged `scenarios` array yields
+  // a corpus that contradicts itself: the full scenario list on disk, one
+  // scenario counted, and coverage claiming a surface that case never
   // touched.
   if (options.append) {
-    merge = mergeCorpus(options.out, drivenSet);
+    merge = mergeCorpus(options.out, drivenSet, options.appRoot);
     scenarios = merge.scenarios;
 
     merge.annotationsRestored.forEach(function(entry) {
@@ -7987,11 +8951,10 @@ function writeArtifacts(state) {
   // cases THIS RUN drove; a merged artifact also holds cases an earlier run
   // drove, and those carry their own `driven` and `expectationResult` records
   // through the merge. Publishing this run's counts under artifact-level names
-  // produced an artifact that contradicted itself in the other direction: a
-  // merged corpus holding a timed-out carried-forward response while
-  // `summary.timedOutSteps` read 0. So every field named for the artifact is
-  // scanned off the artifact, and this run's own numbers are reported beside
-  // them under names that say so.
+  // would contradict the file itself - a merged corpus holding a timed-out
+  // carried-forward response while `summary.timedOutSteps` read 0 - so every
+  // field named for the artifact is scanned off the artifact, and this run's
+  // own numbers are reported beside them under names that say so.
   artifact = accountArtifact(scenarios, options);
   unreachable = artifact.unreachable;
   baselinesPending = artifact.baselinesPending;
@@ -8040,13 +9003,20 @@ function writeArtifacts(state) {
     // is false for every artifact that records less than the whole surface, and
     // `gate.reasons` says which of those it is.
     summary: {
-      captured: scenarios.some(hasRecordedResponse),
+      // EVERY scenario carries a recorded response, not merely one of them.
+      // `some` was the wrong predicate for a field a reader takes as the
+      // artifact's claim about itself: an artifact holding 383 definitions and
+      // one observation reported `captured: true`, which is true of the file
+      // and false of the corpus. The count sits beside it so the field is
+      // checkable rather than believed.
+      captured: scenarios.length > 0 && scenarios.every(hasRecordedResponse),
+      capturedScenarios: scenarios.filter(hasRecordedResponse).length,
       gateQualified: gate.qualifies,
       // Everything from here to `evidenceFindings` describes THIS ARTIFACT, and
       // is scanned off the scenario array that was written. The `ThisRun`
       // fields below describe the invocation instead; under --append the two
-      // genuinely differ, and conflating them is what made an earlier artifact
-      // report 0 timed-out steps while holding a timed-out response.
+      // genuinely differ, and conflating them would report 0 timed-out steps in
+      // an artifact holding a timed-out response.
       scenarios: scenarios.length,
       routes: coverage.routes,
       routesRepresented: coverage.represented,
@@ -8060,7 +9030,6 @@ function writeArtifacts(state) {
       expectationsUnmetApproved: artifact.unmetApproved.length,
       timedOutSteps: artifact.timedOut.length,
       evidenceFindings: evidenceHealth.findings.length,
-      // This invocation.
       definedScenariosThisRun: built.total,
       drivenThisRun: drivenSet.length,
       carriedForward: merge ? merge.carriedForward.length : 0,
@@ -8096,11 +9065,30 @@ function writeArtifacts(state) {
     // What --append merged, so a reader can tell this run's observations from
     // an earlier run's without diffing two artifacts.
     merge: merge === null ? null : {
-      into: options.out,
+      // A LABEL, not the path. The corpus this block sits in is a COMMITTED
+      // artifact, and `--out` is wherever the operator put it - measured as
+      // an absolute scratch path in a tracked file, which is exactly the
+      // internal-path disclosure the provenance block is careful never to
+      // carry (CWE-200). Every path in provenance already goes through this
+      // helper; the merge record is the one that did not.
+      into: pathLabelFor(options.out, options.appRoot),
       fresh: merge.fresh.length,
       added: merge.added,
       carriedForward: merge.carriedForward,
-      annotationsRestored: merge.annotationsRestored
+      annotationsRestored: merge.annotationsRestored,
+      // THE LINEAGE, oldest first. Each generation of an --append campaign
+      // records the parent it adopted responses from - by payload digest, by
+      // the digest of the bytes it read, by the tree that parent measured and
+      // by the generator that wrote it - and carries its parent's chain
+      // forward. Without it, a merged corpus asserts that every response it
+      // holds is a baseline observation of the frozen tree while the evidence
+      // for all but the youngest generation is a file nobody kept: the counts
+      // said 382 were carried forward and nothing said from WHERE.
+      // `authenticateMergeParent` refuses the merge outright if the parent
+      // cannot support the claim, so a chain entry exists only where the
+      // authentication passed.
+      parent: merge.parent.entry,
+      chain: merge.parent.chain.concat([merge.parent.entry])
     },
     mandatoryScenariosMissing: mandatoryMissing,
     notes: corpusNotes(),
@@ -8154,16 +9142,16 @@ function writeArtifacts(state) {
     // observation: which OAuth cases were actually driven, and what the http
     // fixture intercepted while they were.
     scenarios: scenarios,
-    evidence: state.evidence
+    evidence: state.evidence,
+    identityAlignment: state.identityAlignment
   });
 
   // Embedded AND written beside. The embedded block is what lets a DELIVERED
-  // corpus say which tree it measured with no companion file - the corpus used
-  // to declare a mandatory sibling sidecar that the delivery did not contain.
-  // It is one key and every value in it is reproducible, so the diff-clean
-  // property that arrangement was for is kept: a re-capture of one tree
-  // rewrites this key and nothing else. `attach` also hash-links the two, so a
-  // block copied in from another run fails its own payload digest.
+  // corpus say which tree it measured with no companion file, so the artifact
+  // does not depend on a sibling that a delivery may not carry. It is one key
+  // and every value in it is reproducible, so a re-capture of one tree rewrites
+  // this key and nothing else. `attach` also hash-links the two, so a block
+  // copied in from another run fails its own payload digest.
   manifest.provenance.attach(corpus, record);
   text = serialize(corpus);
 
@@ -8220,13 +9208,11 @@ function writeArtifacts(state) {
   //
   // It exists because a captured step is not a definition. Driving replaces
   // each step with the request-and-response record, and the spec fields go with
-  // it - the identity, the session reset, the four-second budget the
-  // never-settling case needs. `replay.js --annotations <path>` joins exactly
-  // those back on, and its own remedy message tells a reader to point that flag
-  // at the committed corpus because a capture used to carry none of it. This
-  // run therefore ships its own authoritative source rather than leaving the
-  // reader to find one, and the markers are in the corpus as well, so a replay
-  // is correct with the flag and with it omitted.
+  // it - the identity, the session reset, the short budget the never-settling
+  // case needs. `replay.js --annotations <path>` joins exactly those back on,
+  // so every run ships its own authoritative source rather than leaving a
+  // reader to find one; the markers are in the corpus as well, so a replay is
+  // correct with the flag and with it omitted.
   annotations = {
     schema: CORPUS_SCHEMA,
     kind: 'annotations',
@@ -8268,15 +9254,14 @@ function writeArtifacts(state) {
 
   // Coverage is a gate, and it is accounted over the artifact that was just
   // written. An unrepresented route means the corpus cannot support the claim
-  // that the whole surface was captured, and the honest response is to fail
-  // rather than to write an artifact that overstates itself.
+  // that the whole surface was captured, so the run fails rather than writing
+  // an artifact that overstates itself.
   //
   // A --only run is the one case where an unrepresented route is not a failure:
   // it is a deliberate re-capture of part of an artifact, it says so in
   // `summary.selection`, and `gate.qualifies` is already false for it. Failing
-  // it as well would make re-capturing one case impossible; letting it claim
-  // the full surface is what this file must never do, and that is now
-  // impossible by construction.
+  // it as well would make re-capturing one case impossible, while the claim it
+  // must never make is ruled out by those two fields.
   if (coverage.unrepresented.length) {
     if (coverageIsClaimed(options, built)) {
       coverage.unrepresented.forEach(function(key) {
@@ -8385,9 +9370,9 @@ function writeArtifacts(state) {
       ' -- ' + entry.failures.join('; '));
 
     if (entry.approvalRefused) {
-      // The marked case differed and approval was REFUSED. Said out loud,
-      // because the alternative reading - "the deviation is approved, so this
-      // is fine" - is exactly the false pass this check exists to stop.
+      // The marked case differed and approval was REFUSED. Reported in its own
+      // line, because the alternative reading - "the deviation is approved, so
+      // this is fine" - is the false pass this check exists to stop.
       note('APPROVAL REFUSED for ' + entry.id + ': ' + entry.approvalRefused);
     }
   });
@@ -8571,7 +9556,6 @@ async function main(argv) {
 }
 
 module.exports = {
-  // The lifecycle.
   capture: capture,
   buildCorpus: buildCorpus,
   buildLauncherOptions: buildLauncherOptions,
@@ -8588,6 +9572,13 @@ module.exports = {
   buildOAuthScenarios: buildOAuthScenarios,
   buildAuthOutcomeScenarios: buildAuthOutcomeScenarios,
   buildErrorEdgeScenarios: buildErrorEdgeScenarios,
+  // Exported for the same reason as its siblings, and with one failure mode of
+  // its own worth exercising directly: each of these cases exists to send a
+  // shape a shipped client sends, so a case whose request drifted back to the
+  // minimal payload would look identical in every summary while measuring
+  // nothing.
+  buildClientContractScenarios: buildClientContractScenarios,
+  multipartBody: multipartBody,
   defaultPayloads: defaultPayloads,
   defaultQueries: defaultQueries,
   materializePath: materializePath,
@@ -8605,7 +9596,6 @@ module.exports = {
   scenarioId: scenarioId,
   withQuery: withQuery,
 
-  // Driving and recording.
   drive: drive,
   Jar: Jar,
   encodePayload: encodePayload,
@@ -8613,12 +9603,11 @@ module.exports = {
   runScenario: runScenario,
   selectProfile: selectProfile,
   refererFor: refererFor,
-  // Exported because it now DECIDES the run: a required identity that cannot
+  // Exported because it DECIDES the run: a required identity that cannot
   // authenticate stops the sweep, and that is worth asserting directly rather
   // than only through a spawned server.
   establishSessions: establishSessions,
 
-  // Evidence.
   collectEvidence: collectEvidence,
   readEvidenceLog: readEvidenceLog,
   faultRecords: faultRecords,
@@ -8627,9 +9616,11 @@ module.exports = {
   legacyRequestResolvable: legacyRequestResolvable,
   countBy: countBy,
 
-  // Accounting and artifacts. `writeArtifacts` is exported because the exit
-  // code it decides - including the OAuth-client gate - is a failure mode that
-  // must be exercisable without launching a server.
+  // Accounting and artifacts. `writeArtifacts` is exported because this is
+  // where the artifact's claims about itself are decided - the coverage it
+  // reports, whether it qualifies as gate evidence, and the exit code,
+  // including the OAuth-client gate - and every one of those is a failure mode
+  // worth asserting without launching a server.
   writeArtifacts: writeArtifacts,
   accountCoverage: accountCoverage,
   evaluateGate: evaluateGate,
@@ -8641,12 +9632,6 @@ module.exports = {
   checkExpectation: checkExpectation,
   accountArtifact: accountArtifact,
   mergeCorpus: mergeCorpus,
-  // Exported because this is where the artifact's claims about itself are
-  // decided - the coverage it reports, whether it qualifies as gate evidence,
-  // and the exit code - and every one of those is worth asserting without
-  // launching a server.
-  writeArtifacts: writeArtifacts,
-  writeArtifact: writeArtifact,
   corpusNotes: corpusNotes,
   buildProvenance: buildProvenance,
   // The provenance decisions, exported for the same reason the rest of these
@@ -8666,7 +9651,6 @@ module.exports = {
   sawTransportFailure: sawTransportFailure,
   markRemainingUndriven: markRemainingUndriven,
 
-  // Building blocks.
   parseArguments: parseArguments,
   compileFilter: compileFilter,
   parseSetCookie: parseSetCookie,
@@ -8695,6 +9679,8 @@ module.exports = {
   OAUTH_ROUTE_PREFIX: OAUTH_ROUTE_PREFIX,
   ACCEPT_HTML: ACCEPT_HTML,
   ACCEPT_JSON: ACCEPT_JSON,
+  MULTIPART_BOUNDARY: MULTIPART_BOUNDARY,
+  MULTIPART_TYPE: MULTIPART_TYPE,
   ABSENT_ID: ABSENT_ID,
   ABSENT_TOKEN: ABSENT_TOKEN,
   ANNOTATION_FIELDS: ANNOTATION_FIELDS,

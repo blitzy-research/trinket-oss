@@ -1,489 +1,83 @@
 // Recorded OAuth, reCAPTCHA and asset-fetch responses.
 //
-// One of the three external-effect interceptors in test/parity/fixtures/. It is
-// loaded as a preload - `node --require <abs path>/test/parity/fixtures/http.js
-// app.js` - by test/parity/server.js, before the application, and it installs
-// itself on first require. Node core only, CommonJS, no CLI arguments.
+// One of the three external-effect interceptors in test/parity/fixtures/,
+// loaded by test/parity/server.js as a `--require` preload ahead of the
+// application and installing itself on first require. Node core only,
+// CommonJS, and no argv is read on that path: every input arrives through a
+// PARITY_* variable.
 //
-// ===========================================================================
-// WHY THIS FILE EXISTS
-// ===========================================================================
-// Four call sites reach a third-party HTTP endpoint from inside the request
-// path, and none of them can be exercised by the corpus without a substitute:
+// WHAT IS SUBSTITUTED, AND WHERE
+//   Four call sites reach a third-party endpoint from inside the request path:
+//   reCAPTCHA siteverify (lib/util/recaptcha.js), the Google token exchange
+//   and profile fetch (lib/controllers/auth.js's googleCallback), and the
+//   streaming asset fetch (lib/controllers/users.js's assetUploadFromURL).
+//   Substitution is at the MODULE BOUNDARY - the application's own `request`
+//   export, resolved from the tree under test, and `globalThis.fetch` - so no
+//   proxy, socket or DNS is involved, and every served value is a literal.
 //
-//   1. reCAPTCHA siteverify   lib/util/recaptcha.js
-//   2. Google token exchange  lib/controllers/auth.js  (googleCallback)
-//   3. Google profile fetch   lib/controllers/auth.js  (googleCallback)
-//   4. The streaming asset    lib/controllers/users.js (assetUploadFromURL)
+// SURFACE AND ARTIFACT
+//   install/restore, status/handshake/assertReady, profile selection, the
+//   evidence accessors, identities/setIdentityEmails, the frozen
+//   endpoint/asset/digest/limit tables, and selfTest/main. Executed directly -
+//   `node test/parity/fixtures/http.js [--out <file>]` - it drives every
+//   profile and reCAPTCHA outcome, failing on one left unselected.
+//   PARITY_HTTP_LOG receives one JSON record per intercepted call - mechanism,
+//   endpoint, redacted url, method, profile, outcome and what was SENT, with
+//   no timestamp - appended per call rather than on flush(), so evidence
+//   survives the outcomes that throw or never settle. PARITY_HTTP_STATUS
+//   receives the install handshake: this module, its digest, the app root, the
+//   pid, the mechanism table.
 //
-// Substitution happens at the MODULE BOUNDARY, not over the network: there is
-// no proxy, no listening socket and no DNS, so the corpus is reproducible on
-// any host. Every served value is a frozen literal, so test/parity/replay.js
-// can compare exactly instead of normalizing (AAP 0.9.3).
+// PROFILES SELECT AN OUTCOME, AND THE SHAPE IS THE OUTCOME
+//   PARITY_HTTP_PROFILE names the initial profile and PARITY_HTTP_PROFILE_FILE
+//   ({"profile": "<name>"}) is RE-READ synchronously at the start of every
+//   intercepted call, so one capture run drives every branch without a
+//   restart. An unknown or unreadable value leaves the profile in force, since
+//   a throwing preload would kill the server. Coverage per call site:
+//   successful exchange, non-2xx, a body that parses to no usable value, a
+//   body that is not JSON, a missing field and transport failure, plus the
+//   asset fetch's redirect, hop-limit, mid-stream and refused cases.
+//   Each mechanism fails in its own shape, because the shape decides which
+//   funnel the edge reaches: the `request` callback form calls back (err,
+//   undefined, undefined), which is what makes the reCAPTCHA call site throw
+//   on `response.statusCode`; the stream form emits 'error'; `fetch` rejects
+//   with TypeError('fetch failed') carrying `cause`. Three outcomes deliver no
+//   callback at all, and `asset:transport-refused` emits 'error' and NEVER
+//   'end', leaving the upload unstarted and the route unsettled.
 //
-// ===========================================================================
-// USER-SPECIFIED RULES
-// ===========================================================================
-// `review_rules` reports that NO user-specified rules were provided for this
-// project, which AAP 0.7 and 0.10.1 independently record. None are invented
-// here, and their absence is not treated as licence to lower the bar:
-// enterprise-standard practice governs, and the binding constraints are the
-// request's own RULES block as interpreted in AAP 0.7, cited by name below.
+// FAIL CLOSED, AND CHECK WHAT WAS SENT
+//   An unrecorded endpoint fails with code PARITY_UNRECORDED in the calling
+//   mechanism's own shape and never opens a socket: the JSON endpoints match
+//   on origin plus pathname, and an asset fetch only from the registry built
+//   out of ASSET_URLS, the hop chain and PARITY_HTTP_ASSET_URLS.
+//   REQUEST_CONTRACTS then states, per endpoint and mechanism, the method,
+//   headers, bearer scheme, body encoding, form fields and redirect mode a
+//   call must have; a breach is REFUSED rather than served, which is what
+//   keeps a drifted wire encoding visible.
 //
-//   R-a  Single purpose. Recorded responses for the endpoints the application
-//        actually calls, under named profiles - not a general HTTP recorder, a
-//        proxy or a cassette format. Every profile here maps to an outcome one
-//        of the four call sites can actually receive and branch on.
-//   R-b  Runs on Node 22, no route or module excluded. The OAuth, reCAPTCHA
-//        and asset-upload routes belong to the 233-route surface replay.js
-//        must cover, and they are unreachable without this file.
-//   R-c  Node core only. Nothing is required except `fs` and `stream`, plus
-//        the runtime's own globals (URL, Response, ReadableStream, Uint8Array,
-//        Buffer, Promise). No `nock`, no `sinon`, no HTTP-mocking package:
-//        this preload also runs inside the BASELINE worktree's process, which
-//        has none of the target's devDependencies. The one dynamic require is
-//        the application's own `request` package, resolved from the worktree
-//        under test purely so that its export can be swapped and retained.
-//   R-d  Behaviour "improvements" are prohibited; a quirk is preserved and
-//        documented, not fixed. Three rulings are implemented literally:
-//          (1) reCAPTCHA outcomes 5 and 6 deliver NO callback to verify()'s
-//              caller. Their contract is a process-level failure signature, so
-//              a "safe" fallback would repair a documented defect.
-//          (2) `asset:transport-refused` emits 'error' and NEVER 'end'. The
-//              upload does not start and the route is left UNSETTLED. No 'end'
-//              is synthesized and no partial byte is uploaded.
-//          (3) `oauth:success-new-user` serves an unseeded email so the
-//              controller reaches its save-then-throw: the account IS created
-//              and a generic authentication failure IS reported (AAP 0.6.6).
-//   R-e  Error-to-response mappings survive unchanged, so each failure is
-//        delivered in the exact shape its mechanism uses - the shape decides
-//        which funnel the edge reaches:
-//          `request` callback form -> cb(err, undefined, undefined) with a real
-//            Error carrying code 'ECONNREFUSED'. That is precisely what leaves
-//            `response` undefined at lib/util/recaptcha.js and makes reading
-//            `response.statusCode` throw.
-//          `request` stream form   -> an 'error' event on the returned stream.
-//          `fetch`                 -> a rejected TypeError('fetch failed')
-//            carrying `cause`, which is undici's shape on Node 22.
-//   R-f  Baseline observed behaviour is the tie-breaker. ONE implementation is
-//        loaded into BOTH worktrees, so any difference the corpus reports is
-//        the application's and never the harness's. Everything the real
-//        library did that is not self-evident was MEASURED and is recorded
-//        under "BASELINE RECORD" below rather than assumed.
-//   AAP 0.8  Zero-warning bar. No `url.parse` (DEP0169 - endpoint matching uses
-//        `new URL`), no `new Buffer`, no deprecated stream or fs form, and no
-//        console output of any kind: evidence goes to PARITY_HTTP_LOG. The
-//        application's own log at lib/controllers/users.js (the asset 'error'
-//        handler) is application output and is left alone.
-//   AAP 0.9.3  Exact comparison. The OAuth access token is persisted onto
-//        user.profiles.google.token and the profile picture becomes
-//        user.avatar, which is rendered into HTML, so both are frozen
-//        constants. No timestamp, id or token is generated anywhere.
+// NO CREDENTIAL REACHES THE EVIDENCE
+//   `authorization` and `proxy-authorization` keep their SCHEME alone, because
+//   a contract asserts on it; cookie, API-key, token and signature headers are
+//   redacted WHOLE; query and form values are redacted by name against a list
+//   AND a pattern. Userinfo is stripped and the removal MARKED, and a non-URL
+//   becomes `unparseable-url:sha1:<12>`. Whether a scheme-bearing header held
+//   a non-empty credential is computed before redaction and kept as a boolean,
+//   because a contract asserts on that too.
 //
-// Folder prohibitions, all absolute and all honoured: no network access on any
-// code path (the originals are retained solely so restore() can put them
-// back, and are never invoked - proved rather than asserted, see THE
-// SELF-VERIFYING HARNESS); an unrecorded endpoint fails deterministically
-// through its own mechanism's failure shape plus a log entry, never falling
-// through to the network; nothing from test/helpers/** or test/lib/** is
-// required (test/helpers/defaults.js informed the record style only); no
-// `url.parse`; no nondeterministic value in anything a response can expose;
-// no application, config or baseline-worktree file is written.
-//
-// AS A PRELOAD, NO CLI ARGUMENT IS READ: every path and profile arrives
-// through a PARITY_* variable, nothing is printed, and `require.main` is never
-// this module. The file has a second mode - executed directly, `node
-// test/parity/fixtures/http.js`, it verifies every recorded outcome and exits
-// non-zero on any failure. That mode reads argv and prints, as every tool in
-// test/parity/ does; the two modes are separated by `require.main === module`
-// at the foot of the file, so no consumer of this module can reach it.
-//
-// ===========================================================================
-// WHAT THIS FILE GUARANTEES, AND HOW EACH GUARANTEE IS CHECKED
-// ===========================================================================
-// Four properties, each of which was previously a statement in this comment
-// block with nothing behind it:
-//
-//   1. NO CALL REACHES THE NETWORK. Enforced by matching every URL against a
-//      registry and refusing anything absent from it (see ASSET REGISTRY,
-//      FAIL CLOSED), and checked by driving the recorded originals through a
-//      tripwire that counts any invocation.
-//   2. EVERY RECORDED OUTCOME IS EXERCISED. A response nothing requests is not
-//      evidence, and defining a profile is not the same as driving it. The
-//      harness drives all of them and fails when any profile in the catalogue
-//      was not selected.
-//   3. WHAT WAS SENT IS RECORDED AND CHECKED. Each call's method, headers,
-//      body encoding, body fields and redirect mode are recorded - with
-//      credentials redacted - and verified against the endpoint's contract, so
-//      a drifted wire encoding is refused rather than served a recorded
-//      success (see REQUEST CONTRACTS). A profile counts as EXERCISED only
-//      when the fixture served or refused a call under it; selecting one
-//      writes a note and proves nothing.
-//   4. THE FIXTURE IS WHOLLY IN FORCE, OR THE PROCESS DOES NOT SERVE. A
-//      mechanism this tree provides and the fixture could not intercept is
-//      terminal, as is an app root the caller DECLARED that does not hold the
-//      application - `request` is resolved against it, so a wrong root
-//      silently decides which mechanisms exist. The install publishes a
-//      handshake naming the implementation and the tree (see THE HANDSHAKE).
-//   5. NO CREDENTIAL REACHES THE EVIDENCE. Records and error messages are
-//      files and strings, so every one of them is redacted (see REDACTION).
-//
-// ===========================================================================
-// REDACTION
-// ===========================================================================
-// Evidence is written to a JSONL file and quoted into errors, so nothing that
-// reaches either may carry a credential:
-//
-//   Only `authorization` and `proxy-authorization` keep anything, and only
-//   their SCHEME - `Bearer <redacted>` - because a contract asserts on the
-//   scheme. `cookie`, `set-cookie`, API-key, token and signature headers are
-//   redacted WHOLE. An earlier version kept everything before the first space
-//   for every sensitive header, which wrote `session=<secret>;` and the first
-//   word of an API key into the evidence.
-//   Query and form values are redacted by name against an explicit list AND a
-//   pattern, so a signed-query parameter this file has never seen - the AWS
-//   credential and security-token pair, for instance - is redacted without the
-//   list being edited first.
-//   Userinfo is removed from a URL and the removal is MARKED, because a URL
-//   that carried credentials in its authority is itself a finding.
-//   Input that is not a URL is reduced to `unparseable-url:sha1:<12>` rather
-//   than written out: a malformed string still carries whatever was in it, and
-//   the digest keeps two runs comparable without carrying the value.
-//   The contract needs one fact redaction hides - whether a scheme-bearing
-//   header carried a NON-EMPTY credential - so that is computed before
-//   redaction and recorded as a boolean.
-//
-// A credential-bearing URL is also a BEHAVIOUR, not only a logging problem.
-// Measured on Node v22.23.2, native fetch refuses one before any request with
-// `TypeError('Request cannot be constructed from a URL that includes
-// credentials: <url>')` and no `cause`, while the replaced library accepted
-// it. That refusal is reproduced on the fetch mechanism, so the difference the
-// migration introduced at the asset call site is visible instead of masked by
-// a fixture that quietly stripped the credentials and served a 200.
-//
-// ===========================================================================
-// ASSET REGISTRY, FAIL CLOSED
-// ===========================================================================
-// The three JSON endpoints match on origin plus pathname. An asset fetch
-// matches only when its (origin, pathname) appears in the registry built from
-// `ASSET_URLS`, from the redirect-hop chain, and from PARITY_HTTP_ASSET_URLS.
-// Everything else is unrecorded and fails.
-//
-// This is a deliberate reversal. `classify()` used to return the asset class
-// for ANY parseable http(s) URL, so a call to an endpoint no profile described
-// - a new outbound integration, or an SSRF payload reaching a host the
-// application was never meant to contact - was served the active profile's
-// asset bytes and read as a success. The no-network guarantee was therefore
-// unfalsifiable: nothing could tell "recorded and served" from "unknown and
-// served anyway". A corpus that needs a further asset URL declares it, which
-// is one line of environment rather than a silent default.
-//
-// ===========================================================================
-// REQUEST CONTRACTS
-// ===========================================================================
-// `REQUEST_CONTRACTS` states, per endpoint and per mechanism, the shape the
-// call must have: method, required headers and their exact values, the bearer
-// scheme AND a non-empty credential behind it, the absence of a query string
-// on the three JSON endpoints - matching is on (origin, pathname), so an
-// unexpected query would otherwise be served the recorded response as though
-// it had not been sent - the redirect mode where it is load-bearing, the body
-// encoding, EVERY required form field, and, for the token exchange, that the
-// body is RFC 3986 encoded rather than '+'-encoded. A breach is REFUSED with a
-// transport-shaped PARITY_CONTRACT error and recorded as a violation.
-//
-// "Every required form field" is deliberate rather than "the fields that
-// decide the outcome": `formEncode` drops only an `undefined` value and
-// node-config reads an unset key as null, so `client_secret` and
-// `redirect_uri` are always PRESENT on the wire - with an empty value where
-// the deployment leaves them unset - and a body without them is a changed
-// body.
-//
-// The reason is that the migration rewrote the wire encoding of three of these
-// four call sites by hand - the private rfc3986/formEncode/legacyJsonRequest
-// helpers in lib/controllers/auth.js and the URLSearchParams body in
-// lib/util/recaptcha.js - and nothing checked the result. A dropped header, a
-// renamed field or '+' for %20 would have been served the same recorded
-// response and produced an identical corpus. Recording a violation and serving
-// the response anyway would leave that state intact, which is why a breach
-// fails the call.
-//
-// ===========================================================================
-// THE HANDSHAKE
-// ===========================================================================
-// install() publishes what it patched, in which tree, from which file:
-// `PARITY_HTTP_STATUS` receives the document, and an `install` record carries
-// it in the evidence log for every run. It names this module's path and a
-// digest of its contents - which is how "ONE implementation was loaded into
-// both worktrees" (R-f) becomes provable rather than asserted - together with
-// the app root and whether it verified, the required and active mechanisms,
-// and the identity contract's state.
-//
-// `assertReady()` is the assertion a driver makes before trusting a run: it
-// throws unless every required mechanism is active, the app root is the tree it
-// claims to be, the identity contract holds - INCLUDING that the existing
-// identity is one the seeder creates, which is required by default rather than
-// on request - and no request contract has been breached.
-//
-// What this file cannot do is make another file call it. `capture.js`,
-// `replay.js` and `server.js` belong to sibling work units and do not consume
-// `PARITY_HTTP_STATUS`, `handshake()` or `assertReady()`, so nothing yet
-// proves to a PARENT that the fixture it meant to attach is the one that
-// attached. Two thirds of that gap is closed structurally rather than by
-// agreement: an unprotected install and a declared-but-wrong app root
-// TERMINATE the child, so a parent polling readiness cannot proceed past
-// either. What remains is identity - a parent should read the handshake and
-// require `installed`, every `required` mechanism active, `appRootVerified`,
-// and the module path, digest and pid of the child it started - and that
-// requires a change in those files.
-//
-// Load-order safety (AAP 0.6.5 defect 2): this module requires nothing from
-// config/**, lib/models/** or lib/controllers/**. Reaching
-// `mongoose-schema-extend` from a preload would replace the global
-// Object.getPrototypeOf and make @hapi/hapi unloadable for the rest of the
-// process.
-//
-// ===========================================================================
-// ENVIRONMENT CONTRACT - the authoritative list. These are every variable this
-// file reads, so test/parity/server.js can match it exactly. No unset or
-// malformed value causes a throw.
-//
-// The first four are the ones a preload needs; the last four were added with
-// the guarantees above and are all optional.
-// ===========================================================================
-//   PARITY_APP_ROOT          Absolute path of the worktree under test, used to
-//                            resolve the application's own `request` package.
-//                            FALLBACK: process.cwd(). The fallback is correct
-//                            because test/parity/server.js spawns the
-//                            application with the worktree under test as its
-//                            working directory, while this file lives in the
-//                            TARGET worktree - so `__dirname` would resolve
-//                            the wrong tree's node_modules and is deliberately
-//                            not used for resolution.
-//   PARITY_HTTP_PROFILE      Name of the initial profile. Unset selects
-//                            'default'. An unknown name also leaves 'default'
-//                            in force and is logged - loading must not throw,
-//                            because a throwing preload kills the server
-//                            before app.js loads.
-//   PARITY_HTTP_PROFILE_FILE Optional absolute path of a JSON file shaped
-//                            {"profile": "<name>"}, RE-READ SYNCHRONOUSLY at
-//                            the start of every intercepted call. This is how
-//                            profiles switch WITHOUT restarting the server:
-//                            test/parity/corpus.json carries a per-case
-//                            `fixtureProfile`, and a single capture.js run
-//                            drives the success, non-2xx, malformed-body,
-//                            transport-failure and missing-field OAuth cases
-//                            plus both streaming failure modes. No control
-//                            socket and no network are involved. A missing,
-//                            unreadable, malformed or unknown-name file leaves
-//                            the previous profile in force and is logged,
-//                            never thrown.
-//   PARITY_HTTP_LOG          Optional evidence file. A strict no-op when
-//                            unset. When set, one JSON record per intercepted
-//                            call is appended synchronously - mechanism,
-//                            endpoint, url, method, active profile, the
-//                            outcome served, and the full description of what
-//                            was SENT (method, redacted headers, body
-//                            encoding, body field names, byte count, digest
-//                            and redirect mode), with NO timestamp. Appending
-//                            per call rather than only on flush() is
-//                            deliberate: several profiles deliberately end in
-//                            an uncaught throw or an unsettled request, and
-//                            evidence has to survive that - it is also what
-//                            lets the harness read a fatal child's evidence.
-//                            Every write is guarded, so a logging fault can
-//                            never propagate into the application.
-//   PARITY_HTTP_STATUS       Optional path for the install handshake, written
-//                            once at install and again on re-install. See THE
-//                            HANDSHAKE. The same document always reaches the
-//                            evidence log as an `install` record, so a run
-//                            that sets nothing still carries it.
-//   PARITY_HTTP_IDENTITIES   Optional JSON, {"existing": "...", "new": "..."},
-//                            applied through setIdentityEmails() at load. This
-//                            is how the seeder and this fixture stay aligned
-//                            without either editing the other; a malformed or
-//                            rejected value leaves the declared identities in
-//                            force and is logged. See the SEEDING CONTRACT.
-//   PARITY_HTTP_ASSET_URLS   Optional JSON array of additional absolute
-//                            http(s) asset URLs to REGISTER. The registry
-//                            fails closed, so a corpus that fetches an asset
-//                            URL this file does not enumerate declares it
-//                            here. A malformed entry is logged and ignored,
-//                            which leaves it unregistered - that is, it still
-//                            fails closed.
-//   PARITY_HTTP_SELFTEST_CHILD
-//                            Set by the harness on the children it spawns, and
-//                            read ONLY when this file is executed directly.
-//                            Never set by a preload and never read by one.
-//
-// ===========================================================================
-// BASELINE RECORD (R-f) - measured, not assumed. Real `request` 2.88.2 driven
-// against a loopback http server on Node v22.23.2, in a scratch directory
-// outside the repository. Each line is a result, not an expectation.
-// ===========================================================================
-// Callback form:
-//   json:true + JSON body  -> the callback's `body` argument is the PARSED
-//                             object and `response.body` is the SAME reference.
-//   no json  + JSON body   -> both are the raw STRING. This is the shape
-//                             lib/util/recaptcha.js depends on: it parses
-//                             `response.body`, not the `body` argument, so a
-//                             parsed object there would change the outcome.
-//   json:true + non-JSON   -> both stay the raw string; the guard
-//                             `!body.access_token` does NOT throw.
-//   json:true + 'null'     -> body === null, and the guard THROWS a TypeError.
-//   json:true + empty body -> body === undefined, and the guard THROWS.
-//   json:true + 404        -> err is NULL and the body is delivered normally.
-//                             A non-2xx is not a transport error.
-// Stream form (`.on()` returns self for every event; `.pipe()` returns the
-// destination):
-//   200            -> ['response:200', 'data', 'end']
-//   query-bearing  -> identical sequence for '.../pic.png?v=2'
-//   404            -> ['response:404', 'data', 'end'] - 'end' DOES fire, so the
-//                     error page IS piped and uploaded, with the 404's own
-//                     content-type. No 'error' event. This answers the
-//                     non-2xx question the plan left open, by measurement.
-//   302            -> ['redirect:302->/final', 'response:200', 'data', 'end'] -
-//                     redirects ARE followed for GET, and the consumer's
-//                     'response' handler observes ONLY the FINAL response, so
-//                     the content-type it reads is the final response's and
-//                     never the 302's. This answers the redirect question.
-//   mid-stream cut -> ['response:200', 'data', 'error:ECONNRESET', 'end'] with
-//                     the partial bytes on disk: 'error' AND 'end' both fire,
-//                     so the upload proceeds with partial content.
-//   refused        -> ['error:ECONNREFUSED'] alone. No 'response', no 'end',
-//                     empty file, upload never starts, request unsettled.
-//   refused Error  -> name 'Error', message 'connect ECONNREFUSED <host>:<port>',
-//                     code 'ECONNREFUSED', errno -111, syscall 'connect'.
-// Export surface: the module is itself callable and carries Request, cookie,
-//   debug, defaults, del, delete, forever, get, head, initParams, jar,
-//   options, patch, post, put - which is why every request-issuing entry point
-//   is routed into one dispatcher instead of patching `get`/`post` alone.
-// Node 22 fetch: a transport failure rejects with TypeError('fetch failed')
-//   carrying a populated `cause`; lib/controllers/auth.js unwraps that cause,
-//   so the cause must be the ECONNREFUSED Error itself.
-// Web streams: enqueue-then-error inside a ReadableStream's `start()` DISCARDS
-//   the queued chunk, so the mid-stream fetch profile uses a `pull()`-driven
-//   stream that enqueues on the first pull and errors on the second. Measured
-//   result: 'data' with the partial bytes, then 'error'.
-//
-// ===========================================================================
-// NOTES OWED TO docs/baseline-parity.md (owned elsewhere)
-// ===========================================================================
-//   1. reCAPTCHA outcomes 3-6 are exercised by DIRECT MODULE-LEVEL INVOCATION
-//      of lib/util/recaptcha.js's verify(), not through routes. Under
-//      NODE_ENV=test, config.isTest is true (config/app.config.js sets
-//      `config.isTest = node_env === 'test'`), so outcome 1 short-circuits
-//      before any HTTP happens and always wins. What makes 3-6 reachable is a
-//      direct require of lib/util/recaptcha.js WITHOUT loading
-//      config/app.config - which leaves config.isTest undefined - together
-//      with a present config.app.recaptcha.secretkey.
-//
-//      THAT INVOCATION LIVES IN THIS FILE, in recaptchaCases() and
-//      childCases() under THE SELF-VERIFYING HARNESS, and it runs with
-//      `node test/parity/fixtures/http.js`. It was previously described here
-//      as though it happened somewhere, and it happened nowhere: no delivered
-//      file required lib/util/recaptcha.js or called verify(), so all five
-//      recorded siteverify responses were unexecuted code and the callback,
-//      throw and no-callback behaviours could regress without a single
-//      artifact changing. Outcomes 3 and 4 and the rejected variant of 3 run
-//      in-process; outcomes 1 and 2 need mutually exclusive configuration
-//      states and 5 and 6 kill the process without calling back, so those four
-//      run in bounded child processes and are asserted by exit code, error
-//      type, the absence of the callback marker, and the evidence the child
-//      appended before it died.
-//   2. The OAuth profiles have a configuration precondition. Both handlers
-//      guard on config.app.auth && config.app.auth.google &&
-//      config.app.auth.google.clientID and short-circuit to request.fail when
-//      it is absent, and test/parity/server-overlay.json's declared contract
-//      does not include app.auth.google. So clientID, clientSecret and
-//      callbackURL MUST be present in the composed NODE_CONFIG for these
-//      profiles to be reached through routes; the overlay owner or capture.js
-//      supplies them. This module stays fully usable by direct invocation
-//      either way.
-//   3. The asset redirect and non-2xx behaviours encoded here were RECORDED
-//      from the real library (see BASELINE RECORD above), not assumed: a
-//      non-2xx still reaches 'end' and therefore uploads the error page, and a
-//      redirect is followed for GET with only the final response observable.
-//   4. The two redirect LIMITS this file enforces - 10 for the `request`
-//      mechanism and 20 for native fetch - are DECLARED, not measured: the
-//      package is not installed on the target tree and the runtime's limit is
-//      not reachable without twenty real hops. They are exported as
-//      `redirectLimits` so a caller asserts against the same numbers the
-//      fixture used, and the 10-hop and 11-hop chains exist so the boundary
-//      between them can be driven at all.
-//
-// ===========================================================================
-// THE SELF-VERIFYING HARNESS, AND WHAT IT DOES NOT COVER
-// ===========================================================================
-// `node test/parity/fixtures/http.js` drives every profile in the catalogue
-// and every reCAPTCHA outcome, and exits non-zero if any case fails or any
-// profile went unselected. `selfTest()` is the same thing as a function, for a
-// sibling tool that wants to fold the result into its own gate, and
-// `--out <file>` writes the JSON report - there is no default output path, so
-// running it never writes into the worktree.
-//
-// Called as a function it leaves the calling process EXACTLY as it found it,
-// and proves it in its own last case: ownership of the genuine fetch is
-// reclaimed before the tripwire is installed, and the installed state, the
-// evidence and violation lists, the served counts, the active profile, the
-// mutated node-config values and the presence as well as the value of every
-// environment key it touched are all snapshotted and put back. The collections
-// are restored as COPIES and after the re-install, because assigning the
-// snapshot itself would alias it and the re-install's own handshake notes
-// would grow the list this restore is measured against.
-//
-// It covers what this file can reach on its own. Three things it deliberately
-// does NOT evidence, each of which belongs to another artifact:
-//
-//   The OAuth handlers themselves. lib/controllers/auth.js needs a hapi
-//   request, a live database and the `log` and `User` globals app.js installs,
-//   so the harness drives the two provider calls with the exact shapes the
-//   controller sends and pins those shapes to the controller's own source
-//   text (see the `sources` group). The controller's OUTCOMES - including the
-//   preserved new-user save-then-fail - belong to test/parity/corpus.json,
-//   which drives the real route.
-//
-//   The fifth auth-scheme outcome (app.js's `Auth error`, reached when
-//   User.findById rejects). It needs a model-level fault injected into the
-//   running application, not an HTTP response, and a preload may not require
-//   lib/models/** at all - mongoose-schema-extend replaces the global
-//   Object.getPrototypeOf and makes @hapi/hapi unloadable for the rest of the
-//   process (AAP 0.6.5 defect 2). It belongs to the harness that owns app.js.
-//
-//   The worker's completion mail. That is test/parity/fixtures/mail.js's
-//   record and test/parity/worker.js's assertion; nothing about it passes
-//   through this file.
-//
-// ===========================================================================
-// SEEDING CONTRACT
-// ===========================================================================
-// Which database branch googleCallback takes is decided by the EMAIL this
-// fixture serves - there is no separate switch. User.findByMultiple queries an
-// $or over the email, the derived username and profiles.google.id
-// (lib/models/user.js:105-115), so:
-//   identities.existing  MUST be an account test/parity/seed.js creates.
-//   identities.new       MUST miss all three criteria - not a seeded email,
-//                        not a seeded username, not a seeded Google id.
-//
-// `existing` is therefore the SEEDED DEFAULT USER, test@dummy.com, which
-// test/parity/seed.js creates as IDENTITIES.user from the same literals
-// test/helpers/defaults.js has always used. It used to be
-// 'parity-existing@example.com', an address the seeder has never created - so
-// the profile named `oauth:success-existing-user` actually drove the NEW-user
-// branch, both OAuth scenarios exercised the same branch, and the
-// existing-user branch went unexercised while appearing to be covered. The
-// inversion is fixed here, in the artifact that decides it, rather than by
-// waiting on a change to the seeder.
-//
-// A seeder that wants its own addresses supplies them through
-// PARITY_HTTP_IDENTITIES or setIdentityEmails() rather than editing this file,
-// so the two artifacts cannot drift. Either way the contract is CHECKED, not
-// merely stated: checkIdentityContract() refuses a `new` identity that is a
-// seeded email or derives a seeded username, refuses two identities that are
-// equal, and reports an `existing` identity it cannot see in the seeded set -
-// which assertReady({requireSeededIdentity: true}) turns into a hard failure
-// for any driver that depends on the branch. The derived username is
-// email.replace(/\W+/g, '-').toLowerCase(), exported as
-// identities.existingUsername / identities.newUsername for the seeder's use.
+// IDENTITIES, READINESS AND THE PROHIBITIONS
+//   The email served decides which OAuth database branch runs, since
+//   `User.findByMultiple` queries an $or over the email, the derived username
+//   and profiles.google.id: `identities.existing` must be an account
+//   test/parity/seed.js creates and `identities.new` must miss all three.
+//   assertReady() throws unless every required mechanism is active, the app
+//   root is the tree it claims to be and the identity contract holds. fetch is
+//   always required and `request` exactly when the tree resolves it, so a
+//   resolvable package that could not be patched, or a declared app root that
+//   does not hold the application, exits with EXIT_UNPROTECTED rather than
+//   serving. The retained originals are never invoked, and nothing is required
+//   from config/**, lib/models/** or lib/controllers/**, where
+//   `mongoose-schema-extend` would make @hapi/hapi unloadable for the rest of
+//   the process. No `url.parse` (DEP0169), no `new Buffer`, no console output.
 
 'use strict';
 
@@ -491,7 +85,7 @@ var fs = require('fs');
 
 // Node core, for the digest that lets two runs be compared byte-for-byte over
 // bodies whose credential-bearing fields are redacted out of the evidence, and
-// for the asset digests the storage contract keys on (AAP 0.6.7).
+// for the asset digests the storage contract keys on.
 var crypto = require('crypto');
 
 // Node core. Used ONLY by the self-verifying harness below, which runs when
@@ -507,7 +101,7 @@ var pathModule = require('path');
 // than Readable.prototype.pipe, and the two differ in how an 'error' on the
 // source is propagated to the destination. Building the stream form on the
 // same base as the original removes a whole class of difference that would
-// otherwise belong to the harness rather than to the application (R-f).
+// otherwise belong to the harness rather than to the application.
 var Stream = require('stream').Stream;
 
 // ---------------------------------------------------------------------------
@@ -515,11 +109,11 @@ var Stream = require('stream').Stream;
 // every one of these values reaches somewhere the corpus compares exactly:
 // the access token is persisted onto user.profiles.google.token, the picture
 // becomes user.avatar and is rendered into HTML, and the asset bytes decide
-// the sha1 that becomes the stored S3 object key (AAP 0.6.7).
+// the sha1 that becomes the stored S3 object key.
 // ---------------------------------------------------------------------------
 
-// Obviously synthetic, and deliberately unable to match any provider's token
-// format so that secret scanners cannot mistake it for a credential.
+// Synthetic, and deliberately unable to match any provider's token format so
+// that secret scanners cannot mistake it for a credential.
 var ACCESS_TOKEN = 'PARITY-FIXED-GOOGLE-ACCESS-TOKEN';
 
 // Rendered into HTML as an avatar src. Never fetched by anything.
@@ -585,7 +179,7 @@ var ENDPOINT_URLS = {
 // This object is also the REGISTRY the asset endpoint matches against. An
 // asset fetch is recognized by (origin, pathname) drawn from these entries and
 // from the redirect-hop chain below - never by "it parsed and it was not one
-// of the three JSON endpoints". See ASSET REGISTRY, FAIL CLOSED in the header.
+// of the three JSON endpoints": an unregistered URL is refused, not served.
 var ASSET_URLS = {
   plain       : 'https://parity.example.com/assets/fixture.gif',
   query       : 'https://parity.example.com/assets/fixture.gif?v=2',
@@ -601,8 +195,9 @@ var ASSET_URLS = {
 // redirects to hop n+1, and the last hop redirects to the chain's destination.
 var ASSET_HOP_PREFIX = 'https://parity.example.com/assets/redirect-hop/';
 
-// The number of hops the two boundary profiles serve. `request` 2.88.2 allowed
-// 10 redirects and native fetch allows 20, so a chain of 10 is inside both
+// The number of hops the two boundary profiles serve. The replaced `request`
+// library allowed 10 redirects and native fetch allows 20, so a chain of 10 is
+// inside both
 // limits and a chain of 11 is inside fetch's and outside the replaced
 // library's. Those two values are the boundary any redirect-limit claim about
 // the asset call site has to be pinned against, so the fixture can serve it.
@@ -611,11 +206,10 @@ var ASSET_HOPS_BEYOND_LEGACY_LIMIT = 11;
 
 // The redirect limits each mechanism enforces. LEGACY is the replaced library's
 // documented `maxRedirects` default; FETCH is the WHATWG/undici limit. Neither
-// is measured here - `request` is not installed on the target tree and the
+// is observed here - `request` is not installed on the target tree and the
 // runtime's limit is not reachable without 20 real hops - so both are declared
-// as the contract the fixture enforces and are exported so a caller can assert
-// against the same number the fixture used (R-f: declared, not passed off as
-// measured).
+// values the fixture enforces, exported so a caller asserts against the same
+// number the fixture used.
 var LEGACY_MAX_REDIRECTS = 10;
 var FETCH_MAX_REDIRECTS   = 20;
 
@@ -625,12 +219,11 @@ var FETCH_MAX_REDIRECTS   = 20;
 // path-level registration rather than merely origin-level rejection.
 var UNRECORDED_URL = 'https://parity.example.com/unrecorded/never-recorded';
 
-// A URL on an origin nothing records at all. The asset endpoint used to accept
-// any parseable http(s) URL, so an outbound call to an endpoint no profile
-// describes - a new integration, or an SSRF payload reaching a host the
-// application was never meant to contact - was served plausible asset bytes and
-// looked like a success. That is the fail-open behaviour this fixture no longer
-// has, and this constant is the control that proves it.
+// A URL on an origin nothing records at all: the control for the fail-closed
+// registry. An asset endpoint that accepted any parseable http(s) URL would
+// serve plausible bytes to an outbound call no profile describes - a new
+// integration, or an SSRF payload reaching a host the application was never
+// meant to contact - and that call would read as a success.
 var UNREGISTERED_ORIGIN_URL = 'https://unregistered.invalid/some/path';
 
 // ---------------------------------------------------------------------------
@@ -649,37 +242,50 @@ function derivedUsername(email) {
 // pairs. Declared locally with their provenance rather than imported, because
 // requiring test/helpers/** is prohibited in this folder and requiring
 // test/parity/seed.js would pull lib/models/** - and therefore
-// mongoose-schema-extend - into a preload, which is the load-order fault AAP
-// 0.6.5 defect 2 describes. The values are copied verbatim from
+// mongoose-schema-extend - into a preload, which is what makes @hapi/hapi
+// unloadable for the rest of the process. The values are copied verbatim from
 // test/parity/seed.js's IDENTITIES block, which copies them in turn from
 // test/helpers/defaults.js, so the three artifacts state one set of accounts.
 //
 // This list is what makes the identity contract CHECKABLE from inside the
 // fixture: `existing` must be one of these, and `new` must be none of them.
+// The fourth entry is the GOOGLE-LINKED account, seeded as
+// `fixtures.oauthExisting` with `profiles.google.id` and an avatar already
+// populated. It is a full member of this list rather than a special case: the
+// seeder creates it exactly as it creates the other three, and omitting it was
+// what made `checkIdentityContract` report the OAuth identity as unverified
+// while the seeder was creating it all along.
 var SEEDED_ACCOUNTS = [
-  { email: 'test@dummy.com',        username: 'testing' },
-  { email: 'admin@example.com',     username: 'administrator' },
-  { email: 'disabled@example.com',  username: 'disableduser' }
+  { email: 'test@dummy.com',            username: 'testing' },
+  { email: 'admin@example.com',         username: 'administrator' },
+  { email: 'disabled@example.com',      username: 'disableduser' },
+  { email: 'parity-existing@example.com', username: 'parity-existing-example-com' }
 ];
 
+// Which of those accounts the OAuth existing-user branch is driven against.
+// Named rather than indexed so the choice reads as a decision: it is the
+// google-linked account, for the no-write reason given in the SEEDING CONTRACT
+// above, and not the seeded default user.
+var OAUTH_EXISTING_ACCOUNT = SEEDED_ACCOUNTS[3];
+
 // Which database branch googleCallback takes is decided by the EMAIL served
-// here, matched by User.findByMultiple, whose query is an $or over the email,
-// the derived username and profiles.google.id (lib/models/user.js:105-115). So
+// here, matched by `lib/models/user.js`'s `findByMultiple`, whose query is an
+// $or over the email, the derived username and profiles.google.id. So
 // `existing` has to be an address the seeder really creates and `new` has to
 // miss all three criteria.
 //
-// `existing` is the SEEDED DEFAULT USER. It was 'parity-existing@example.com',
-// which test/parity/seed.js has never seeded, so the profile named
-// oauth:success-existing-user actually drove the NEW-user branch and the two
-// OAuth database branches were inverted - both scenarios exercising one branch
-// while the other went unexercised. Pointing the existing identity at the
-// account the seeder does create removes the inversion here rather than by
-// waiting on a second artifact, and assertIdentityContract() below refuses any
-// configuration that could reintroduce it.
+// `existing` is the seeder's GOOGLE-LINKED account, which is the one branch
+// this profile is named for: its `profiles.google` is already populated, so
+// googleCallback logs it in without writing to it. It briefly pointed at the
+// seeded default user instead, which does reach the existing-user branch but
+// through its account-LINKING path - a write to the document every other
+// scenario reads. checkIdentityContract() below refuses any configuration that
+// would invert the two branches, and the self-check compares these literals
+// against test/parity/seed.js's `oauthIdentities` export.
 var identities = {
-  existing         : SEEDED_ACCOUNTS[0].email,
+  existing         : OAUTH_EXISTING_ACCOUNT.email,
   new              : 'parity-newcomer@example.com',
-  existingUsername : derivedUsername(SEEDED_ACCOUNTS[0].email),
+  existingUsername : derivedUsername(OAUTH_EXISTING_ACCOUNT.email),
   newUsername      : derivedUsername('parity-newcomer@example.com')
 };
 
@@ -841,7 +447,7 @@ var RECAPTCHA_SUCCESS = {
 // provider says no. It is recorded separately because it is the only way to
 // reach the request.fail edges that branch on `recaptcha_result.success` in
 // lib/controllers/users.js (create and sendEmailVerification), which the
-// error-edge inventory needs (AAP 0.6.3).
+// error-edge inventory needs.
 var RECAPTCHA_REJECTED = {
   outcome : 'recaptcha-200-rejected',
   status  : 200,
@@ -857,7 +463,7 @@ var RECAPTCHA_REJECTED = {
 // reCAPTCHA outcome 4: any non-200 makes verify() call back with the
 // differently shaped {status: false}. That key is `status`, not `success`, and
 // the two shapes are deliberately NOT unified: callers test `success`, so a
-// non-200 is not merely a falsy success but a different object (R-d).
+// non-200 is not merely a falsy success but a different object.
 var RECAPTCHA_NON_200 = {
   outcome : 'recaptcha-503',
   status  : 503,
@@ -920,7 +526,7 @@ var TOKEN_MALFORMED_BODY = {
 // TypeError out of the callback - an uncaught exception that leaves the
 // request unanswered rather than producing the generic failure. Recorded as a
 // separate profile because the outcome differs from the case above, and
-// preserved rather than tidied (R-d).
+// preserved rather than tidied.
 var TOKEN_NON_OBJECT_BODY = {
   outcome : 'token-200-null-body',
   status  : 200,
@@ -954,11 +560,11 @@ function userinfoExisting() {
   };
 }
 
-// The same shape with an UNSEEDED email, which is the whole mechanism for
-// selecting the new-user branch. The controller then saves the user, sets the
+// The same shape with an UNSEEDED email, which is what selects the new-user
+// branch. The controller then saves the user, sets the
 // yar `next` and `grantDemoTrinkets` values, and throws a ReferenceError on an
 // undefined `opts` - so the account is created and a generic failure is
-// reported. That outcome is reproduced deliberately (R-d ruling 3, AAP 0.6.6).
+// reported. That outcome is reproduced deliberately.
 function userinfoNew() {
   return {
     outcome : 'userinfo-200-new-user',
@@ -1100,7 +706,7 @@ var ASSET_REDIRECT_BEYOND_LIMIT = {
 };
 
 // 'error' only, and NEVER 'end': the upload does not start and the route is
-// left unsettled (R-d ruling 2).
+// left unsettled.
 var ASSET_REFUSED = {
   outcome   : 'asset-transport-refused',
   mode      : 'refused',
@@ -1127,6 +733,12 @@ var NOT_RECORDED = { outcome: 'unrecorded', recorded: false };
 // declares only the endpoint it is about and no call can land on a hole by
 // accident. 'none' is the deliberate exception: it records nothing, and exists
 // so the no-escape-to-the-network path can be exercised for every endpoint.
+//
+// The two OAuth handlers guard on config.app.auth.google.clientID and
+// short-circuit to request.fail when it is absent, so clientID, clientSecret
+// and callbackURL must be present in the composed NODE_CONFIG for the oauth:*
+// profiles to be reachable THROUGH ROUTES. Direct invocation needs none of
+// them.
 // ---------------------------------------------------------------------------
 
 var DEFAULT_PROFILE = {
@@ -1220,7 +832,7 @@ var state = {
 // contract keys on. sha1 rather than something stronger deliberately:
 // lib/util/file.js derives the stored S3 object key from the sha1 of the
 // uploaded bytes, so this is the value a storage assertion has to compare
-// against (AAP 0.6.7).
+// against.
 function sha1(value) {
   return crypto.createHash('sha1')
     .update(Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8'))
@@ -1230,7 +842,7 @@ function sha1(value) {
 // ---------------------------------------------------------------------------
 // Evidence log. Nothing here may ever throw into the application, and nothing
 // here may emit to stdout or stderr: the zero-warning gate captures both
-// streams for the whole run (AAP 0.8).
+// streams for the whole run.
 // ---------------------------------------------------------------------------
 
 // Appends one record and, when PARITY_HTTP_LOG is set, writes it through
@@ -1311,11 +923,10 @@ function flush() {
     // The directory is NOT created here. The harness owns the log path, the
     // per-call append does not create directories either - so the two paths
     // stay consistent - and a recursive mkdir is not a safe operation to run
-    // blind from inside a request: measured on this host,
-    // fs.mkdirSync('/proc/<missing>/<missing>', {recursive: true}) BLOCKS
-    // indefinitely where appendFileSync on the same path returns ENOENT at
-    // once. A fixture must never be able to stall the process it is loaded
-    // into.
+    // blind from inside a request: fs.mkdirSync on a path under an
+    // unreadable parent can BLOCK indefinitely where appendFileSync on the
+    // same path returns ENOENT at once. A fixture must never be able to stall
+    // the process it is loaded into.
     fs.writeFileSync(target, lines.length ? lines.join('\n') + '\n' : '');
     return target;
   }
@@ -1421,7 +1032,7 @@ function setProfile(name) {
 
 // ---------------------------------------------------------------------------
 // Endpoint classification. `new URL` only - never url.parse, which emits
-// DEP0169 on every call (AAP 0.8).
+// DEP0169 on every call.
 // ---------------------------------------------------------------------------
 
 // Extracts the URL from either accepted call shape: a bare string, a WHATWG
@@ -1539,15 +1150,14 @@ function buildAssetRegistry() {
 // missing URL, and, the case that matters, a perfectly parseable https URL on
 // an origin or a path no profile describes.
 //
-// That last clause is the whole point. This function used to end by returning
-// the asset class for any parseable http(s) URL, so a call to an endpoint
-// nothing had recorded - a new outbound integration, or an SSRF payload
-// reaching a host the application was never meant to contact - was served the
-// active profile's asset bytes and read as a success. The fixture's own
-// no-network guarantee was therefore unfalsifiable: nothing could distinguish
-// "recorded and served" from "unknown and served anyway". Unrecorded now fails
-// through the calling mechanism's own failure shape with code
-// PARITY_UNRECORDED, which is visible, deterministic, and still never a socket.
+// That last clause is what keeps the no-network guarantee falsifiable.
+// Returning the asset class for any parseable http(s) URL would serve the
+// active profile's asset bytes to a call nothing had recorded - a new outbound
+// integration, or an SSRF payload reaching a host the application was never
+// meant to contact - and nothing could then distinguish "recorded and served"
+// from "unknown and served anyway". Unrecorded fails through the calling
+// mechanism's own failure shape with code PARITY_UNRECORDED, which is visible,
+// deterministic, and still never a socket.
 function classify(rawUrl) {
   if (typeof rawUrl !== 'string' || !rawUrl) {
     return { endpoint: null, url: rawUrl === null || rawUrl === undefined ? '' : String(rawUrl), reason: 'no-url' };
@@ -1612,7 +1222,7 @@ function hopNumberOf(parsed) {
 // The Error a refused or reset connection produced, reproduced field for
 // field from the measured original: name 'Error', a message naming the host
 // and port, and code/errno/syscall. Deterministic - the host and port come
-// from the record, never from a live socket (R-e).
+// from the record, never from a live socket.
 function transportError(spec) {
   var message = spec.message ||
     ('connect ' + spec.code + ' ' + (spec.host || 'parity.example.com') + ':' + (spec.port || 443));
@@ -1652,7 +1262,7 @@ function unrecordedError(classified, mechanism) {
 // The rejection `fetch` produces for a transport failure on Node 22: a
 // TypeError whose message is exactly 'fetch failed', carrying the underlying
 // Error as `cause`. lib/controllers/auth.js unwraps that cause, so the cause
-// must be the Error the replaced library reported directly (R-e).
+// must be the Error the replaced library reported directly.
 function fetchFailure(cause) {
   var err = new TypeError('fetch failed');
   err.cause = cause;
@@ -1685,14 +1295,12 @@ function contractError(classified, mechanism, violations) {
 // Request description: what was sent, recorded exactly, with credentials
 // redacted.
 //
-// The evidence log used to carry the mechanism, the endpoint, the URL, the
-// method, the profile and the outcome - and nothing about the request itself.
-// So the wire encoding of the two OAuth calls and of reCAPTCHA, which the
-// migration rewrote by hand (the private rfc3986/formEncode/legacyJsonRequest
-// helpers in lib/controllers/auth.js and the URLSearchParams body in
-// lib/util/recaptcha.js), had no oracle at all: a header dropped, a form field
-// renamed or `+` substituted for %20 would have served the same recorded
-// response and produced an identical corpus.
+// The wire encoding of the two OAuth calls and of reCAPTCHA is hand-written -
+// the private rfc3986/formEncode/legacyJsonRequest helpers in
+// lib/controllers/auth.js and the URLSearchParams body in
+// lib/util/recaptcha.js - so without an oracle over what was SENT, a dropped
+// header, a renamed form field or a `+` where %20 belongs would be served the
+// same recorded response and produce an identical corpus.
 //
 // Everything below is therefore recorded per call - method, header names and
 // values, body encoding, body field names, byte length and digest, and the
@@ -1714,10 +1322,10 @@ var REDACTED = '<redacted>';
 var SCHEME_BEARING_HEADERS = ['authorization', 'proxy-authorization'];
 
 // Headers whose value is a credential with nothing worth keeping. Redacted
-// WHOLE - an earlier version of this function preserved everything before the
-// first space for every sensitive header, which turned `session=SECRET; Path=/`
-// into evidence carrying `session=SECRET;` and an API key with a space in it
-// into evidence carrying its first word.
+// WHOLE, never up to the first space: that rule belongs to the two
+// scheme-bearing headers above and applied here would write
+// `session=SECRET;` out of `session=SECRET; Path=/`, or the first word of an
+// API key that happens to contain a space.
 var OPAQUE_CREDENTIAL_HEADERS = [
   'cookie', 'set-cookie', 'x-api-key', 'x-goog-api-key', 'x-auth-token',
   'x-amz-security-token', 'x-amz-credential', 'x-csrf-token', 'x-xsrf-token'
@@ -1753,11 +1361,9 @@ function isSensitiveField(name) {
 // Userinfo is removed and the removal is marked, because "this URL carried
 // credentials in its authority" is itself evidence. Sensitive query values are
 // replaced. Input that is not a URL is reduced to a DIGEST rather than written
-// out verbatim: a malformed string can still carry a signed query, and an
-// earlier version returned it unchanged on the reasoning that a non-URL has no
-// credential structure - which is true of its structure and false of its
-// bytes. The digest keeps two runs comparable without carrying the value.
-// Never throws.
+// out verbatim: a malformed string has no credential structure but can still
+// carry a signed query in its bytes, and the digest keeps two runs comparable
+// without carrying the value. Never throws.
 function redactUrl(rawUrl) {
   if (rawUrl === null || rawUrl === undefined || rawUrl === '') {
     return '';
@@ -2061,8 +1667,9 @@ var REQUEST_CONTRACTS = {
       bodyEncoding   : 'form',
       requiredFields : ['response', 'secret']
     },
-    // At 2f8712a: request.post({url, form:{secret, response}}, cb) with `json`
-    // NOT set - which is load-bearing, because verify() parses response.body
+    // The replaced call shape: request.post({url, form:{secret, response}},
+    // cb) with `json` NOT set - which is load-bearing, because verify()
+    // parses response.body
     // itself and a parsed object there changes the outcome.
     request : {
       method         : 'POST',
@@ -2323,7 +1930,7 @@ function bodyStringFor(rec) {
 // body becomes the parsed value INCLUDING null, and an unparseable body stays
 // the raw string. The first two are what make the application's
 // `!body.access_token` and `!profile.email` guards throw a TypeError instead
-// of rejecting, and that fault is preserved (R-d).
+// of rejecting, and that fault is preserved.
 function legacyJsonBody(text) {
   if (text === '') {
     return undefined;
@@ -2417,7 +2024,7 @@ function normalizeArgs(defaultMethod, args) {
 // rather than synchronously, which is what the original did from its own
 // emitter: a throw inside the callback then escapes as an uncaught exception,
 // which is the documented contract of reCAPTCHA outcomes 5 and 6 and of the
-// null-body token case (R-d, R-e).
+// null-body token case.
 function serveRequestCallback(call) {
   var classified = classify(call.url);
   var rec = classified.endpoint ? recordFor(classified.endpoint) : null;
@@ -2481,8 +2088,8 @@ function hopsFrom(rec, classified) {
   }
 
   // A request for the chain's DESTINATION has no hops ahead of it, or a
-  // hop-counting caller would arrive and be redirected round the chain again -
-  // measured, as a walk that never terminated.
+  // hop-counting caller would arrive and be redirected round the chain again,
+  // walking it without end.
   var destination = chain[chain.length - 1].location;
   if (classified && classified.url && sameEndpoint(classified.url, destination)) {
     return [];
@@ -2517,7 +2124,61 @@ function newRequestStream(call, classified) {
   stream.abort = function() { return stream; };
   stream.end = function() { return stream; };
 
+  // `pipe` stays Stream.prototype.pipe - its error propagation is the whole
+  // reason this object is built on the legacy base class - and the override
+  // only RECORDS the destination on the way through, so `afterFlush` below
+  // can wait for the bytes it wrote to reach the file.
+  stream.pipe = function(destination, options) {
+    stream.parityDestination = destination;
+
+    return Stream.prototype.pipe.call(stream, destination, options);
+  };
+
   return stream;
+}
+
+// Runs `done` once the destination this stream was piped into has flushed the
+// bytes already written to it.
+//
+// WHY THIS EXISTS, measured. The consumer of this stream is
+// `assetUploadFromURL`, which registers its upload on the SOURCE's 'end' and
+// separately pipes the source into `fs.createWriteStream(tmpPath)`
+// [lib/controllers/users.js:594-615 at 2f8712a]. `Stream.prototype.pipe`
+// wires 'data' to `destination.write(chunk)` with no callback, and the 'end'
+// handler the application registered BEFORE the pipe therefore runs before
+// the write has been flushed - so the upload hashes whatever is on disk at
+// that instant. Emitting 'data' and 'end' in one turn made that a coin toss:
+// two captures of the identical tree recorded sha1
+// da39a3ee5e6b4b0d3255bfef95601890afd80709, which is the digest of NO BYTES,
+// and d5fceb6532643d0d84ffe09c40c481ecdf59e15a, which is the digest of the
+// 42 bytes this fixture serves and the value this file's own
+// `asset:success` profile documents. A content-addressed storage key cannot
+// be normalized away - AAP 0.6.7 makes the digest the contract - so the
+// stimulus is made faithful instead: no socket delivers a chunk and its EOF
+// in the same synchronous turn, and a zero-length marker write is ordered
+// behind the chunk already queued, so its callback is the moment the file
+// holds what was sent.
+//
+// Falls back to `setImmediate` when there is nothing to wait for: a consumer
+// that never piped, or a destination without a callback-taking `write`.
+function afterFlush(stream, done) {
+  var destination = stream.parityDestination;
+
+  if (!destination || typeof destination.write !== 'function') {
+    setImmediate(done);
+    return;
+  }
+
+  try {
+    destination.write(Buffer.alloc(0), function() {
+      done();
+    });
+  }
+  catch (err) {
+    // A destination that rejects the marker write tells us nothing about its
+    // flush state, so the run continues on the timing it would have had.
+    setImmediate(done);
+  }
 }
 
 // Delivers the stream form. Emission is deferred to setImmediate so that the
@@ -2564,7 +2225,7 @@ function serveRequestStream(call) {
   setImmediate(function() {
     if (mode === 'refused') {
       // 'error' and nothing else, ever: no 'response', no 'data', no 'end'.
-      // The upload never starts and the request is left unsettled (R-d).
+      // The upload never starts and the request is left unsettled.
       stream.emit('error', transportError(rec.transport));
       return;
     }
@@ -2613,7 +2274,7 @@ function serveRequestStream(call) {
       // so the upload proceeds with partial content. Deferred one tick so the
       // bytes are through the pipe before the error unwires it, which is the
       // order the measured baseline produced.
-      setImmediate(function() {
+      afterFlush(stream, function() {
         stream.emit('error', transportError(rec.transport));
         stream.emit('end');
       });
@@ -2621,8 +2282,12 @@ function serveRequestStream(call) {
     }
 
     // 'complete' and 'non-2xx' both end normally: a non-2xx is not a
-    // transport error, so its body really is piped and uploaded.
-    stream.emit('end');
+    // transport error, so its body really is piped and uploaded. 'end' waits
+    // for the destination to hold the bytes - see `afterFlush` - because the
+    // consumer's upload reads the file from its own 'end' handler.
+    afterFlush(stream, function() {
+      stream.emit('end');
+    });
   });
 
   return stream;
@@ -2674,10 +2339,10 @@ function buildRequestReplacement() {
   // initParams, jar and cookie - are declared UNAVAILABLE rather than faked.
   // None is referenced anywhere in the application, at the base commit or on
   // the target tree, and none issues an HTTP request, so their absence cannot
-  // open a route to the network. Declaring them loudly is the honest option:
-  // a hollow cookie jar that silently stores nothing, or an initParams that
-  // returns a differently shaped object, would turn a missing capability into
-  // a subtle wrong answer.
+  // open a route to the network. Declaring them loudly is what keeps a missing
+  // capability from becoming a subtle wrong answer: a hollow cookie jar that
+  // silently stores nothing, or an initParams that returns a differently
+  // shaped object, would do exactly that.
   ['Request', 'initParams', 'jar', 'cookie'].forEach(function(name) {
     dispatcher[name] = function() {
       throw new Error(
@@ -2855,12 +2520,12 @@ function parityFetch(input, init) {
   var rec = classified.endpoint ? recordFor(classified.endpoint) : null;
 
   // Native fetch REFUSES a URL carrying credentials in its authority, and it
-  // refuses it before any request is made. Measured on Node v22.23.2:
+  // refuses it before any request is made. On Node 22:
   //   TypeError('Request cannot be constructed from a URL that includes
   //   credentials: <url>'), with no `cause`.
   //
   // Reproducing it matters because the replaced library ACCEPTED such a URL, so
-  // this is one of the measured behavioural differences the migration
+  // this is one of the behavioural differences the migration
   // introduced at lib/controllers/users.js's asset upload - and a fixture that
   // quietly stripped the credentials and served a 200 would report parity
   // across exactly that difference. The URL is recorded redacted; the message
@@ -2907,7 +2572,7 @@ function parityFetch(input, init) {
   if (!rec || rec.recorded === false) {
     recordCall(classified, 'fetch', description, 'unrecorded');
     // fetch's own failure shape, so the caller's rejection handling is
-    // reached exactly as a real transport failure would reach it (R-e).
+    // reached exactly as a real transport failure would reach it.
     return Promise.reject(fetchFailure(unrecordedError(classified, 'fetch')));
   }
 
@@ -2930,8 +2595,8 @@ function parityFetch(input, init) {
   // three modes are three different observable outcomes and the token exchange
   // depends on one of them: it sends 'manual' precisely so that a 3xx is NOT
   // chased, since fetch follows every method and downgrades a redirected POST
-  // to GET. Ignoring the mode - which this function used to do - made that
-  // dependency untestable and made a hop limit inexpressible.
+  // to GET. A dispatcher that ignored the mode would make that dependency
+  // untestable and a hop limit inexpressible.
   var hops = hopsFrom(rec, classified);
 
   if (hops.length) {
@@ -3092,8 +2757,8 @@ function verifyAppRoot(appRoot) {
 //   into the handshake and the evidence log, which is what makes readiness fail
 //   for a parent that polls it - test/parity/server.js reports the child's exit,
 //   and neither capture.js nor replay.js can proceed past a dead child.
-//   Nothing is printed: stdout and stderr belong to the zero-warning gate
-//   (AAP 0.8), and the exit code plus the handshake are the signal.
+//   Nothing is printed: stdout and stderr belong to the zero-warning gate,
+//   and the exit code plus the handshake are the signal.
 function install() {
   if (state.installed) {
     return status();
@@ -3170,7 +2835,7 @@ function install() {
 // evidence log as well so it travels with the corpus in every run - including
 // runs that set no handshake path.
 //
-// The handshake answers the question a parent could not previously ask: is the
+// The handshake answers the question a parent otherwise cannot ask: is the
 // fixture that installed the one I meant, in the tree I meant, with every
 // mechanism active? It carries the module's own path and a digest of its
 // contents, the app root and whether it verified, the pid, the active profile
@@ -3196,9 +2861,9 @@ function publishHandshake(current) {
 }
 
 // A digest of this file, so a handshake identifies the implementation and not
-// merely its path: both worktrees load ONE implementation (R-f), and this is
-// what lets a run prove it rather than assert it. Computed once, and a failure
-// to read is reported rather than thrown.
+// merely its path: both worktrees load ONE implementation, and this is what
+// lets a run prove it rather than assert it. Computed once, and a failure to
+// read is reported rather than thrown.
 var fixtureDigest = (function() {
   try {
     return sha1(fs.readFileSync(__filename));
@@ -3354,8 +3019,8 @@ function requestContractReport() {
 
 // How many calls were served per (endpoint, profile, outcome). This is what
 // turns "the profile was in force" into "the profile was USED": a check that
-// counts nothing cannot tell an exercised branch from an unexercised one, which
-// is how thirteen profiles came to be defined and never selected.
+// counts nothing cannot tell an exercised branch from an unexercised one, and
+// a defined-but-unselected profile is evidence of nothing.
 function servedCounts() {
   var out = {};
   Object.keys(state.served).forEach(function(key) {
@@ -3369,13 +3034,13 @@ function servedCounts() {
 // PARITY_HTTP_PROFILE_FILE. An unknown name is logged and ignored rather than
 // thrown, because this runs at load time.
 // ---------------------------------------------------------------------------
-// Applies PARITY_HTTP_IDENTITIES, which is how the documented alignment hook
-// acquires a caller in every process that loads this file. Before this existed,
-// setIdentityEmails() was the sanctioned way to keep the fixture and the seeder
-// from drifting and NOTHING called it, so the drift it exists to prevent was
-// the state of the tree. A malformed value is logged and ignored - the declared
-// identities stay in force and the contract check reports on them - because a
-// throw here would kill the server before app.js loaded.
+// Applies PARITY_HTTP_IDENTITIES, which is how the alignment hook acquires a
+// caller in every process that loads this file rather than only in principle:
+// setIdentityEmails() is what keeps this fixture and the seeder from drifting,
+// and an alignment nothing calls prevents no drift. A malformed value is
+// logged and ignored - the declared identities stay in force and the contract
+// check reports on them - because a throw here would kill the server before
+// app.js loaded.
 function alignIdentitiesFromEnvironment() {
   var declared = process.env.PARITY_HTTP_IDENTITIES;
   if (!declared) {
@@ -3441,7 +3106,6 @@ module.exports = {
   setProfile   : setProfile,
   getProfile   : function() { return state.activeProfile; },
 
-  // Evidence.
   calls : function() { return state.calls.slice(); },
   reset : function() {
     // Clears the evidence log only. The active profile is deliberately left
@@ -3453,9 +3117,9 @@ module.exports = {
   },
   flush : flush,
 
-  // Identities. See the SEEDING CONTRACT in the header: `existing` must be an
-  // account test/parity/seed.js creates, `new` must be an account it does not,
-  // and alignment goes through this function - or through
+  // Identities: `existing` must be an account test/parity/seed.js creates and
+  // `new` must be an account it does not, so the two OAuth database branches
+  // stay distinct. Alignment goes through this function - or through
   // PARITY_HTTP_IDENTITIES, which calls it at load time - rather than by
   // editing either file.
   identities        : identities,
@@ -3485,8 +3149,8 @@ module.exports = {
     partial    : '8885cfafb2d7b043d78a4913bb5f3b0f405b0109',
     redirected : '9fb285daedf99a4dad5de09770de5fadf688d3ee',
     errorPage  : '6196b3f53dcab9801e387f9e327228a3aaa9385a',
-    // Computed rather than transcribed: a literal digest that nothing derives
-    // is a claim, and this one has no measurement behind it in a document.
+    // Computed rather than transcribed, so the digest cannot drift from the
+    // page it describes.
     serverError: sha1(ASSET_SERVER_ERROR_PAGE)
   },
 
@@ -3505,7 +3169,7 @@ module.exports = {
   // The self-verifying harness. `selfTest()` drives every profile in the
   // catalogue and every reCAPTCHA outcome and returns a report; `main()` is the
   // same thing as a gate, which is what runs when this file is executed
-  // directly. See THE SELF-VERIFYING HARNESS in the header.
+  // directly.
   selfTest : selfTest,
   main     : main,
 
@@ -3662,8 +3326,8 @@ function expectOneCall(result, endpoint, outcome, mechanism) {
 // approximation.
 //
 // They are declared here, next to the drivers, and asserted against the call
-// sites' own source text by the `sources` group below - which is what keeps
-// this copy honest without importing a controller into a preload.
+// sites' own source text by the `sources` group below, which keeps this copy
+// in step with them without importing a controller into a preload.
 // ---------------------------------------------------------------------------
 
 function tokenRequestInit(code) {
@@ -3755,14 +3419,58 @@ async function identityCases(report) {
       applyIdentityEmails(original);
     }
   });
+
+  await runCase(report, 'identity', 'the literals here equal the seeder\'s published map', async function() {
+    // The one check that makes the two artifacts unable to drift. This file
+    // may not require test/parity/seed.js - the seeder pulls lib/models/**,
+    // and therefore mongoose-schema-extend, into whatever process loads it,
+    // which is the load-order fault AAP 0.6.5 defect 2 describes and would
+    // make @hapi/hapi unloadable for any preload that did it. So the seeder's
+    // export is read in a CHILD process, where that side effect is contained
+    // and cannot reach this one, and only its two addresses cross back.
+    //
+    // Without this, an alignment held by two copies of one address is exactly
+    // as strong as the comments asking a reader to keep them equal - which is
+    // how the fixture came to serve an identity the seeder was not linking.
+    var child = childProcess.spawnSync(process.execPath, [
+      '-e',
+      'process.stdout.write(JSON.stringify(require(process.argv[1]).oauthIdentities));',
+      pathModule.join(__dirname, '..', 'seed.js')
+    ], { encoding: 'utf8', timeout: 60000 });
+
+    expectEqual(child.status, 0, 'reading test/parity/seed.js in a child process must ' +
+      'succeed, and it said: ' + String(child.stderr || '').slice(0, 400));
+
+    var published = JSON.parse(String(child.stdout));
+
+    expectEqual(published.existing, identities.existing,
+      'the seeder publishes the existing OAuth address and this fixture serves it; ' +
+      'a difference inverts the branch the profile is named for');
+    expectEqual(published.new, identities.new,
+      'the seeder publishes the new-user address and this fixture serves it');
+    expectEqual(published.existingUsername, identities.existingUsername,
+      'both files derive the username the same way');
+    expectEqual(published.newUsername, identities.newUsername,
+      'both files derive the username the same way');
+
+    // The seeded set this file checks `existing` against has to contain the
+    // address the seeder actually creates for it, or requireSeeded reports the
+    // aligned identity as unverified - which is the shape the defect took.
+    expect(SEEDED_ACCOUNTS.some(function(account) {
+      return account.email === published.existing;
+    }), 'SEEDED_ACCOUNTS must list the seeder\'s OAuth account ' +
+      JSON.stringify(published.existing));
+
+    return { existing: published.existing, new: published.new };
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Group: the registry, and the proof that nothing escapes.
 //
-// This is the negative control the fixture claimed and never exercised. It runs
-// against BOTH mechanisms and every endpoint class, and it includes the case
-// that used to fail open: a perfectly parseable https URL on an origin no
+// The negative control for the no-network guarantee. It runs against BOTH
+// mechanisms and every endpoint class, including the case that a fail-open
+// classifier would serve: a perfectly parseable https URL on an origin no
 // profile records.
 // ---------------------------------------------------------------------------
 async function registryCases(report, context) {
@@ -3787,9 +3495,9 @@ async function registryCases(report, context) {
     expectEqual(result.value.cause.code, 'PARITY_UNRECORDED', 'the cause code');
     expectOneCall(result, 'unknown', 'unrecorded', 'fetch');
 
-    // The regression this guards: the same call used to resolve 200 with the
-    // active profile's asset bytes, so a new outbound endpoint - or an SSRF
-    // payload - looked like a successful fetch.
+    // What this guards: under a fail-open classifier the same call resolves
+    // 200 with the active profile's asset bytes, so a new outbound endpoint -
+    // or an SSRF payload - looks like a successful fetch.
     return { url: UNREGISTERED_ORIGIN_URL };
   });
 
@@ -3849,8 +3557,8 @@ async function registryCases(report, context) {
   });
 
   await runCase(report, 'registry', 'a credential-bearing URL is refused exactly as native fetch refuses it', async function() {
-    // Measured on Node v22.23.2: fetch rejects a URL with userinfo before any
-    // request, with a TypeError naming the URL and no `cause`. The replaced
+    // On Node 22, fetch rejects a URL with userinfo before any request, with
+    // a TypeError naming the URL and no `cause`. The replaced
     // library ACCEPTED such a URL, so this is one of the differences the
     // migration introduced at the asset call site - and a fixture that stripped
     // the credentials and served a 200 would report parity across it.
@@ -3905,7 +3613,7 @@ async function registryCases(report, context) {
     try {
       await fetch('https://[broken]/x?access_token=' + secrets[3]);
     }
-    catch (ignored) { /* likewise */ }
+    catch (ignored) { /* the throw is expected; the evidence is what is asserted */ }
 
     var evidence = JSON.stringify(state.calls.slice(mark));
     secrets.forEach(function(secret) {
@@ -4172,7 +3880,7 @@ async function oauthCases(report) {
     expectOneCall(profile, 'userinfo', 'userinfo-200-new-user', 'fetch');
 
     // The branch this feeds is the preserved save-then-fail: the account IS
-    // created and a generic authentication failure IS reported (AAP 0.6.6).
+    // created and a generic authentication failure IS reported.
     // What is asserted here is the input that selects it - the outcome itself
     // belongs to the corpus, which drives the controller.
     return { email: profile.value.body.email, selects: 'new-user branch' };
@@ -4264,9 +3972,9 @@ async function oauthCases(report) {
 }
 
 // ---------------------------------------------------------------------------
-// Group: the streaming asset fetch. Every mode, including the two the corpus
-// never drove - a non-2xx and a followed redirect - the 500 that had no record
-// at all, and the redirect modes and limits that were previously ignored.
+// Group: the streaming asset fetch. Every mode: the complete response, a
+// non-2xx, a 500, a followed redirect, both redirect-limit chains, every
+// redirect mode, a mid-stream cut and a refused connection.
 //
 // The consumer is replicated from lib/controllers/users.js: content-type off
 // the response headers, and the body read through the same web-stream path.
@@ -4474,7 +4182,7 @@ async function assetCases(report) {
     expectEqual(result.value.cause.code, 'ECONNREFUSED', 'the cause code');
     expectOneCall(result, 'asset', 'asset-transport-refused', 'fetch');
 
-    // The preserved consequence (R-d): no response means the upload never
+    // The preserved consequence: no response means the upload never
     // starts and the route is left UNSETTLED. Nothing here may synthesize a
     // completion.
     return { code: result.value.cause.code, consequence: 'route left unsettled' };
@@ -4499,10 +4207,10 @@ async function assetCases(report) {
 // ---------------------------------------------------------------------------
 // Group: the request-contract oracle itself.
 //
-// A drifted encoding used to be served a recorded success, so the corpus stayed
-// identical and the drift was invisible. Each case here breaches one clause and
-// asserts the call is REFUSED - which is what makes the oracle load-bearing
-// rather than decorative - and the last case asserts a conforming call is not.
+// Without the oracle a drifted encoding is served a recorded success, the
+// corpus stays identical and the drift is invisible. Each case here breaches
+// one clause and asserts the call is REFUSED; the last asserts that a
+// conforming call is not.
 // ---------------------------------------------------------------------------
 async function contractCases(report, context) {
   async function expectRefusal(url, init, expected) {
@@ -5153,8 +4861,8 @@ async function childCases(report, context) {
 
   await runCase(report, 'install', 'a mechanism that cannot be intercepted terminates the process', async function() {
     // The escape this guards: the package resolves, so the application can
-    // require it and reach a socket, but patching it failed. That used to be a
-    // diagnostic in a log while the child went on serving traffic.
+    // require it and reach a socket, but patching it failed. A diagnostic in a
+    // log would leave the child serving real traffic, so it is terminal.
     var root = fs.mkdtempSync(pathModule.join(os.tmpdir(), 'parity-http-unprotected-'));
 
     try {
@@ -5268,7 +4976,7 @@ function runChildCase(name) {
   if (name === 'recaptcha:short-circuit-istest') {
     // The assignment config/app.config.js itself makes, reproduced without
     // requiring app.config - which would load config/db and mongoose, and with
-    // it the prototype patch that makes @hapi/hapi unloadable (AAP 0.6.5).
+    // it the prototype patch that makes @hapi/hapi unloadable.
     config.isTest = true;
   }
 
@@ -5337,14 +5045,13 @@ async function selfTest(options) {
   // The caller's state, snapshotted so it can be put back byte for byte.
   //
   // selfTest() is exported for a sibling tool to call in its own process, so
-  // it may not leave that process altered. An earlier version snapshotted
-  // `globalThis.fetch` AFTER the load-time auto-install - capturing the
-  // fixture's own replacement as though it were the genuine function - and
-  // restored only some of what it changed, so a caller was left with the
+  // it may not leave that process altered. Ownership of the genuine fetch is
+  // reclaimed FIRST, through restore(): snapshotting `globalThis.fetch` after
+  // the load-time auto-install would capture the fixture's own replacement as
+  // though it were the genuine function, and a caller would be left with the
   // patch installed, `installed` false, the deliberate contract violations
-  // retained and a fabricated NODE_CONFIG still in the environment. Ownership
-  // of the genuine fetch is therefore reclaimed FIRST, through restore(), and
-  // every mutated key is recorded with its presence as well as its value.
+  // retained and a fabricated NODE_CONFIG still in the environment. Every
+  // mutated key is recorded with its presence as well as its value.
   // ------------------------------------------------------------------------
   var callerState = {
     installed : state.installed,
@@ -5447,10 +5154,9 @@ async function selfTest(options) {
 
     // Counted ONLY from records the fixture wrote for a call it actually served
     // or refused - the `event`-free ones. Selecting a profile is not driving
-    // it: an earlier version of this count also credited the
-    // `profile-changed` and `install` notes, so a probe that selected a
-    // profile and issued no request was reported as having exercised it, which
-    // is the same vacuous pass this harness exists to prevent.
+    // it: crediting the `profile-changed` and `install` notes would report a
+    // probe that selected a profile and issued no request as having exercised
+    // it, which is the vacuous pass this harness exists to prevent.
     //
     // This process's evidence plus every child's: four outcomes can only be
     // driven in a child, and two of those children die from the throw that IS
@@ -5479,8 +5185,7 @@ async function selfTest(options) {
       // every profile the run reports as consumed there is at least one
       // `event`-free record - a call served or refused - carrying that profile.
       // Selecting a profile writes a `profile-changed` note and nothing else,
-      // so a probe that switched profiles and issued no request used to be
-      // credited with driving it.
+      // so a probe that switched profiles and issued no request drives nothing.
       var records = state.calls.concat(context.childRecords || []);
 
       report.profilesConsumed.forEach(function(profile) {
@@ -5562,7 +5267,7 @@ async function selfTest(options) {
     if (callerState.installed) {
       // The invariant a caller depends on: the fixture patched, holding the
       // GENUINE fetch as the value restore() would put back - not its own
-      // replacement, which is what an earlier version left behind.
+      // replacement.
       expect(globalThis.fetch !== genuineFetch, 'the fixture must be installed again');
       expectEqual(state.originalFetch, genuineFetch,
         'and it must own the genuine fetch, or a later restore() would install the wrong value');

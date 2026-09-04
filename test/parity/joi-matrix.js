@@ -1,113 +1,81 @@
 #!/usr/bin/env node
 'use strict';
 
-// The joi validation parity matrix - the gate that turns a SAMPLE into a CLAIM.
+// The joi validation accept/reject parity gate: every validation target the
+// route declarations carry, three cases each, driven against a running
+// application and compared with a recorded baseline.
 //
-// AAP §0.6.2 moves `joi` 17.13.3 -> 18.2.5 while PRESERVING the hand-rolled
-// validation block, and the evidence offered for that bump was a sample of the
-// repository's usage. This file is the gate that makes it a claim: all 102
-// validation targets, three cases each, captured on the baseline worktree and
-// replayed against the target, compared on the OBSERVABLE outcome.
+// A target's accepting, rejecting and coercion case is built from a pre-parse
+// copy of the declarations, proved locally against its own schema, driven in
+// both `Accept` modes, and compared field for field with the baseline
+// recording. What is compared is the OBSERVABLE OUTCOME - the status, redirect
+// target and rendered flash of the response `request.fail` produced - never
+// joi's return value. That response exists because the hand-rolled block
+// validates in hapi's place: `@hapi/hapi` rejects the plain-object shorthand
+// unless a validator is registered and the application registers none, so
+// `lib/util/routeParser.js`'s block answers a redirect where native validation
+// would answer 400.
 //
-// THE COMPARISON HAS BEEN RUN, AND THE COMMITTED ARTIFACT CARRIES BOTH SIDES.
-// `test/parity/joi-baseline.json` is the baseline recording - AAP §0.6.2 names
-// that path, and `--compare` replays the inputs it holds - and it carries a
-// `targetComparison` block written back into it by `--record-into` after the
-// replay it describes completed, plus the replay's own `crossCheck`. Neither is
-// null. The figures are in THE MEASURED RESULT below and they are that
-// artifact's own, not a description of what a run would show.
+// INVOCATION - artifacts go to `--out`, AND BOTH STREAMS ARE DISCARDED
+//   Enumerating the targets calls `parseRoutes`, which dynamically requires
+//   every controller: `lib/controllers/users.js` creates the exports queue at
+//   module load and prints its queue line on stdout, and the tree under test
+//   may print dependency notices on stderr. Neither is suppressible from here,
+//   so a caller discards both streams and reads the artifact off disk. `--out`
+//   is required in every mode and nothing is replaced without `--overwrite`;
+//   USAGE below carries the whole flag set.
 //
-// ===========================================================================
-// RULES
-// ===========================================================================
-// `review_rules` returns exactly "No user rules provided." for this project,
-// which AAP §0.7 and §0.10.1 independently record. NO rule is invented here and
-// their absence is not read as licence to lower the bar: enterprise practice
-// governs, and two commitments shape this file.
-//   * EVERY PARITY CLAIM IS BACKED BY AN INSPECTABLE ARTIFACT. The generated
-//     inputs are committed alongside the captured responses, inside
-//     joi-baseline.json as a per-case `input` record, so a reviewer sees
-//     exactly what was sent rather than having to re-derive it.
-//   * NOTHING IS NORMALIZED AWAY THAT COULD BE COMPARED EXACTLY. Status,
-//     `Location` and the rendered message are compared as measured. The single
-//     exception is the ORIGIN of an absolute `Location`, which is a property of
-//     the run and not of the response; the verbatim header is recorded anyway.
-//
-// The request's own RULES block is binding and is not that document:
-//   R-c  A package change needs a stated reason, and the reason for joi
-//        17.13.3 -> 18.2.5 is the request's own "joi current line". The sample
-//        that justified it is not proof; 102 targets are.
-//   R-d  Behaviour improvements are PROHIBITED, which is why the two inert
-//        `language` maps stay inert. §PHASE 5 below makes their inertness an
-//        ASSERTION: a run in which the friendly message suddenly appears fails,
-//        because that is an improvement and not a repair.
-//   R-e  Error-to-response mappings must survive unchanged, so what is captured
-//        is the response `request.fail` produced - status, redirect target and
-//        rendered flash - and never joi's return value.
-//   R-f  Baseline behaviour at 2f8712a is the tie-breaker, which is why this
-//        tool must run UNMODIFIED against a tree that does not contain it. That
-//        is what `--app` is for, and why every application require is resolved
-//        absolutely inside the tree under test.
-//
-// ===========================================================================
-// INVOCATION - artifacts go to --out, BOTH STREAMS ARE DISCARDED
-// ===========================================================================
-// "Static" does not mean "no side effects". Proving that the parser deletes
-// `validate` means calling `parseRoutes`, which dynamically requires every
-// controller, and `lib/controllers/users.js` creates the exports queue at
-// module load and prints its in-memory-queue line on STDOUT. A baseline tree
-// additionally prints the AWS SDK v2 end-of-support notice on STDERR. Neither
-// is suppressible from here, so a caller discards both streams EXPLICITLY and
-// reads the artifact from disk:
-//
-// `--out` is REQUIRED in every mode and no existing file is replaced without
-// `--overwrite`. Neither is fussiness: the default output path used to be
-// `test/parity/joi-baseline.json` - the committed recording this gate's whole
-// claim rests on - so a bare run destroyed the evidence it was meant to check.
-//
-//   # 1. baseline capture, driven from THIS worktree against a baseline install
-//   node test/parity/joi-matrix.js --capture \
-//     --app /path/to/baseline-2f8712a \
-//     --port <free port> --database <isolated name> \
-//     --out test/parity/joi-baseline.json --overwrite  >/dev/null 2>/dev/null
-//
-//   # 2. THE GATE: replay the SAME recorded inputs against the target, diff
-//   #    every field, and write the completed comparison back into the
-//   #    recording so the committed artifact carries both sides
 //   node test/parity/joi-matrix.js --compare test/parity/joi-baseline.json \
-//     --port <free port> --database <isolated name> \
-//     --out /tmp/joi-comparison.json \
-//     --record-into test/parity/joi-baseline.json --overwrite \
-//     >/dev/null 2>/dev/null
+//     --out <report>.json --overwrite >/dev/null 2>/dev/null
 //
-//   # offline re-comparison of two recordings. --allow-same-tree is required
-//   # when both come from one tree, and the report records that it was used;
-//   # comparing a file with ITSELF is refused unconditionally.
-//   node test/parity/joi-matrix.js --compare /tmp/a.json /tmp/b.json \
-//     --out /tmp/report.json --allow-same-tree
+//   `--capture --app <worktree>` records the other side, `--compare <a> <b>
+//   --allow-same-tree` compares two recordings offline, and `--schema-only`
+//   proves the cases with no database and no socket.
 //
-//   # the enumeration, the case set and the local schema proof, with no
-//   # database and no listening socket
-//   node test/parity/joi-matrix.js --schema-only --out /tmp/joi-schema.json \
-//     >/dev/null 2>/dev/null
+// ARTIFACT
+//   The matrix at `--out`. Its top-level keys are ARTIFACT_SCHEMA below, which
+//   comments each one: the enumeration and its proofs, the run policies, the
+//   seeded state driven against, the evidence blocks, and `targets` - one entry
+//   per target, with each case's input and the outcome it produced. Provenance
+//   is sealed into the SIBLING file `<out>.provenance.json`, never into the
+//   artifact, so the artifact stays diffable while the sidecar records which
+//   tree, which joi and which configuration wrote it and `--compare` can verify
+//   both sides before comparing. A live `--compare` also writes the matrix it
+//   drove to `<out>.target.json`, with a sidecar of its own.
 //
-// Provenance is written to a SIBLING file, `<out>.provenance.json`, and never
-// inside the artifact. That is what lets the artifact be diffed directly while
-// still recording which tree, which joi and which configuration produced it.
-// The sidecar is REQUIRED to compare: `--compare` verifies each side's digest,
-// generator and role before it compares anything, and refuses a comparison that
-// cannot be evidence - the same file twice, or two recordings from one
-// application HEAD or one joi major. A live `--compare` writes the matrix it
-// drove to `<out>.target.json` and THAT matrix's sidecar to
-// `<out>.target.json.provenance.json`, beside the file it describes rather than
-// beside the report, and the report hash-links all four.
+// PROVENANCE IS EMBEDDED IN THE ARTIFACT, under its own `provenance` key, and
+// the artifact is therefore self-authenticating: it names the tree it measured,
+// the joi that produced its verdicts and the generator that wrote it, and it is
+// hash-linked to all three by a payload digest taken over itself WITHOUT that
+// key. `--compare` recomputes that digest and resolves the recorded generator
+// blob and commit in THIS repository before it compares anything, and refuses a
+// comparison that cannot be evidence - the same file twice, a baseline side
+// that was not captured, or two recordings from one application HEAD or one joi
+// major.
 //
-// The record itself is built through the shared contract in
-// test/parity/manifest.js, which is what keeps a sidecar from naming an
-// absolute worktree root nobody else has and from resolving a generator commit
-// whose tree does not hold the blob that ran. A `--capture` run is also a
-// claim about the BASE COMMIT (AAP 0.10.3) and is enforced as one:
-// `resolveRole` refuses a capture against another tree, and
+// A sidecar, `<out>.provenance.json`, is still written beside every artifact,
+// and it is a RUN OUTPUT rather than part of the delivery: it adds a digest of
+// the exact bytes plus the two things that may not be committed - the
+// warning-gate verdict, which names the stderr files it read, and this run's
+// own addressing. Nothing requires it to exist, and a committed recording has
+// none. A live `--compare` writes the matrix it drove to `<out>.target.json`
+// and THAT matrix's sidecar to `<out>.target.json.provenance.json`, beside the
+// file it describes rather than beside the report.
+//
+// This is not how the file started. It wrote a sidecar in a vocabulary of its
+// own and embedded nothing, so the delivered `joi-baseline.json` carried no
+// provenance block - and the validator in this very file, which accepts the
+// shared contract's roles and fields, refused it. The committed evidence was
+// rejected by its own generator (SEAM-F08, RULE-F06). The record is now built,
+// attached and validated through the shared contract in
+// test/parity/manifest.js, whose portability guard THROWS on a value the
+// repository cannot reproduce - which is what keeps an absolute worktree root,
+// a live PID or a wall clock out of a committed artifact (RULE-F21) - and whose
+// verified generator identity is what keeps a block from naming a commit whose
+// tree does not hold the blob that ran.
+//
+// A `--capture` run is also a claim about the BASE COMMIT (AAP 0.10.3) and is
+// enforced as one: `resolveRole` refuses a capture against another tree, and
 // `--allow-nonbaseline` is the only escape - it records the artifact as
 // unreviewed, which no gate accepts.
 //
@@ -132,12 +100,14 @@
 // controller, and the application child's captured stderr across every start
 // and restart - and a notice in either exits non-zero.
 //
-// The verdict is recorded in the PROVENANCE sidecar and never in the artifact.
-// That is deliberate: the artifact is diffed field-for-field against the
-// baseline recording, and a baseline install legitimately emits the AWS SDK v2
-// notice that only the target's config/aws.js suppresses, so putting the
+// The verdict is recorded in the RUN-OUTPUT sidecar and never in the artifact,
+// for two independent reasons. The artifact is diffed field-for-field against
+// the baseline recording, and a baseline install legitimately emits the AWS SDK
+// v2 notice that only the target's config/aws.js suppresses, so putting the
 // warning record inside the artifact would manufacture a validation-parity
-// difference out of a warning difference.
+// difference out of a warning difference. And the verdict names the absolute
+// paths of the stderr files it read, which is exactly the host state the
+// embedded block may not carry.
 //
 // THAT WARNING IS NOW MEASURED AND FATAL, not merely described. This tool had
 // no warning gate at all, so the same warning a storage run surfaces passed
@@ -428,9 +398,7 @@
 // and enforced by assertFieldCoverage - a field that is neither compared nor
 // excused with a reason fails the run, so this list cannot quietly grow.
 
-// Node core only. Every one of these is referenced below; an import this file
-// does not use is an import removed, because a stale require is a claim about
-// the tool's dependencies that the code does not honour.
+// Node core only, and every one of them is used below.
 //   fs           - reading route modules' package metadata and writing artifacts
 //   path         - resolving --app and --out against the original cwd
 //   http/https   - the request driver at `exchange`, selected per URL protocol
@@ -450,16 +418,16 @@ var querystring  = require('querystring');
 
 // THE SHARED PROVENANCE CONTRACT, from the one tool in test/parity/ that is
 // Node-core-only at module scope. Requiring it costs nothing and starts
-// nothing: manifest.js guards its CLI behind `require.main === module`, so this
-// require neither generates a manifest nor spawns a process - measured, it
-// writes not one byte to either stream.
+// nothing: test/parity/manifest.js guards its CLI behind
+// `require.main === module`, so this require neither generates a manifest nor
+// spawns a process nor writes to either stream.
 //
-// It is required RATHER THAN REIMPLEMENTED because a second copy of these
-// guarantees would drift from the first, and the drift is precisely what the
-// review found: nine tools, each internally plausible, naming four different
-// origins between them. Every provenance fact this file records now goes
-// through `provenance.build`, whose portability guard THROWS on a value that
-// cannot be reproduced from the repository.
+// It is required rather than reimplemented so that one definition of these
+// guarantees serves every parity tool: a second copy drifts, and the drift
+// shows up as sibling artifacts naming different origins for the same fact.
+// Every provenance fact this file records goes through `provenance.build`,
+// whose portability guard THROWS on a value that cannot be reproduced from the
+// repository.
 //
 // The require is relative to THIS FILE, so it always resolves inside the tool's
 // own worktree - it is unaffected by `--app` and by the chdir into the tree
@@ -469,18 +437,17 @@ var provenance   = require('./manifest').provenance;
 
 // The zero-warning gate, stated once for all four parity gates. What counts as
 // a notice, which flags the measurement requires, and the fact that there are
-// no allowances are decided there and not here. This file used to DISCARD the
-// stream on the reasoning that the gate belonged to somebody else; it does not,
-// because reaching the schemas means requiring every controller into this
-// process, and driving 102 targets means serving real requests.
+// no allowances are decided there and not here. This process is one of the
+// places that gate is measured: reaching the schemas loads every controller
+// into it, and driving the targets serves real requests.
 var warningPolicy = require('./warning-policy');
 
 // Under direct execution the flags come first, before the harvest loads
 // anything. A pending deprecation is silent without --pending-deprecation, so a
 // run that lacks the flags cannot tell "nothing was emitted" from "nothing was
-// asked for", and this file's own header already records that the DEP0005 it
-// reaches through `archiver` only appears under them. A re-execution that still
-// lacks them fails closed.
+// asked for" - and the notices this process is most likely to raise come from
+// the dependency graph the harvest loads, which is exactly the class of warning
+// that flag reveals. A re-execution that still lacks them fails closed.
 if (require.main === module) {
   warningPolicy.elevate();
 }
@@ -515,30 +482,48 @@ var EXIT_OK         = 0;
 var EXIT_DIFFERENCE = 1;
 var EXIT_ERROR      = 2;
 
-// What an artifact IS, recorded in the artifact AND in its sidecar so a
-// comparison cannot mistake one side of the gate for the other however the two
-// files were named on disk. See roleFor and assertComparable.
-var ROLE_BASELINE    = 'baseline-capture';
-var ROLE_TARGET      = 'target-replay';
-var ROLE_SCHEMA_ONLY = 'schema-only';
+// What an artifact IS, recorded in the artifact AND in its embedded provenance
+// block so a comparison cannot mistake one side of the gate for the other
+// however the two files were named on disk. See resolveRole and
+// assertComparable.
+//
+// THESE ARE THE SHARED CONTRACT'S WORDS, not this tool's own. They used to be
+// `baseline-capture`, `target-replay` and `schema-only` - a private vocabulary
+// this file invented - and that is precisely why the recording it wrote could
+// not be authenticated by the validator sitting in the same file: `validate`
+// accepts the contract's roles, so an artifact labelled `baseline-capture` was
+// refused by its own generator. A role is a fact about the TREE that was
+// measured, the contract defines the four facts a role can state, and there is
+// no version of "which side of the gate is this" that needs a fourth word.
+//
+//   baseline    measured on a worktree at the base commit
+//   target      measured on the migrated tree
+//   analysis    derived by reading a tree, with no application executed - which
+//               is exactly what --schema-only produces
+//   unreviewed  measured on neither, via the explicit escape hatch; every gate
+//               declines it
+var ROLE_BASELINE   = 'baseline';
+var ROLE_TARGET     = 'target';
+var ROLE_ANALYSIS   = 'analysis';
+var ROLE_UNREVIEWED = 'unreviewed';
 
 // The closed set, so readRecording can reject an unrecognised role rather than
-// carry it into a comparison it cannot reason about.
-var ROLES = [ROLE_BASELINE, ROLE_TARGET, ROLE_SCHEMA_ONLY];
+// carry it into a comparison it cannot reason about. Taken FROM the contract
+// rather than re-listed here: a second copy is how the two vocabularies drifted
+// apart in the first place.
+var ROLES = provenance.ROLES;
 
 // This tool's own worktree root, two levels above test/parity/. Used for the
 // `--out` default, for `--app`'s default and for this tool's provenance. Only
 // the ANALYSED tree moves; the artifact always belongs to this worktree.
 var TOOL_ROOT = path.resolve(__dirname, '..', '..');
 
-// AAP §0.6.2 names this exact path for the recorded baseline. It is the path a
-// CAPTURE is asked to write - `--out test/parity/joi-baseline.json` - and the
-// artifact the overwrite guard below protects. It is deliberately NOT a
-// default: the committed baseline was captured on a worktree at 2f8712a with
-// joi 17.13.3, and a default that points at it means any ordinary run - a
-// schema-only listing, a diagnostic capture against the target tree - replaces
-// the one recording the comparison exists to compare against, silently and
-// with no way back.
+// The committed baseline recording: the path a CAPTURE is asked to write with
+// `--out test/parity/joi-baseline.json`, and the artifact the overwrite guard
+// below protects. It is deliberately NOT a default, because a default pointing
+// at it means any ordinary run - a schema-only listing, a diagnostic capture
+// against the target tree - replaces the one recording the comparison exists
+// to compare against, silently and with no way back.
 var COMMITTED_BASELINE = path.join(__dirname, 'joi-baseline.json');
 
 // The environment variable that names ONE scratch directory for the default
@@ -553,8 +538,8 @@ var ARTIFACT_NAMES = {
 };
 
 // The flag that permits writing over an existing baseline artifact, and the
-// commit the committed baseline was captured at (AAP §0.10.3). Both are named
-// here so the guard's message can quote them.
+// commit the committed baseline was captured at. Both are named here so the
+// guard's message can quote them.
 var OVERWRITE_FLAG = '--overwrite-baseline';
 var BASELINE_COMMIT = '2f8712a';
 
@@ -570,10 +555,10 @@ var DEFAULT_COMPARISON_OUT = path.join(__dirname, 'joi-comparison.json');
 // what makes the total come to exactly 102.
 var VALIDATE_LANGUAGE_KEY = 'language';
 
-// The figures this tool must reproduce, measured on this checkout and matching
-// AAP §0.1.1.1 and §0.9.1. A mismatch is REPORTED AND FATAL rather than
-// corrected: it means either a route module changed or the deep copy is reading
-// post-parse state, and both invalidate the gate.
+// The figures this tool must reproduce from the route declarations. A mismatch
+// is REPORTED AND FATAL rather than corrected: it means either a route module
+// changed or the deep copy is reading post-parse state, and both invalidate the
+// gate.
 var EXPECTED = {
   declared        : 228,
   parsedRoutes    : 233,
@@ -614,7 +599,7 @@ var NOT_APPLICABLE = 'N/A';
 // Why a case is inapplicable, and the distinction the run's exit code turns on.
 //
 // A DETERMINATION is a measured fact about the schema or the transport, and it
-// is the honest N/A the prompt requires: most string-only sections admit no
+// is recorded as an explicit N/A: most string-only sections admit no
 // coercion input at all, and the single `params` target admits no rejecting one
 // because every non-empty path segment satisfies `Joi.string().required()` and
 // a client cannot add a route parameter. Those are answers, not gaps, and they
@@ -662,21 +647,21 @@ var ADMIN_PRE = 'isAdmin(';
 //
 // That matters because PRE-HANDLERS RUN BEFORE THE VALIDATION BLOCK. A
 // schema-derived value for such a field is a valid string that is not a
-// document, so the pre-handler answers 404 or 500 and validation never runs -
-// measured on six targets before this map existed. Substituting the seeded id
-// is the same materialization `pathValues` already performs for `{folderId}`
-// and `{fileId}`, applied where the declaration puts the identifier in the
-// payload or the query instead of the path, and it is verified against the
-// schema before it is used so it can never turn an accepting input into a
-// rejecting one.
+// document, so the pre-handler answers 404 or 500 and the validation block
+// never runs, leaving the target with no joi evidence at all. Substituting the
+// seeded id is the same materialization `pathValues` already performs for
+// `{folderId}` and `{fileId}`, applied where the declaration puts the
+// identifier in the payload or the query instead of the path, and it is
+// verified against the schema before it is used so it can never turn an
+// accepting input into a rejecting one.
 //
-// `invitation` resolves to a fixture THIS TOOL owns rather than to one of the
-// seeder's. test/parity/seed.js has no CourseInvitation group - it is owned by
-// another unit and is not edited from here - and without a document the two
-// `{invitationId}` targets answered 404 from `invitation(params.invitationId)`
-// and never reached the validation block. So the document is created here,
-// beside the seeded fixtures and in the seeder's own reserved-id style; see
-// INVITATION_FIXTURE and applyPreconditions.
+// `invitation` resolves to a fixture THIS TOOL creates rather than to one of
+// the seeder's: test/parity/seed.js has no CourseInvitation group, so without a
+// document of its own the two `{invitationId}` targets answer 404 from
+// `invitation(params.invitationId)` and never reach the validation block. The
+// document is therefore created here, beside the seeded fixtures and in the
+// seeder's own reserved-id style; see INVITATION_FIXTURE and
+// applyPreconditions.
 var LOOKUP_FIXTURES = {
   user     : 'user',
   course   : 'course',
@@ -694,14 +679,14 @@ var LOOKUP_FIXTURES = {
 // `PUT /api/courses/{courseId}/invitations/{invitationId}/resend` and
 // `.../email` both run `invitation(params.invitationId)` - findById on the
 // CourseInvitation model - BEFORE the handler that holds the validation block,
-// so with no document both targets answered 404 for every case and contributed
-// no joi evidence. That is a missing fixture rather than a fact about the
-// schema, so it is supplied.
+// so without a document to find, both targets answer 404 for every case and
+// contribute no joi evidence. That is a missing fixture rather than a fact
+// about the schema, so it is supplied.
 //
-// The shape is exactly the model's own required set
-// [lib/models/courseInvitation.js:9-15]: `courseId` referencing a Course,
-// `email` and `token` required, `status` one of the five values the comment on
-// that line enumerates. The `_id` follows the seeder's convention - fixed,
+// The shape is exactly the required set the CourseInvitation schema in
+// lib/models/courseInvitation.js declares: `courseId` referencing a Course,
+// `email` and `token` required, and `status` one of the five values that schema
+// enumerates. The `_id` follows the seeder's convention - fixed,
 // synthetic, and readable as a fixture at a glance - in the `07` block, which
 // test/parity/seed.js does not use: its groups occupy 01 to 06 and it reserves
 // `ff` within a block for an id that belongs to no document. The document is
@@ -731,22 +716,20 @@ var INVITATION_FIXTURE = {
 // what it dereferences - `folder(payload.folderId)` - and the rejecting ladder
 // steers around it. A FUNCTION pre-handler declares nothing, so a
 // schema-derived value that is valid text but not a valid DOMAIN value makes
-// the pre-handler answer first and the validation block never runs. Measured on
-// the baseline, before this table existed:
-//   * `helpers.validLang` [lib/util/helpers.js:198-211] reads
+// the pre-handler answer first and the validation block never runs. Each entry
+// below therefore states what its pre-handler demands of the request:
+//   * lib/util/helpers.js's `validLang` reads
 //     `params.lang || query.lang || payload.lang` and throws `Boom.notFound`
-//     unless the value is in `Trinket.schema.path('lang').enumValues`, so the
-//     generated `aaa` answered 404 on `GET /api/trinkets/popular`,
-//     `GET /api/trinkets/active` and `POST /api/trinkets/codeerror`;
-//   * `helpers.trinketTypeEnabled` [lib/util/helpers.js:217-241] reads
+//     unless the value is in `Trinket.schema.path('lang').enumValues`, so a
+//     generated filler such as `aaa` answers 404 rather than reaching the
+//     validation block;
+//   * lib/util/helpers.js's `trinketTypeEnabled` reads
 //     `params.lang || query.lang` and throws `Boom.notFound` for a lang that is
-//     not an ENABLED type, which is why `GET /library/trinkets/{path*}`
-//     answered 404 on its accepting case and 200 only on the rejecting one,
-//     whose violation happened to be `lang: null`;
-//   * `helpers.verifyEmailToken` [lib/util/helpers.js:258-283] calls
+//     not an ENABLED type, so an accepting case needs an enabled one;
+//   * lib/util/helpers.js's `verifyEmailToken` calls
 //     `jwt.verify(token, config.app.mail.secret + trinket.shortCode)`, which
-//     THROWS on a filler token, so `POST /api/trinkets/{trinketId}/email`
-//     answered 500 for every case.
+//     THROWS on a filler token, so the target answers 500 unless the token is
+//     signed with the configuration in force.
 //
 // The pre-handlers are identified by REFERENCE IDENTITY against the tree's own
 // `lib/util/helpers.js` exports - see helperResolver - not by a route list, so
@@ -781,12 +764,12 @@ var HANDLER_ENCODED_LEAVES = {
 };
 
 // The single entry inside that ZIP. The NAME is the application's, not this
-// tool's choice: both handlers read `content.file("zipCode")`
-// [lib/controllers/trinket.js:1030,1097]. The CONTENT is a JSON string rather
-// than a JSON object, because both handlers then assign `JSON.parse(code)` to a
-// `String` field [lib/models/draft.js:7], so a parsed object would be a cast
-// error and a parsed string is a clean save - which keeps the drive's outcome
-// about the schema and not about mongoose.
+// tool's choice: both handlers in lib/controllers/trinket.js read
+// `content.file("zipCode")`. The CONTENT is a JSON string rather than a JSON
+// object, because both handlers then assign `JSON.parse(code)` to the `code`
+// field, which lib/models/draft.js declares as a `String` - so a parsed object
+// would be a cast error and a parsed string is a clean save, which keeps the
+// drive's outcome about the schema and not about mongoose.
 var ZIP_ENTRY_NAME    = 'zipCode';
 var ZIP_ENTRY_CONTENT = '"parity zip code"';
 
@@ -813,9 +796,9 @@ var REVIEWED_UNDRIVABLE = [
 // the application code path that stops it and the measurement behind that
 // claim.
 //
-// The distinction this list draws is the whole point of it. A rejecting case
-// that does not reach the block contributes NO joi evidence, so an unreached
-// target must never be counted as parity proof. Every unreached target that is
+// The distinction the list draws is what it is for. A rejecting case that does
+// not reach the block contributes NO joi evidence, so an unreached target must
+// never be counted as parity proof. Every unreached target that is
 // NOT named here fails the run - which is what turns the reach figure from a
 // note into an assertion - and a target named here fails nothing but is
 // reported, per case and in the summary, as resting on the local schema proof
@@ -862,8 +845,8 @@ var REVIEWED_UNREACHED = [
 // the spot rather than being counted in `summary.drivesTimedOut` and forgotten.
 //
 // `case` is null when every case of the target times out; naming the kind
-// narrows the review to the input that reaches the non-answering branch, which
-// is what makes the entry checkable against the code it cites.
+// identifies the input that reaches the non-answering branch, which is what
+// makes the entry checkable against the code it names.
 var REVIEWED_TIMEOUTS = [
   {
     target : 'POST /api/users/email payload',
@@ -907,9 +890,9 @@ var RESTORE_POLICY = 'test/parity/seed.js reset({scope:\'collections\'}) + ' +
   '2-3ms for the reset and 240-320ms for the re-seed, against a 2.9s initial ' +
   'seed.';
 
-// How long any single HTTP exchange is given. Bounded so that a route that
-// never settles is a RECORDED RESULT rather than a hung gate; AAP §0.9.3 makes
-// exactly that distinction for the file-stream branch.
+// How long any single HTTP exchange is given. Bounded so that a route which
+// never settles is a RECORDED RESULT rather than a hung gate - a distinction
+// the file-stream branch depends on, since it does not answer at all.
 var REQUEST_TIMEOUT_MS = 20000;
 
 // The safe filler character for a generated string. In `[a-z]`, in `\w`, in
@@ -934,10 +917,10 @@ var DEFAULT_STRING_LENGTH = 3;
 // which surfaces as an unhandled 'error' event and KILLS THE PROCESS. The
 // converted controller does not.
 //
-// A gate that died with it could never capture a baseline at all, and R-f makes
-// the baseline the tie-breaker - so the crash is RECORDED, the application is
-// restarted, and the run continues. The bound exists so a tree that crashes on
-// every request reports that rather than restarting forever.
+// A gate that died with it could never capture the baseline side of the
+// comparison at all - so the crash is RECORDED, the application is restarted,
+// and the run continues. The bound exists so a tree that crashes on every
+// request reports that rather than restarting forever.
 var MAX_RESTARTS = 30;
 
 // The transport failures that mean the application is gone rather than that it
@@ -1001,7 +984,8 @@ var USAGE = [
   '                     worktree` to capture a baseline with tooling that does',
   '                     not exist at that commit.',
   '  --out <path>       Where the artifact goes. In capture and --schema-only',
-  '                     modes this is the matrix, and <out>.provenance.json is',
+  '                     modes this is the matrix, and the run-output',
+  '                     <out>.provenance.json is',
   '                     sealed beside it. In --compare mode this is the',
   '                     comparison REPORT, and a live replay additionally',
   '                     writes the matrix it drove to <out>.target.json with',
@@ -1025,7 +1009,8 @@ var USAGE = [
   '                     ' + OVERWRITE_FLAG + ' is accepted as the same flag.',
   '  --record-into <p>  With --compare, write the completed comparison and the',
   '                     replay record back into the baseline recording <p> and',
-  '                     re-seal its sidecar. Requires --overwrite. This is how',
+  '                     re-attach its provenance block and re-seal. Requires',
+  '                     --overwrite. This is how',
   '                     test/parity/joi-baseline.json comes to carry two-sided',
   '                     evidence while remaining the baseline recording that',
   '                     --compare replays.',
@@ -1065,15 +1050,24 @@ var USAGE = [
   '  2  usage or operational failure - the gate could not run, or its',
   '     teardown did not complete and it may have left a live connection, a',
   '     live process or a data directory behind',
-  '     Includes a recording whose provenance sidecar is missing, foreign or',
-  '     does not digest to the file beside it, and a comparison that is not',
-  '     between the two sides of the gate.',
+  '     Includes a recording whose embedded provenance does not establish',
+  '     what it measured, does not hash to its own payload digest, or names a',
+  '     generator this repository cannot retrieve, and a comparison that is',
+  '     not between the two sides of the gate.',
   '',
-  'PROVENANCE Every recording is written together with a sidecar that seals',
-  '     sha256 over its exact bytes and names its role, its tree and its joi.',
-  '     --compare REQUIRES that sidecar for each side and verifies it before',
-  '     comparing, and refuses a self-comparison outright; that is what stops a',
+  'PROVENANCE Every recording carries its provenance EMBEDDED under its own',
+  '     `provenance` key - the shared block from test/parity/manifest.js,',
+  '     naming the tree it measured by commit, the generator by its git blob',
+  '     and the joi behind its verdicts, hash-linked to the artifact by a',
+  '     payload digest over the artifact without that key. --compare validates',
+  '     that block for each side through the shared contract before comparing,',
+  '     and refuses a self-comparison outright; that is what stops a',
   '     zero-difference report being produced by a file compared with itself.',
+  '     A sidecar is also written beside every artifact and is a RUN OUTPUT,',
+  '     not part of the delivery: it adds a digest of the exact bytes, the',
+  '     warning-gate verdict and this run\'s own addressing. It is not',
+  '     required, and a committed recording has none - where one is present,',
+  '     its digest is reconciled against the bytes beside it.',
   '',
   'NOTE The zero-warning gate (AAP 0.9.3, no allowances - see',
   '     test/parity/warning-policy.js) is applied to this process AND to the',
@@ -1173,11 +1167,10 @@ ParityError.prototype.constructor = ParityError;
  *
  * Output and input paths are resolved against the ORIGINAL working directory,
  * captured at process start and passed in, so a relative `--out` means what the
- * caller typed however this process's own state changes afterwards. It is not
- * merely defensive: `prepareEnvironment` no longer chdirs into the tree under
- * test, but a relative path resolved late would still be at the mercy of any
- * later change, and for a baseline capture the cost of getting it wrong is a
- * file written into a tree this tool must not modify.
+ * caller typed however this process's own state changes afterwards. A relative
+ * path resolved late is at the mercy of any change to the working directory,
+ * and for a baseline capture the cost of getting it wrong is a file written
+ * into a tree this tool must not modify.
  *
  * @param {string[]} args process.argv.slice(2)
  * @param {string} originalCwd The working directory at process start.
@@ -1360,8 +1353,8 @@ function parseArguments(args, originalCwd) {
 
     if (!options.overwrite) {
       throw new ToolError('--record-into ' + options.recordInto + ' modifies ' +
-        'an existing sealed recording and re-seals its sidecar, so it ' +
-        'requires --overwrite as well');
+        'an existing sealed recording and re-attaches its provenance block ' +
+        'over the new bytes, so it requires --overwrite as well');
     }
 
     // A relaxed comparison is explicitly NOT two-tree parity evidence - the
@@ -1659,9 +1652,11 @@ function resolveArtifactPath(basename) {
  * a baseline recorded from `2f8712a` leaves a file that still says "baseline"
  * while holding the very outcomes the comparison is supposed to be measured
  * against, and a comparison against it would then pass by construction. The
- * commit the existing artifact was captured from is read from its own
- * provenance sidecar, so the check is against what that file actually records
- * rather than against an assumption about it.
+ * commit the existing artifact was captured from is read from the ARTIFACT'S
+ * OWN embedded provenance block, falling back to a sidecar beside it, so the
+ * check is against what that file actually records rather than against an
+ * assumption about it - and it does not depend on a run output the delivery
+ * does not ship.
  *
  * @param {string} target The artifact path about to be written.
  * @param {Object} options Parsed arguments; `overwrite` and `appRoot` are read.
@@ -1669,8 +1664,11 @@ function resolveArtifactPath(basename) {
  * @throws {ToolError} If the artifact exists and either condition fails.
  */
 function assertOverwritable(target, options) {
-  var sidecar = target + '.provenance.json';
-  var recorded = null;
+  var sidecarPath = target + '.provenance.json';
+  var text;
+  var recordedHead = null;
+  var source = null;
+  var sidecar;
   var head;
 
   if (!fs.existsSync(target)) {
@@ -1684,22 +1682,50 @@ function assertOverwritable(target, options) {
       '<path>, or pass ' + OVERWRITE_FLAG + ' to replace it.');
   }
 
-  if (fs.existsSync(sidecar)) {
-    try {
-      recorded = JSON.parse(fs.readFileSync(sidecar, 'utf8'));
-    }
-    catch (err) {
-      throw new ToolError('cannot read the provenance sidecar ' + sidecar +
-        ' (' + err.message + '), so the commit ' + target + ' was captured ' +
-        'from cannot be checked against --app. Repair or remove the sidecar, ' +
-        'or capture to a different --out.');
-    }
+  // THE ARTIFACT'S OWN BLOCK FIRST. A recording carries the tree it measured
+  // embedded under its `provenance` key, so the check reads what the file
+  // itself says rather than depending on a companion file to be present. The
+  // sidecar is consulted only as a fallback, which is what lets a recording
+  // sealed by an earlier build - one that wrote `app.head` into a sidecar and
+  // nothing into the artifact - still be replaced by a re-capture rather than
+  // becoming unreplaceable.
+  try {
+    text = fs.readFileSync(target, 'utf8');
+  }
+  catch (err) {
+    throw new ToolError('cannot read the existing matrix ' + target + ' (' +
+      err.message + '), so the commit it was captured from cannot be checked ' +
+      'against --app. Capture to a different --out.');
   }
 
-  if (!recorded || !recorded.app || !recorded.app.head) {
-    throw new ToolError(target + ' has no ' + sidecar + ' recording the ' +
-      'commit it was captured from, so ' + OVERWRITE_FLAG + ' cannot be ' +
-      'checked. Capture to a different --out, or remove both files first if ' +
+  recordedHead = ((provenance.extract(text) || {}).analysedTree || {}).head ||
+    null;
+
+  if (recordedHead !== null) {
+    source = 'its own embedded provenance block';
+  }
+  else if (fs.existsSync(sidecarPath)) {
+    try {
+      sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
+    }
+    catch (err) {
+      throw new ToolError('cannot read the provenance sidecar ' +
+        sidecarPath + ' (' + err.message + '), and ' + target + ' carries no ' +
+        'embedded provenance block, so the commit it was captured from ' +
+        'cannot be checked against --app. Repair or remove the sidecar, or ' +
+        'capture to a different --out.');
+    }
+
+    recordedHead = ((sidecar || {}).app || {}).head ||
+      (((sidecar || {}).analysedTree || {}).head) || null;
+    source = 'the sidecar ' + sidecarPath;
+  }
+
+  if (recordedHead === null) {
+    throw new ToolError(target + ' records no commit it was captured from - ' +
+      'neither an embedded `provenance.analysedTree.head` nor a ' +
+      sidecarPath + ' naming one - so ' + OVERWRITE_FLAG + ' cannot be ' +
+      'checked. Capture to a different --out, or remove the file first if ' +
       'the recording is genuinely being discarded.');
   }
 
@@ -1707,17 +1733,17 @@ function assertOverwritable(target, options) {
 
   if (head === null) {
     throw new ToolError('cannot determine the HEAD of ' + options.appRoot +
-      ', so it cannot be checked against the ' + recorded.app.head +
-      ' recorded in ' + sidecar + '. Capture to a different --out.');
+      ', so it cannot be checked against the ' + recordedHead +
+      ' recorded in ' + source + '. Capture to a different --out.');
   }
 
-  if (head !== recorded.app.head) {
-    throw new ToolError('refusing to overwrite ' + target + ': it records a ' +
-      'capture of ' + recorded.app.head + ' and --app names ' +
+  if (head !== recordedHead) {
+    throw new ToolError('refusing to overwrite ' + target + ': ' + source +
+      ' records a capture of ' + recordedHead + ' and --app names ' +
       options.appRoot + ', which is at ' + head + '. A matrix captured from ' +
       'one tree must not be replaced by a reading of another - a comparison ' +
       'against it would then pass by construction. Capture to a different ' +
-      '--out, or point --app at a worktree at ' + recorded.app.head + '.');
+      '--out, or point --app at a worktree at ' + recordedHead + '.');
   }
 
   return undefined;
@@ -1726,8 +1752,8 @@ function assertOverwritable(target, options) {
 /**
  * True when `target` is an existing file holding a matrix written by this tool.
  *
- * Used to keep a comparison REPORT from being written over a recorded MATRIX.
- * The two are different documents with the same extension, and the mistake -
+ * Keeps a comparison REPORT from being written over a recorded MATRIX. The two
+ * are different documents with the same extension, and the mistake -
  * `--compare base.json --out base.json` - destroys the recording the
  * comparison was measuring against.
  *
@@ -1859,69 +1885,41 @@ function writeArtifact(target, text) {
 }
 
 /**
- * Writes a matrix with its provenance EMBEDDED, plus the sidecar run output.
+ * Reports what a sealed block says, on stderr.
  *
- * One function for both write sites, because the two facts that make an
- * artifact authenticable are easy to get half-right independently: the block
- * must be embedded BEFORE the bytes are serialized, so that `payloadDigest`
- * covers the artifact a consumer will actually read, and the sidecar must carry
- * `artifactDigest` over THOSE EXACT BYTES rather than over a second
- * serialization. Both write sites therefore call this rather than composing the
- * pair themselves.
+ * Printed at every write site because the two facts a reader needs are the two
+ * a filename cannot carry: WHICH TREE was measured, and whether the generator
+ * that produced the artifact can be retrieved from this repository. An
+ * unverified generator is named as such rather than omitted - an artifact
+ * produced from an uncommitted edit records the commit it was run FROM, which
+ * does not contain the tool that produced it, and saying so is the difference
+ * between provenance and a label.
  *
- * `provenance.attach` mutates the record by adding `payloadDigest` and the
- * artifact by adding `provenance`, and the sidecar is built from the SAME
- * record afterwards - so the embedded block and the sidecar are one record with
- * one extra field, and not two records that could disagree.
- *
- * @param {string} target Absolute path of the matrix.
- * @param {Object} matrix The artifact object, mutated to carry its block.
- * @param {Object} record From buildProvenance.
- * @param {(string|undefined)} sidecarPath Where the sidecar goes. Defaults to
- *   `<target>.provenance.json`.
- * @returns {string} The exact bytes written to `target`.
- * @throws {ToolError} If a file cannot be written.
+ * @param {Object} block A block that has been through `provenance.attach`.
+ * @returns {undefined}
  */
-function writeMatrix(target, matrix, record, sidecarPath) {
-  var text;
-
-  try {
-    provenance.attach(matrix, record);
-  }
-  catch (err) {
-    throw asToolError(err);
-  }
-
-  text = serialize(matrix);
-
-  writeArtifact(target, text);
-  writeArtifact(sidecarPath || (target + '.provenance.json'),
-    serialize(provenance.sidecar(record, text)));
-
-  note('provenance: role ' + record.role + ', analysed tree ' +
-    ((record.analysedTree && record.analysedTree.headShort) || 'none') +
-    ', generator ' + record.generator.path + ' blob ' +
-    String(record.generator.blob).slice(0, 12) +
-    (record.generator.verified
-      ? ' verified in commit ' + String(record.generator.commit).slice(0, 7)
-      : ' NOT YET COMMITTED (' + record.generator.commitState + ')') +
-    ', payload ' + record.payloadDigest.value.slice(0, 12));
-
-  return text;
+function noteProvenance(block) {
+  note('provenance: role ' + block.role + ', analysed tree ' +
+    ((block.analysedTree && block.analysedTree.headShort) || 'none') +
+    ', generator ' + block.generator.path + ' blob ' +
+    String(block.generator.blob).slice(0, 12) +
+    (block.generator.verified
+      ? ' verified in commit ' + String(block.generator.commit).slice(0, 7)
+      : ' NOT YET COMMITTED (' + block.generator.commitState + ')') +
+    ', payload ' + block.payloadDigest.value.slice(0, 12));
 }
 
 /**
  * Reads and parses a matrix written by this tool, optionally REFUSING one whose
  * provenance does not establish what it measured.
  *
- * The second argument is what closes "no machine consumer validates it". A
- * recorded matrix reaches this tool as the baseline side of the gate, and until
- * now anything with a `targets` array was accepted - including an artifact
- * whose companion sidecar named a tree nobody could identify, and including one
- * whose outcomes had been edited after capture. When `expect` is given, the
- * block is extracted and checked, and a failure is an OPERATIONAL failure
- * rather than a parity difference: a comparison against an artifact that cannot
- * say which tree it measured is not a comparison, so it must exit 2 and not 1.
+ * A recorded matrix reaches this tool as the baseline side of the gate, so
+ * accepting anything with a `targets` array would accept an artifact whose
+ * companion sidecar names a tree nobody can identify, and one whose outcomes
+ * were edited after capture. When `expect` is given, the provenance block is
+ * extracted and checked, and a failure is an OPERATIONAL failure rather than a
+ * parity difference: a comparison against an artifact that cannot say which
+ * tree it measured is not a comparison, so it exits 2 and not 1.
  *
  * @param {string} target Absolute path.
  * @param {(Object|undefined)} expect Provenance expectations. `roles` lists the
@@ -1992,8 +1990,8 @@ function readMatrix(target, expect) {
 // while still covering every target, every case and every recorded outcome.
 //
 // `crossCheck` is in the set for the same reason as `targetComparison`: the
-// replay/divergence record belongs to the comparison, not to the capture, and
-// AAP §0.6.2's evidence requires the committed recording to carry it.
+// replay/divergence record is produced by the comparison rather than by the
+// capture, and the committed recording has to carry it as evidence.
 var RECORD_INTO_KEYS = ['targetComparison', 'crossCheck'];
 
 /**
@@ -2011,9 +2009,23 @@ function artifactDigest(text) {
  *
  * `digest` covers the file as it is on disk, which is what an integrity check
  * needs. `payloadDigest` covers the same artifact re-serialized with
- * RECORD_INTO_KEYS nulled, which is what a cross-artifact link needs. They are
- * computed from `text` rather than from the object so the recorded `bytes` and
- * `digest` cannot drift from the file: whatever was written is what is hashed.
+ * RECORD_INTO_KEYS nulled AND its embedded `provenance` block removed, which is
+ * what a cross-artifact link needs. They are computed from `text` rather than
+ * from the object so the recorded `bytes` and `digest` cannot drift from the
+ * file: whatever was written is what is hashed.
+ *
+ * WHY `provenance` IS EXCLUDED, and why that is not a weakening. The embedded
+ * block carries its own `payloadDigest` - the contract's, over the artifact
+ * without the block - and that is the seal binding the two together; a
+ * recording whose outcomes were edited fails it. This digest is a different
+ * instrument: a NAME by which a comparison report links the baseline recording
+ * it consumed, and it has to survive `--record-into` writing the completed
+ * comparison back into that recording. The embedding changes the contract's
+ * digest, so the block is re-attached afterwards - and if this digest covered
+ * the block, re-attaching it would move this digest too, breaking the one link
+ * it exists to hold stable. So each covers what it is for: the contract's
+ * digest covers the content including the comparison, and this one covers the
+ * content that was captured.
  *
  * @param {string} text The exact serialized bytes.
  * @returns {{digest: string, payloadDigest: string, bytes: number}}
@@ -2034,6 +2046,10 @@ function artifactDigests(text) {
   payload = {};
 
   Object.keys(parsed).forEach(function(key) {
+    if (key === 'provenance') {
+      return;
+    }
+
     payload[key] = RECORD_INTO_KEYS.indexOf(key) === -1 ? parsed[key] : null;
   });
 
@@ -2047,8 +2063,8 @@ function artifactDigests(text) {
 /**
  * The sidecar path for an artifact. Always its SIBLING.
  *
- * One function, used by every writer and every reader, because the sidecar
- * naming is the whole of SCR-F50: a sidecar written to `<report>.provenance.json`
+ * One function, used by every writer and every reader, because the naming is
+ * the whole of the guarantee: a sidecar written to `<report>.provenance.json`
  * while the matrix it describes is at `<report>.target.json` describes a file it
  * does not sit beside, and a reader has no way to tell which of the two it
  * belongs to.
@@ -2061,172 +2077,295 @@ function sidecarPathFor(artifactPath) {
 }
 
 /**
- * Writes an artifact and seals its sidecar over the bytes just written.
+ * Writes a recording that AUTHENTICATES ITSELF, and a run-output sidecar beside
+ * it.
  *
- * The seal is taken from the text this function itself wrote, so the sidecar's
- * `artifact.digest` is a statement about the file on disk and not about an
- * object that may have been mutated since. `role` is carried in both the
- * artifact and the sidecar so a comparison can refuse a mis-paired run whichever
- * of the two files it reads first.
+ * This is the one write path, and it is the shared contract's. Every matrix
+ * this tool produces goes through it, in every mode.
+ *
+ * WHAT WAS WRONG BEFORE, because the shape of the fix follows from it. This
+ * file held two write paths: a conforming one that embedded the shared block
+ * through `provenance.attach` and had NO call sites, and a hand-rolled one that
+ * wrote the artifact plus a sidecar of its own invention and did all the work.
+ * So the delivered `joi-baseline.json` carried no `provenance` key at all,
+ * while the validator sitting a hundred lines above in the same file refused
+ * exactly that - an artifact that "does not say which tree it measured". The
+ * committed evidence was rejected by its own generator, and the two paths are
+ * now one.
+ *
+ * THREE FACTS, IN THIS ORDER, because each depends on the one before:
+ *
+ *   1. the block is EMBEDDED before the bytes exist. `provenance.attach`
+ *      computes the contract's `payloadDigest` over the artifact WITHOUT the
+ *      block and then sets the block on it, so the digest covers the artifact a
+ *      consumer will actually read. Embedding after serialization would seal
+ *      bytes nobody has.
+ *   2. the artifact is serialized ONCE and those exact bytes are written. The
+ *      sidecar's `artifactDigest` and this tool's own `artifact.digest` are
+ *      taken from the same string, so neither can describe a second
+ *      serialization of an object that has since been mutated.
+ *   3. the sidecar is a COPY. `provenance.sidecar` copies the block and adds a
+ *      digest of the bytes; the run-output facts are added to that copy. The
+ *      embedded block is never mutated afterwards, which is what keeps the
+ *      committed record portable - `warningGate` alone carries the absolute
+ *      paths of the stderr files it read.
+ *
+ * The sidecar remains a RUN OUTPUT and is not part of the delivery: the
+ * artifact carries the embedded block, so nothing has to be shipped in pairs,
+ * and `readRecording` treats an absent sidecar as the normal case. That is the
+ * shared contract's own rule, and it is why the committed
+ * `joi-baseline.json.provenance.json` - a second file, in a third vocabulary,
+ * that a reviewer read as the evidence - is gone.
  *
  * @param {string} artifactPath Absolute path of the artifact.
- * @param {string} text The serialized artifact.
- * @param {Object} provenance The provenance record, sealed in place.
- * @returns {{artifactPath: string, sidecarPath: string, digests: Object}}
- * @throws {ToolError} If either file cannot be written.
+ * @param {Object} artifact The artifact object, MUTATED to carry its block.
+ * @param {Object} block From buildProvenance; mutated by `attach` to carry the
+ *   contract's payload digest.
+ * @param {(Object|null|undefined)} runOutput From buildRunOutput, or null when
+ *   the caller has none.
+ * @returns {{artifactPath: string, sidecarPath: string, text: string,
+ *            digests: Object}}
+ * @throws {ToolError} If the block is not attachable or either file cannot be
+ *   written.
  */
-function sealSidecar(artifactPath, text, provenance) {
-  var sidecar = sidecarPathFor(artifactPath);
-  var digests = artifactDigests(text);
+function sealRecording(artifactPath, artifact, block, runOutput) {
+  var sidecarPath = sidecarPathFor(artifactPath);
+  var text;
+  var digests;
+  var sidecar;
+
+  try {
+    provenance.attach(artifact, block);
+  }
+  catch (err) {
+    throw asToolError(err);
+  }
+
+  text    = serialize(artifact);
+  digests = artifactDigests(text);
 
   writeArtifact(artifactPath, text);
 
-  provenance.artifact = {
-    path         : artifactPath,
+  sidecar = provenance.sidecar(block, text);
+
+  // This tool's own seal, beside the contract's. `digest` is the exact bytes;
+  // `payloadDigest` is the RECORD_INTO-stable link a comparison report uses to
+  // name the baseline it consumed. The path is a LABEL, not a path: an
+  // absolute one here is what put three sibling clones' worktrees into
+  // delivered evidence.
+  sidecar.artifact = {
+    path         : provenance.pathLabel(artifactPath, { toolRoot: TOOL_ROOT }),
     digest       : digests.digest,
     payloadDigest: digests.payloadDigest,
     bytes        : digests.bytes,
-    digestNote   : 'sha256. `digest` covers the exact bytes of `path`. ' +
-      '`payloadDigest` covers the same artifact re-serialized with ' +
+    digestNote   : 'sha256. `digest` covers the exact bytes of the artifact ' +
+      'this sidecar sits beside. `payloadDigest` covers that artifact ' +
+      're-serialized with ' +
       RECORD_INTO_KEYS.map(function(key) {
         return '`' + key + '`';
-      }).join(' and ') + ' set to null, so it survives --record-into ' +
-      'embedding the completed comparison back into this recording.'
+      }).join(' and ') + ' set to null and its embedded `provenance` block ' +
+      'removed, so it survives both --record-into embedding the completed ' +
+      'comparison and the re-attachment of the block afterwards. The block ' +
+      'embedded IN the artifact carries the contract\'s own payloadDigest, ' +
+      'which is the seal binding it to its content.'
   };
 
-  writeArtifact(sidecar, serialize(provenance));
+  if (runOutput) {
+    Object.keys(runOutput).forEach(function(key) {
+      sidecar[key] = runOutput[key];
+    });
+  }
+
+  writeArtifact(sidecarPath, serialize(sidecar));
+
+  noteProvenance(block);
 
   return {
     artifactPath: artifactPath,
-    sidecarPath : sidecar,
+    sidecarPath : sidecarPath,
+    text        : text,
     digests     : digests
   };
 }
 
 /**
- * Loads a recorded matrix TOGETHER WITH its provenance sidecar, verifying both.
+ * Loads a recorded matrix and REFUSES one that cannot authenticate itself.
  *
  * BE-39: this tool used to read a recording with `readMatrix` and never look at
- * the sidecar it had itself written, so nothing established that a file named
- * as the baseline was a baseline, that it had not been edited since it was
- * sealed, or that it came from a different tree than the one it was about to be
- * compared against. Requiring the sidecar here is what closes that: a recording
- * whose sidecar is absent, whose digest does not match its bytes, or whose
- * generator or role is not this tool's is refused before any comparison runs.
+ * the provenance it had itself written, so nothing established that a file
+ * named as the baseline was a baseline, that it had not been edited since it
+ * was sealed, or that it came from a different tree than the one it was about
+ * to be compared against. It then closed that with checks of its own against a
+ * sidecar file - and SEAM-F08 found the flaw in the fix: those checks were a
+ * private schema, so the sidecar they accepted carried none of the shared
+ * contract's guarantees, and the delivered recording carried no embedded block
+ * at all. The validator that would have caught it was already in this file and
+ * was never called from here.
  *
- * THE CHECK IS THE EXACT WHOLE-FILE DIGEST, with no fallback. An earlier build
- * accepted `artifact.payloadDigest` when the exact digest failed, on the
- * reasoning that `--record-into` embeds a comparison after sealing - but
- * `payloadDigest` is computed with RECORD_INTO_KEYS nulled, so that fallback
- * accepted any edit confined to `targetComparison` and `crossCheck`: precisely
- * the fields that claim the target run happened. A negative control that
- * rewrote the verdict to a fabricated one and inserted invented divergences was
- * accepted. No legitimate producer needs the fallback either, because
- * recordComparisonInto RE-SEALS the complete post-embed artifact, so a
- * correctly produced recording always matches its sidecar exactly.
+ * SO THE AUTHENTICATION IS THE CONTRACT'S, AND IT IS ON THE ARTIFACT. What is
+ * checked is `assertMatrixProvenance`, through readMatrix's `expect` path: the
+ * schema version, the artifact the block claims to describe, the role, the
+ * payload digest recomputed over the artifact WITHOUT its block, the generator
+ * blob and commit resolved as objects in THIS repository, that the recorded
+ * generator is still the delivered one, and - of anything claiming the baseline
+ * role - that the tree it measured was the base commit and was clean. An
+ * artifact whose outcomes were edited after capture fails the payload digest;
+ * one whose block was copied in from another run fails it too.
  *
- * `payloadDigest` is retained for what it is actually for: linking a comparison
- * report to the baseline recording it consumed ACROSS a deliberate re-embed. It
- * is a cross-artifact identity link, never an integrity seal.
+ * A SIDECAR IS NOT REQUIRED, and that is a strengthening rather than a
+ * relaxation. Under the contract the sidecar is a run output and the delivered
+ * artifact carries the embedded block, so demanding a companion file would
+ * demand something the delivery does not ship - while a recording with a
+ * sidecar and no block, which is what the demand actually admitted, is exactly
+ * the artifact this gate must refuse. Where a sidecar IS present its digest
+ * over the exact bytes is reconciled, because a pair that disagrees cannot be
+ * read together.
+ *
+ * `payloadDigest` in the return value is this tool's own RECORD_INTO-stable
+ * link, for what it is actually for: naming the baseline recording a comparison
+ * report consumed, ACROSS a deliberate re-embed. It is a cross-artifact
+ * identity link, never an integrity seal - the block's own digest is that.
  *
  * @param {string} target Absolute path of the matrix.
  * @param {string} label 'baseline' or 'target', for the messages.
- * @returns {{path: string, sidecarPath: string, matrix: Object,
+ * @returns {{path: string, sidecarPath: (string|null), matrix: Object,
  *            provenance: Object, digest: string, payloadDigest: string,
- *            sealedDigest: string, embedded: boolean}} `embedded` reports
- *   whether the SIDECAR records a `comparisonEmbedded` block - a fact about
- *   the sealed pair, not a relaxation of the digest check.
- * @throws {ToolError} On a missing, unreadable, mismatched or foreign sidecar.
+ *            sealedDigest: string, embedded: boolean}} `provenance` is the
+ *   AUTHENTICATED block from inside the artifact; `embedded` reports whether a
+ *   completed comparison has been written into the recording.
+ * @throws {ToolError} On a recording whose provenance does not establish it as
+ *   parity evidence, or which does not hash to its own block.
  */
 function readRecording(target, label) {
-  var matrix = readMatrix(target);
-  var sidecar = sidecarPathFor(target);
+  var matrix;
+  var block;
+  var sidecarPath = sidecarPathFor(target);
+  var sidecar;
   var text;
-  var provenance;
   var digests;
-  var sealed;
-  var embedded = false;
 
-  if (!fs.existsSync(sidecar)) {
-    throw new ToolError('the ' + label + ' recording ' + target + ' has no ' +
-      'provenance sidecar at ' + sidecar + '. A recording without its sidecar ' +
-      'names no tree, no joi version and no digest, so it cannot be shown to ' +
-      'be the other side of this gate; re-capture it, or pass the pair that ' +
-      'was written together.');
+  // THE VALIDATION IS THE SHARED CONTRACT'S, through readMatrix's `expect`
+  // path. It was here all along and this call site passed nothing, so the
+  // whole of it - schema, artifact name, role, payload digest, generator blob
+  // and commit resolved in THIS repository, and the baseline-tree cross-check
+  // - never ran, and the checks that did run were this file's own against a
+  // vocabulary the contract does not use.
+  //
+  // `roles` is the two MEASURED roles. `analysis` is refused because a
+  // --schema-only artifact records no HTTP outcome and so cannot be a side of
+  // this gate, and `unreviewed` is refused by construction: it is what the
+  // --allow-nonbaseline escape hatch records, and declining it is the whole
+  // purpose of the label. `requireBaselineTree` is left to its default, which
+  // demands the base commit of anything CLAIMING the baseline role - so a
+  // recording that says baseline and measured something else is refused here
+  // rather than compared.
+  matrix = readMatrix(target, { roles: [ROLE_BASELINE, ROLE_TARGET] });
+  block  = matrix.provenance;
+
+  // The artifact's own `role` and its block's must agree. The contract checks
+  // the block; this checks that the recording a comparison reads the role off
+  // is the same recording the block describes.
+  if (matrix.role !== block.role) {
+    throw new ToolError('the ' + label + ' recording ' + target + ' declares ' +
+      'role ' + JSON.stringify(matrix.role) + ' while its embedded ' +
+      'provenance declares ' + JSON.stringify(block.role) + '; the two do ' +
+      'not describe one run, so the file cannot be read as either');
   }
 
-  try {
-    provenance = JSON.parse(fs.readFileSync(sidecar, 'utf8'));
-  }
-  catch (err) {
-    throw new ToolError('cannot read the ' + label + ' provenance sidecar ' +
-      sidecar + ': ' + err.message);
-  }
-
-  if (!provenance || provenance.generator !== 'test/parity/joi-matrix.js') {
-    throw new ToolError('the ' + label + ' provenance sidecar ' + sidecar +
-      ' does not name test/parity/joi-matrix.js as its generator, so it was ' +
-      'not written by this tool');
-  }
-
-  if (ROLES.indexOf(provenance.role) === -1) {
-    throw new ToolError('the ' + label + ' provenance sidecar ' + sidecar +
-      ' carries role ' + JSON.stringify(provenance.role) + ', which is not ' +
-      'one of ' + ROLES.join(', ') + '; re-capture it with a current build of ' +
-      'this tool');
-  }
-
-  if (matrix.role !== provenance.role) {
-    throw new ToolError('the ' + label + ' recording declares role ' +
-      JSON.stringify(matrix.role) + ' while its sidecar declares ' +
-      JSON.stringify(provenance.role) + '; the pair does not describe one run');
-  }
-
-  if (!provenance.artifact || typeof provenance.artifact.digest !== 'string' ||
-      typeof provenance.artifact.payloadDigest !== 'string') {
-    throw new ToolError('the ' + label + ' provenance sidecar ' + sidecar +
-      ' records no artifact digest, so the recording it names cannot be shown ' +
-      'to be unmodified; re-capture it with a current build of this tool');
-  }
-
-  text = fs.readFileSync(target, 'utf8');
+  text    = fs.readFileSync(target, 'utf8');
   digests = artifactDigests(text);
-  sealed = provenance.artifact;
 
-  // EXACT bytes, no fallback. See the doc block: accepting `payloadDigest`
-  // here would accept any edit confined to `targetComparison` and
-  // `crossCheck`, which are the fields that claim the comparison happened.
-  if (digests.digest !== sealed.digest) {
-    throw new ToolError('the ' + label + ' recording ' + target + ' does ' +
-      'not match its sidecar: sealed digest ' + sealed.digest.slice(0, 16) +
-      '..., file digest ' + digests.digest.slice(0, 16) + '...' +
-      (digests.payloadDigest === sealed.payloadDigest
-        ? '. The recorded OUTCOMES still match (the payload digest is ' +
-          'unchanged), so the edit is confined to `' +
-          RECORD_INTO_KEYS.join('` or `') + '` - the blocks that assert the ' +
-          'comparison was performed. Those are evidence too and are sealed ' +
-          'like everything else'
-        : '. The recorded outcomes have been modified since the recording was ' +
-          'sealed') +
-      ', so this file is not evidence of what was measured. Re-capture it, ' +
-      'or - if the change was deliberate, as it is for a perturbation ' +
-      'negative control - re-seal it with sealSidecar so the modification is ' +
-      'on the record.');
-  }
-
-  // A fact about the sealed pair rather than a digest outcome: the sidecar says
-  // whether --record-into has written a comparison into this recording.
-  embedded = !!provenance.comparisonEmbedded;
+  // The sidecar is a RUN OUTPUT and most recordings have none: the delivered
+  // artifact carries the embedded block, which is what authenticates it.
+  // Absence is therefore not a finding. Present-and-disagreeing IS one, and
+  // assertMatrixProvenance has already reconciled its digest against these
+  // exact bytes - `sidecarBeside` is what readMatrix passed it.
+  sidecar = sidecarBeside(target);
 
   return {
-    path        : target,
-    sidecarPath : sidecar,
-    matrix      : matrix,
-    provenance  : provenance,
-    digest      : digests.digest,
+    path         : target,
+    sidecarPath  : sidecar === undefined ? null : sidecarPath,
+    matrix       : matrix,
+    // The AUTHENTICATED block, from inside the artifact. Every consumer -
+    // assertComparable, reportComparison, recordComparisonInto - reads the
+    // record through this, so there is one description of the run and not a
+    // sidecar's and an artifact's.
+    provenance   : block,
+    digest       : digests.digest,
     payloadDigest: digests.payloadDigest,
-    sealedDigest: sealed.digest,
-    embedded    : embedded
+    // What the contract's own seal says the artifact hashes to. Equal to
+    // `digest` by construction here, because the payload digest check above
+    // would have refused any difference; carried so a caller can report the
+    // seal it verified against rather than re-deriving it.
+    sealedDigest : block.payloadDigest.value,
+    // Whether --record-into has written a comparison into this recording. Read
+    // off the ARTIFACT rather than off a sidecar that need not exist: the
+    // embedded `targetComparison` is the fact, and the sidecar merely
+    // described it.
+    embedded     : !!(matrix.targetComparison &&
+      matrix.targetComparison.performed)
+  };
+}
+
+/**
+ * The analysed HEAD a recording's block names, or null.
+ *
+ * Three accessors, because the block's shape is the CONTRACT'S and the callers
+ * that need these three facts should not each know how to walk it. They also
+ * accept the shape this tool used to write - `app.head`, `versions.joi`,
+ * `tool` - so a recording sealed by an earlier build is still readable where a
+ * fact can be found rather than failing on a missing key. Nothing accepts such
+ * a recording as EVIDENCE: readRecording rejects it long before these are
+ * called, because it carries no embedded block at all.
+ *
+ * @param {Object} record From readRecording.
+ * @returns {(string|null)}
+ */
+function analysedHeadOf(record) {
+  var block = (record && record.provenance) || {};
+
+  return (block.analysedTree && block.analysedTree.head) ||
+    (block.app && block.app.head) || null;
+}
+
+/**
+ * The joi version a recording was produced at, or null.
+ *
+ * @param {Object} record From readRecording.
+ * @returns {(string|null)}
+ */
+function joiVersionOf(record) {
+  var block = (record && record.provenance) || {};
+  var detail = block.detail || {};
+
+  return (detail.versions && detail.versions.joi) ||
+    (block.versions && block.versions.joi) ||
+    (record && record.matrix && record.matrix.joiVersion) || null;
+}
+
+/**
+ * The identity of the generator that produced a recording.
+ *
+ * Reported, never enforced: the substantive risk a differing tool build carries
+ * is that the two sides generated different inputs, and the crossCheck measures
+ * exactly that per case and fails on it. This is what lets a reader see whether
+ * ONE build drove both sides.
+ *
+ * @param {Object} record From readRecording.
+ * @returns {{path: (string|null), blob: (string|null), commit: (string|null),
+ *            verified: (boolean|null), head: (string|null)}}
+ */
+function generatorIdentityOf(record) {
+  var block = (record && record.provenance) || {};
+  var generator = block.generator || {};
+
+  return {
+    path    : generator.path || null,
+    blob    : generator.blob || null,
+    commit  : generator.commit || null,
+    verified: generator.verified === undefined ? null : !!generator.verified,
+    head    : (block.delivered && block.delivered.head) ||
+      generator.deliveredHead || null
   };
 }
 
@@ -2245,11 +2384,11 @@ function majorOf(version) {
 /**
  * Refuses a comparison that is not between the two sides of the gate.
  *
- * The gate's whole claim is "joi 17.13.3 accepted and rejected exactly what joi
- * 18.2.5 accepts and rejects". A comparison of one recording with itself, or of
- * two recordings from the same tree, cannot support that claim and would report
- * zero differences with total confidence - which is BE-39's self-comparison
- * hole, and the reason it is closed here rather than left to the caller.
+ * The gate's whole claim is "the baseline joi accepted and rejected exactly
+ * what the target joi accepts and rejects". A comparison of one recording with
+ * itself, or of two recordings from the same tree, cannot support that claim
+ * and would report zero differences with total confidence, so it is refused
+ * here rather than left to the caller.
  *
  * Three checks, and only two of them can be waived:
  *
@@ -2270,14 +2409,13 @@ function majorOf(version) {
  * @throws {ToolError} On a comparison that cannot be evidence.
  */
 function assertComparable(baseline, target, allowSameTree) {
-  var baselineHead = (baseline.provenance.app || {}).head || null;
-  var targetHead = (target.provenance.app || {}).head || null;
-  var baselineJoi = (baseline.provenance.versions || {}).joi ||
-    baseline.matrix.joiVersion || null;
-  var targetJoi = (target.provenance.versions || {}).joi ||
-    target.matrix.joiVersion || null;
+  var baselineHead = analysedHeadOf(baseline);
+  var targetHead = analysedHeadOf(target);
+  var baselineJoi = joiVersionOf(baseline);
+  var targetJoi = joiVersionOf(target);
   var relaxed = [];
-  var checked = ['same-path', 'same-application-head', 'same-joi-major'];
+  var checked = ['same-path', 'baseline-is-a-capture',
+    'same-application-head', 'same-joi-major'];
 
   if (path.resolve(baseline.path) === path.resolve(target.path)) {
     throw new ToolError('refusing to compare ' + baseline.path + ' with ' +
@@ -2289,9 +2427,23 @@ function assertComparable(baseline, target, allowSameTree) {
     throw new ToolError('the baseline recording ' + baseline.path + ' has ' +
       'role ' + JSON.stringify(baseline.matrix.role) + ', not ' +
       JSON.stringify(ROLE_BASELINE) + '. The first --compare argument must be ' +
-      'a capture; a ' + ROLE_SCHEMA_ONLY + ' artifact records no HTTP outcome ' +
-      'and a ' + ROLE_TARGET + ' artifact is the other side of a comparison ' +
-      'that already ran.');
+      'a capture of the base commit; a ' + ROLE_TARGET + ' artifact is the ' +
+      'other side of a comparison that already ran, an ' + ROLE_ANALYSIS +
+      ' artifact records no HTTP outcome, and an ' + ROLE_UNREVIEWED +
+      ' artifact measured a tree nobody identified.');
+  }
+
+  // THE ROLE IS NOT ENOUGH, now that a role states which TREE was measured
+  // rather than which flag ran. A --schema-only run pointed at the base commit
+  // measured that tree honestly and records not one HTTP outcome, so the mode
+  // is what separates "captured" from "read", and it is checked here because
+  // the role deliberately no longer carries it.
+  if (baseline.matrix.mode !== 'capture') {
+    throw new ToolError('the baseline recording ' + baseline.path + ' was ' +
+      'produced in ' + JSON.stringify(baseline.matrix.mode) + ' mode, not ' +
+      '`capture`. Only a capture drives the cases against a running ' +
+      'application and records their outcomes; comparing against anything ' +
+      'else would diff measured responses with absent ones.');
   }
 
   if (baselineHead !== null && targetHead !== null && baselineHead === targetHead) {
@@ -2328,11 +2480,12 @@ function assertComparable(baseline, target, allowSameTree) {
     // The tool build behind each side. REPORTED, not enforced: the substantive
     // risk a differing tool carries is that the two runs generated different
     // inputs, and the crossCheck already measures exactly that per case and
-    // fails on it. Recording the digests is what lets a reader see whether one
-    // build drove both sides, and `dirty` says whether the commit named
-    // contains the tool that ran.
-    baselineTool: (baseline.provenance.tool || {}),
-    targetTool  : (target.provenance.tool || {})
+    // fails on it. The identity is the git BLOB of the generator that ran -
+    // the same forty characters in every clone - with the commit it was
+    // resolved in and whether that resolution succeeded, which is what a
+    // reader needs to retrieve the tool rather than merely read its name.
+    baselineTool: generatorIdentityOf(baseline),
+    targetTool  : generatorIdentityOf(target)
   };
 }
 
@@ -2375,18 +2528,17 @@ function sidecarBeside(target) {
 /**
  * Refuses a recorded matrix that cannot authenticate itself.
  *
- * Five requirements, and each one is a defect the review actually found in a
- * delivered artifact:
+ * Five requirements, each closing a way an artifact can arrive unable to
+ * account for itself:
  *
- *   a block at all         The condemned sidecar was a separate file, so an
- *                          artifact could arrive with no provenance whatever
- *                          and be consumed as baseline evidence. A matrix with
- *                          no embedded block is refused, with the exact command
+ *   a block at all         Provenance kept only in a separate file means an
+ *                          artifact can arrive with none whatever and be
+ *                          consumed as baseline evidence. A matrix with no
+ *                          embedded block is refused, with the exact command
  *                          that regenerates it.
  *   schema 2               A schema-1 block carries no `generator.blob` and no
- *                          `verified`, which is exactly the unverifiable claim
- *                          this contract removes; accepting one would accept
- *                          it back.
+ *                          `verified`, so its claim cannot be checked at all;
+ *                          accepting one would readmit exactly that.
  *   the artifact name      A block names the artifact it describes, so a block
  *                          copied in from another run is caught rather than
  *                          read as this artifact's own.
@@ -2402,9 +2554,9 @@ function sidecarBeside(target) {
  *                          or whose block came from a different run, fails here.
  *
  * Plus one cross-check: an artifact CLAIMING the `baseline` role must have
- * measured a tree at AAP §0.10.3's base commit. A claim and the tree it names
- * disagreeing is precisely how the deleted sidecar read as a baseline while
- * naming a sibling clone.
+ * measured a tree at BASELINE_COMMIT. A role claim and the tree the block names
+ * can disagree, and when they do the artifact reads as a baseline while
+ * describing some other checkout.
  *
  * Every failure is listed, not just the first: a reviewer regenerating an
  * artifact wants the whole verdict in one run.
@@ -2450,15 +2602,14 @@ function assertMatrixProvenance(target, text, matrix, expect) {
     requireBaselineTree: requireBaseline,
     payload            : payload,
     // The two that make the identity checkable rather than merely present.
-    // Without `repositoryRoot` the contract cannot resolve anything, so a
-    // block naming a random 40-hex generator blob, a generator commit that is
-    // not an object and a delivered head from no repository passed as
-    // `provenance OK` - every field was well-formed and nothing looked any of
-    // them up. Without `requireGeneratorVerified` a block that admits
-    // `verified: false` was accepted on its own admission. This is a GATE
-    // consumer: it declines an artifact it cannot authenticate, and there is
-    // no waiver here, because the generators this delivery ships are
-    // committed.
+    // Without `repositoryRoot` the contract can resolve nothing, so a block
+    // naming a random 40-hex generator blob, a generator commit that is not an
+    // object and a delivered head from no repository passes as `provenance OK`
+    // - every field well-formed and none of them looked up. Without
+    // `requireGeneratorVerified`, a block that admits `verified: false` is
+    // accepted on its own admission. This is a GATE consumer: it declines an
+    // artifact it cannot authenticate, and there is no waiver here, because the
+    // generators shipped alongside it are committed.
     repositoryRoot          : TOOL_ROOT,
     requireGeneratorVerified: true,
     // Where a sidecar sits beside the matrix, its digest over the exact bytes
@@ -2520,42 +2671,12 @@ function gitHead(directory) {
 }
 
 /**
- * Whether `file` differs in its worktree from the commit `gitHead` reports.
- *
- * The provenance names a tool commit, and a commit is only evidence about the
- * bytes that ran if those bytes were committed. This is the fact that says so.
- * Null - not false - when git cannot answer, for the reason gitHead returns
- * null: a run that produced a correct matrix must not be failed for being
- * unable to describe its own checkout.
- *
- * @param {string} file Absolute path.
- * @returns {(boolean|null)}
- */
-function gitDirty(file) {
-  var output;
-
-  try {
-    output = childProcess.execFileSync('git',
-      ['status', '--porcelain', '--', file], {
-        cwd      : path.dirname(file),
-        encoding : 'utf8',
-        stdio    : ['ignore', 'pipe', 'ignore']
-      });
-  }
-  catch (err) {
-    return null;
-  }
-
-  return String(output).trim().length > 0;
-}
-
-/**
  * The version a package resolves to inside `appRoot`, or null.
  *
  * Recorded in the provenance because it is the single most important fact about
- * a capture: a matrix captured at joi 17.13.3 and one captured at 18.2.5 are
- * the two sides of this gate, and a reviewer must be able to see which is
- * which without trusting a filename.
+ * a capture: the two joi lines a matrix can be captured at are the two sides of
+ * this gate, and a reviewer must be able to see which side a recording is
+ * without trusting a filename.
  *
  * @param {string} appRoot Absolute path.
  * @param {string} name Package name.
@@ -2629,9 +2750,8 @@ function assertAppRoot(appRoot) {
  * undefined - which is what BOTH trees' committed YAML leaves it as, since no
  * committed file declares the key - `lib/util/queues.js` takes the Bull branch
  * and dials localhost:6379, risking a hang or an unhandled ECONNREFUSED. False
- * selects the in-memory branch. AAP §0.9.1 specifies exactly this overlay, and
- * it is passed identically to both trees so no configuration file is edited to
- * achieve it.
+ * selects the in-memory branch. The overlay is passed identically to both trees
+ * so no configuration file is edited to achieve it.
  *
  * An inherited NODE_CONFIG is honoured underneath the overlay. An inherited
  * value that is not valid JSON is a hard failure rather than something to
@@ -2673,8 +2793,8 @@ function composeNodeConfig(inherited) {
  *                    resolves its directory from process.cwd() unless told
  *                    otherwise, so without this a baseline run would read the
  *                    TARGET tree's YAML - and the recaptcha-conditional schema
- *                    at config/api_routes.js:6-8 is derived FROM configuration,
- *                    so the target set itself would come from the wrong tree.
+ *                    in config/api_routes.js is derived FROM configuration, so
+ *                    the target set itself would come from the wrong tree.
  *                    An inherited value belonging to another tree is replaced,
  *                    and the replacement is announced.
  *   NODE_CONFIG      The redis overlay described in composeNodeConfig.
@@ -2682,31 +2802,26 @@ function composeNodeConfig(inherited) {
  *                    and NODE_CONFIG_RUNTIME_JSON, from ./mongo's one
  *                    implementation.
  *
- * WHY ALL THREE, AND WHY THERE IS NO LONGER A `process.chdir` HERE.
- * This function previously set persistence to 'N' and called
- * `process.chdir(appRoot)`, on the belief that persistence alone kept
- * config/runtime.json out of the tree under test. It does not: `config` 0.4.37
- * writes '{}' into its runtime JSON whenever that file is missing or empty and
- * skips the write only when persistence is 'N' AND the file watch is disabled
- * [node_modules/config/lib/config.js:867-880]. With the working directory
- * pointed INTO the analysed tree, the default runtime path pointed there too,
- * and `node test/parity/joi-matrix.js --schema-only` created
- * config/runtime.json inside that tree - measured. It is gitignored, so
- * `git status` on the "untouched" baseline stayed clean while the file sat in
- * it, and runtime.json is layered OVER every other configuration source
- * [config/lib/config.js:780], so the next run would have read it.
+ * WHY ALL THREE, AND WHY THERE IS NO `process.chdir` HERE. Persistence alone
+ * does not keep config/runtime.json out of the tree under test: the npm
+ * `config` package writes '{}' into its runtime JSON whenever that file is
+ * missing or empty, and skips the write only when NODE_CONFIG_PERSIST_ON_CHANGE
+ * is 'N' AND the file watch is disabled. With the working directory pointed
+ * INTO the analysed tree, the default runtime path points there too, so a run
+ * creates config/runtime.json inside a tree that is supposed to be untouched -
+ * invisibly, because the file is gitignored, and consequentially, because
+ * `config` layers runtime.json OVER every other configuration source and the
+ * next run would read it.
  *
- * The chdir is gone rather than compensated for, because nothing after this
- * point selects a module or a configuration file by working directory:
- * `requireFromApp` resolves every application module absolutely inside
- * `appRoot`, `mongoose` is required by absolute path, `startInfrastructure`
- * passes `appRoot` to test/parity/server.js explicitly, test/parity/seed.js
- * resolves its models relative to its own file, and every artifact path was
- * resolved against `originalCwd` in `parseArguments` before this ran. Measured:
- * the `--schema-only` artifact is identical with and without it.
- * NODE_ENV is set to 'test' unless the caller overrode it, matching AAP
- * §0.9.1's gate command; whatever value results is recorded in the provenance
- * and passed identically to both trees.
+ * There is no chdir to compensate for, because nothing after this point selects
+ * a module or a configuration file by working directory: `requireFromApp`
+ * resolves every application module absolutely inside `appRoot`, `mongoose` is
+ * required by absolute path, `startInfrastructure` passes `appRoot` to
+ * test/parity/server.js explicitly, test/parity/seed.js resolves its models
+ * relative to its own file, and every artifact path is resolved against
+ * `originalCwd` in `parseArguments` before this runs. NODE_ENV is set to 'test'
+ * unless the caller overrode it; whatever value results is recorded in the
+ * provenance and passed identically to both trees.
  *
  * @param {string} appRoot Absolute path, already validated.
  * @returns {{nodeEnv: string, nodeConfig: string, nodeConfigDir: string,
@@ -2746,8 +2861,8 @@ function prepareEnvironment(appRoot) {
  * analysing the baseline - the single bug that would make the two-worktree
  * model meaningless, because both matrices would then describe the same tree
  * and the gate would pass unconditionally. Resolving inside `appRoot` also
- * means `joi` itself resolves from <appRoot>/node_modules, which is the whole
- * point: 17.13.3 on one side and 18.2.5 on the other.
+ * means `joi` itself resolves from <appRoot>/node_modules, which is what puts a
+ * different joi on each side of the comparison.
  *
  * @param {string} appRoot Absolute path.
  * @param {string} relative Repository-relative module path.
@@ -2802,7 +2917,10 @@ function harvest(appRoot) {
   var constants;
   var helpers;
 
-  // FIRST. See above.
+  // BEFORE the route modules: config/constants.js publishes itself onto the
+  // `config` object, and config/routes.js reads `config.constants.trinketLangs`
+  // at load to run its per-language expansion. Required in the other order it
+  // expands nothing or throws.
   constants = requireFromApp(appRoot, 'config/constants');
 
   pageRoutes  = requireFromApp(appRoot, 'config/routes');
@@ -2883,12 +3001,12 @@ function harvest(appRoot) {
 /**
  * The trinket languages the tree under test accepts, in declaration order.
  *
- * Read from the MODEL first, because that is the list `helpers.validLang`
- * actually tests against - `Trinket.schema.path('lang').enumValues`
- * [lib/util/helpers.js:205] - and only then from `config.constants.trinketLangs`,
- * which is where the model gets it [lib/models/trinket.js:21]. Both come from
- * the tree under test, so a tree that added or removed a language moves this
- * list with it rather than diverging from a copy kept here.
+ * Read from the MODEL first, because `Trinket.schema.path('lang').enumValues`
+ * is the list lib/util/helpers.js's `validLang` actually tests against, and
+ * only then from `config.constants.trinketLangs`, which is where
+ * lib/models/trinket.js gets it. Both come from the tree under test, so a tree
+ * that added or removed a language moves this list with it rather than
+ * diverging from a copy kept here.
  *
  * The model require is not a new load: config/routes.js imports
  * lib/util/helpers.js, which requires the model at its own module scope, so the
@@ -2992,8 +3110,8 @@ function helperResolver(helpers) {
  *
  * The 30-byte local header, the 46-byte central directory record and the
  * 22-byte end-of-central-directory record are the format's own fixed layouts;
- * `zlib.crc32` supplies the checksum the reader verifies. Measured: both trees'
- * `jszip` 3.6.0 read the entry back byte-identically.
+ * `zlib.crc32` supplies the checksum the reader verifies, and the entry reads
+ * back byte-identically through the `jszip` each tree resolves.
  *
  * @param {string} name The single entry's name.
  * @param {string} content Its bytes, as UTF-8 text.
@@ -3059,21 +3177,22 @@ function buildZipCode(name, content) {
 /**
  * The JWT `helpers.verifyEmailToken` will accept for the seeded trinket.
  *
- * The secret and the claim are the application's:
- * `jwt.verify(token, config.app.mail.secret + trinket.shortCode)` and
- * `data.shortCode === trinket.shortCode` [lib/util/helpers.js:259,272]. The
- * concatenation is reproduced as JavaScript performs it, undefined included -
+ * The secret and the claim are the application's: lib/util/helpers.js's
+ * `verifyEmailToken` calls
+ * `jwt.verify(token, config.app.mail.secret + trinket.shortCode)` and then
+ * requires `data.shortCode === trinket.shortCode`. The concatenation is
+ * reproduced as JavaScript performs it, undefined included -
  * committed configuration declares no `app.mail.secret`, so the secret in force
  * is the string `'undefined' + shortCode`, and a run against a tree that
  * declares one picks that up instead because the value is read from the
  * configuration this process froze against the same overlay the child received.
  *
- * IT IS SIGNED HERE RATHER THAN BY THE TREE'S OWN `jsonwebtoken`, and that is a
- * measurement rather than a preference. The two trees resolve 5.7.0 and 9.0.3,
- * and their headers serialize in different key orders - `{"typ","alg"}` against
- * `{"alg","typ"}` - so the same claim signs to different bytes on the two
- * sides. The generated inputs of the two runs are cross-checked against each
- * other, so that difference would be reported as a generated-input divergence
+ * IT IS SIGNED HERE RATHER THAN BY THE TREE'S OWN `jsonwebtoken`, because the
+ * two trees resolve different majors of that package and their headers
+ * serialize in different key orders - `{"typ","alg"}` against `{"alg","typ"}` -
+ * so the same claim signs to different bytes on the two sides. The generated
+ * inputs of the two runs are cross-checked against each other, so that
+ * difference would be reported as a generated-input divergence
  * and the two runs would no longer be the same experiment. A fixed header order
  * and no `iat` claim make the token byte-identical on both trees; it is then
  * VERIFIED through the tree's own `jsonwebtoken` before it is used, so the
@@ -3611,8 +3730,8 @@ function applyKnownValues(schema, input, wanted, transport) {
  *     trinket, so the ownership pre-handlers (`canEdit`) succeed;
  *   * anything else is driven ANONYMOUSLY. That is faithful for `mode: 'try'`,
  *     and it keeps the preserved authenticated-visitor 500 on `GET /login` and
- *     `GET /signup` out of a validation measurement - that quirk belongs to
- *     test/lib/api/pages.js, not here.
+ *     `GET /signup` out of a validation measurement, where it would be noise
+ *     rather than a validation outcome.
  *
  * @param {Object} declaration
  * @param {Array.<Object>} pre Descriptors from preDescriptors.
@@ -4610,10 +4729,10 @@ function violationsFor(leaf) {
   }
 
   if (rules.pattern) {
-    // '9bad' is the measured violator: it produces
-    // `"username" with value "9bad" fails to match the required pattern: /.../`
-    // on both joi 17.13.3 and 18.2.5, which is the exact string PHASE 5's
-    // inertness assertion is about.
+    // '9bad' is the violator whose message the inertness record is read from:
+    // it produces `"username" with value "9bad" fails to match the required
+    // pattern: /.../` on both joi lines, and that string is what the `language`
+    // map's substring key is tested against.
     push('pattern', '9bad');
     push('pattern', '!!!');
     push('pattern', 'ZZ 99 !!');
@@ -4742,10 +4861,10 @@ function buildRejectingInput(schema, leaves, accepting, transport, referenced,
   });
 
   // Fields the page this target's failure redirects to actually renders. See
-  // renderedRedirectFields: violating one of them yields the same kind of
-  // evidence AND carries the rendered message R-e asks for, so it is tried
-  // first. It is a PREFERENCE and nothing else - a preferred leaf that admits
-  // no deliverable violation falls through to the ordinary ladder below.
+  // renderedRedirectFields: violating one of them yields the same schema
+  // verdict AND proves the message reaches the client, so it is tried first. It
+  // is a PREFERENCE and nothing else - a preferred leaf that admits no
+  // deliverable violation falls through to the ordinary ladder below.
   (preferred || []).forEach(function(key) {
     preferredSet[key] = true;
   });
@@ -5102,8 +5221,8 @@ function buildCoercionInput(schema, leaves, accepting, transport) {
  * The transport a section's value travels by.
  *
  * `payload` becomes a request BODY, `query` a QUERY STRING and `params` a PATH
- * SEGMENT - which is the prompt's requirement and also a fact about what the
- * schema will see. The four routes declaring `payload.output === 'file'` are
+ * SEGMENT, which is what decides the bytes the schema will see. The four routes
+ * declaring `payload.output === 'file'` are
  * MULTIPART: with that option hapi replaces `request.payload` with a file
  * descriptor, so a JSON body would never reach the declared schema at all and
  * the recorded outcome would be about hapi's payload processing instead of
@@ -5205,8 +5324,9 @@ function projectValue(transport, value) {
 /**
  * The value the SERVER will see, given the transport.
  *
- * This is the honest half of the input record. A query string and a path
- * segment carry only text, so `request.query.index` is the STRING '42' however
+ * This is the half of the input record that says what arrived rather than what
+ * was meant. A query string and a path segment carry only text, so
+ * `request.query.index` is the STRING '42' however
  * the generator spelled it, and the local schema proof therefore runs on the
  * stringified form - because that is what the application validates. A JSON
  * body preserves types, so for a payload target the two forms are identical.
@@ -5268,14 +5388,16 @@ function shapeFallbacks(transport) {
  * what `Joi.string().required()` rejects, and therefore the one violator the
  * ladder would otherwise find for the single `params` target - is an
  * UNREACHABLE case. Recording it would claim a validation rejection that no
- * request can produce, which is exactly what the prompt's "record that
- * reasoning rather than inventing an unreachable case" clause forbids.
+ * request can produce, so the reasoning is recorded as a determination instead
+ * of an unreachable case being invented.
  *
  * A query parameter has neither constraint: `?page=` delivers '' and leaving it
  * out delivers nothing, and both reach the validation block.
  *
  * @param {string} transport From transportFor.
- * @param {{strategy: string, value: *, omit: boolean}} violation
+ * @param {{strategy: string, value: *, omit: boolean}} violation The candidate
+ *   violation: how it breaks the leaf, the value it would send, and whether it
+ *   works by omitting the key altogether.
  * @returns {boolean}
  */
 function isDeliverable(transport, violation) {
@@ -5519,8 +5641,8 @@ function buildCases(joi, target, resolved, steering) {
       CASE_REJECTING,
       false,
       null,
-      // The authored reasoning wins when there is one - the prompt asks for
-      // the params target's reasoning to be recorded, not merely derived - and
+      // The reviewed reasoning wins when there is one, so the params target
+      // carries the reason a reviewer wrote rather than only the derived one;
       // the derived reason stands behind it for anything new.
       reviewedReason(target.key, CASE_REJECTING) || rejecting.reason,
       {
@@ -5594,9 +5716,9 @@ function buildCases(joi, target, resolved, steering) {
  *     the matrix fails the run until its reason is in REVIEWED_UNDRIVABLE.
  *
  * An inapplicable case whose determination is a fact about the SCHEMA or the
- * TRANSPORT passes, and is exactly the honest N/A required: most string-only
- * sections admit no coercion input, and the single `params` target admits no
- * rejecting one. Those are answers.
+ * TRANSPORT passes, and is recorded as an explicit N/A with that fact: most
+ * string-only sections admit no coercion input, and the single `params` target
+ * admits no rejecting one. Those are answers.
  *
  * The tool-failure assertions are EXIT_ERROR - the artifact cannot be trusted.
  * The unresolved-case assertion is EXIT_DIFFERENCE: the case set itself moved.
@@ -5826,8 +5948,8 @@ function substituteCustomMessage(map, message) {
  * lookup, which is available in every mode, and the message the SERVER actually
  * flashed, which is available once a case has been driven.
  *
- * Under R-d the inert mapping is preserved, not repaired, so a substitution is
- * a FAILURE and not an improvement. assertInertness makes that explicit.
+ * The inert mapping is preserved rather than repaired, so a substitution is a
+ * FAILURE here and not an improvement. assertInertness makes that explicit.
  *
  * @param {Array.<Object>} entries Serialized target entries.
  * @param {Array.<Object>} maps From languageMaps.
@@ -5889,8 +6011,9 @@ function buildInertnessRecord(entries, maps) {
         : fieldMap[LANGUAGE_MATCH_KEY],
       rejectionStrategy  : rejecting ? rejecting.strategy : null,
       rawJoiMessage      : rawMessages.length ? rawMessages[0] : null,
-      // The whole point: the map keys its message on the substring
-      // "regular expression", and joi's pattern message does not contain it.
+      // The map keys its message on the substring "regular expression", and
+      // joi's pattern message does not contain it - which is what makes the map
+      // inert.
       containsMatchKey   : rawMessages.length
         ? String(rawMessages[0]).indexOf(LANGUAGE_MATCH_KEY) >= 0
         : null,
@@ -5918,8 +6041,8 @@ function buildInertnessRecord(entries, maps) {
  * means the premise this file is built on is wrong and the recorded baseline
  * would enshrine it; in compare mode it would also show up as a message
  * difference, but naming it here is what tells a reader that the friendly
- * message APPEARING is the failure - an improvement, which R-d prohibits - and
- * not a repair.
+ * message APPEARING is the failure: the maps are preserved as they are, so a
+ * substitution is a behaviour change and not a repair.
  *
  * @param {Array.<Object>} record From buildInertnessRecord.
  * @returns {undefined}
@@ -5984,9 +6107,9 @@ function Jar() {
  *
  * Only the name and value are kept. Attributes are not honoured - no Path, no
  * Domain, no Expires - because every request here goes to one origin and the
- * ATTRIBUTES ARE THEMSELVES UNDER TEST elsewhere: AAP §0.9.3 asserts on them,
- * and a jar that silently dropped a cookie for failing its own attribute check
- * would turn a cookie regression into a mysterious lost session.
+ * ATTRIBUTES ARE THEMSELVES UNDER TEST in the corpus gate. A jar that silently
+ * dropped a cookie for failing its own attribute check would turn a cookie
+ * regression into a mysterious lost session.
  *
  * @param {(string[]|undefined)} setCookie
  * @returns {undefined}
@@ -6020,9 +6143,9 @@ Jar.prototype.header = function() {
 /**
  * Performs one HTTP exchange.
  *
- * A TIMEOUT IS A RESULT, not a throw. AAP §0.9.3 makes exactly that
- * distinction, because a route that never settles is a recordable baseline
- * outcome; a gate that hung on one would produce no artifact at all. Redirects
+ * A TIMEOUT IS A RESULT, not a throw: a route that never settles is a
+ * recordable outcome of the tree under test, and a gate that hung on one would
+ * produce no artifact at all. Redirects
  * are NOT followed here - following is a deliberate, recorded step in
  * driveCase, because the followed request is what consumes the session-held
  * flash.
@@ -6042,6 +6165,7 @@ function exchange(origin, options) {
   return new Promise(function(resolve) {
     var address = new URL(options.target, origin);
     var transport = address.protocol === 'https:' ? https : http;
+    var requestOptions;
     var headers = { accept: options.accept || ACCEPT_HEADER.html };
     var cookie = options.jar ? options.jar.header() : '';
     var body = options.body === undefined ? null : options.body;
@@ -6067,14 +6191,22 @@ function exchange(origin, options) {
       headers['content-length'] = Buffer.byteLength(body);
     }
 
-    request = transport.request({
+    requestOptions = {
       protocol : address.protocol,
       hostname : address.hostname,
       port     : address.port,
       path     : address.pathname + address.search,
       method   : options.method,
       headers  : headers
-    }, function(response) {
+    };
+
+    // The source address this drive is sent FROM, when the caller pins one.
+    // Only `login` does; see `loginSourceAddress`.
+    if (options.localAddress) {
+      requestOptions.localAddress = options.localAddress;
+    }
+
+    request = transport.request(requestOptions, function(response) {
       var text = '';
 
       response.setEncoding('utf8');
@@ -6219,10 +6351,10 @@ function jsonValidationFlash(body, contentType) {
     flash  : isPlainObject(parsed.flash) && isPlainObject(parsed.flash.validation)
       ? parsed.flash.validation
       : null,
-    // The top-level key list is a stable body signal. Full-body comparison is
-    // deliberately NOT this gate's job: AAP §0.9.3 gives that to the request
-    // corpus in test/parity/{capture,replay}.js, which owns the normalization a
-    // whole body needs. Here the body is evidence about the validation flash.
+    // The top-level key list is a stable body signal. Full-body comparison
+    // belongs to the request corpus in test/parity/{capture,replay}.js, which
+    // carries the normalization a whole body needs; here the body is evidence
+    // about the validation flash.
     keys   : Object.keys(parsed).sort(),
     parsed : true
   };
@@ -6382,6 +6514,45 @@ function requestBody(target, visible) {
  * @returns {Promise<Jar>}
  * @throws {ToolError} If the login does not succeed.
  */
+// Counts the logins this process has sent, so the source address below cycles
+// deterministically. 127.0.<0-15>.<2-255> gives 4064 distinct addresses, which
+// is more than any matrix drives.
+var loginSequence = 0;
+var LOGIN_SOURCE_ADDRESS_COUNT = 254 * 16;
+
+/**
+ * The loopback source address the next login is sent from.
+ *
+ * `lib/controllers/users.js` throttles `POST /login` per remote address -
+ * `LOGIN_ADDRESS_LIMIT` attempts per quarter-hour bucket - and that counter is
+ * deliberately NOT cleared by a successful login, because an address is not an
+ * identity. This tool logs in FRESH for every authenticated drive (see the note
+ * on `login` for why a shared session would corrupt the flash observation), and
+ * a full matrix is several hundred drives, so a single source address exhausts
+ * that allowance part-way through a run: measured, the application answered 100
+ * logins and throttled the 101st, and every case after it would have recorded
+ * an unauthenticated outcome - hundreds of differences produced by this
+ * harness's own login pattern rather than by any validation behaviour.
+ *
+ * So each login is sent from its own address in 127.0.0.0/8, every one of which
+ * is local on Linux, which spreads the counter instead of defeating it: the
+ * throttle is left exactly as the application implements it and each bucket
+ * sees a handful of attempts. Nothing else about the request changes - the
+ * target host, the Host header and therefore the cookie jar are unaffected -
+ * and the application keys nothing but this counter on the remote address, so
+ * no recorded outcome moves. The rotation is index-based rather than random so
+ * two runs of the same matrix send the same sequence.
+ *
+ * @returns {string} An address in 127.0.0.0/8, never 127.0.0.1 itself.
+ */
+function loginSourceAddress() {
+  var offset = loginSequence % LOGIN_SOURCE_ADDRESS_COUNT;
+
+  loginSequence++;
+
+  return '127.0.' + Math.floor(offset / 254) + '.' + ((offset % 254) + 2);
+}
+
 async function login(origin, credentials) {
   var jar = new Jar();
   var body = querystring.stringify({
@@ -6390,12 +6561,13 @@ async function login(origin, credentials) {
   });
 
   var response = await exchange(origin, {
-    method      : 'POST',
-    target      : '/login',
-    accept      : ACCEPT_HEADER.html,
-    jar         : jar,
-    body        : body,
-    contentType : 'application/x-www-form-urlencoded'
+    method       : 'POST',
+    target       : '/login',
+    accept       : ACCEPT_HEADER.html,
+    jar          : jar,
+    body         : body,
+    contentType  : 'application/x-www-form-urlencoded',
+    localAddress : loginSourceAddress()
   });
 
   if (response.timedOut || response.error) {
@@ -6676,20 +6848,6 @@ function isUnreachable(reason) {
 }
 
 /**
- * Restarts the application after a crash and restores the fixtures.
- *
- * The database is NOT restarted with it. `test/parity/mongo.js` owns the
- * mongod's lifecycle and this tool published its address before the server
- * started, so `server.stop()` leaves it running - which is what lets the
- * mongoose connection this process holds survive the restart, and what makes
- * re-seeding cheap. The seeder is idempotent, so it restores anything a
- * half-completed request removed and creates nothing otherwise.
- *
- * @param {Object} context The infrastructure context, updated in place.
- * @returns {Promise<undefined>}
- * @throws {ToolError} If the restart budget is exhausted or the restart fails.
- */
-/**
  * The fixtures this gate needs that test/parity/seed.js does not own.
  *
  * One document today: the CourseInvitation two targets look up before their
@@ -6760,13 +6918,14 @@ async function applyPreconditions(context) {
  * WHY EVERY NON-GET DRIVE GETS ONE. An accepted payload on a mutating route is
  * SUPPOSED to change the database - that is what makes it an acceptance - and
  * the next drive then runs against a database the recorded baseline never
- * described. Measured on the baseline, before this existed: the html drive of
- * `POST /api/folders` created the folder `aaa`, the json drive re-sent the same
- * bytes, `lib/models/folder.js:165`'s unique `{_owner, slug}` index rejected
- * the save, and `lib/controllers/folders.js:71` answered the duplicate-key
- * error by calling `request.catch(...)` on the hapi request - a TypeError
- * inside a mongoose callback, an unhandled 'error' event, and a DEAD
- * APPLICATION. Three more crashes followed from the same shape.
+ * described. On the baseline tree that is fatal rather than merely untidy: the
+ * html drive of `POST /api/folders` creates the folder `aaa`, the json drive
+ * re-sends the same bytes, the unique `{_owner, slug}` index on the Folder
+ * schema in lib/models/folder.js rejects the save, and `folders.create` in
+ * lib/controllers/folders.js answers the duplicate-key error by calling
+ * `request.catch(...)` on the hapi request - a TypeError inside a mongoose
+ * callback, an unhandled 'error' event, and a DEAD APPLICATION. Several
+ * routes fail the same way.
  *
  * A restore before each such drive makes every drive start from the state the
  * artifact documents, which is what lets `crashes.length === 0` be an assertion
@@ -6798,6 +6957,20 @@ async function restoreState(context) {
   context.restores += 1;
 }
 
+/**
+ * Restarts the application after a crash and restores the fixtures.
+ *
+ * The database is NOT restarted with it. `test/parity/mongo.js` owns the
+ * mongod's lifecycle and this tool published its address before the server
+ * started, so `server.stop()` leaves it running - which is what lets the
+ * mongoose connection this process holds survive the restart, and what makes
+ * re-seeding cheap. The seeder is idempotent, so it restores anything a
+ * half-completed request removed and creates nothing otherwise.
+ *
+ * @param {Object} context The infrastructure context, updated in place.
+ * @returns {Promise<undefined>}
+ * @throws {ToolError} If the restart budget is exhausted or the restart fails.
+ */
 async function restartApplication(context) {
   var started;
 
@@ -6850,13 +7023,13 @@ async function restartApplication(context) {
  * before json - fully deterministic, so both captures issue the same requests
  * in the same sequence.
  *
- * One baseline behaviour makes that sequence load-bearing rather than merely
+ * One application behaviour makes that sequence load-bearing rather than merely
  * tidy. `request.fail` ASSIGNS BACK onto the long-lived `fail` object when it
  * interpolates a redirect target, so on `POST /users`, `GET /activate-account`
  * and `POST /activate-account` the first rejection's target leaks into every
- * later one. AAP §0.6.6 preserves that. It makes those outcomes order-dependent
- * - and identical on both trees, because the order is fixed here and recorded
- * per outcome.
+ * later one. That is preserved behaviour, and it makes those outcomes
+ * order-dependent - identical on both trees only because the order is fixed
+ * here and recorded per outcome.
  *
  * @param {Array.<Object>} entries Serialized target entries.
  * @returns {Array.<{entry: Object, record: Object, mode: string,
@@ -7127,11 +7300,11 @@ var FILE_DESCRIPTOR_PATH = '/parity/hapi-output-file-descriptor';
  * order in V8 is insertion order for string keys, and the pristine deep copy
  * preserves it, so iterating the copy reproduces the block's own sequence.
  *
- * `language` is excluded from the schemas and kept beside them, exactly as the
- * parser does it: `delete(validation.language)` runs at parse time
- * [lib/util/routeParser.js:217-219] on the same object the handler closure
- * later iterates, and the map is read separately as `language[fieldPath]`
- * [lib/util/routeParser.js:414].
+ * `language` is excluded from the schemas and kept beside them, exactly as
+ * lib/util/routeParser.js does it: `parseRoutes` executes
+ * `delete(validation.language)` on the same object the handler closure later
+ * iterates, and the handler's validation block reads the map separately as
+ * `language[fieldPath]`.
  *
  * @param {Object} loaded The harvest result.
  * @returns {Object} 'METHOD path' -> {sections: [...], language: Object}
@@ -7249,15 +7422,14 @@ function presentedValue(entry, record, section, values) {
 /**
  * Attaches the whole-block flash proof to every applicable case.
  *
- * WHY THE PROOF IS WHOLE-BLOCK. The hand-rolled block does not validate the
- * target's section - it validates EVERY section the route declares
- * [lib/util/routeParser.js:400-423], keyed by `err.path.join('.')`. So driving
- * a `query` target on a route that also declares `payload` produces an extra
- * flash key: the empty string, from the sibling section's `"value" must be of
- * type object` on a null body. Comparing the observed flash against the proof
- * of the TARGET section alone therefore reported a mismatch on every
- * multi-section route - measured, 40 records in the previous artifact - which
- * is a defect in the comparator and not a finding about the application.
+ * WHY THE PROOF IS WHOLE-BLOCK. The hand-rolled block in
+ * lib/util/routeParser.js does not validate the target's section - it validates
+ * EVERY section the route declares, keying each error by `err.path.join('.')`.
+ * So driving a `query` target on a route that also declares `payload` produces
+ * an extra flash key: the empty string, from the sibling section's `"value"
+ * must be of type object` on a null body. A proof of the TARGET section alone
+ * would therefore report a mismatch on every multi-section route, which would
+ * be a defect in the comparator and not a finding about the application.
  *
  * The proof reproduces the block exactly: each section is validated against the
  * value that section actually holds on this drive, the details are folded into
@@ -7450,10 +7622,10 @@ function summarizeFlashProofs(entries) {
 /**
  * Asserts the whole-block proof over every driven rejecting case.
  *
- * A mismatch was a recorded field that failed nothing, which is what made forty
- * of them survive a review. It is now fatal, with the observed flash and the
- * proof printed side by side so the next reader does not have to re-derive
- * either.
+ * A mismatch here is FATAL rather than a recorded field that fails nothing,
+ * because a recorded field that fails nothing is one nobody reads. The observed
+ * flash and the proof are printed side by side, so a reader does not have to
+ * re-derive either.
  *
  * @param {Array.<Object>} entries Serialized target entries.
  * @returns {undefined}
@@ -7860,7 +8032,8 @@ function renderedValidationFields(appRoot, template) {
 
       files.push(name);
 
-      // Client-side reads are not renders. See above.
+      // A reference inside a <script> block is a client-side read of an AJAX
+      // response, not markup the server emits, so it is not a render.
       stripped = source.replace(/<script[\s\S]*?<\/script>/gi, '');
 
       pattern = /flash\.validation\.([A-Za-z0-9_$]+)/g;
@@ -7894,20 +8067,20 @@ function renderedValidationFields(appRoot, template) {
  *
  * Used to STEER the rejecting ladder, not to judge it. The flash-follow oracle
  * below decides applicability from what a case turned out to flash, and two
- * measured consequences of that are worth removing rather than documenting:
+ * consequences of that are worth steering around rather than merely recording:
  *
  *   * A target can declare a `fail.redirect` to a page that renders
  *     `flash.validation.name` while the ladder violates a different leaf, so
- *     the rendered-message evidence R-e asks for is lost to an accident of leaf
- *     ordering. `fields` fixes that.
+ *     the proof that the message reaches the client is lost to an accident of
+ *     leaf ordering. `fields` fixes that.
  *   * A target can declare an INTERPOLATED redirect - `POST /users` declares
  *     `/{formName}` - whose destination is chosen by a field of its own
- *     payload. An earlier build excluded every interpolated redirect outright,
- *     which threw away a reachable render: `formName` is
- *     `Joi.string().required()`, `GET /signup` declares `signup.html`, and that
- *     template renders `flash.validation.email` and `.password`. `plant` fixes
- *     that by solving the redirect template against the literal GET routes and
- *     naming the value the input must carry.
+ *     payload. Excluding every interpolated redirect outright would throw away
+ *     a reachable render: `formName` is `Joi.string().required()`,
+ *     `GET /signup` declares `signup.html`, and that template renders
+ *     `flash.validation.email` and `.password`. `plant` handles it by solving
+ *     the redirect template against the literal GET routes and naming the value
+ *     the input must carry.
  *
  * The destination is resolved by SOLVING the declared template rather than by
  * guessing: each literal GET route path is matched against the template with
@@ -7971,9 +8144,9 @@ function renderedRedirectFields(target, matchers, appRoot, leafKeys) {
   // Every destination the template can name, in the route table's own order.
   // The FIRST whose template renders a `flash.validation` field wins; a
   // candidate that renders nothing is passed over rather than ending the
-  // search, which is what an earlier build got wrong - it took the first
-  // MATCH, `/glowscript-blocks`, whose page renders no flash, and concluded
-  // the target was unsteerable.
+  // search. Stopping at the first MATCH instead would reach
+  // `/glowscript-blocks`, whose page renders no flash, and report a steerable
+  // target as unsteerable.
   solved = solveRedirect(declared, placeholders[0], matchers);
 
   for (i = 0; i < solved.length; i++) {
@@ -7994,11 +8167,14 @@ function renderedRedirectFields(target, matchers, appRoot, leafKeys) {
   return none;
 
   /**
-   * The rendered fields of whatever GET route serves `path`.
+   * The rendered fields of whatever GET route serves a path.
    *
-   * @param {string} path
-   * @param {(Object|null)} plant
-   * @returns {Object}
+   * @param {string} path_ The candidate destination, matched against the
+   *   literal GET route patterns.
+   * @param {(Object|null)} plant The `{key, value}` the input must carry for
+   *   the redirect to resolve to `path_`, or null when the template has no
+   *   placeholder.
+   * @returns {Object} A steering record, or `none` when nothing renders.
    */
   function rendersFor(path_, plant) {
     var route = matchers.filter(function(matcher) {
@@ -8340,13 +8516,12 @@ function buildFlashFollow(entries, loaded, appRoot) {
   });
 
   return {
-    // The figure the assertion is about.
     applicable : applicable,
     rendered   : rendered,
     // Every fail.redirect rejecting drive, applicable or not, with the reason.
     candidates : candidates.length,
-    // EVERY applicable case, not the first ten: the evidence is the set, and a
-    // truncated set is a sample again.
+    // EVERY applicable case rather than a leading few, so the artifact carries
+    // the whole set a reviewer would otherwise have to reconstruct.
     examples   : examples,
     unrendered : unrendered,
     determinations : candidates,
@@ -8546,14 +8721,14 @@ function fixtureSeed() {
 /**
  * Publishes the database address into NODE_CONFIG, BEFORE the harvest.
  *
- * The order matters and is not obvious. npm `config` 0.4.37 resolves and
+ * The order matters and is not obvious. The npm `config` package resolves and
  * FREEZES on first require, and the harvest is the first require - so whatever
  * NODE_CONFIG holds at that moment is the configuration this whole process
  * sees, including the configuration test/parity/seed.js reads when it resolves
  * `aws.buckets.exports` for the export fixtures. That bucket exists only in the
- * overlay: committed configuration declares no `exports` entry at all, which
- * AAP §0.6.7 records as an existing deployment gap. Composing the address and
- * the overlay first is therefore what lets the seeder run at all.
+ * overlay, because committed configuration declares no `exports` entry at all,
+ * so composing the address and the overlay first is what lets the seeder run at
+ * all.
  *
  * It also means the recaptcha-conditional schema at config/api_routes.js is
  * derived from the SAME configuration the server under test received, so the
@@ -8585,15 +8760,15 @@ async function publishDatabaseAddress(options) {
     // An address the caller owns. The layer is composed here so this process's
     // `config` freezes against the same values the child will receive.
     //
-    // SCR-F49: the override is passed. test/parity/server.js's parseMongoUri
-    // takes `(raw, override)` and the override WINS over the URI's path, but
-    // this call used to supply only `raw` - so with `--mongo-uri .../a
-    // --database b` the database name forked three ways: this process's config
-    // and the seeder got `a` from the URI path, while the child got `b`,
-    // because startInfrastructure passes `--database` straight through to
-    // `server.start`. The application then served an empty database while the
-    // seeder filled a different one, and every pre-handler lookup would have
-    // recorded a 404 that reads exactly like application behaviour.
+    // THE OVERRIDE MUST BE PASSED. test/parity/server.js's parseMongoUri takes
+    // `(raw, override)` and the override WINS over the URI's path, so supplying
+    // only `raw` forks the database name three ways under `--mongo-uri .../a
+    // --database b`: this process's config and the seeder take `a` from the URI
+    // path while the child takes `b`, because startInfrastructure passes
+    // `--database` straight through to `server.start`. The application then
+    // serves an empty database while the seeder fills a different one, and
+    // every pre-handler lookup records a 404 that reads exactly like
+    // application behaviour.
     address = lazy.server.parseMongoUri(options.mongoUri, options.database);
 
     // The URI the SEEDER connects with, rebuilt from the resolved address
@@ -8655,11 +8830,11 @@ async function publishDatabaseAddress(options) {
 /**
  * Asserts that the application actually connected to the agreed database.
  *
- * The third leg of SCR-F49, and the one that cannot be checked before the child
+ * The leg of the database agreement that cannot be checked before the child
  * exists. `assertDatabaseAlignment` reconciles three values THIS process
  * computed; this reconciles them with the two the child reports - the address
- * `test/parity/server.js:resolveMongo` settled on, and the `db.mongo` block of
- * the configuration the application booted with. Those are what serve the
+ * test/parity/server.js's `resolveMongo` settled on, and the `db.mongo` block
+ * of the configuration the application booted with. Those are what serve the
  * requests, so an agreement that excluded them would be an agreement about the
  * wrong thing.
  *
@@ -8796,11 +8971,14 @@ function shellArgument(value) {
  * Only the database path is replaced. A caller's `--mongo-uri` may carry
  * credentials and driver options, and dropping them while "normalizing" the URI
  * would break the very address the caller asked for; equally, keeping the URI's
- * own database when `--database` overrode it is what SCR-F49 describes. So the
- * URI is rewritten rather than rebuilt.
+ * own database when `--database` overrode it is the fork
+ * assertDatabaseAlignment exists to catch. So the URI is rewritten rather than
+ * rebuilt.
  *
- * @param {string} raw The caller's URI.
- * @param {{database: string}} address The resolved address.
+ * @param {string} raw The caller's `--mongo-uri`, preserved except for its
+ *   database path.
+ * @param {{database: string}} address The resolved address, whose `database`
+ *   replaces that path.
  * @returns {string}
  * @throws {ToolError} If `raw` is not a URL.
  */
@@ -8823,8 +9001,8 @@ function resolvedDatabaseUri(raw, address) {
 /**
  * Asserts that all three consumers of the database name agree.
  *
- * SCR-F49's actual hazard is not that the name is wrong, it is that it can be
- * wrong in only one of three places and produce no error anywhere. The three:
+ * The hazard is not that the name is wrong, it is that it can be wrong in only
+ * one of three places and produce no error anywhere. The three:
  *
  *  1. THIS PROCESS's composed NODE_CONFIG. npm `config` freezes on first
  *     require, the harvest is that require, and the child inherits this value -
@@ -8836,12 +9014,13 @@ function resolvedDatabaseUri(raw, address) {
  *     pre-handler looks up actually get written.
  *
  * A divergence between 1 and 3 gives an application serving an empty database:
- * every seeded-id lookup 404s, roughly two thirds of the matrix never reaches
- * the validation block, and nothing reports a fault. So it is asserted here,
- * loudly, naming all three - which is cheap, and is the only way this class of
- * error is distinguishable from real application behaviour.
+ * every seeded-id lookup 404s, most of the matrix never reaches the validation
+ * block, and nothing reports a fault. So it is asserted here, naming all three,
+ * which is the only way this class of error is distinguishable from real
+ * application behaviour.
  *
- * @param {{host: string, port: number, database: string}} address
+ * @param {{host: string, port: number, database: string}} address The address
+ *   this process resolved, and the one the other two are checked against.
  * @param {string} uri The seeder's connection URI.
  * @param {string} nodeConfig The composed NODE_CONFIG, serialized.
  * @param {string} source How the address was obtained, for the message.
@@ -8937,10 +9116,10 @@ async function startInfrastructure(options, database) {
   var startOptions = {
     appRoot : options.appRoot,
     overlay : options.overlay || lazy.mongo.DEFAULT_OVERLAY,
-    // The application child is launched under the flags AAP §0.9.3 measures
-    // this gate with, so that the stderr this run judges can actually carry a
-    // pending deprecation. test/parity/server.js already takes the option; it
-    // is not modified for this.
+    // The application child is launched under the same flags the warning policy
+    // requires of this process, so that the stderr this run judges can actually
+    // carry a pending deprecation. test/parity/server.js already takes the
+    // option; it is not modified for this.
     nodeFlags : warningPolicy.REQUIRED_FLAGS.slice()
   };
   var context;
@@ -8956,8 +9135,8 @@ async function startInfrastructure(options, database) {
     // resolved the database name once, applying `--database` over the URI's
     // path; handing the child the rewritten URI means it cannot re-derive a
     // different name from the same inputs even if it read the path and ignored
-    // the override. Both are still passed, and they now agree by construction
-    // rather than by luck (SCR-F49).
+    // the override. Both are still passed, and they agree by construction
+    // rather than by luck.
     startOptions.mongoUri = database.uri;
   }
 
@@ -8976,12 +9155,12 @@ async function startInfrastructure(options, database) {
 
   lazy.mongoose.set('strictQuery', true);
 
-  // The ALIGNED URI, with no fallback. `lazy.mongo.uri()` used to stand behind
-  // it, and that fallback was the last way the seeder could reach a database
-  // nothing had verified: it re-derives an address from the provisioner's own
-  // state rather than from the one assertDatabaseAlignment agreed, so on the
-  // caller-supplied branch it could have named a different database entirely.
-  // A missing URI here is a defect in this tool, and it is reported as one.
+  // The ALIGNED URI, with no fallback. `lazy.mongo.uri()` behind it would be a
+  // way for the seeder to reach a database nothing had verified: it re-derives
+  // an address from the provisioner's own state rather than from the one
+  // assertDatabaseAlignment agreed, so on the caller-supplied branch it could
+  // name a different database entirely. A missing URI here is a defect in this
+  // tool, and it is reported as one.
   if (!database.uri) {
     throw new ToolError('publishDatabaseAddress returned no connection URI, ' +
       'so the seeder has no verified database to write to. This is a defect ' +
@@ -9052,8 +9231,8 @@ async function startInfrastructure(options, database) {
  * Requiring the module is what registers the schema on this process's mongoose;
  * the module itself exports the application's public wrapper, which has no
  * collection handle, so the private model is taken from the registry by the
- * name the module registered it under. Both facts are the model helper's
- * [lib/models/model.js:199-206], not this file's assumptions.
+ * name the module registered it under. Both facts are properties of the shared
+ * model helper in lib/models/model.js rather than assumptions made here.
  *
  * @returns {Object} A mongoose model.
  * @throws {ToolError} If the model cannot be loaded or is not registered.
@@ -9251,8 +9430,8 @@ var ARTIFACT_KEY_ORDER = [
   'restorePolicy',
   'knownValues',
   'preconditions',
-  // SCR-F49. The agreed database address and the consumers it was agreed
-  // across, in the ARTIFACT as well as the sidecar: a reviewer opening the
+  // The agreed database address and the consumers it was agreed across, in the
+  // ARTIFACT as well as the sidecar: a reviewer opening the
   // matrix can see that the application served the database the fixtures were
   // seeded into, which is the precondition for every pre-handler lookup in it.
   'databaseAlignment',
@@ -9267,11 +9446,10 @@ var ARTIFACT_KEY_ORDER = [
   'timeouts',
   'flashFollow',
   // Every process warning captured while the matrix was built, attributed to
-  // this tool or to a dependency. A NEW top-level key is comparison-safe:
-  // `compareMatrices` compares explicit field whitelists and iterates only the
-  // `enumeration` and `deepCopyProof` blocks, so nothing here can make a
-  // matrix captured by an earlier revision of this tool present as a
-  // difference.
+  // this tool or to a dependency. A top-level key added here is
+  // comparison-safe: `compareMatrices` compares explicit field whitelists and
+  // iterates only the `enumeration` and `deepCopyProof` blocks, so a recording
+  // that predates the key cannot present as a difference.
   'warnings',
   // The outcome-proof mismatch audit: every recorded `flashMatchesProof:
   // false`, the rule that explains it, and the rules that explained nothing.
@@ -9284,8 +9462,8 @@ var ARTIFACT_KEY_ORDER = [
   'crossCheck',
   // The completed target-side comparison, embedded into a BASELINE recording by
   // `--record-into` after the replay it describes has run. Null in a freshly
-  // captured matrix, which is the honest state of a capture that has not been
-  // compared with anything yet. Excluded from `payloadDigest` - see
+  // captured matrix, because a capture has not been compared with anything
+  // yet. Excluded from `payloadDigest` - see
   // artifactDigests - so embedding it cannot invalidate the digest the
   // comparison report links the baseline by.
   'targetComparison',
@@ -9358,8 +9536,8 @@ var DRIVE_DEPENDENT_FIELDS = {
 // field present on a serialized record must be compared, or be a join field, or
 // be compared element-wise, or appear here with a reason. A field added to the
 // artifact later therefore cannot silently stop being compared - the run fails
-// until it is either compared or explicitly excused here. That is what CMP-F39
-// asks for, and a paragraph of prose could not deliver it.
+// until it is either compared or explicitly excused here, which is a guarantee
+// a paragraph of prose could not deliver.
 var NOT_COMPARED = {
   target : {},
   'case' : {
@@ -9418,13 +9596,13 @@ var NOT_COMPARED_NOTE = notComparedNote();
 /**
  * Asserts that no recorded field is silently uncompared.
  *
- * CMP-F39's requirement, mechanized. The three COMPARED_* lists are the whole
- * of what `--compare` checks, and they are hand-maintained - so a field added
- * to a record without being added to a list is recorded, shipped as evidence,
- * and never compared, with nothing anywhere saying so. That already happened
- * once: `seededFields` - which records WHICH leaves carry a seeded fixture id,
- * and so is part of the generated input - was present on all 102 accepting
- * cases, absent from COMPARED_CASE_FIELDS and absent from the prose note.
+ * The three COMPARED_* lists are the whole of what `--compare` checks, and they
+ * are hand-maintained - so a field added to a record without being added to a
+ * list is recorded, shipped as evidence, and never compared, with nothing
+ * anywhere saying so. `seededFields` is the shape of that hazard: it records
+ * WHICH leaves carry a seeded fixture id, which makes it part of the generated
+ * input, and it sits on every accepting case where a reader would assume the
+ * comparison covers it.
  *
  * So the coverage is checked rather than described. Every field present on any
  * serialized record must be in exactly one of four places: the level's
@@ -9539,11 +9717,10 @@ function assertFieldCoverage(entries, driven) {
 
 // The artifact's schema version, and the shape it declares.
 //
-// WHY THE SHAPE IS IN THE FILE IT DESCRIBES. There is no schema document
-// anywhere in this repository - `grep -rn "validateKey\|joiVersion"` finds
-// nothing outside this file and the artifact it writes - so a reviewer's only
-// description of the artifact is the artifact. Rather than referring to a
-// document that does not exist, every artifact carries its own: the top-level
+// WHY THE SHAPE IS IN THE FILE IT DESCRIBES. This repository holds no schema
+// document for these artifacts, so a reviewer's only description of the
+// artifact is the artifact. Rather than referring to a document that does not
+// exist, every artifact carries its own: the top-level
 // keys, the per-target and per-case fields that are part of the contract, and
 // the two contracts a reader cannot infer from one record - that `cases` is an
 // ORDERED three-element array, one per kind, and which fields `--compare`
@@ -9560,13 +9737,25 @@ var ARTIFACT_SCHEMA_VERSION = 2;
 var ARTIFACT_SCHEMA = {
   version : ARTIFACT_SCHEMA_VERSION,
   describes : 'test/parity/joi-matrix.js validation accept/reject parity matrix',
+  // The SHARED contract's roles, from test/parity/manifest.js. A role states
+  // which TREE was measured, never which flag ran, so the mode is carried
+  // separately and the two together say what an artifact is: a `baseline`
+  // artifact in `capture` mode is the recording this gate compares against,
+  // and a `baseline` artifact in `schema-only` mode cannot be - it measured
+  // the right tree and recorded no HTTP outcome. assertComparable checks both.
   roles : {
-    'baseline-capture' : 'A recording. `--compare` replays the inputs it holds ' +
-      'against another tree and diffs the result against it.',
-    'target-replay'    : 'The matrix a `--compare` run drove, having replaced ' +
-      'its generated inputs with the ones the recording holds.',
-    'schema-only'      : 'Enumeration, case construction and the local schema ' +
-      'proof, with no HTTP outcome. NOT the full gate.'
+    baseline   : 'Measured on a worktree at the base commit (AAP §0.10.3). In ' +
+      '`capture` mode this is the recording `--compare` replays the inputs of ' +
+      'against another tree, diffing the result against it.',
+    target     : 'Measured on the migrated tree. In `compare` mode this is the ' +
+      'matrix a live replay drove, having replaced its generated inputs with ' +
+      'the ones the recording holds.',
+    analysis   : 'Derived by reading a tree, with no application executed - ' +
+      'which is what `--schema-only` produces: enumeration, case ' +
+      'construction and the local schema proof, with no HTTP outcome. NOT a ' +
+      'side of this gate.',
+    unreviewed : 'Measured on a tree that is neither, through the explicit ' +
+      '--allow-nonbaseline escape. Every gate declines it.'
   },
   topLevel : {
     generator        : 'string - the tool that wrote it',
@@ -9599,7 +9788,24 @@ var ARTIFACT_SCHEMA = {
     flashFollow      : 'object - rendered-validation evidence and its applicable set',
     crossCheck       : 'object|null - replay/divergence record of a --compare run',
     targetComparison : 'object|null - the completed target-side comparison',
-    targets          : 'object[] - one per validation target, keyed `<METHOD> <path> <key>`'
+    targets          : 'object[] - one per validation target, keyed `<METHOD> <path> <key>`',
+    provenance       : 'object - the SHARED provenance block from ' +
+      'test/parity/manifest.js, embedded by provenance.attach and hash-linked ' +
+      'to everything above it by its own `payloadDigest`, which is taken over ' +
+      'this artifact WITHOUT this key. It is what makes the artifact ' +
+      'self-authenticating: schema version, the generator identified by its ' +
+      'git blob with the commit that holds it, the analysed tree, the ' +
+      'delivered head, the base commit, the runtime, and this tool\'s own ' +
+      'facts under `detail` - the mode, the joi/hapi/mongoose versions ' +
+      'resolved in the tree under test, whether reCAPTCHA was configured, ' +
+      'whether the server ran secure, the seed selection, a digest of the ' +
+      'composed configuration, and - once --record-into has run - ' +
+      '`comparisonEmbedded`, naming the report and target matrix the ' +
+      'embedded comparison came from and which keys it wrote. Written last, ' +
+      'and outside the compared region by construction: compareMatrices ' +
+      'diffs the named summary blocks and the per-target records, so two ' +
+      'sides that necessarily describe different trees here cannot produce a ' +
+      'difference out of saying so'
   },
   target : {
     key           : 'string - `<METHOD> <path> <validateKey>`, unique',
@@ -9634,41 +9840,55 @@ var ARTIFACT_SCHEMA = {
     http          : 'object - one outcome per Accept mode: ' + MODES.join(', ')
   },
   sidecar : {
+    what : 'A RUN OUTPUT, written beside every artifact this tool produces ' +
+      'and NOT part of the delivery. The artifact carries the provenance ' +
+      'block embedded under its own `provenance` key, which is the committed ' +
+      'record and what authenticates it; a reader needs no companion file, ' +
+      'and readRecording treats an absent sidecar as the normal case. What ' +
+      'the sidecar adds is a digest of the exact bytes written plus the ' +
+      'facts that may not be committed - see `warningGate` and `run`.',
     path : '<this artifact>.provenance.json - always the SIBLING of the ' +
       'artifact it describes, including the target matrix a --compare run ' +
       'writes to <report>.target.json, whose sidecar is ' +
       '<report>.target.json.provenance.json and not <report>.provenance.json',
-    role : 'string - the same value as this artifact\'s `role`; a mismatch ' +
-      'between the two is refused, so a sidecar moved beside the wrong matrix ' +
-      'is detectable',
+    artifactDigest : 'object - the contract\'s digest record over the exact ' +
+      'bytes written, from provenance.sidecar',
     'artifact.digest' : 'string - sha256 over the exact bytes of the artifact ' +
       'as sealed',
     'artifact.payloadDigest' : 'string - sha256 over the artifact ' +
-      're-serialized with ' + RECORD_INTO_KEYS.join(' and ') + ' set to null. ' +
-      'Stable across --record-into, which is what a comparison report links a ' +
-      'baseline by.',
+      're-serialized with ' + RECORD_INTO_KEYS.join(' and ') + ' set to null ' +
+      'and its `provenance` block removed. Stable across --record-into AND ' +
+      'across the re-attachment of the block afterwards, which is what lets a ' +
+      'comparison report link a baseline by it.',
     'artifact.bytes' : 'number - byte length of the sealed artifact',
-    'tool.digest' : 'string - sha256 over the generator file AS IT RAN, so ' +
-      'the recording can be tied to the tool bytes that produced it rather ' +
-      'than only to a commit',
-    'tool.dirty' : 'boolean|null - whether the generator differed from ' +
-      '`tool.head` when it ran. A `true` here means the commit named does ' +
-      'NOT contain the tool that produced this artifact; null means git ' +
-      'could not answer',
-    comparisonEmbedded : 'object|null - present when --record-into has written ' +
-      'a completed comparison into the artifact after sealing, naming the ' +
-      'report and target matrix it came from'
+    warningGate : 'object|null - the zero-warning gate\'s verdict for this ' +
+      'run. Here and never in the artifact: it names the absolute paths of ' +
+      'the stderr files it read, and the artifact is diffed field-for-field ' +
+      'against a recording whose own install legitimately emits notices this ' +
+      'tree suppresses',
+    run : 'object - this run\'s own addressing: the tree it read, the ' +
+      'server\'s origin, port, pid, run directory and database, and the ' +
+      'composed NODE_CONFIG less its secret-labelled values. Every one of ' +
+      'them identifies the RUN rather than the experiment, which is why the ' +
+      'block records a digest of the configuration and `server.secure` alone'
   },
   contracts : [
-    'A recording cannot be compared without its sidecar: --compare parses it, ' +
-      'checks the generator and the role, and requires the artifact to digest ' +
-      'to the EXACT bytes `artifact.digest` sealed - with no exception for a ' +
-      'recording --record-into has since embedded a comparison into, because ' +
-      '--record-into re-seals the sidecar as it writes. `payloadDigest` links ' +
-      'a report to the baseline it compared; it is never accepted in place of ' +
-      'the exact digest, since the blocks it excludes are the blocks that ' +
-      'assert a comparison was performed. It also refuses a ' +
-      'self-comparison outright, and refuses two recordings from one ' +
+    'A recording is compared only if it AUTHENTICATES ITSELF. --compare runs ' +
+      'the shared contract\'s validator over the block embedded in the ' +
+      'artifact: the schema version, the artifact the block claims to ' +
+      'describe, the role, the payload digest recomputed over the artifact ' +
+      'without its block, the generator blob and commit resolved as objects ' +
+      'in THIS repository, that the delivered generator is still the one that ' +
+      'produced it, and - of anything claiming the baseline role - that the ' +
+      'tree it measured was the base commit and was clean. A recording whose ' +
+      'outcomes were edited after capture fails the payload digest, and one ' +
+      'whose block was copied in from another run fails it too. A sidecar is ' +
+      'a run output and is not required; where one is present its digest over ' +
+      'the exact bytes is reconciled, because a pair that disagrees cannot be ' +
+      'read together. The tool\'s own `payloadDigest` links a report to the ' +
+      'baseline it compared and is never an integrity seal. --compare also ' +
+      'refuses a self-comparison outright, refuses a baseline side that was ' +
+      'not produced in `capture` mode, and refuses two recordings from one ' +
       'application HEAD or one joi major unless --allow-same-tree says so and ' +
       'the report records that it did. Without those checks a zero-difference ' +
       'report could be produced by comparing one file with itself.',
@@ -9704,29 +9924,6 @@ var ARTIFACT_SCHEMA = {
 };
 
 /**
- * The role an artifact plays in the gate, from the mode that produced it.
- *
- * The role is about the ARTIFACT, not about the tree: a capture is the
- * recording a later comparison replays, whichever tree it was taken from. Which
- * tree that was is in the sidecar's `app.head` and in `joiVersion`, and those
- * are what the same-tree refusal in assertComparable reads.
- *
- * @param {string} mode
- * @returns {string}
- */
-function roleFor(mode) {
-  if (mode === 'compare') {
-    return ROLE_TARGET;
-  }
-
-  if (mode === 'schema-only') {
-    return ROLE_SCHEMA_ONLY;
-  }
-
-  return ROLE_BASELINE;
-}
-
-/**
  * What the artifact proves and the commands that reproduce it.
  *
  * Written INTO the artifact rather than into a document, because the artifact
@@ -9749,22 +9946,34 @@ function artifactNotes(options, mode) {
   // carry `user:password@` and this text is committed inside the artifact
   // (CWE-532). A reader supplies their own credential; everything else about
   // the address is in `databaseAlignment`.
+  // Every PATH is a symbolic label rather than the absolute one this run was
+  // given (RULE-F33). The delivered artifact recorded
+  // `--app /tmp/blitzy/scratch/<uuid>/w-023/baseline-2f8712a --out
+  // /tmp/blitzy/trinket-oss/<clone>/test/parity/joi-baseline.json`, which
+  // names one agent's clone: a reader outside it cannot run that command and
+  // learns only where somebody else's worktree sat. `tool:<relative>` is
+  // runnable from the repository root, and `ephemeral:<basename>` says
+  // honestly that the rest was scratch. The tree the run MEASURED is not lost
+  // by this - it is in the provenance block, by commit.
+  var label = function(value) {
+    return provenance.pathLabel(value, { toolRoot: TOOL_ROOT });
+  };
   var flags = [
-    '--app ' + shellArgument(options.appRoot),
+    '--app ' + shellArgument(label(options.appRoot)),
     options.port === null ? null : '--port ' + shellArgument(options.port),
     options.database === null
       ? null
       : '--database ' + shellArgument(options.database),
     options.overlay === null
       ? null
-      : '--overlay ' + shellArgument(options.overlay),
+      : '--overlay ' + shellArgument(label(options.overlay)),
     options.mongoUri === null
       ? null
       : '--mongo-uri ' + shellArgument(redactMongoUri(options.mongoUri)),
     options.allowSameTree ? '--allow-same-tree' : null,
     options.recordInto === null
       ? null
-      : '--record-into ' + shellArgument(options.recordInto),
+      : '--record-into ' + shellArgument(label(options.recordInto)),
     options.overwrite ? '--overwrite' : null
   ].filter(function(flag) {
     return flag !== null;
@@ -9784,12 +9993,20 @@ function artifactNotes(options, mode) {
     reproduce : {
       thisRun : 'node test/parity/joi-matrix.js ' +
         (mode === 'compare'
-          ? '--compare ' + shellArgument(options.compare[0] ||
+          ? '--compare ' + shellArgument(label(options.compare[0]) ||
             '<baseline.json>')
           : '--' + mode) +
         ' ' + flags + ' --out ' +
-        shellArgument(options.out || '<out.json>') +
+        shellArgument(label(options.out) || '<out.json>') +
         ' >/dev/null 2>/dev/null',
+      // What the labels above mean, because a command a reader cannot resolve
+      // is not a reproduction instruction.
+      paths : 'Every path in `thisRun` is a symbolic label: `tool:<relative>` ' +
+        'is relative to the repository root and `ephemeral:<basename>` was a ' +
+        'scratch location whose directory is this run\'s own machine state - ' +
+        'substitute your own. The tree that was MEASURED is named by commit ' +
+        'in `provenance.analysedTree`, which is the reproducible form of it; ' +
+        '`baselineCapture` below is how that tree is created.',
       // Stated because a redacted command is not a runnable one, and a reader
       // who is not told would paste the marker as a password.
       credentials : 'Any credential a `--mongo-uri` carried is REDACTED as "' +
@@ -9807,9 +10024,10 @@ function artifactNotes(options, mode) {
         '<report.json>.target.json.provenance.json',
       recordComparison : 'add `--record-into <baseline.json> --overwrite` to ' +
         'the comparison above to write the completed `targetComparison` block ' +
-        'and the replay `crossCheck` back into the baseline recording and ' +
-        're-seal its sidecar. Refused unless the report\'s baseline payload ' +
-        'digest equals that recording\'s.',
+        'and the replay `crossCheck` back into the baseline recording, ' +
+        're-attach its provenance block over the new bytes and re-seal. ' +
+        'Refused unless the report\'s baseline payload digest equals that ' +
+        'recording\'s.',
       offlineRecompare : 'node test/parity/joi-matrix.js --compare <a.json> ' +
         '<b.json> --out <report.json> --allow-same-tree   # two recordings, ' +
         'no application. --allow-same-tree is required because both come from ' +
@@ -9820,23 +10038,29 @@ function artifactNotes(options, mode) {
         'every controller, which prints the in-memory-queue line on stdout, ' +
         'and a baseline tree prints the AWS SDK v2 notice on stderr.'
     },
-    digests : 'The sidecar beside this file records sha256 over its exact ' +
-      'bytes (`artifact.digest`) and, separately, sha256 over the same ' +
-      'artifact re-serialized with ' +
+    digests : 'TWO digests cover this file, and they answer different ' +
+      'questions. `provenance.payloadDigest`, embedded above, is the shared ' +
+      'contract\'s seal: sha256 over the canonical form of this artifact ' +
+      'WITHOUT its `provenance` key, so an edited outcome or a block copied ' +
+      'in from another run fails it, and `--compare` recomputes it before ' +
+      'consuming this file. The run-output sidecar, when one is beside it, ' +
+      'additionally records sha256 over the exact bytes (`artifact.digest`) ' +
+      'and sha256 over the artifact re-serialized with ' +
       RECORD_INTO_KEYS.map(function(key) {
         return '`' + key + '`';
-      }).join(' and ') + ' set to null (`artifact.payloadDigest`). A ' +
-      'comparison report links a baseline by payloadDigest precisely so that ' +
-      'embedding the comparison result back into the recording afterwards - ' +
-      'which writes exactly those keys - cannot invalidate the link, and ' +
-      '--record-into asserts that invariant before it writes. Recompute the ' +
-      'payload digest with: node -e "const m=require(\'./<artifact>.json\');' +
+      }).join(' and ') + ' set to null AND its `provenance` block removed ' +
+      '(`artifact.payloadDigest`). A comparison report links a baseline by ' +
+      'that second one precisely so that embedding the comparison result back ' +
+      'into the recording afterwards - which writes exactly those keys and ' +
+      'then re-attaches the block - cannot invalidate the link, and ' +
+      '--record-into asserts that invariant before it writes. Recompute it ' +
+      'with: node -e "const m=require(\'./<artifact>.json\');' +
       RECORD_INTO_KEYS.map(function(key) {
         return 'm.' + key + '=null;';
-      }).join('') + 'console.log(require(\'crypto\').createHash(\'sha256\')' +
+      }).join('') + 'delete m.provenance;' +
+      'console.log(require(\'crypto\').createHash(\'sha256\')' +
       '.update(JSON.stringify(m,null,2)+String.fromCharCode(10))' +
-      '.digest(\'hex\'))". The whole-file digest is the same command without ' +
-      'the nulling, over the file\'s own bytes: sha256sum <artifact>.json.'
+      '.digest(\'hex\'))". The whole-file digest is sha256sum <artifact>.json.'
   };
 }
 
@@ -10020,13 +10244,25 @@ function redactSecrets(serialized) {
 /**
  * Builds this run's provenance record, through the shared contract.
  *
- * WHAT THIS FUNCTION USED TO DO, AND WHY IT DOES NOT ANY MORE. It recorded the
- * tool's own worktree ROOT and the analysed tree's ROOT as absolute paths, a
- * `capturedAt` wall clock, and - when a server ran - its PID, its port, its
- * working directory, its run directory and its database name. Four independent
- * reviews condemned exactly that record: it named a SIBLING CLONE's worktree
- * and a tool commit whose tree does not contain this generator, so it could
- * neither be reproduced nor authenticate the artifact it accompanied.
+ * THE RECORD IS THE CONTRACT'S, NOT THIS FILE'S. Every field comes from
+ * `provenance.build` in test/parity/manifest.js, which composes the schema
+ * version, the generator identity, the analysed tree, the delivered head, the
+ * base commit and the runtime, and then runs the portability guard over the
+ * whole block - so a value that cannot be reproduced from the repository makes
+ * the run FAIL rather than reaching an artifact. Everything this tool wants to
+ * add rides in `detail`, which the same guard covers.
+ *
+ * WHAT THIS FUNCTION USED TO DO, AND WHY IT DOES NOT ANY MORE. It hand-built a
+ * record of its own: the tool's worktree ROOT and the analysed tree's ROOT as
+ * absolute paths, a `capturedAt` wall clock, and - when a server ran - its PID,
+ * its port, its working directory, its run directory and its database name.
+ * Four independent reviews condemned exactly that record: it named a SIBLING
+ * CLONE's worktree and a tool commit whose tree does not contain this
+ * generator, so it could neither be reproduced nor authenticate the artifact it
+ * accompanied. A fifth then found the deeper fault - this doc block already
+ * described the record below while the code went on emitting the one above, and
+ * a contract that only the comment obeys is not a contract. The guard is what
+ * closes that: it is executable, so the two cannot diverge again.
  *
  * Every one of those facts is now either dropped or replaced by something a
  * reviewer can re-derive from the repository:
@@ -10037,38 +10273,38 @@ function redactSecrets(serialized) {
  *                             `delivered`, the tool worktree's HEAD with no
  *                             path attached.
  *   app root, app head     -> `analysedTree`, a HEAD, a subject and
- *                             `isBaselineCommit`, with no path: the review
- *                             found three different absolute paths naming ONE
- *                             commit, which is the whole argument for
- *                             recording the commit.
- *   capturedAt             -> nothing. A wall clock is what makes two runs over
- *                             one tree differ, and the contract's portability
- *                             guard throws on one.
+ *                             `isBaselineCommit`, with no path. Several paths
+ *                             can name one commit, and the commit is the fact.
+ *   capturedAt             -> nothing. The contract's portability guard throws
+ *                             on a wall clock.
  *   server pid/port/       -> `server.secure` alone, which is the only
- *   appRoot/runDir/          semantically meaningful bit: AAP §0.6.1 runs the
- *   database                 cookie contract twice, and which pass produced an
- *                             artifact is a property of the EXPERIMENT. The
- *                             rest is this run's process table.
+ *   appRoot/runDir/          semantically meaningful bit, because the cookie
+ *   database                 contract is exercised in both secure and
+ *                             non-secure passes and which pass produced an
+ *                             artifact is a property of the EXPERIMENT.
  *   NODE_CONFIG verbatim   -> a digest of the composed string plus its sorted
  *                             TOP-LEVEL KEYS. Even redacted, the composed
  *                             configuration carries the port and the database
- *                             name, so the artifact recorded run-local state
- *                             through the back door. The reproduction source is
- *                             the committed overlay, which the `redaction`
- *                             prose names.
+ *                             name, so recording it verbatim readmits
+ *                             run-local state through the back door. The
+ *                             reproduction source is the committed overlay,
+ *                             which the `redaction` prose names.
  *
- * What survives is what explains the artifact: the mode, the joi / hapi
- * versions resolved INSIDE the tree under test - the single most important fact
- * about a capture, since 17.13.3 on one side and 18.2.5 on the other are the
- * two sides of this gate - the mongoose the driver seeded with,
- * `recaptchaConfigured`, the seed selection, and the normalization and
- * redaction prose.
+ * What survives, in `detail`, is what explains the artifact: the mode, the joi
+ * / hapi versions resolved INSIDE the tree under test - the single most
+ * important fact about a capture, since 17.13.3 on one side and 18.2.5 on the
+ * other are the two sides of this gate - the mongoose the driver seeded with,
+ * `recaptchaConfigured`, the seed selection, whether the server ran secure, and
+ * the normalization and redaction prose.
  *
  * `recaptchaConfigured` is recorded because it CHANGES THE TARGET SET: with
  * `app.recaptcha.secretkey` set, `'g-recaptcha-response'` becomes
  * `Joi.string().required()` instead of `.allow('').optional()`, so a capture
  * taken with a secret and one taken without are not comparable. The overlay
  * leaves it unset on both sides and this is the evidence.
+ *
+ * The run-local facts a debugger still wants are not thrown away - they move to
+ * `buildRunOutput`, whose record goes in the sidecar. See sealRecording.
  *
  * @param {Object} input
  * @param {string} input.mode The mode that produced the artifact.
@@ -10081,7 +10317,7 @@ function redactSecrets(serialized) {
  * @param {boolean} input.recaptchaConfigured
  * @param {(Object|null)} input.server The start result, or null.
  * @param {(Object|null)} input.seedSummary
- * @returns {Object} A schema-2 provenance block.
+ * @returns {Object} A schema-2 provenance block, portability-checked.
  * @throws {ToolError} If a value in the block is not reproducible, or the role
  *   is unknown. Both are operational failures: an artifact whose provenance
  *   cannot be trusted must not be written.
@@ -10089,104 +10325,191 @@ function redactSecrets(serialized) {
 function buildProvenance(input) {
   var redacted = redactSecrets(input.environment.nodeConfig);
   var composed = parseJsonOrNull(input.environment.nodeConfig);
+  var alignment = input.databaseAlignment === undefined ||
+    input.databaseAlignment === null
+    ? null
+    : input.databaseAlignment;
+
+  try {
+    return provenance.build({
+      artifact      : input.artifact,
+      role          : input.role,
+      // `__filename`, so the block identifies the generator by the git blob of
+      // the bytes that actually ran rather than by a commit somebody hopes
+      // contains them.
+      generatorFile : __filename,
+      toolRoot      : TOOL_ROOT,
+      // USED to derive `analysedTree`, never recorded: the contract records the
+      // commit, and the path is where that commit happened to sit on one host.
+      analysedRoot  : input.appRoot,
+      detail        : {
+        mode            : input.mode,
+        artifactSchema  : ARTIFACT_SCHEMA_VERSION,
+        // The joi behind every verdict in the artifact, resolved INSIDE the
+        // tree under test. The single most important fact about a capture:
+        // 17.13.3 on one side and 18.2.5 on the other ARE the two sides of
+        // this gate, and assertComparable refuses a comparison that cannot
+        // show they differ.
+        versions        : {
+          joi      : packageVersion(input.appRoot, 'joi'),
+          hapi     : packageVersion(input.appRoot, '@hapi/hapi'),
+          mongoose : packageVersion(TOOL_ROOT, 'mongoose')
+        },
+        // Recorded because it CHANGES THE TARGET SET: with
+        // `app.recaptcha.secretkey` set, `'g-recaptcha-response'` becomes
+        // `Joi.string().required()` instead of `.allow('').optional()`, so a
+        // capture taken with a secret and one taken without are not
+        // comparable. The overlay leaves it unset on both sides and this is
+        // the evidence.
+        recaptchaConfigured : input.recaptchaConfigured,
+        // The only semantically meaningful bit of the server that ran: AAP
+        // §0.6.1 runs the cookie contract twice, and which pass produced an
+        // artifact is a property of the EXPERIMENT. Its pid, its port, its
+        // working directory, its run directory and its database name are this
+        // run's process table and are deliberately absent.
+        server          : input.server === null
+          ? null
+          : { secure: !!input.server.secure },
+        // That one database address was agreed, and WHICH consumers were
+        // checked - without the address itself, which is generated per run.
+        // Null in --schema-only, which provisions nothing.
+        databaseAlignment : alignment === null ? null : {
+          source      : alignment.source,
+          agreedAcross: alignment.agreedAcross
+        },
+        seed            : input.seedSummary === null ? null : input.seedSummary,
+        // The composed configuration, as a fingerprint rather than as itself.
+        // Even redacted, the composed NODE_CONFIG carries the port and the
+        // ephemeral database name, so recording the string put run-local state
+        // into a committed artifact through the back door.
+        // `configurationDigest` redacts every secret-labelled value and drops
+        // every address-labelled one BEFORE hashing, so the digest identifies
+        // the part of the configuration that describes the tree and cannot
+        // confirm a guess at a secret. The reproduction source is the
+        // committed overlay, which the `redaction` prose names.
+        configuration   : {
+          NODE_ENV        : input.environment.nodeEnv,
+          nodeConfigKeys  : composed === null
+            ? []
+            : Object.keys(composed).sort(),
+          nodeConfigDigest: provenance.configurationDigest(
+            composed === null ? {} : composed),
+          nodeConfigDir   : provenance.pathLabel(
+            input.environment.nodeConfigDir,
+            { toolRoot: TOOL_ROOT, analysedRoot: input.appRoot }),
+          redactedKeys    : redacted.redactedKeys
+        },
+        // The one normalization this gate applies, named in the provenance so
+        // it travels with the artifact.
+        normalization   : 'Only the ORIGIN of an absolute Location header is ' +
+          'removed, into locationRelative; the verbatim header is recorded ' +
+          'beside it. Nothing else is normalized.',
+        // Declared beside the normalization for the same reason: a record that
+        // withholds something without saying so misrepresents itself.
+        redaction       : 'The composed NODE_CONFIG is recorded as ' +
+          '`configuration.nodeConfigDigest` and not verbatim. Before it is ' +
+          'hashed, every secret-labelled value is replaced and every ' +
+          'address-labelled value dropped, and `configuration.redactedKeys` ' +
+          'lists the paths this tool had already withheld under ' +
+          'SECRET_KEY_PATTERN. The child process received the real ' +
+          'configuration - the redaction applies to this record only. The ' +
+          'values come from the committed overlay ' +
+          '(test/parity/server-overlay.json) and any --overlay the caller ' +
+          'passed, which are where a reviewer reproduces them from.'
+      }
+    });
+  }
+  catch (err) {
+    throw asToolError(err);
+  }
+}
+
+/**
+ * The facts about THIS RUN that belong in the sidecar and nowhere else.
+ *
+ * The block above is portable by construction - the contract's guard throws on
+ * a value that is not - and that is what makes it committable. But a run still
+ * produces facts a reader wants while debugging one, and two of them cannot go
+ * in a committed artifact at all:
+ *
+ *   the warning-gate verdict  It carries the absolute paths of the stderr
+ *                             files it read, and this file's own header
+ *                             requires the verdict to stay OUT of the artifact
+ *                             for a second reason: the artifact is diffed
+ *                             field-for-field against the baseline recording,
+ *                             and a baseline install legitimately emits the
+ *                             AWS SDK v2 notice that only the target's
+ *                             config/aws.js suppresses, so a warning record
+ *                             inside it would manufacture a validation-parity
+ *                             difference out of a warning difference.
+ *   the address that was used A port and an ephemeral database name identify
+ *                             the run rather than the experiment.
+ *
+ * So they live here, on the SIDECAR, which is a run output: written next to the
+ * artifact, useful for the next ten minutes, and not committed. See
+ * sealRecording.
+ *
+ * @param {Object} input The same input buildProvenance received.
+ * @returns {Object} The sidecar-only run record.
+ */
+function buildRunOutput(input) {
+  var alignment = input.databaseAlignment === undefined
+    ? null
+    : input.databaseAlignment;
 
   return {
-    generator : 'test/parity/joi-matrix.js',
-    capturedAt: new Date().toISOString(),
-    mode      : input.mode,
-    // What the artifact this sidecar describes IS. Recorded here as well as in
-    // the artifact so readRecording can refuse a mis-paired comparison whichever
-    // of the two files it reads first, and so a sidecar that has been moved
-    // beside the wrong matrix is detectable rather than silently authoritative.
-    role      : input.role,
-    // Sealed by sealSidecar over the exact bytes it writes - the digest cannot
-    // be computed here, because the artifact is not serialized yet. Left
-    // explicitly null so the key order is the same whether or not the seal ran,
-    // and so a sidecar that somehow reaches disk unsealed is refused by
-    // readRecording rather than read as digestless-but-fine.
-    artifact  : null,
-    tool      : {
-      root : TOOL_ROOT,
-      head : gitHead(TOOL_ROOT),
-      // The generator's own bytes, so the sidecar is evidence about the tool
-      // that ran and not merely about the commit it ran from. A reviewer
-      // checks it with `git show <head>:test/parity/joi-matrix.js |
-      // sha256sum`, and `dirty` says whether that check can succeed: an
-      // artifact produced from an uncommitted edit names the commit it was
-      // run FROM, which does not contain the tool that produced it, and
-      // saying so is the difference between provenance and a label.
-      generator : 'test/parity/joi-matrix.js',
-      digest    : artifactDigest(fs.readFileSync(__filename, 'utf8')),
-      dirty     : gitDirty(__filename)
-    },
-    app       : {
-      root : input.appRoot,
-      head : gitHead(input.appRoot)
-    },
-    versions  : {
-      node     : process.version,
-      joi      : packageVersion(input.appRoot, 'joi'),
-      hapi     : packageVersion(input.appRoot, '@hapi/hapi'),
-      mongoose : packageVersion(TOOL_ROOT, 'mongoose')
-    },
-    environment: {
-      NODE_ENV        : input.environment.nodeEnv,
-      // The configuration the child actually received, less the values named in
-      // redactedKeys. The redaction is applied to this copy only; see
-      // SECRET_KEY_PATTERN for why the record is better without them.
-      NODE_CONFIG     : redacted.nodeConfig,
-      NODE_CONFIG_DIR : input.environment.nodeConfigDir,
-      redactedKeys    : redacted.redactedKeys
-    },
-    recaptchaConfigured : input.recaptchaConfigured,
-    // The database address every consumer agreed on, and the list of consumers
-    // that were checked. Null in --schema-only, which provisions nothing.
-    databaseAlignment : input.databaseAlignment === undefined
-      ? null
-      : input.databaseAlignment,
-    server    : input.server === null ? null : {
-      origin   : input.server.origin,
-      port     : input.server.port,
-      secure   : input.server.secure,
-      pid      : input.server.pid,
-      appRoot  : input.server.appRoot,
-      runDir   : input.server.runDir,
-      database : input.server.mongo === null || input.server.mongo === undefined
-        ? null
-        : input.server.mongo.database
-    },
-    seed      : input.seedSummary === null ? null : input.seedSummary,
-    // The one normalization this gate applies, named in the provenance so it
-    // travels with the artifact.
-    normalization : 'Only the ORIGIN of an absolute Location header is removed, ' +
-      'into locationRelative; the verbatim header is recorded beside it. ' +
-      'Nothing else is normalized.',
-    // Declared beside the normalization for the same reason: a record that
-    // withholds something without saying so misrepresents itself.
-    redaction : 'environment.NODE_CONFIG has the value of every ' +
-      'secret-labelled key replaced with "' + REDACTED + '"; the keys ' +
-      'withheld are listed in environment.redactedKeys. The child process ' +
-      'received the real configuration - the redaction applies to this ' +
-      'record only. The values themselves come from the committed overlay ' +
-      '(test/parity/server-overlay.json) and any --overlay the caller passed, ' +
-      'which are where a reviewer reproduces them from.'
+    mode        : input.mode,
+    // Filled in by recordWarningGate, which runs after teardown so the
+    // application's stderr is complete. Null when the gate never reported.
+    warningGate : null,
+    // The run's own addressing, for a reader debugging THIS run.
+    run         : {
+      appRoot  : input.appRoot,
+      server   : input.server === null ? null : {
+        origin   : input.server.origin,
+        port     : input.server.port,
+        secure   : input.server.secure,
+        pid      : input.server.pid,
+        runDir   : input.server.runDir,
+        database : input.server.mongo === null ||
+          input.server.mongo === undefined
+          ? null
+          : input.server.mongo.database
+      },
+      databaseAlignment : alignment,
+      // The composed configuration the child received, less the values
+      // SECRET_KEY_PATTERN names. Here rather than in the block for the reason
+      // the block's `redaction` prose gives.
+      environment : {
+        NODE_ENV        : input.environment.nodeEnv,
+        NODE_CONFIG     : redactSecrets(input.environment.nodeConfig).nodeConfig,
+        NODE_CONFIG_DIR : input.environment.nodeConfigDir
+      }
+    }
   };
 }
 
 /**
  * The role this artifact must carry, decided by the TREE THAT WAS MEASURED.
  *
- * A role is a fact about the tree, never about which flag ran: the deleted
- * sidecar said `mode: "capture"` and was taken to mean "baseline" by every
- * reader, while the tree it measured was not identified at all. So the tree
- * decides, and a `--capture` run - the mode whose artifact IS the recorded
- * baseline this gate compares against - must additionally PROVE it measured
- * AAP §0.10.3's base commit.
+ * A role is a fact about the tree, never about which flag ran: a sidecar saying
+ * `mode: "capture"` reads as "baseline" while identifying no tree at all. So
+ * the tree decides, and a `--capture` run - the mode whose artifact IS the
+ * recorded baseline this gate compares against - must additionally PROVE it
+ * measured BASELINE_COMMIT.
  *
  * `--schema-only` and `--compare` are deliberately not held to that. Both are
  * legitimately run against the migrated tree - the first is the enumeration
- * proof, the second is the target side of the gate - and their role simply
- * follows the tree, exactly as test/parity/manifest.js's analysis mode does.
+ * proof, the second is the target side of the gate.
+ *
+ * They differ in what they may CLAIM, though, and that is what the contract's
+ * fourth role is for. `--schema-only` executes no application: it enumerates,
+ * builds and locally proves, and records not one HTTP outcome. Under the
+ * contract that is `analysis` - "derived by reading a tree, with no application
+ * executed" - whichever tree it read, and labelling it `baseline` because it
+ * happened to read the base commit would produce an artifact a comparison could
+ * consume as the recorded side of a gate it never measured. `--compare`
+ * measures, so its role follows the tree.
  *
  * @param {Object} options Parsed arguments, for the escape hatch.
  * @param {string} mode The mode being run.
@@ -10196,8 +10519,12 @@ function buildProvenance(input) {
  *   commit and no escape was given.
  */
 function resolveRole(options, mode, tree) {
+  if (mode === 'schema-only') {
+    return ROLE_ANALYSIS;
+  }
+
   if (mode !== 'capture') {
-    return tree.isBaselineCommit ? 'baseline' : 'target';
+    return tree.isBaselineCommit ? ROLE_BASELINE : ROLE_TARGET;
   }
 
   try {
@@ -10304,18 +10631,16 @@ function recaptchaConfigured(appRoot) {
 // ---------------------------------------------------------------------------
 // `flashMatchesProof` records, per driven outcome, whether the validation flash
 // the application produced carries EXACTLY the leaf paths the local schema
-// proof predicted. Measured on the committed baseline: 162 true, 260 null (no
-// flash or no schema, so there is nothing to compare) and FORTY FALSE - and
-// those forty were recorded and then ignored, so the artifact reported forty
-// unexplained outcome-proof mismatches and still exited 0.
+// proof predicted. It is null wherever there is nothing to compare - no flash
+// or no schema - and false where the two disagree. A false that is recorded and
+// not classified is an unexplained mismatch shipped as evidence, so the audit
+// below classifies every one of them and fails the run on any it cannot.
 //
-// A mismatch is not automatically a defect. Measured, the forty fall into
-// exactly two mechanisms, both of them explainable behaviour of the preserved
-// hand-rolled block, and the resolution taken here is therefore the second one
-// the review offered: EXPLICITLY RESOLVE EACH ONE. Every mismatch is classified
-// against a named rule, the classification is recorded in the artifact, and an
-// UNCLASSIFIED mismatch is fatal. A declared rule that matches NOTHING is also
-// fatal, so the rule set cannot rot into a rubber stamp that keeps passing
+// A mismatch is not automatically a defect: the two mechanisms below are both
+// explainable behaviour of the hand-rolled block. So each mismatch is RESOLVED
+// EXPLICITLY - classified against a named rule, with the classification
+// recorded in the artifact - and an UNCLASSIFIED mismatch is fatal. A declared
+// rule that matches NOTHING is fatal too, so the rule set cannot keep passing
 // after the behaviour it describes has gone.
 //
 // `flashMatchesProof` ITSELF IS NOT RECOMPUTED, and that is a hard constraint
@@ -10325,28 +10650,27 @@ function recaptchaConfigured(appRoot) {
 // field that had not actually changed. Classification is purely additive and
 // reads the same recorded values a reviewer sees.
 //
-// THE TWO MECHANISMS, each measured rather than reasoned about:
+// THE TWO MECHANISMS, each a property of the tree under test:
 //
-// 1. AN OBJECT-LEVEL JOI ERROR HAS NO PATH. `lib/util/routeParser.js:401-418`
-//    loops over EVERY declared validate section and merges every error into ONE
-//    flash object keyed by `err.path.join('.')` (:412, assigned at :416). An
-//    error about the value as a
-//    whole - `"value" must be of type object` - carries an empty path, so it
-//    lands under the key `''`, which no leaf-path proof can predict. All 24
-//    instances are `query` targets on the four POST routes that also declare a
-//    `payload` schema: driving the query target sends no body, the block
-//    validates `request.payload` anyway, and the object-level error from that
-//    OTHER section appears in the same flash. Preserved under R-d, not repaired.
+// 1. AN OBJECT-LEVEL JOI ERROR HAS NO PATH. The validation block in
+//    lib/util/routeParser.js loops over EVERY declared validate section and
+//    merges every error into ONE flash object keyed by `err.path.join('.')`. An
+//    error about the value as a whole - `"value" must be of type object` -
+//    carries an empty path, so it lands under the key `''`, which no leaf-path
+//    proof can predict. Every instance is a `query` target on one of the POST
+//    routes that also declare a `payload` schema: driving the query target
+//    sends no body, the block validates `request.payload` anyway, and the
+//    object-level error from that OTHER section appears in the same flash. It
+//    is preserved, not repaired.
 //
 // 2. A `payload: {output: 'file'}` ROUTE NEVER SEES THE BODY THE CASE SENT.
 //    hapi writes the request body to a temporary file and hands the handler its
 //    own descriptor - `path` and `bytes` - so the declared schema's own key is
 //    reported missing and hapi's two keys are reported as not allowed,
-//    regardless of what was sent. The four routes are the only four in the
-//    repository that declare it: `POST /file` (config/routes.js:342),
-//    `POST /file/avatar` (config/routes.js:358), `POST /api/users/assets`
-//    (config/api_routes.js:1244) and `POST /api/users/assets/{fileId}`
-//    (config/api_routes.js:1261). The 16 instances are exactly those routes.
+//    regardless of what was sent. Four routes declare it, and they are the only
+//    four in the repository that do: `POST /file` and `POST /file/avatar` in
+//    config/routes.js, and `POST /api/users/assets` and
+//    `POST /api/users/assets/{fileId}` in config/api_routes.js.
 //
 // WHAT MAKES THESE RULES MORE THAN LABELS. Each carries positive conditions a
 // changed behaviour would break: rule 1 requires the mismatch to be the empty
@@ -10358,8 +10682,8 @@ function recaptchaConfigured(appRoot) {
 // mechanism.
 
 // hapi's own payload keys under `payload: {output: 'file'}`: the descriptor it
-// substitutes for the parsed body. Measured on the baseline flash for all four
-// routes below.
+// substitutes for the parsed body, and what the flash of all four routes below
+// reports as not allowed.
 var FILE_OUTPUT_PAYLOAD_KEYS = Object.freeze(['path', 'bytes']);
 
 // The only four routes in the repository declaring `payload: {output: 'file'}`.
@@ -10367,19 +10691,20 @@ var FILE_OUTPUT_PAYLOAD_KEYS = Object.freeze(['path', 'bytes']);
 // `--compare a b` mode where no route declaration is loaded at all - the audit
 // must be a pure function of an artifact.
 var FILE_OUTPUT_ROUTES = Object.freeze([
-  'POST /file',                       // config/routes.js:342
-  'POST /file/avatar',                // config/routes.js:358
-  'POST /api/users/assets',           // config/api_routes.js:1244
-  'POST /api/users/assets/{fileId}'   // config/api_routes.js:1261
+  'POST /file',                       // config/routes.js
+  'POST /file/avatar',                // config/routes.js
+  'POST /api/users/assets',           // config/api_routes.js
+  'POST /api/users/assets/{fileId}'   // config/api_routes.js
 ]);
 
-// An error whose `path` is empty joins the flash under this key:
-// lib/util/routeParser.js:412 computes `err.path.join('.')` and :416 assigns
-// the message under it.
+// An error whose `path` is empty joins the flash under this key, because
+// lib/util/routeParser.js's validation block computes `err.path.join('.')` and
+// assigns the message under whatever that yields.
 var OBJECT_LEVEL_FLASH_KEY = '';
 
-// The unknown key the rejecting-input generator injects at :2842. Named here so
-// a rule can talk about it without the reader having to find it.
+// The unknown key the rejecting-input generator injects - see
+// buildRejectingInput's `unknownKey` strategy. Named here so a rule can talk
+// about it without the reader having to find it.
 var INJECTED_UNKNOWN_KEY = 'parityUnknownKey';
 
 /**
@@ -10601,20 +10926,16 @@ function auditProofMismatches(matrix, label) {
     // to explain, and the quantity that decides that is the number of
     // MISMATCHES - not the number of outcomes driven.
     //
-    // The two are not the same and the difference is measurable. This audit was
-    // written against a matrix in which driving outcomes always produced
-    // mismatches - 24 object-level and 16 file-output - so `outcomes > 0` and
-    // `records.length > 0` were indistinguishable. They are no longer: the
-    // matrix now follows a `fail.redirect` to the rendered page and reads the
-    // validation flash off it, so the local proof matches the flash on all 190
-    // comparable outcomes and 0 of 462 are mismatches. Under `outcomes > 0` a
-    // perfectly clean matrix therefore failed this gate with both rules
-    // reported as rubber stamps.
+    // The two come apart whenever the run is clean. Because the matrix follows
+    // a `fail.redirect` to the rendered page and reads the validation flash off
+    // it, the local proof can match every comparable outcome and leave no
+    // mismatch at all - and keyed on `outcomes > 0` a clean matrix would fail
+    // this gate with both rules reported as explaining nothing.
     //
-    // The safeguard itself is kept and still fires where it was aimed: if a
-    // mismatch reappears and a declared rule no longer explains it, that rule
-    // is reported. `--schema-only` remains covered, because a run that records
-    // no outcome records no mismatch either.
+    // The safeguard still fires where it is aimed: if a mismatch appears and no
+    // declared rule explains it, that rule set is reported. `--schema-only` is
+    // covered too, because a run that records no outcome records no mismatch
+    // either.
     rulesChecked        : records.length > 0,
     rulesMatchingNothing: records.length > 0
       ? PROOF_MISMATCH_RULES.filter(function(rule) {
@@ -10773,9 +11094,9 @@ function compareMatrices(baseline, target) {
 
   if (canonical(baseline.inertness) !== canonical(target.inertness)) {
     // The whole inertness record, compared as one value. The raw joi message is
-    // inside it, and it is measured identical on 17.13.3 and 18.2.5 - so a
-    // difference here is either a changed joi message or a `language` map that
-    // started firing, and both must be read in full rather than as one field.
+    // inside it and is identical on both joi lines, so a difference here is
+    // either a changed joi message or a `language` map that started firing, and
+    // both must be read in full rather than as one field.
     difference('summary', { target: 'inertness' }, 'inertness',
       baseline.inertness, target.inertness);
   }
@@ -10848,6 +11169,53 @@ function compareMatrices(baseline, target) {
 }
 
 /**
+ * The symbolic label for an artifact this run consumed or produced.
+ *
+ * RULE-F33: a delivered artifact recorded `/tmp/blitzy/scratch/<uuid>/w-023/...`
+ * for four of its own files, which names one agent's clone and tells a reader
+ * outside it nothing. `pathLabel` reduces a path in the tool's own repository
+ * to `tool:<relative>` and anything else - a scratch destination, the sibling
+ * of a report under /tmp - to `ephemeral:<basename>`, which is the whole of
+ * what is reproducible about it.
+ *
+ * @param {(string|null)} target
+ * @returns {(string|null)}
+ */
+function artifactLabel(target) {
+  return provenance.pathLabel(target, { toolRoot: TOOL_ROOT });
+}
+
+/**
+ * The report's entry for a sidecar, whether or not one exists.
+ *
+ * A sidecar is a run output: a committed recording carries its provenance
+ * embedded and has none beside it. So the link is recorded as absent rather
+ * than omitted - an omitted key reads as an oversight, while `path: null` with
+ * its reason states the design.
+ *
+ * @param {(string|null)} target The sidecar path, or null when there is none.
+ * @returns {{path: (string|null), digest: (string|null),
+ *            note: (string|undefined)}}
+ */
+function sidecarLink(target) {
+  if (!target || !fs.existsSync(target)) {
+    return {
+      path  : null,
+      digest: null,
+      note  : 'no sidecar beside this recording. A sidecar is a run output; ' +
+        'the recording authenticates itself from the provenance block ' +
+        'embedded under its own `provenance` key, whose payload digest this ' +
+        'gate recomputed before consuming it.'
+    };
+  }
+
+  return {
+    path  : artifactLabel(target),
+    digest: artifactDigest(fs.readFileSync(target, 'utf8'))
+  };
+}
+
+/**
  * Writes the comparison report to stderr and returns it for the artifact.
  *
  * Every difference is named, not counted, and the input is printed with it: a
@@ -10871,14 +11239,14 @@ function reportComparison(result, baselineRecord, targetRecord, comparability) {
   report = {
     generator      : 'test/parity/joi-matrix.js',
     comparedAt     : new Date().toISOString(),
-    baseline       : baselineRecord.path,
-    target         : targetRecord.path,
+    baseline       : artifactLabel(baselineRecord.path),
+    target         : artifactLabel(targetRecord.path),
     // Every artifact this comparison consumed or produced, named AND hash-linked
     // (SCR-F50, TST-40). Four files, so a reviewer can establish that the report
     // in front of them describes those exact bytes rather than four files that
     // happened to carry those names: the baseline recording, its sidecar, the
-    // target matrix, and the target matrix's own sidecar - which sits beside the
-    // matrix, not beside this report.
+    // target matrix, and the target matrix's own sidecar - which sits beside
+    // the matrix, not beside this report.
     //
     // The baseline is linked by `payloadDigest` as well as by `digest` for the
     // reason RECORD_INTO_KEYS gives: embedding this comparison back into the
@@ -10886,7 +11254,7 @@ function reportComparison(result, baselineRecord, targetRecord, comparability) {
     // make the committed two-sided evidence impossible.
     artifacts      : {
       baselineMatrix : {
-        path         : baselineRecord.path,
+        path         : artifactLabel(baselineRecord.path),
         role         : baselineRecord.matrix.role,
         digest       : baselineRecord.digest,
         payloadDigest: baselineRecord.payloadDigest,
@@ -10895,44 +11263,32 @@ function reportComparison(result, baselineRecord, targetRecord, comparability) {
         appHead      : comparability.baselineHead,
         joiVersion   : comparability.baselineJoi
       },
-      baselineSidecar : {
-        path  : baselineRecord.sidecarPath,
-        digest: artifactDigest(fs.readFileSync(baselineRecord.sidecarPath,
-          'utf8'))
-      },
-      baselineTool : {
-        head  : (comparability.baselineTool || {}).head || null,
-        digest: (comparability.baselineTool || {}).digest || null,
-        dirty : (comparability.baselineTool || {}).dirty === undefined
-          ? null
-          : comparability.baselineTool.dirty
-      },
+      // A run output, so most recordings have none and the entry says so
+      // rather than being absent: a reader who finds `path: null` knows the
+      // recording authenticated itself from its embedded block, which is the
+      // normal case for a committed artifact.
+      baselineSidecar : sidecarLink(baselineRecord.sidecarPath),
+      baselineTool : comparability.baselineTool,
       targetMatrix : {
-        path         : targetRecord.path,
+        path         : artifactLabel(targetRecord.path),
         role         : targetRecord.matrix.role,
         digest       : targetRecord.digest,
         payloadDigest: targetRecord.payloadDigest,
         appHead      : comparability.targetHead,
         joiVersion   : comparability.targetJoi
       },
-      targetSidecar : {
-        path  : targetRecord.sidecarPath,
-        digest: artifactDigest(fs.readFileSync(targetRecord.sidecarPath, 'utf8'))
-      },
-      targetTool : {
-        head  : (comparability.targetTool || {}).head || null,
-        digest: (comparability.targetTool || {}).digest || null,
-        dirty : (comparability.targetTool || {}).dirty === undefined
-          ? null
-          : comparability.targetTool.dirty
-      },
+      targetSidecar : sidecarLink(targetRecord.sidecarPath),
+      targetTool : comparability.targetTool,
       // Stated rather than left to a reader to compare two hex strings. The
       // crossCheck is what would FAIL on a tool whose input generation moved
       // between the two sides; this says whether that risk was even present.
+      // Compared on the generator BLOB, which identifies the bytes that ran:
+      // two clones at the same commit agree on it, and an uncommitted edit on
+      // one side does not.
       oneToolDroveBothSides :
-        !!(comparability.baselineTool && comparability.baselineTool.digest) &&
-        comparability.baselineTool.digest ===
-          (comparability.targetTool || {}).digest
+        !!(comparability.baselineTool && comparability.baselineTool.blob) &&
+        comparability.baselineTool.blob ===
+          (comparability.targetTool || {}).blob
     },
     // Which side-of-the-gate checks ran, and which - if any - were waived. A
     // report with a non-empty `relaxed` list is a determinism or negative
@@ -11009,12 +11365,11 @@ function reportComparison(result, baselineRecord, targetRecord, comparability) {
 /**
  * Collects every process warning raised while `body` runs.
  *
- * THIS TOOL HAD NO WARNING GATE AT ALL, so the same warning a storage run
- * surfaces passed here unseen - and this tool loads the whole controller graph
- * to prove the parser deletes `validate`, which is exactly the load that
- * reaches the retained `archiver` chain. AAP 0.9.3's gate is that the run emits
- * no warning attributable to the application's own source or to any dependency
- * the plan retains, and reading that off a terminal is not evidence.
+ * The gate this run has to satisfy is that it emits no warning attributable to
+ * the application's own source or to a retained dependency, and reading that
+ * off a terminal is not evidence. It matters here in particular because
+ * proving the parser deletes `validate` loads the whole controller graph, so
+ * whatever that graph pulls in can raise a notice inside this process.
  *
  * The listener is ADDED, not substituted: Node's own handler still prints, so
  * nothing is suppressed and a warning stays as visible as it was. It is removed
@@ -11022,10 +11377,10 @@ function reportComparison(result, baselineRecord, targetRecord, comparability) {
  * Origin frames are kept, because the frame that raised a warning is what
  * decides whether it belongs to this file or to a dependency.
  *
- * `--pending-deprecation` matters: DEP0005 is a PENDING deprecation and is
- * silent without it, so a run without the flag can capture nothing and still be
- * honest about what it measured. The header of this file names the one warning
- * measured under that flag and where it comes from.
+ * `--pending-deprecation` matters: a pending deprecation is silent without it,
+ * so a run that lacks the flag can capture nothing and still be honest about
+ * what it measured - which is why warning-policy.js makes the flags a
+ * precondition rather than a preference.
  *
  * @param {function(): Promise<*>} body
  * @returns {Promise<{value: *, warnings: Array<Object>}>}
@@ -11168,21 +11523,14 @@ function describeWarnings(warnings) {
 // ---------------------------------------------------------------------------
 // THE EXIT PREDICATE
 // ---------------------------------------------------------------------------
-// ONE FAILURE SET, ASSEMBLED ONCE, READ ONCE. This tool decided its exit code
-// in two places - `runCapture` returned success or threw the deferred
-// behavioural failure, `runCompare` returned a code derived from the difference
-// list - and neither of them could see a captured process warning or an
-// unexplained outcome-proof mismatch, because neither was measured at all.
+// ONE FAILURE SET, ASSEMBLED ONCE, READ ONCE. `runCapture` and `runCompare`
+// both feed the same predicate, and every mode derives its code from
+// `deriveExitCode(gate)` alone - so a captured process warning and an
+// unexplained outcome-proof mismatch reach the exit code by the same route a
+// parity difference does. The kinds:
 //
-// Both now feed the same predicate, and every mode derives its code from
-// `deriveExitCode(gate)` alone. The kinds:
-//
-//   warning            a process warning was captured. Unconditional: the AAP
-//                      approves exactly two deviations - the
-//                      lib/controllers/files.js image-stream response (0.7) and
-//                      the `marked` audit high (0.5.1.4) - and neither is a
-//                      warning, so no warning is approved and there is no
-//                      allowance list
+//   warning            a process warning was captured. Unconditional: no
+//                      warning is approved and there is no allowance list
 //   proof-mismatch     a recorded outcome-proof mismatch that no declared rule
 //                      explains
 //   rule-unmatched     a declared rule that explained NOTHING, so the rule set
@@ -11446,6 +11794,57 @@ function reportGate(gate) {
 }
 
 /**
+ * A captured warning, reduced to what a committed artifact may carry.
+ *
+ * A notice's `origin` is a stack, and every frame in it is an absolute path
+ * into the node_modules of whichever worktree raised it - so recording the
+ * warnings verbatim would put `/tmp/.../w-029/baseline-2f8712a/node_modules/
+ * iconv-lite/lib/extend-node.js:10:46` into the delivered evidence, which is
+ * one clone's topology and tells a reader outside it nothing (RULE-F33). The
+ * MESSAGE is the finding and is kept; each frame goes through the contract's
+ * `portableText`, which substitutes a symbolic label for the path and a marker
+ * for any instant, leaving a frame that still names the module and the line and
+ * is identical on the next run.
+ *
+ * The live warning objects are NOT modified: the gate's own stderr lines quote
+ * the real path, because an operator reading a failure wants the file they can
+ * open. Only what is written into the artifact is reduced.
+ *
+ * @param {Array<Object>} warnings Attributed captured warnings.
+ * @param {(string|null)} appRoot The tree under test, for the labels.
+ * @returns {Array<Object>} Copies, safe to commit.
+ */
+function portableWarnings(warnings, appRoot) {
+  var bounds = { toolRoot: TOOL_ROOT, analysedRoot: appRoot || undefined };
+
+  return (warnings || []).map(function(warning) {
+    var copy = {};
+
+    Object.keys(warning).forEach(function(key) {
+      var value = warning[key];
+
+      if (typeof value === 'string') {
+        copy[key] = provenance.portableText(value, bounds);
+        return;
+      }
+
+      if (Array.isArray(value)) {
+        copy[key] = value.map(function(entry) {
+          return typeof entry === 'string'
+            ? provenance.portableText(entry, bounds)
+            : entry;
+        });
+        return;
+      }
+
+      copy[key] = value;
+    });
+
+    return copy;
+  });
+}
+
+/**
  * Records the warnings and the proof-mismatch audit onto a matrix, and reports
  * the audit.
  *
@@ -11456,12 +11855,14 @@ function reportGate(gate) {
  * @param {Object} matrix The artifact.
  * @param {Array<Object>} warnings Attributed captured warnings.
  * @param {string} label Which matrix this is.
+ * @param {(string|null|undefined)} appRoot The tree under test, so the
+ *   recorded warnings can be reduced to portable frames.
  * @returns {Object} The audit.
  */
-function annotateMatrix(matrix, warnings, label) {
+function annotateMatrix(matrix, warnings, label, appRoot) {
   var audit = auditProofMismatches(matrix, label);
 
-  matrix.warnings = warnings;
+  matrix.warnings = portableWarnings(warnings, appRoot);
   matrix.proofMismatches = audit;
   matrix.summary.proofMismatches = audit.mismatches;
   matrix.summary.proofMismatchesUnclassified = audit.unclassified.length;
@@ -11488,8 +11889,8 @@ function annotateMatrix(matrix, warnings, label) {
  * recorded `input` and `serverVisible` replace the generated ones, and the
  * local schema proof is then RE-RUN on the recorded input against the tree
  * under test's joi - which is precisely the measurement the gate exists for:
- * does joi 18.2.5 accept and reject exactly what joi 17.13.3 accepted and
- * rejected, given the same bytes.
+ * does the target joi accept and reject exactly what the baseline joi accepted
+ * and rejected, given the same bytes.
  *
  * The generated inputs are not discarded. They are cross-checked against the
  * recorded ones and every divergence is reported in its own right, because a
@@ -11640,16 +12041,16 @@ async function buildMatrix(options, mode, recorded) {
   var deferred = null;
   var tree;
   var role;
+  var provenanceInput;
 
   assertAppRoot(options.appRoot);
 
   // THE BASELINE CHECK, BEFORE ANYTHING IS LAUNCHED. A capture pointed at the
-  // wrong worktree used to produce an artifact indistinguishable from a
-  // baseline capture, and it produced it only after provisioning a database,
-  // starting the application and driving 306 cases - so the failure arrived
-  // last, when it belongs first. `resolveRole` throws here, before
-  // publishDatabaseAddress, so a mis-aimed capture costs nothing and says what
-  // to do about it.
+  // wrong worktree produces an artifact indistinguishable from a baseline
+  // capture, and checking it after the run means checking it only once a
+  // database has been provisioned, an application started and every case
+  // driven. `resolveRole` throws here, before publishDatabaseAddress, so a
+  // mis-aimed capture costs nothing and says what to do about it.
   tree = provenance.treeIdentity(options.appRoot);
   role = resolveRole(options, mode, tree);
 
@@ -11804,6 +12205,31 @@ async function buildMatrix(options, mode, recorded) {
     recordWarningStreams(context.stderrPaths);
   }
 
+  // ONE description of the run, read twice: once by buildProvenance, which
+  // keeps only what the repository can reproduce, and once by buildRunOutput,
+  // which keeps the rest for the sidecar. Composed here rather than twice at
+  // the two call sites, because two copies of this object drifting apart is
+  // how the block and the sidecar came to disagree about which run they
+  // described.
+  // SCR-F49: `databaseAlignment` carries the agreed address and what it was
+  // agreed across, so a reviewer can see that the application, the seeder and
+  // this process named ONE database - and not merely that no error was raised.
+  // The block keeps the agreement and drops the address; the sidecar keeps
+  // both.
+  provenanceInput = {
+    mode                : mode,
+    artifact            : artifactName(options, mode),
+    role                : role,
+    appRoot             : options.appRoot,
+    environment         : environment,
+    recaptchaConfigured : recaptchaConfigured(options.appRoot),
+    server              : context === null ? null : context.server,
+    seedSummary         : context === null ? null : context.seedSummary,
+    databaseAlignment   : database.alignment === undefined
+      ? null
+      : database.alignment
+  };
+
   return {
     deferred : deferred,
     artifact : buildArtifact({
@@ -11811,7 +12237,12 @@ async function buildMatrix(options, mode, recorded) {
       version         : ARTIFACT_SCHEMA_VERSION,
       artifactVersion : 1,
       schema          : ARTIFACT_SCHEMA,
-      role            : roleFor(mode),
+      // The role decided by the TREE, above, and not by the flag that ran. It
+      // used to come from a `roleFor(mode)` that read the mode alone, so a
+      // capture pointed anywhere at all produced an artifact labelled as the
+      // recorded baseline; `resolveRole` has already refused that case before
+      // a database was provisioned, and this is the same value it returned.
+      role            : role,
       mode            : mode,
       joiVersion      : packageVersion(options.appRoot, 'joi'),
       notes           : artifactNotes(options, mode),
@@ -11844,23 +12275,11 @@ async function buildMatrix(options, mode, recorded) {
       targetComparison: null,
       targets         : entries
     }),
-    provenance : buildProvenance({
-      mode                : mode,
-      artifact            : artifactName(options, mode),
-      role                : roleFor(mode),
-      appRoot             : options.appRoot,
-      environment         : environment,
-      recaptchaConfigured : recaptchaConfigured(options.appRoot),
-      server              : context === null ? null : context.server,
-      seedSummary         : context === null ? null : context.seedSummary,
-      // SCR-F49: the agreed database address and what it was agreed across,
-      // recorded so a reviewer can see that the application, the seeder and
-      // this process named ONE database - and not merely that no error was
-      // raised.
-      databaseAlignment   : database.alignment === undefined
-        ? null
-        : database.alignment
-    }),
+    provenance : buildProvenance(provenanceInput),
+    // The sidecar's half: the warning-gate verdict and this run's own
+    // addressing, neither of which may reach a committed artifact. See
+    // buildRunOutput.
+    runOutput  : buildRunOutput(provenanceInput),
     crossCheck : crossCheck
   };
 }
@@ -11873,9 +12292,8 @@ async function buildMatrix(options, mode, recorded) {
  * Installs the in-process notice collector.
  *
  * Called before anything is dispatched, because the harvest requires every
- * controller into THIS process - which is how the `archiver` chain and its
- * DEP0005 arrive - and a collector installed afterwards would miss the notices
- * that mattered most.
+ * controller into THIS process, which is where a dependency's own module-load
+ * notices arrive; a collector installed afterwards would miss exactly those.
  *
  * BOTH collectors are used - the process-warning listener AND the stderr tee -
  * because either alone has a hole. The listener never sees a notice printed
@@ -11978,19 +12396,23 @@ async function finishWarningGate(appRoot) {
 }
 
 /**
- * The gate's record for the provenance sidecar, and its lines on stderr.
+ * The gate's record for the run-output sidecar, and its lines on stderr.
  *
- * The record goes in the SIDECAR and never in the artifact: the artifact is
- * diffed field-for-field against the baseline recording, and a baseline install
- * legitimately emits the AWS SDK v2 notice that only the target's config/aws.js
- * suppresses, so a warning record inside it would manufacture a
- * validation-parity difference out of a warning difference.
+ * The record goes in the SIDECAR and never in the artifact, for two
+ * independent reasons. The artifact is diffed field-for-field against the
+ * baseline recording, and a baseline install legitimately emits the AWS SDK v2
+ * notice that only the target's config/aws.js suppresses, so a warning record
+ * inside it would manufacture a validation-parity difference out of a warning
+ * difference. And `streams` names the absolute paths of the stderr files this
+ * run read - precisely the host state a committed block may not carry - so it
+ * belongs to `buildRunOutput`'s record and not to the provenance block, whose
+ * portability guard would refuse it.
  *
- * @param {Object} provenance The document `buildProvenance` produced.
+ * @param {Object} runOutput The record `buildRunOutput` produced.
  * @param {Object} judged The check document from `finishWarningGate`.
- * @returns {Object} the same provenance, with the gate recorded on it
+ * @returns {Object} the same record, with the gate recorded on it
  */
-function recordWarningGate(provenance, judged) {
+function recordWarningGate(runOutput, judged) {
   judged.failures.forEach(function(failure) {
     note('WARNING GATE: ' + failure);
   });
@@ -12007,8 +12429,8 @@ function recordWarningGate(provenance, judged) {
     });
   }
 
-  if (provenance) {
-    provenance.warningGate = {
+  if (runOutput) {
+    runOutput.warningGate = {
       policy      : judged.policy.id,
       flags       : judged.flags,
       gateApplies : judged.gateApplies,
@@ -12021,15 +12443,9 @@ function recordWarningGate(provenance, judged) {
     };
   }
 
-  return provenance;
+  return runOutput;
 }
 
-/**
- * `--capture` and `--schema-only`.
- *
- * @param {Object} options Parsed arguments.
- * @returns {Promise<number>} An exit code.
- */
 /**
  * The destination inside PARITY_ARTIFACT_DIR, or null when none was named.
  *
@@ -12056,11 +12472,10 @@ function artifactDirDestination(mode) {
  * Resolves and guards `--out`, and every path derived from it.
  *
  * Two refusals, both about the same hazard. `COMMITTED_BASELINE` is
- * test/parity/joi-baseline.json - the COMMITTED baseline recording, named by
- * AAP §0.6.2 - so a bare `--capture` used to overwrite the repository's only
- * copy of the evidence with a run against whatever tree happened to be current.
- * That is TST-40's second half, and no amount of care by a caller fixes a
- * default that is destructive:
+ * test/parity/joi-baseline.json, the committed baseline recording, so a default
+ * output path pointing there means a bare `--capture` overwrites the
+ * repository's only copy of the evidence with a run against whatever tree
+ * happens to be current. A caller's care cannot fix a destructive default:
  *
  *  - `--out` is REQUIRED. There is no default output path, so no invocation can
  *    write an artifact the caller did not name.
@@ -12124,14 +12539,13 @@ function resolveOut(options, mode) {
  * Writes a completed comparison back into the baseline recording it was about.
  *
  * This is what makes the COMMITTED artifact two-sided evidence rather than one
- * side of a gate that was never closed (BE-42, INT-F10, TST-19, CMP-F06). The
- * committed file stays the baseline recording - AAP §0.6.2 names that path, and
- * `--compare` replays the inputs it records - and gains two things it could not
- * have carried at capture time: `targetComparison`, the completed 17-against-18
- * result with its counts, its per-scope difference breakdown, its hash links
- * and the target run's own summary figures; and `crossCheck`, the real
- * replay/divergence record, which is produced by the replay and therefore
- * belongs to the comparison rather than to the capture.
+ * side of a gate that was never closed. The committed file stays the baseline
+ * recording - `--compare` replays the inputs it records - and gains two things
+ * it could not have carried at capture time: `targetComparison`, the completed
+ * baseline-against-target result with its counts, its per-scope difference
+ * breakdown, its hash links and the target run's own summary figures; and
+ * `crossCheck`, the real replay/divergence record, which is produced by the
+ * replay and therefore belongs to the comparison rather than to the capture.
  *
  * Three refusals, because an embedding that could attach the wrong comparison
  * would be worse than none:
@@ -12160,15 +12574,18 @@ function recordComparisonInto(recordingPath, report, reportText, reportPath,
                               targetRecord) {
   var record = readRecording(recordingPath, 'record-into');
   var matrix = record.matrix;
+  var block = record.provenance;
   var targetMatrix = targetRecord.matrix;
   var summary = targetMatrix.summary || {};
-  var text;
   var digests;
+  var sealed;
 
-  if (matrix.role !== ROLE_BASELINE) {
+  if (matrix.role !== ROLE_BASELINE || matrix.mode !== 'capture') {
     throw new ToolError('refusing to record a comparison into ' +
       recordingPath + ': its role is ' + JSON.stringify(matrix.role) +
-      ' and only a ' + ROLE_BASELINE + ' recording is one side of this gate');
+      ' and its mode ' + JSON.stringify(matrix.mode) + ', and only a ' +
+      ROLE_BASELINE + ' recording produced in `capture` mode is one side of ' +
+      'this gate');
   }
 
   if (report.artifacts.baselineMatrix.payloadDigest !== record.payloadDigest) {
@@ -12209,7 +12626,11 @@ function recordComparisonInto(recordingPath, report, reportText, reportPath,
       matrixDigest  : report.artifacts.targetMatrix.digest,
       sidecarPath   : report.artifacts.targetSidecar.path,
       sidecarDigest : report.artifacts.targetSidecar.digest,
-      reportPath    : reportPath,
+      // A label, like every other address this artifact records: the report a
+      // comparison was written to is normally a scratch destination, and its
+      // directory is the run's own machine state. The DIGEST is what
+      // identifies it.
+      reportPath    : artifactLabel(reportPath),
       reportDigest  : artifactDigest(reportText)
     },
     comparability : report.comparability,
@@ -12285,41 +12706,62 @@ function recordComparisonInto(recordingPath, report, reportText, reportPath,
     missing     : targetMatrix.crossCheck.missing
   };
 
-  text = serialize(matrix);
-  digests = artifactDigests(text);
+  // The RECORD_INTO-stable link, checked before anything is written. Computed
+  // over the artifact WITHOUT its embedded block, so the re-attachment below
+  // cannot move it and this assertion is about the embedding alone.
+  digests = artifactDigests(serialize(matrix));
 
   if (digests.payloadDigest !== record.payloadDigest) {
     throw new ToolError('embedding the comparison changed ' + recordingPath +
       '\'s payload digest, from ' + record.payloadDigest.slice(0, 16) +
       '... to ' + digests.payloadDigest.slice(0, 16) + '.... That must be ' +
       'impossible - payloadDigest is defined over the artifact with ' +
-      RECORD_INTO_KEYS.join(' and ') + ' nulled, and those are the only keys ' +
-      'this writes - so either the key set or the digest definition has ' +
-      'drifted and every report linking a baseline by payload digest is now ' +
-      'unverifiable. Fix RECORD_INTO_KEYS before writing.');
+      RECORD_INTO_KEYS.join(' and ') + ' nulled and its `provenance` block ' +
+      'removed, and those are the only keys this writes - so either the key ' +
+      'set or the digest definition has drifted and every report linking a ' +
+      'baseline by payload digest is now unverifiable. Fix RECORD_INTO_KEYS ' +
+      'before writing.');
   }
 
-  // Re-seal over the new bytes, and say in the sidecar that the bytes now
-  // include something written after the capture.
-  record.provenance.comparisonEmbedded = {
-    at            : report.comparedAt,
+  // What the embedding did, recorded IN the block that travels with the
+  // artifact rather than only in a sidecar that need not exist. Portable by
+  // construction: the report and the target matrix are named by digest and by
+  // symbolic label, and `keys` says exactly which fields were written after
+  // the capture - which is the fact a reader of a two-sided recording needs.
+  // The wall clock the sidecar used to carry is gone; `comparedAt` on the
+  // embedded `targetComparison` beside it is the comparison's own record of
+  // when it ran.
+  block.detail = block.detail || {};
+  block.detail.comparisonEmbedded = {
     keys          : RECORD_INTO_KEYS.slice(),
-    reportPath    : reportPath,
+    report        : artifactLabel(reportPath),
     reportDigest  : artifactDigest(reportText),
     targetMatrix  : report.artifacts.targetMatrix.path,
     targetDigest  : report.artifacts.targetMatrix.digest,
-    note          : 'The capture itself is unchanged: `artifact.payloadDigest` ' +
-      'is identical before and after this embedding, and is what a comparison ' +
-      'report links this recording by. `artifact.digest` covers the file as it ' +
-      'now stands, including the embedded block.'
+    note          : 'The capture itself is unchanged: the RECORD_INTO-stable ' +
+      'payload digest is identical before and after this embedding, and is ' +
+      'what a comparison report links this recording by. The block\'s own ' +
+      '`payloadDigest` has been recomputed over the artifact as it now ' +
+      'stands, so the recording still authenticates itself.'
   };
 
-  sealSidecar(recordingPath, text, record.provenance);
+  try {
+    provenance.assertPortable(block, 'provenance');
+  }
+  catch (err) {
+    throw asToolError(err);
+  }
+
+  // Re-attach and re-seal over the new bytes. The re-attachment is what keeps
+  // the recording self-authenticating: the contract's payload digest covers
+  // the artifact INCLUDING the comparison, so leaving the pre-embed digest in
+  // place would deliver a recording that fails its own seal.
+  sealed = sealRecording(recordingPath, matrix, block, null);
 
   note('recorded the completed comparison into ' + recordingPath +
-    ' (sha256 ' + digests.digest.slice(0, 16) + '..., payload digest ' +
-    'unchanged at ' + digests.payloadDigest.slice(0, 16) + '...)');
-  note('re-sealed ' + sidecarPathFor(recordingPath));
+    ' (sha256 ' + sealed.digests.digest.slice(0, 16) + '..., ' +
+    'RECORD_INTO-stable payload digest unchanged at ' +
+    sealed.digests.payloadDigest.slice(0, 16) + '...)');
 }
 
 /**
@@ -12383,12 +12825,11 @@ function recordingEvidenceFaults(matrix, label) {
  *
  * `--record-into` MUTATES the committed baseline, so the question is not "did
  * the comparison run" but "is this result eligible to become the project's
- * evidence". An earlier build wrote first and raised the deferred assertion
- * afterwards, so a run whose target failed a fatal invariant - or one relaxed
- * by --allow-same-tree, which is explicitly not two-tree parity evidence -
- * could seal a `HOLDS` verdict into the recording and then exit non-zero. The
- * exit code was right and the artifact was wrong, and the artifact is what
- * outlives the run.
+ * evidence". Eligibility is decided BEFORE the write: a run whose target failed
+ * a fatal invariant, or one relaxed by --allow-same-tree and therefore not
+ * two-tree parity evidence, would otherwise seal a `HOLDS` verdict into the
+ * recording and exit non-zero beside it - and the artifact is what outlives the
+ * run.
  *
  * @param {Object} input {result, comparability, deferred, baselineRecord,
  *   targetMatrix, live}
@@ -12440,12 +12881,12 @@ function qualifyForRecording(input) {
 /**
  * The target matrix path for a comparison report.
  *
- * SCR-F50: the matrix a live `--compare` drove is written beside the report as
+ * The matrix a live `--compare` drove is written beside the report as
  * `<out>.target.json`, and its sidecar is `<out>.target.json.provenance.json` -
- * that is, the sibling of the MATRIX, not of the report. The tool previously
- * wrote the sidecar to `<out>.provenance.json`, which sits beside the report
- * while describing the matrix, so a reader could not tell which file the
- * digest, the role and the joi version belonged to.
+ * that is, the sibling of the MATRIX and not of the report. A sidecar at
+ * `<out>.provenance.json` would sit beside the report while describing the
+ * matrix, leaving a reader unable to tell which file the digest, the role and
+ * the joi version belong to.
  *
  * @param {string} out The report path.
  * @returns {string}
@@ -12454,6 +12895,12 @@ function targetMatrixPathFor(out) {
   return out + '.target.json';
 }
 
+/**
+ * `--capture` and `--schema-only`.
+ *
+ * @param {Object} options Parsed arguments.
+ * @returns {Promise<number>} An exit code.
+ */
 async function runCapture(options) {
   var out = resolveOut(options, options.mode);
   var built;
@@ -12491,20 +12938,24 @@ async function runCapture(options) {
 
   built    = captured.value;
   warnings = describeWarnings(captured.warnings);
-  audit    = annotateMatrix(built.artifact, warnings, 'target');
+  audit    = annotateMatrix(built.artifact, warnings, 'target',
+    options.appRoot);
 
   // Judged after teardown, so the application's stderr is complete, and
   // before the artifacts are sealed, so the verdict travels in the sidecar.
   judged = await finishWarningGate(options.appRoot);
 
-  recordWarningGate(built.provenance, judged);
+  recordWarningGate(built.runOutput, judged);
 
-  sealed = sealSidecar(out, serialize(built.artifact), built.provenance);
+  sealed = sealRecording(out, built.artifact, built.provenance,
+    built.runOutput);
 
   note('wrote ' + sealed.artifactPath + ' (' + sealed.digests.bytes +
-    ' bytes, sha256 ' + sealed.digests.digest.slice(0, 16) + '...)');
-  note('wrote ' + sealed.sidecarPath + ' (role ' + built.artifact.role +
-    ', payload sha256 ' + sealed.digests.payloadDigest.slice(0, 16) + '...)');
+    ' bytes, sha256 ' + sealed.digests.digest.slice(0, 16) +
+    '..., provenance embedded)');
+  note('wrote ' + sealed.sidecarPath + ' (RUN OUTPUT, not part of the ' +
+    'delivery: role ' + built.artifact.role + ', RECORD_INTO-stable payload ' +
+    'sha256 ' + sealed.digests.payloadDigest.slice(0, 16) + '...)');
 
   // THE VERDICT, derived only now - after the artifact that evidences it is on
   // disk. The deferred behavioural failure is folded in rather than thrown, so
@@ -12536,7 +12987,7 @@ async function runCapture(options) {
  * recorded outcome and this must exit non-zero naming that case.
  *
  * A perturbed recording must be RE-HASHED before it is fed back in, because a
- * recorded matrix is now hash-linked to its own provenance and an artifact that
+ * recorded matrix is hash-linked to its own provenance and an artifact that
  * does not match its `payloadDigest` is refused as untrustworthy (exit 2)
  * rather than compared. `provenance.attach(matrix, matrix.provenance)` from
  * test/parity/manifest.js recomputes the link over the perturbed payload,
@@ -12572,14 +13023,15 @@ async function runCompare(options) {
 
   resetTeardownFailures();
 
-  note('baseline ' + baselineRecord.path + ' verified against its sidecar: ' +
-    'role ' + baseline.role + ', joi ' +
-    ((baselineRecord.provenance.versions || {}).joi || 'unrecorded') +
-    ', app HEAD ' +
-    (((baselineRecord.provenance.app || {}).head || 'unrecorded').slice(0, 12)) +
-    ', digest matched' + (baselineRecord.embedded
-      ? ' (and its sidecar records an embedded comparison)'
-      : ''));
+  note('baseline ' + baselineRecord.path + ' authenticated against its ' +
+    'embedded provenance: role ' + baseline.role + ', joi ' +
+    (joiVersionOf(baselineRecord) || 'unrecorded') + ', app HEAD ' +
+    ((analysedHeadOf(baselineRecord) || 'unrecorded').slice(0, 12)) +
+    ', payload digest matched' + (baselineRecord.embedded
+      ? ' (and it carries a completed comparison)'
+      : '') + (baselineRecord.sidecarPath === null
+      ? ''
+      : '; the sidecar beside it was reconciled too'));
 
   if (options.compare.length === 2) {
     // Offline: both sides are recordings, so both are verified the same way.
@@ -12610,24 +13062,24 @@ async function runCompare(options) {
 
     judged = await finishWarningGate(options.appRoot);
 
-    recordWarningGate(built.provenance, judged);
+    recordWarningGate(built.runOutput, judged);
 
     // The audit is recorded ON the matrix BEFORE it is sealed, so the sealed
     // bytes carry the evidence the verdict is derived from - and so the live
     // branch's `audits` entry below, which reads `proofMismatches` off this
     // object, exists at all.
-    annotateMatrix(targetMatrix, warnings, 'target');
+    annotateMatrix(targetMatrix, warnings, 'target', options.appRoot);
 
-    // The matrix and ITS OWN sidecar, written as siblings. See
-    // targetMatrixPathFor for why that matters.
-    sealedTarget = sealSidecar(targetPath, serialize(targetMatrix),
-      built.provenance);
+    // The matrix with its provenance embedded, and ITS OWN sidecar written as
+    // its sibling. See targetMatrixPathFor for why the sibling matters.
+    sealedTarget = sealRecording(targetPath, targetMatrix, built.provenance,
+      built.runOutput);
 
     note('wrote ' + sealedTarget.artifactPath + ' (' +
       sealedTarget.digests.bytes + ' bytes, sha256 ' +
-      sealedTarget.digests.digest.slice(0, 16) + '...)');
-    note('wrote ' + sealedTarget.sidecarPath + ' (role ' + targetMatrix.role +
-      ', beside the matrix it describes)');
+      sealedTarget.digests.digest.slice(0, 16) + '..., provenance embedded)');
+    note('wrote ' + sealedTarget.sidecarPath + ' (RUN OUTPUT, role ' +
+      targetMatrix.role + ', beside the matrix it describes)');
 
     // Re-read through the same verifier the offline path uses, so the live
     // target is held to exactly the checks a recorded one is - including that
@@ -12647,8 +13099,7 @@ async function runCompare(options) {
   // BOTH matrices are audited, because a recorded mismatch nobody has resolved
   // is unresolved wherever it sits: the baseline this gate consumes as evidence
   // is subject to the same bar as the matrix it produces. The baseline is
-  // audited from its recorded values and is never rewritten - it belongs to
-  // whoever captured it.
+  // audited from its recorded values and is never rewritten.
   audits = [
     auditProofMismatches(baseline, 'baseline'),
     // A live replay has already audited and annotated its own matrix; do not
@@ -12860,7 +13311,6 @@ function main() {
 }
 
 module.exports = {
-  // The modes.
   run         : run,
   main        : main,
   buildMatrix : buildMatrix,
@@ -12873,20 +13323,22 @@ module.exports = {
   readMatrix      : readMatrix,
   indexTargets    : indexTargets,
 
-  // Digests and sidecars, exported because the negative controls need them.
-  // Perturbing a recorded outcome invalidates that recording's seal, so a
-  // tampered file is refused for INTEGRITY (exit 2) before the comparator ever
-  // sees the changed outcome. Both failure modes must be demonstrable, and they
-  // are distinct: re-seal the perturbed file with sealSidecar and the
-  // comparator reports the changed case as a DIFFERENCE (exit 1); leave it
-  // unsealed and readRecording refuses it as modified (exit 2).
+  // Digests and seals, exported because the negative controls need them.
+  // Perturbing a recorded outcome invalidates that recording's own payload
+  // digest, so a tampered file is refused for INTEGRITY (exit 2) before the
+  // comparator ever sees the changed outcome. Both failure modes must be
+  // demonstrable, and they are distinct: re-attach the block over the
+  // perturbed payload - `provenance.attach(matrix, matrix.provenance)`, or
+  // sealRecording, which does it and writes - and the comparator reports the
+  // changed case as a DIFFERENCE (exit 1); leave the block as it was and
+  // readRecording refuses the file as modified (exit 2).
   RECORD_INTO_KEYS : RECORD_INTO_KEYS,
   ROLES            : ROLES,
   artifactDigest   : artifactDigest,
   artifactDigests  : artifactDigests,
   sidecarPathFor   : sidecarPathFor,
   targetMatrixPathFor : targetMatrixPathFor,
-  sealSidecar      : sealSidecar,
+  sealRecording    : sealRecording,
   readRecording    : readRecording,
   majorOf          : majorOf,
   assertComparable : assertComparable,
@@ -12894,12 +13346,17 @@ module.exports = {
   recordComparisonInto : recordComparisonInto,
   // The provenance surface, exported so a harness can drive it WITHOUT a
   // database: every guarantee below is checkable by building a block and
-  // reading it back, which is how the four provenance findings are evidenced.
+  // reading it back, which is how the provenance findings are evidenced.
   provenance            : provenance,
   buildProvenance       : buildProvenance,
+  buildRunOutput        : buildRunOutput,
   resolveRole           : resolveRole,
   artifactName          : artifactName,
-  writeMatrix           : writeMatrix,
+  artifactLabel         : artifactLabel,
+  sidecarLink           : sidecarLink,
+  analysedHeadOf        : analysedHeadOf,
+  joiVersionOf          : joiVersionOf,
+  generatorIdentityOf   : generatorIdentityOf,
   assertMatrixProvenance: assertMatrixProvenance,
   asToolError           : asToolError,
   parseJsonOrNull       : parseJsonOrNull,
@@ -12916,6 +13373,7 @@ module.exports = {
   attributeWarning       : attributeWarning,
   describeWarnings       : describeWarnings,
   annotateMatrix         : annotateMatrix,
+  portableWarnings       : portableWarnings,
   buildGate              : buildGate,
   deriveExitCode         : deriveExitCode,
   reportGate             : reportGate,
@@ -12976,13 +13434,11 @@ module.exports = {
   buildTimeouts           : buildTimeouts,
   renderedRedirectFields  : renderedRedirectFields,
   solveRedirect           : solveRedirect,
-  gitDirty                : gitDirty,
   assertEvidence          : assertEvidence,
   collectAssertions       : collectAssertions,
   applyPreconditions      : applyPreconditions,
   restoreState            : restoreState,
   invitationModel         : invitationModel,
-  roleFor                 : roleFor,
   artifactNotes           : artifactNotes,
   compileSection          : compileSection,
   validateLocally         : validateLocally,
@@ -13075,7 +13531,8 @@ module.exports = {
   ARTIFACT_SCHEMA_VERSION : ARTIFACT_SCHEMA_VERSION,
   ROLE_BASELINE           : ROLE_BASELINE,
   ROLE_TARGET             : ROLE_TARGET,
-  ROLE_SCHEMA_ONLY        : ROLE_SCHEMA_ONLY,
+  ROLE_ANALYSIS           : ROLE_ANALYSIS,
+  ROLE_UNREVIEWED         : ROLE_UNREVIEWED,
   ORDER_POLICY            : ORDER_POLICY,
   RESTORE_POLICY          : RESTORE_POLICY,
   ARTIFACT_KEY_ORDER      : ARTIFACT_KEY_ORDER,

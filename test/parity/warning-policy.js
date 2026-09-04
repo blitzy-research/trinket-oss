@@ -1,111 +1,82 @@
 /**
  * test/parity/warning-policy.js - the zero-warning gate, in one place.
  *
- * ===========================================================================
- * WHY THIS FILE EXISTS
- * ===========================================================================
- * AAP 0.8 states the bar in the user's own emphasis: "Boot with zero
- * deprecation warnings across the ENTIRE running application, not just the
- * hapi-facing surface." AAP 0.9.3 turns that into a pass condition - "no
- * warning or deprecation notice attributable to the application's own source or
- * to any dependency this plan retains" - and names the exercise it is measured
- * over: `node --pending-deprecation --trace-deprecation` across the listening
- * server, a full replay pass over all 233 routes, and the standalone worker.
+ * The parity gates hold one condition: a run emits no warning or deprecation
+ * notice attributable to the application's own source or to a dependency the
+ * delivery retains, measured under `--pending-deprecation --trace-deprecation`
+ * over the listening server, the full route surface and the worker. This module
+ * IS that condition - what counts as a notice, how it is detected, what the
+ * flags must be, and which tree may be gated - as data and one predicate, so
+ * the gates state the bar by reference and a change to it is a single diff.
  *
- * That is ONE condition. It was implemented four times, once per tool, and the
- * four disagreed:
+ * INVOCATION
+ *   Required, never executed. `test/parity/replay.js`, `worker.js`,
+ *   `storage.js` and `joi-matrix.js` require it. Nothing here starts anything
+ *   except `elevate`, which re-executes its caller once with the required
+ *   flags from a `require.main === module` guard. It requires nothing from the
+ *   application, `test/lib` or `test/helpers`, so requiring it cannot load,
+ *   connect to or configure anything.
  *
- *   test/parity/replay.js     no allowances, but a detector whose `Warning:\b`
- *                             alternative can never match and which knew
- *                             nothing of Mongoose or AWS notices - and gate
- *                             qualification that never asked whether the
- *                             deprecation flags had been passed at all.
- *   test/parity/worker.js     one named allowance for the compress-commons
- *                             DEP0005, printed as a "deviation" that no AAP
- *                             section authorizes.
- *   test/parity/storage.js    warnings recorded into `findings`, which only
- *                             printed - the exit code never saw them.
- *   test/parity/joi-matrix.js warnings discarded, on the reasoning that the
- *                             gate belonged to somebody else.
+ * ARTIFACT
+ *   No file of its own. `judge` returns the check document each gate embeds in
+ *   its artifact - `{name, policy, subject, gateApplies, asserted, ok,
+ *   qualifying, skipped, reason, flags, notices, entries, requirements,
+ *   failures}` - and `POLICY` travels inside it, so an artifact records which
+ *   bar it was judged against and on what evidence.
  *
- * Four policies are no policy: whichever tool a reader happened to open told
- * them a different thing was required. So the policy lives here, as data and as
- * one predicate, and the four tools state it by reference. A change to the bar
- * is now a change to this file, visible in one diff.
- *
- * ===========================================================================
- * THE POLICY, IN FULL
- * ===========================================================================
- * 1. THERE ARE NO ALLOWANCES. `ALLOWANCES` is empty and is not a list waiting
- *    to be populated. AAP 0.7 and 0.5.1.4 authorize exactly two deviations
- *    from this migration's requirements - the never-settling file response at
- *    lib/controllers/files.js:98-100 becoming a real stream response, and the
- *    `marked` fork's residual high audit finding - and NEITHER is a warning.
- *    AAP 0.9.5 is explicit that "no exception is granted to the plan by the
- *    plan". A retained dependency's deprecation is therefore a gate FAILURE,
- *    not a footnote: 0.9.3's pass condition names retained dependencies as
- *    covered, and archiver 2.1.1 - which 0.5.1.1 retains and 0.2.2 leaves out
- *    of scope - is exactly that case. The gate fails while its DEP0005 stands,
- *    and clearing it is a dependency decision, not a gate decision.
- * 2. THE FLAGS ARE A PRECONDITION, NOT A PREFERENCE. DEP0005 is a PENDING
- *    deprecation: without `--pending-deprecation` it is silent, so a run that
- *    did not pass the flags cannot distinguish "nothing was emitted" from
- *    "nothing was asked for". Such a run produces no warning evidence and
- *    cannot stand as the gate. `auditFlags` measures this - reading
- *    `process.execArgv`, `NODE_OPTIONS` (whose entries do NOT appear in
- *    execArgv - measured) and `NODE_NO_WARNINGS` - and `elevate` removes the
- *    ergonomic excuse by re-executing an in-process tool with the flags once.
- * 3. SUPPRESSION IS A FAILURE, NOT A CONFIGURATION. `--no-deprecation`,
- *    `--no-warnings`, `--disable-warning=...` and `NODE_NO_WARNINGS` are
- *    reported as failures wherever they appear, because a silent stream under
- *    them is indistinguishable from a clean one.
- * 4. THE GATE IS THE TARGET TREE'S. A run against another worktree - a
- *    baseline install reached through `--app` - is a MEASUREMENT: its notices
- *    are recorded and printed, its exit code is not decided by them, and it is
- *    forced NON-QUALIFYING so it can never be presented as the gate. This is
- *    what reconciles zero allowances with the fact that a baseline tree
- *    legitimately emits the AWS SDK v2 end-of-support notice, which only the
- *    target's `config/aws.js:6` suppresses.
- * 5. EVIDENCE HAS A BREADTH, AND THE CALLER DECLARES IT. A clean stderr proves
- *    nothing about the routes nobody requested. Callers pass `requirements`,
- *    each a named prerequisite with its own met/unmet state, and an unmet one
- *    fails the check on the tree it gates. AAP 0.9.3's breadth - all 233
- *    routes, more than one identity, methods beyond GET, and the worker - is
- *    expressed that way by test/parity/replay.js.
- *
- * ===========================================================================
  * WHAT COUNTS AS A NOTICE
- * ===========================================================================
- * `NOTICE_PATTERNS` is the whole answer, as data, each entry saying what it is
- * for. Three of them exist because of specific measurements on this codebase:
+ *   `NOTICE_PATTERNS`, each entry carrying its own reason in its `what` field.
+ *   Detection is text-first with a `process.on('warning')` listener as the
+ *   supplement, because the two see different things: the listener sees every
+ *   `process.emitWarning` - including a maintenance banner emitted as a NOTE
+ *   with unindented continuation lines - and misses anything printed through
+ *   `console.warn`, which is how Mongoose reports its deprecations. Generic
+ *   deprecation wording is included deliberately, to catch a dependency that
+ *   prints its own notice with none of Node's markers; no runtime output in
+ *   `lib/`, `config/` or `app.js` contains the word, so the application's own
+ *   log stream cannot false-positive on it. A stack frame is tested for before
+ *   the patterns, because `--trace-deprecation` puts a stack under every notice
+ *   and a frame naming a matched word would open a second block for one.
  *
- *   * `(node:PID)` is Node's own warning printer and catches every
- *     `process.emitWarning` - including the AWS SDK v2 banner, which is an
- *     emitWarning of type NOTE with UNINDENTED continuation lines (measured),
- *     so it folds into exactly one block.
- *   * `[MONGOOSE]` exists because Mongoose emits its deprecation notices
- *     through `console.warn`, NOT through `process.emitWarning` - so a
- *     `process.on('warning')` listener alone would miss them entirely. That is
- *     why detection is text-first here and the listener is the supplement.
- *   * `Warning:` is written as `(^|\s)Warning:(\s|$)`. The predicate this file
- *     replaces wrote `Warning:\b`, which cannot match anything: `:` and the
- *     space after it are both non-word characters, so the boundary never
- *     holds. It was dead, and a dead pattern in a gate reads as coverage.
+ * THERE ARE NO ALLOWANCES
+ *   `ALLOWANCES` is empty and is not a list waiting to be populated. A notice
+ *   from a retained dependency is a gate FAILURE and not a footnote, and
+ *   clearing one is a dependency decision taken in the manifest and the
+ *   lockfile rather than a gate decision taken here. It is exported as data so
+ *   a reader can see that it is empty instead of trusting prose, and so an
+ *   entry could only arrive as a visible diff.
  *
- * Generic deprecation wording is included deliberately, to catch a retained
- * dependency that prints its own notice through `console.warn` with none of
- * Node's markers. Measured on this repository: no runtime output in `lib/`,
- * `config/` or `app.js` contains the word, so the application's own log stream
- * cannot false-positive on it.
+ * THE FLAGS ARE A PRECONDITION, NOT A PREFERENCE
+ *   A pending deprecation is silent without `--pending-deprecation`, so a run
+ *   that did not pass the flags cannot distinguish "nothing was emitted" from
+ *   "nothing was asked for": it carries no warning evidence and cannot stand as
+ *   the gate. `auditFlags` measures that over `process.execArgv`,
+ *   `NODE_OPTIONS` - whose entries do not appear in execArgv - and
+ *   `NODE_NO_WARNINGS`. Suppression is a failure rather than a configuration:
+ *   `--no-deprecation`, `--no-warnings`, `--disable-warning=...`,
+ *   `--redirect-warnings=...` and their environment forms each make a quiet
+ *   stream indistinguishable from a clean one - redirection included, because
+ *   these gates judge a stream and a redirected notice leaves none in it.
  *
- * ===========================================================================
- * PROHIBITIONS OBSERVED
- * ===========================================================================
- * This module requires nothing from the application, nothing from `test/lib`
- * and nothing from `test/helpers`. It uses `new URL` and never `url.parse`
- * (DEP0169) and `Buffer.from` and never `new Buffer` (DEP0005), because its own
- * stderr is inside the stream it judges. It suppresses nothing: the collector
- * TEES, so every notice stays as visible as it was.
+ * THE GATE IS THE TARGET TREE'S
+ *   A run against another worktree - a baseline install reached through
+ *   `--app` - is a MEASUREMENT: its notices are recorded and printed, they do
+ *   not decide its exit code, and it is forced non-qualifying so it can never
+ *   be presented as the gate. `gateAppliesTo` decides that once for every gate.
+ *   It is also what reconciles zero allowances with a baseline tree
+ *   legitimately emitting the AWS SDK end-of-support notice, which only the
+ *   target's `config/aws.js` suppresses.
+ *
+ * EVIDENCE HAS A BREADTH, AND THE CALLER DECLARES IT
+ *   A clean stderr proves nothing about the routes nobody requested. Callers
+ *   pass `requirements`, each a named prerequisite with its own met/unmet
+ *   state, and an unmet one fails the check on the tree it gates.
+ *
+ * THIS MODULE'S OWN STDERR IS INSIDE THE STREAM IT JUDGES
+ *   So it uses `new URL` and never `url.parse`, `Buffer.from` and never
+ *   `new Buffer`, prefixes its own lines with `LOG_PREFIX`, and always excludes
+ *   that prefix from detection. It suppresses nothing: the collector TEES, so
+ *   every notice stays as visible as it was.
  */
 
 'use strict';
@@ -113,10 +84,10 @@
 var childProcess = require('child_process');
 var path         = require('path');
 
-// This tool's own worktree root, two levels above test/parity/. Rule 4 of the
-// policy is decided against it in ONE place - `gateAppliesTo` - so every gate
-// treats a foreign `--app` tree the same way instead of each deciding for
-// itself, which is how three of the four came to apply the target's gate to a
+// This tool's own worktree root, two levels above test/parity/. The
+// target-tree rule is decided against it in ONE place - `gateAppliesTo` - so
+// every gate treats a foreign `--app` tree the same way instead of each
+// deciding for itself and some of them applying the target's gate to a
 // baseline install.
 var TOOL_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -133,11 +104,12 @@ var LOG_PREFIX = '[parity:warning-gate] ';
 // fails closed instead of re-executing forever.
 var ELEVATION_MARKER = 'PARITY_WARNING_GATE_ELEVATED';
 
-// One name, so the check reads identically in every tool's report and a
-// reviewer grepping for it finds all four.
+// One name, so the check reads identically in every tool's report and grepping
+// for it finds every gate that applied it.
 var CHECK_NAME = 'zero warnings (AAP 0.9.3, no allowances)';
 
-// The flags AAP 0.9.3 names. Order is the order the AAP writes them in.
+// The flags the gate is measured under, in the order they are conventionally
+// written on the command line.
 var REQUIRED_FLAGS = Object.freeze([
   '--pending-deprecation',
   '--trace-deprecation'
@@ -148,13 +120,12 @@ var REQUIRED_FLAGS = Object.freeze([
 // because each can take a value (`--disable-warning=DEP0005`,
 // `--redirect-warnings=file`).
 //
-// `--redirect-warnings` belongs here for a measured reason rather than a
-// theoretical one: under `--pending-deprecation --trace-deprecation
-// --redirect-warnings=<file>` a `new Buffer()` deprecation was written to the
-// file and stderr stayed EMPTY. Every one of these gates judges a stream, so a
-// run that diverted its warnings elsewhere passes every check while producing
-// no evidence at all - which is the failure mode this whole policy exists to
-// prevent, arriving through a flag instead of an allowance.
+// `--redirect-warnings` belongs here for a concrete reason rather than a
+// theoretical one: under it a deprecation is written to the named file and
+// stderr stays EMPTY. Every one of these gates judges a stream, so a run that
+// diverted its warnings elsewhere passes every check while producing no
+// evidence at all - the failure mode this policy exists to prevent, arriving
+// through a flag instead of an allowance.
 var SUPPRESSING_FLAGS = Object.freeze([
   '--no-deprecation',
   '--no-warnings',
@@ -164,17 +135,17 @@ var SUPPRESSING_FLAGS = Object.freeze([
 
 // The environment's own suppressors, checked because a flag audit that read
 // only argv would miss them. `NODE_REDIRECT_WARNINGS` is the environment form
-// of the flag above and was reproduced doing the same thing.
+// of the flag above and diverts the stream the same way.
 var SUPPRESSING_ENV = Object.freeze([
   'NODE_NO_WARNINGS',
   'NODE_REDIRECT_WARNINGS'
 ]);
 
-// EMPTY, AND NOT A PLACEHOLDER. See paragraph 1 of the policy above: the AAP
-// authorizes two deviations and neither is a warning, so there is nothing this
-// list could legitimately hold. It is exported as data so a reader can see that
-// it is empty rather than having to trust prose, and so a future entry would
-// have to arrive as a visible diff carrying the AAP section that grants it.
+// EMPTY, AND NOT A PLACEHOLDER. A notice from a retained dependency fails this
+// gate, and clearing one is a dependency decision rather than a gate decision,
+// so there is nothing this list could legitimately hold. It is exported as data
+// so a reader can see that it is empty rather than having to trust prose, and
+// so a future entry would have to arrive as a visible diff.
 var ALLOWANCES = Object.freeze([]);
 
 // The policy as a document, embedded in every artifact that reports the gate so
@@ -290,8 +261,8 @@ var harnessDepth = 0;
  * third writes unprefixed progress lines, and teeing its stream without a way
  * to tell prose from notices would either miss its dependencies' `console.warn`
  * output (with `tee: false`) or judge its own sentences (with `tee: true`).
- * This closes that gap without changing what any tool prints: the writer is
- * unchanged, and only the collector's view of the line changes.
+ * Marking the scope closes that gap without changing what any tool prints: the
+ * writer is untouched and only the collector's view of the line changes.
  *
  * Synchronous by contract. An `async` body would leave the scope open across an
  * await and swallow a notice raised in between, so a function is taken and
@@ -570,7 +541,7 @@ function framesOf(stack) {
  * Two collectors, because one alone has a measured blind spot:
  *
  *   * a `process.on('warning')` listener sees every `process.emitWarning` -
- *     Node's deprecations, and the AWS SDK v2 banner - but NOT Mongoose, which
+ *     Node's deprecations, and the AWS SDK banner - but NOT Mongoose, which
  *     prints through `console.warn`;
  *   * a stderr tee sees everything that is printed, including Mongoose, but
  *     also sees the harness's own progress output, so it is only safe where
@@ -736,10 +707,9 @@ function suppressorsIn(flags) {
  * Audits a flag list against the policy.
  *
  * `NODE_OPTIONS` is folded in because its entries do NOT appear in
- * `process.execArgv` - measured on Node 22.23.2 - so an audit that read only
- * execArgv would report a properly-flagged run as unflagged. `NODE_NO_WARNINGS`
- * is folded in as a suppressor for the same reason: it is not a flag anywhere
- * argv can see.
+ * `process.execArgv`, so an audit that read only execArgv would report a
+ * properly-flagged run as unflagged. `NODE_NO_WARNINGS` is folded in as a
+ * suppressor for the same reason: it is not a flag anywhere argv can see.
  *
  * @param {Array.<string>} flags The flags the measured process was given.
  * @param {Object} [env=process.env]
@@ -942,6 +912,95 @@ function judge(input) {
 }
 
 /**
+ * Renders a judged gate as failure entries a caller folds into ITS OWN verdict.
+ *
+ * A judged gate answers the question but decides nothing: `judge` returns `ok`,
+ * and it is the calling tool's failure set - the thing it serializes and the
+ * thing its exit predicate reads - that has to carry the answer. A tool that
+ * checks `ok` beside its verdict instead of inside it writes an artifact saying
+ * PASSED and then exits non-zero, which is the defect this function exists to
+ * make impossible: it was measured in test/parity/storage.js, whose `buildGate`
+ * assembled cases, warnings, findings and teardown failures and left the
+ * warning verdict to a separate branch after the artifact had already been
+ * written. The entries below go into the same list as every other failure, so
+ * the artifact and the exit code cannot disagree.
+ *
+ * The RULES are applied here rather than by each caller, for the reason this
+ * whole module exists - one of the four gates folded the verdict inline and
+ * three did not fold it at all:
+ *
+ *   * A satisfied gate contributes nothing. `[]`, and the caller's verdict is
+ *     unaffected.
+ *   * A gate that does not apply contributes nothing. Rule 4: a run against
+ *     another worktree MEASURES that tree, and `judge` has already emptied its
+ *     failures and set `ok` - so a baseline measurement cannot fail a caller
+ *     that folds this in.
+ *   * A skipped gate contributes nothing, for the same reason: nothing was
+ *     launched, so there is no stream of its own to fail on.
+ *   * `ok === false` ALWAYS contributes at least one entry. A gate that reports
+ *     not-ok while naming no reason would otherwise fold to an empty list and
+ *     pass silently, which is the failure mode of the thing it replaces, so
+ *     that case gets an entry naming the caller as the owner - a gate that
+ *     cannot say why it failed is a defect in the tool, not in the tree.
+ *
+ * `owner` is the caller's to state because the two possible answers are its
+ * own: a notice the tree under test emitted is that tree's to clear, and a gate
+ * with no reason is the tool's to fix. Neither is decidable from here.
+ *
+ * @param {(Object|null|undefined)} gate A `judge` result, or nothing.
+ * @param {Object} [options]
+ * @param {string} [options.owner] Owner recorded for a failure the policy
+ *   named. Defaults to 'the tree under test'.
+ * @param {string} [options.selfOwner] Owner recorded for the not-ok-without-a-
+ *   reason entry - the calling tool. Defaults to `options.owner`.
+ * @returns {Array<{subject: string, detail: string, owner: string}>} Empty when
+ *   the gate is satisfied, does not apply or was skipped.
+ */
+function gateFailures(gate, options) {
+  var settings = options || {};
+  var owner = settings.owner || 'the tree under test';
+  var policyId;
+  var entries;
+
+  if (!gate || gate.ok !== false) {
+    return [];
+  }
+
+  // `judge` sets `ok` false only for a gate that applies, so these two are
+  // belt-and-braces against a hand-built document rather than live paths -
+  // and cheap enough to keep, because the cost of getting Rule 4 wrong here is
+  // a baseline measurement failing a target's gate.
+  if (gate.gateApplies === false || gate.skipped === true) {
+    return [];
+  }
+
+  policyId = (gate.policy && gate.policy.id) || gate.policy || POLICY.id;
+
+  entries = (gate.failures || []).map(function(failure) {
+    return {
+      subject: 'the zero-warning gate (' + policyId + ') on ' +
+        (gate.subject || 'the run'),
+      detail : String(failure),
+      owner  : owner
+    };
+  });
+
+  if (!entries.length) {
+    entries.push({
+      subject: 'the zero-warning gate (' + policyId + ') on ' +
+        (gate.subject || 'the run'),
+      detail : 'the gate reported not-ok without naming a failure, so the ' +
+        'reason it failed was not recorded. The verdict stands - a gate that ' +
+        'cannot say why it failed may not be read as a pass - and the missing ' +
+        'reason is a defect in the tool that built this document.',
+      owner  : settings.selfOwner || owner
+    });
+  }
+
+  return entries;
+}
+
+/**
  * Rule 4, decided once: whether the gate applies to the tree under test.
  *
  * The gate is the TARGET tree's. A run against another worktree - a baseline
@@ -949,12 +1008,11 @@ function judge(input) {
  * are recorded and printed, they do not decide its exit code, and it is forced
  * non-qualifying so it can never be presented as the gate. That is what lets
  * this policy have no allowances while a baseline install legitimately emits
- * the AWS SDK v2 end-of-support notice that only the target's `config/aws.js`
+ * the AWS SDK end-of-support notice that only the target's `config/aws.js`
  * suppresses.
  *
- * Every gate calls this rather than computing it, because three of the four
- * previously did not compute it at all and would have failed a baseline
- * measurement on a notice the baseline is expected to emit.
+ * Every gate calls this rather than computing it, so none of them can fail a
+ * baseline measurement on a notice the baseline is expected to emit.
  *
  * @param {(string|null)} appRoot The tree under test, or null for this one.
  * @returns {Object} `{applies, appRoot, toolRoot, treeNote}`
@@ -979,9 +1037,9 @@ function gateAppliesTo(appRoot) {
  * Waits for warnings already scheduled to be delivered.
  *
  * Node delivers a `process.emitWarning` on a later turn, and a dependency can
- * schedule one on a timer: the retained AWS SDK v2 emits its end-of-support
- * NOTE from a zero-delay timer, and a collector closed synchronously right
- * after the work finished reported a clean run and then let that NOTE print.
+ * schedule one on a timer: the retained AWS SDK emits its end-of-support NOTE
+ * from a zero-delay timer, so a collector closed synchronously right after the
+ * work finished would report a clean run and then let that NOTE print.
  * Two macrotask turns are awaited - one for a `setTimeout(fn, 0)` already
  * queued, one for a warning that turn emits - which is bounded, deterministic
  * and cheap.
@@ -1023,11 +1081,10 @@ function requirement(id, met, detail) {
 /**
  * Re-executes this process once with the required flags, if it lacks them.
  *
- * The three in-process gates - worker.js, storage.js and joi-matrix.js - are
- * themselves the process whose stderr AAP 0.9.3 inspects, so a caller who
- * omitted the flags would get a run that cannot produce evidence. Rejecting it
- * would be honest and useless; re-executing it once is honest and useful, and
- * it removes the only reason anyone had to run these tools without the flags.
+ * The in-process gates - `worker.js`, `storage.js` and `joi-matrix.js` - are
+ * themselves the process whose stderr is inspected, so a caller who omitted the
+ * flags would get a run that cannot produce evidence. Re-executing it once
+ * removes the only reason anyone had to run these tools without them.
  *
  * Guarded by an environment marker, so a re-execution that STILL lacks the
  * flags - `NODE_OPTIONS=--no-warnings`, say - does not loop: it returns the
@@ -1162,8 +1219,9 @@ module.exports = {
   splitFlags      : splitFlags,
   suppressorsIn   : suppressorsIn,
 
-  // The judgement.
+  // The judgement, and the one way a caller folds it into its own verdict.
   judge           : judge,
+  gateFailures    : gateFailures,
   requirement     : requirement,
   gateAppliesTo   : gateAppliesTo,
   drainPendingWarnings: drainPendingWarnings,

@@ -33,7 +33,7 @@ Wait for the services to start. You'll see `Server started on port:` when ready.
 
 Open **http://localhost:3000** in your browser.
 
-The CSS step is not optional under Compose, and the reason is the volume layout rather than the build: `docker-compose.yml` mounts your checkout over the application directory, so `/css/base.css` and `/css/embed.css` are served from `public/css/` **in the checkout** and not from the copies the image built. Both files are generated and gitignored, so a fresh clone does not have them and those two requests answer 404 until the build above has run - measured on a clean checkout. The image itself does contain them, so running it without mounting your source over it (`docker run`, or any deployment that does not bind-mount the checkout) needs no extra step.
+The CSS step is not optional under Compose, and the reason is the volume layout rather than the build: `docker-compose.yml` mounts your checkout over the application directory, so `/css/base.css` and `/css/embed.css` are served from `public/css/` **in the checkout** and not from the copies the image built. Both files are generated and gitignored, so a fresh clone does not have them and those two requests answer 404 until the build above has run. The image itself does contain them, so running it without mounting your source over it (`docker run`, or any deployment that does not bind-mount the checkout) needs no extra step.
 
 ## Frontend Components
 
@@ -71,7 +71,7 @@ docker-compose exec --user root app npm run build:css
 docker-compose exec --user root app npm run watch:css
 ```
 
-`--user root` is required and is not a convenience: the container runs as the unprivileged `trinket` user (uid 999), the checkout it writes into belongs to whoever cloned it, and `public/components` is a named volume owned by the image's user. Without it the build fails with `EACCES` - either writing Vite's bundled config beside `vite.config.mjs`, or copying `public/components` while preparing the output directory. Both failures were measured; as root the build writes both stylesheets into the mounted checkout. The files then belong to root on your host, which is the price of building this way; the host build below does not have that effect.
+`--user root` is required and is not a convenience: the container runs as the unprivileged `trinket` user (uid 999), the checkout it writes into belongs to whoever cloned it, and `public/components` is a named volume owned by the image's user. Without it the build fails with `EACCES` - either writing Vite's bundled config beside `vite.config.mjs`, or copying `public/components` while preparing the output directory. As root the build writes both stylesheets into the mounted checkout. The files then belong to root on your host, which is the price of building this way; the host build below does not have that effect.
 
 The same scripts run on the host:
 
@@ -86,9 +86,9 @@ npm run build:css
 npm run watch:css
 ```
 
-Either way the outputs are `public/css/base.css` and `public/css/embed.css`, both gitignored build artifacts. Measured on a clean checkout: `npm ci` then `npm run build` exits 0 and writes 265,727 and 296,352 bytes respectively, and the SCSS compile prints several hundred Sass deprecation notices from the vendored Foundation tree in `public/components` on the way - they are expected, and the artifacts are correct.
+Either way the outputs are `public/css/base.css` and `public/css/embed.css`, both gitignored build artifacts. On a clean checkout, `npm ci` followed by `npm run build` exits 0 and writes both of them, and the SCSS compile prints several hundred Sass deprecation notices from the vendored Foundation tree in `public/components` on the way - they are expected, and the artifacts are correct.
 
-A container built from the current `Dockerfile` contains both stylesheets, because the image build runs `npm run build:css`; a clean image build was verified to produce the same two files, byte for byte, and to serve them at `/css/base.css` and `/css/embed.css` with `Content-Type: text/css`. Earlier images shipped neither. **That does not carry over to `docker-compose up`**, because the bind mount described in the Quick Start puts your checkout's `public/css/` in front of the image's - so under Compose these commands, or the host build, are what produce the stylesheets, and the image's copies are what you get when nothing is mounted over them. The application serves the files from disk as they are requested, so a build while the container is running takes effect without a restart.
+A container built from the current `Dockerfile` contains both stylesheets, because the image build fetches the components, installs with `npm ci` and then runs `npm run build:css` - so the image serves `/css/base.css` and `/css/embed.css` from copies it built itself. Earlier images shipped neither. **That does not carry over to `docker-compose up`**, because the bind mount described in the Quick Start puts your checkout's `public/css/` in front of the image's - so under Compose these commands, or the host build, are what produce the stylesheets, and the image's copies are what you get when nothing is mounted over them. The application serves the files from disk as they are requested, so a build while the container is running takes effect without a restart.
 
 ### Viewing Logs
 

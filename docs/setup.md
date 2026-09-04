@@ -31,7 +31,7 @@ When using the Docker workflow, Docker and Git are all you need - everything els
    # or, with Node 22 on the host: npm ci && npm run build
    ```
 
-   Compose bind-mounts the checkout over the application directory and keeps only `node_modules` and `public/components` as named volumes, so `/css/base.css` and `/css/embed.css` are served from the checkout's `public/css/` rather than from the copies the image built. Those two files are generated and gitignored: on a fresh clone they are absent and both requests answer 404 until this step has run - measured on a clean checkout. An image run without the checkout mounted over it serves its own copies and needs no such step.
+   Compose bind-mounts the checkout over the application directory and keeps only `node_modules` and `public/components` as named volumes, so `/css/base.css` and `/css/embed.css` are served from the checkout's `public/css/` rather than from the copies the image built. Those two files are generated and gitignored: on a fresh clone they are absent and both requests answer 404 until this step has run. An image run without the checkout mounted over it serves its own copies and needs no such step.
 
 4. Start the services:
    ```bash
@@ -87,7 +87,7 @@ Without email configured, password reset is unavailable but users can still regi
    npm run build
    ```
 
-   The frontend components are gitignored and distributed separately, so `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. The build writes `public/css/base.css` and `public/css/embed.css`. Measured from a freshly cleaned tree: `npm ci` exits 0 without `--legacy-peer-deps`, `npm run build` exits 0, and both stylesheets are present afterwards (265,727 and 296,352 bytes). A second `npm run build` re-verifies the installed component tree against the digest recorded when it was published and skips the download.
+   The frontend components are gitignored and distributed separately, so `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. The build writes `public/css/base.css` and `public/css/embed.css`. From a freshly cleaned tree, `npm ci` exits 0 without `--legacy-peer-deps`, `npm run build` exits 0, and both stylesheets are present afterwards. A second `npm run build` re-verifies the installed component tree against the digest recorded when it was published and skips the download.
 
 3. Start MongoDB locally (Redis is optional).
 

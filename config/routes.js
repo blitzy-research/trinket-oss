@@ -4,7 +4,7 @@ var Joi               = require('joi'),
     helpers           = require('../lib/util/helpers'),
     config            = require('config'),
     constants         = require('./constants'),  // Ensure constants is loaded
-    // js-yaml 4: load() uses the safe schema by default; the 3.x safe loader was removed
+    // load() parses with js-yaml's safe default schema
     reservedUsernames = yaml.load(fs.readFileSync(__dirname + '/reserved.yaml', 'utf8')),
     routes;
 

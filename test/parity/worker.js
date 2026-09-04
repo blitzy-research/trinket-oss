@@ -3,502 +3,88 @@
 
 // Bounded functional validation of the export worker.
 //
-// AAP 0.9.3 states the requirement this file answers: "The export worker is
-// functionally validated, not merely required. A bare require opens Mongo and
-// Redis handles and registers a long-lived processor, so it is neither finite
-// nor meaningful." So this harness starts the worker against an isolated
-// MongoDB, a REAL Bull 4 queue in a namespace of its own, the filesystem-backed
-// S3 fixture and the captured-mail fixture, drives real jobs through the
-// processor the worker registered, asserts the persisted documents, the
-// produced archive, the uploaded object and the captured mail, asserts Bull's
-// own completion, failure, retry and stalled semantics, and closes every handle
-// it opened - inside an overall timeout, with every human-readable byte on
-// stderr because stdout carries the worker's own log lines.
+// `lib/workers/exports.js` exports nothing: requiring it resolves the `exports`
+// queue through `lib/util/queues.js` and registers three event handlers and a
+// one-argument promise-returning processor. So the only way into a handler body
+// is a job on the very queue instance the worker registered against, and this
+// harness requires the worker into ITS OWN process and enqueues from inside it.
+// Seven deterministic jobs run, a successful export through to a failing one,
+// against an isolated MongoDB, a real Bull queue in a Redis namespace of this
+// run's own, and the filesystem-backed S3 and captured-mail fixtures.
 //
-// ===========================================================================
-// USER-SPECIFIED RULES
-// ===========================================================================
-// `review_rules` returns exactly "No user rules provided." for this project,
-// which AAP 0.7 and 0.10.1 independently record. None are invented here and
-// their absence is not read as licence to lower the bar: enterprise practice
-// governs, and two commitments shape every assertion below.
-//
-//   * Every parity claim is backed by an inspectable artifact. The worker's
-//     persisted documents, the archive it produced, the object it uploaded and
-//     the mail it sent are all read back and asserted - never inferred from
-//     the absence of an error.
-//   * Nothing is normalized away that could be compared exactly. The S3 key,
-//     the download URL, the filename, the content type, the content
-//     disposition and the archive's entry list are exact strings. The
-//     enumerated volatile set is in VOLATILE below and nothing else joins it.
-//
-// The request's own RULES block is binding and is not that document:
-//
-//   R-b  No module excluded. This worker is why that clause reaches beyond the
-//        request path: at base commit 2f8712a it cannot be REQUIRED at all,
-//        because its first two requires load config/db before
-//        config/app.config and mongoose-schema-extend's transitive Proxy
-//        polyfill replaces the global Object.getPrototypeOf before
-//        @hapi/hapi loads. The require-time check below is therefore an
-//        assertion, not a formality.
-//   R-c  Every package move needs a stated reason, and `bull` 0.7.2 -> 4.16.5
-//        passed an API-surface check and then failed a closer read. That is
-//        exactly why method presence is not evidence and why this file drives
-//        the handler BODIES rather than checking that handlers exist.
-//   R-e  Error-to-response mappings survive unchanged. The worker's failure
-//        path is asserted per edge: which document field is written, which
-//        mail is sent, whether the promise rejects, and with which error.
-//
-// ===========================================================================
-// THE QUEUE: A REAL BULL 4 QUEUE IN A NAMESPACE OF ITS OWN
-// ===========================================================================
-// `lib/workers/exports.js` has no API. It is a pure side-effect module: it
-// exports nothing, and requiring it resolves the exports queue through
-// `require('../util/queues').exports()` and then registers an `error` handler,
-// a `failed` handler that reads `job.id`, a `completed` handler that calls
-// `job.remove()`, and a one-argument promise-returning processor. There is
-// nothing to call, so the only way to reach a handler body is to put a job on
-// the very queue instance the worker registered against - reachable because
-// `lib/util/queues.js` caches per name in a module-local cache and the worker
-// and this harness resolve the same module instance.
-//
-// WHICH KIND OF QUEUE THAT INSTANCE IS decides what this file can prove, and
-// there is only one answer that proves anything. With `db.redis.enabled: false`
-// `lib/util/queues.js` selects its `InMemoryQueue`, whose `on` is a NO-OP that
-// returns `this` and emits nothing and whose `_processJob` merely `.catch`-logs
-// a rejected processor. Every one of the worker's three event handlers is
-// unreachable there, and with them `job.id` in the failed handler,
-// `job.remove()` on completion and the failed handler's own persistence. An
-// earlier revision of this file worked around that by replacing the instance's
-// `on` and wrapping `_processJob` so that the HARNESS emitted `completed` and
-// `failed` itself. That reached the handler bodies and nothing else: no Bull
-// existed in the process, so Bull's own emission, retry and stalled-job
-// semantics - the exact list AAP 0.5.1.2 says the 0.7.2 -> 4.16.5 move alters
-// and AAP 0.9.3 requires asserted - were not exercised at all. Evidence a
-// harness produces about itself is not evidence about the application, so that
-// mechanism is GONE and nothing in this file emits a queue event.
-//
-// WHAT REPLACES IT. The composed configuration sets `db.redis.enabled: true`
-// and points `db.redis.app` and `db.redis.exports` at a loopback Redis
-// (127.0.0.1:6379 by default, `--redis host:port` to override), so
-// `lib/util/queues.js` takes its Bull branch and builds a genuine
-// `new Queue('exports', {redis: {...}})`. Every event this file asserts is
-// emitted by Bull 4.16.5 itself.
-//
-// ISOLATION, because a queue name IS its Redis keyspace. Bull derives its key
-// prefix from `opts.prefix` (default `bull`), and `lib/util/queues.js`
-// forwards only host, port and password - by design, and this file does not
-// edit it. So the harness patches the `bull` module the application resolves,
-// for the duration of the run, with a wrapper that adds ONE option: a
-// `prefix` unique to this run. Nothing else is injected - not `settings`, not
-// `limiter`, not `defaultJobOptions` - so the queue the worker registers on
-// carries Bull's own defaults, which the run asserts (`lockDuration` 30000)
-// precisely so that a future timing injection cannot pass unnoticed. The
-// wrapper is recorded in the artifact as `queue.injected`, restored in
-// teardown, and the namespace is obliterated before the process leaves. Two
-// runs on one Redis, or a run beside another agent's, therefore cannot see each
-// other's jobs.
-//
-// WHAT THE SELECTED WORKTREE ACTUALLY RESOLVED IS A MEASUREMENT, NOT A
-// PRECONDITION. `--app` exists so this harness, which lives only in the
-// migrated worktree, can drive an INDEPENDENTLY INSTALLED one (AAP 0.9.3), and
-// the baseline at 2f8712a resolves bull 0.7.2: a queue with `on`, `add`,
-// `getJob` and `process`, without `moveUnlockedJobsToWait`, `obliterate`,
-// ioredis-shaped clients or `prefix` support. An earlier revision asserted the
-// Bull 4 surface while merely CONSTRUCTING its observer, so it threw during
-// setup and produced no load-order measurement, no fixtures and no capability
-// diagnosis - it refused the very architecture it was built for. So
-// `probeQueueSurface` now records the surface into the artifact whatever it
-// says, `assertQueueIsRealBull` turns any shortfall into named FAILED checks
-// carrying the remedy, and the run continues to collect everything that does
-// not depend on the queue. What it will NOT do is enqueue: a queue whose
-// `prefix` option was ignored addresses the shared `bull:exports:*` keyspace,
-// this host runs up to sixty-four clones against one Redis, and a gate that
-// polluted a sibling's keyspace to produce its own evidence would be trading
-// someone else's run for its own. Each undriven job is then a failed check of
-// its own rather than a check that quietly disappears.
-//
-// WHAT THAT BUYS, asserted rather than asserted-about:
-//   * the processor's promise completion - a real `completed` event carrying
-//     the value the processor resolved with, and `job.remove()` proven by the
-//     job being GONE from Redis afterwards rather than by a counter;
-//   * `job.id` in the failed handler - a real Bull 4 Job, `id` present and
-//     `jobId` absent as an own property, and the handler's own log line as the
-//     evidence of what it read;
-//   * retry - a job added with `attempts: 2` whose processor Bull runs twice,
-//     with `attemptsMade` 1 then 2 and the failure persisted after the last;
-//   * stalled-job recovery - a job locked by a second queue instance in the
-//     same namespace, its lock deleted, and Bull's own
-//     `moveUnlockedJobsToWait` run twice (the script's guard key is cleared
-//     between passes, because pass one marks and pass two reports): Bull emits
-//     `stalled`, moves the job back to wait, and the WORKER's processor picks
-//     it up and fails it, which is the whole path a lost lock takes in
-//     production;
-//   * the queue-level `error` payload - provoked by taking one job's lock away
-//     while its processor runs, which is the genuine "Missing lock for job N
-//     failed" Bull raises when a processor outlives its lock. Two levers, both
-//     on the harness's side and both undone immediately: the lock horizon is
-//     shortened for that one job, and the lock key is deleted as soon as it
-//     appears. The error object the worker's handler receives is Bull's own,
-//     and Bull's decision that a lost lock is not an outcome it records - no
-//     `failed`, no `completed`, no failed handler - is asserted rather than
-//     assumed.
-//
-// ===========================================================================
-// THE MAIL TEMPLATE PRECONDITION
-// ===========================================================================
-// `lib/workers/exports.js` calls `nunjucks.configure(config.app.templates)`
-// only when `!config.isTest`, and this harness runs under NODE_ENV=test, so the
-// worker itself never configures it. The concern is that
-// `nunjucks.render('emails/export-ready')` would then resolve against
-// nunjucks' default loader and throw, driving an otherwise successful export
-// into the failure path.
-//
-// MEASURED, and the premise does not hold in this tree:
-//   * before any application require: THROWS "template not found:
-//     emails/export-ready" - the default loader searches the process's own
-//     working directory;
-//   * after `require(<appRoot>/lib/workers/exports)`: RENDERS.
-// The reason is a side effect of the worker's own require graph:
-// config/app.config -> lib/util/routeParser -> lib/controllers/courses.js
-// requires lib/util/nunjucks, whose module scope configures the GLOBAL
-// environment that `nunjucks.render` uses. The mail path is therefore genuinely
-// exercised with no harness intervention.
-//
-// So the harness configures NOTHING and instead ASSERTS the capability as a
-// measured precondition (`measureTemplateResolution`), recording both
-// observations in the report. This is identical on both worktrees, because the
-// require chain is.
-//
-// ===========================================================================
-// NO WATCHER IS STARTED, SO NONE IS ALLOWED OR OWNED
-// ===========================================================================
-// That same require of `lib/util/nunjucks` configures nunjucks with
-// `watch: config.isDev || config.isTest`, so under NODE_ENV=test its
-// FileSystemLoader does two things this gate cannot live with: it `require`s
-// `chokidar`, which THIS REPOSITORY DOES NOT DECLARE - AAP 0.5.1.3 removes it
-// as dead, and it is on disk only because npm 7 and later install nunjucks'
-// optional peer automatically - and it starts a watcher per template search
-// path, upwards of a hundred FSEventWrap handles, keeping each FSWatcher in a
-// constructor-local variable the loader never exposes.
-//
-// Three revisions of this file, and the third is the one to keep. The first
-// declared those handles an allowed deviation and called `process.exit`, which
-// reports a leak and leaves rather than closing one. The second resolved
-// `chokidar` as nunjucks resolves it, wrapped `watch` to keep a reference, and
-// closed each watcher in teardown - which fixed the handles and left the
-// harness itself reaching for an undeclared package to do it.
-//
-// This one removes the cause. Both consequences follow from ONE option, so one
-// option is what changes: before the first application require the harness
-// wraps `nunjucks.configure` - the declared package's own public API - and
-// passes `watch: false` through to it, having normalized the arguments exactly
-// as nunjucks does. No watcher is created, no chokidar is loaded, and the
-// teardown step asserts both: `configure` is restored, every call was passed
-// `watch: false`, and NOTHING matching `node_modules/chokidar` is in this
-// process's require cache. What is given up is template hot-reload, which a
-// process that renders once and exits cannot use and which
-// `lib/util/nunjucks.js` already defeats for itself by clearing `env.cache` on
-// every render under isTest.
-//
-// The handle assertion then requires the inventory to be EMPTY apart from this
-// process's own stdout/stderr, which are partitioned separately because which
-// of them exists depends on how the process was invoked and neither ever keeps
-// the loop alive. Nothing forces the process out: it returns from `main`, sets
-// `process.exitCode` and drains, and the watchdog that remains can only ever
-// exit NON-ZERO, after reporting what is still open.
-//
-// The application's own reliance on chokidar REMAINS, and this file records it
-// rather than inheriting it: `dependencies.templateWatch` in the artifact
-// carries how many `configure` calls asked for watching, where chokidar would
-// resolve from, that it is undeclared, that it is nunjucks' optional peer, and
-// that nothing loaded it - and the note owed to `docs/baseline-parity.md` says
-// in words that under NODE_ENV=test an install which skipped optional peers
-// would leave `lib/util/nunjucks.js` unable to load. Declaring the package or
-// configuring nunjucks without watching outside development are decisions for
-// the lanes that own `package.json` and `lib/util/nunjucks.js`.
-//
-// ===========================================================================
-// THE RUNTIME DEFECT THIS GATE REPORTS AS A FAILURE
-// ===========================================================================
-// The success half of AAP 0.9.3's worker gate is unreachable while the worker
-// carries two idioms the installed dependency set no longer supports, both
-// measured:
-//
-//   Q ASSIMILATION  `q` 1.0.1's `Q.nsend`/`ninvoke` runs
-//                   `Q(object).dispatch("post", [name, nodeArgs])` and Q
-//                   assimilates the value the method returns when it is a
-//                   thenable. A mongoose 6 Query IS a thenable, so each
-//                   `Q.nsend` call executes its query a second time and
-//                   mongoose 6.13.11 throws "Query was already executed".
-//                   Measured for `findByIdAndUpdate`, `findById` and `count`.
-//   REMOVED STREAM  `Query.prototype.stream` is `undefined` on mongoose 6 - it
-//                   went in mongoose 5 - and `createExportArchive` streams the
-//                   owner's trinkets, so archive creation cannot start.
-//
-// Neither is a regression of this migration: the same mongoose 6 line and the
-// same `q` 1.0.1 are declared at 2f8712a, `lib/models/user.js` already carries
-// a comment about the first, and the worker is that incompatibility's last
-// consumer - unnoticed precisely because the module could not be required at
-// all. Neither is repaired from HERE, because `lib/workers/exports.js` is not
-// this file's to edit.
-//
-// WHAT THIS FILE DOES ABOUT IT IS THE POINT. An earlier revision treated the
-// combination as a third, accepted outcome - a BLOCKED verdict with its own
-// exit code and its own expectation set - which is a gate reporting that it
-// cannot do its job while exiting as though that were an answer. It is not one.
-// `probeCapabilities` still MEASURES both idioms and still records the exact
-// error text and the call-site counts, because a diagnosis is worth more than
-// a bare failure; but the measurement is now ASSERTED, every job is driven
-// against the real queue, and a worker that cannot complete an export fails
-// this gate with the remedy named: convert the `Q.nsend` calls to
-// `Model.<method>(...).exec()` and the `.stream()` call to `.cursor()`. There
-// is no verdict between PASS and FAIL.
-//
-// The measurement is in two halves and the halves fail differently. The
-// call-site counts come from the worker's SOURCE, over code with comments
-// stripped, and an unreadable source is fatal - a failed read used to leave
-// the source empty, which reads as zero call sites, which reads as the most
-// favourable answer available, produced by the absence of evidence. The
-// runtime halves need a registered model on a live connection, so on a
-// worktree that cannot require the worker at all they are recorded as
-// UNPROBED, and unprobed is never usable.
-//
-// ===========================================================================
-// THE WARNING BAR, AND THE ONE HANDLE ALLOWANCE
-// ===========================================================================
-// THERE IS NO WARNING ALLOWANCE. The bar is AAP 0.9.3's, it is stated once in
-// test/parity/warning-policy.js for all four parity gates, and it has no
-// exceptions: any notice attributable to the application's own source or to a
-// dependency this plan RETAINS fails this run. The instance that proved the bar
-// was DEP0005 `Buffer()` from
-// `compress-commons/lib/archivers/zip/constants.js`, reached through
-// `archiver` 2.1.1 - which this harness FAILED on rather than excusing.
-// Clearing it was the dependency decision's job and that decision was taken:
-// archiver moved 2.1.1 -> 6.0.2, the chain is now zip-stream 5.0.2 ->
-// compress-commons 5.0.3 -> crc32-stream 5.0.1, and this gate measures zero
-// notices on the delivered tree. Excusing it was never this harness's to
-// grant, because 0.7 and 0.5.1.4 authorize exactly two deviations and neither
-// is a warning.
-//
-// The flags are a precondition, not an invocation detail: a pending deprecation
-// is silent without `--pending-deprecation`, so under direct execution this
-// file re-executes itself once with the required flags rather than reporting a
-// silence it cannot vouch for.
-//
-// THE HANDLE BAR IS THE SAME SHAPE, and it is not an allowance table with an
-// application observation in it: an open handle this run created is a
-// failure, and only this process's own stdio is partitioned out as invocation
-// plumbing. The measurement worth keeping is why the watcher handles cannot
-// simply be closed by a caller:
-//
-//      `FSEventWrap` handles from the chokidar watchers `lib/util/nunjucks.js`
-//      creates under NODE_ENV=test. They cannot be closed by a caller:
-//      measured, nunjucks 3.2.4's FileSystemLoader keeps the FSWatcher in a
-//      constructor-local variable, and the loader's own keys are
-//      `_events`/`_eventsCount`/`_maxListeners`/`pathsToNames`/`noCache`/
-//      `searchPaths`/`cache` - there is no `watcher` property to close. They
-//      now land in `handles.unexpected`, which fails the clean-close check.
-//      The run still TERMINATES: the deliberate exit at the bottom of this file
-//      arms an unref'd grace timer and then calls process.exit with the run's
-//      own code, so an open handle produces a failing run rather than a hung
-//      gate. That is reporting a leak, failing on it, and then leaving.
-//
-// Only this process's own stdio remains in HANDLE_ALLOWANCES, and it is not an
-// allowance for a defect: which stdio handles exist depends solely on how the
-// process was invoked, so they are invocation plumbing and are partitioned out
-// of the assertion rather than excused within it.
-//
-// ===========================================================================
-// THE ENVIRONMENT CONTRACT
-// ===========================================================================
-// Composed here and applied to this process, because this process IS the
-// worker whose stderr AAP 0.9.3 inspects. Nothing is forked: the queue instance
-// the worker registered its processor on lives in this process, so the job has
-// to be enqueued from inside it.
-//
-//   NODE_ENV                       'test', the value every sibling parity tool
-//                                  uses.
-//   NODE_CONFIG                    from `mongo.start({overlay}).nodeConfig` -
-//                                  the inherited value, then the overlay, then
-//                                  the database address. The overlay copy this
-//                                  file passes carries the Redis endpoint and
-//                                  `db.redis.enabled: true`, and has `app.start`
-//                                  removed: the overlay exists to launch a
-//                                  server and this harness must not open a
-//                                  listening socket. `aws.buckets.exports` is
-//                                  why the overlay is still mandatory, since
-//                                  committed configuration declares none
-//                                  although the worker dereferences its `name`
-//                                  and `host` (AAP 0.6.7).
-//   NODE_CONFIG_PERSIST_ON_CHANGE  'N'.
-//   NODE_CONFIG_DISABLE_FILE_WATCH 'Y'. Both controls, because `config` 0.4.37
-//                                  skips creating its runtime JSON only when
-//                                  persistence is off AND the watch is
-//                                  disabled, and nothing in this application
-//                                  subscribes with `config.watch(...)`, so
-//                                  disabling it changes no behaviour.
-//   NODE_CONFIG_RUNTIME_JSON       inside the run directory. Measured
-//                                  necessary: `config` 0.4.37 otherwise writes
-//                                  `runtime.json` INTO the tree under test.
-//   NODE_CONFIG_DISABLE_FILE_WATCH 'Y'. `config` watches that file and logs
-//                                  `Error loading <path>` when a read fails, so
-//                                  removing the run directory in teardown would
-//                                  otherwise print library output into the
-//                                  stream the warning gate reads.
-//   NODE_CONFIG_DIR                `<appRoot>/config`, so one harness can run
-//                                  against either worktree.
-//   All four come from ./mongo's `isolateRuntimeConfig`, the single
-//   implementation every parity tool now shares.
-//   PARITY_APP_ROOT                how fixtures/aws.js resolves `config/aws`
-//                                  and fixtures/mail.js resolves
-//                                  `lib/util/mailer`.
-//   PARITY_S3_ROOT                 the object store, inside the run directory.
-//   PARITY_S3_LOG, PARITY_MAIL_LOG the fixtures' evidence files.
-//   TMPDIR, TMP, TEMP              inside the run directory.
-//   MONGOMS_SYSTEM_BINARY          read by mongodb-memory-server itself;
-//                                  neither set nor cleared here.
-//
-// The working directory is changed to `appRoot` before the first application
-// require, because `config.app.templates` is the RELATIVE path 'lib/views/' and
-// nunjucks resolves it against the process's working directory.
-//
-// ===========================================================================
-// THE CONTROLS
-// ===========================================================================
-// AAP 0.9.6-grade evidence needs proof that the assertions are not vacuous, so
-// the flags that provide it are documented and default to the real thing:
-//
-//   --worker-module <path>  requires a different module as the worker,
-//                           relative to appRoot. Two uses: restore `job.jobId`
-//                           in a scratch copy and confirm the `job.id`
-//                           assertion fails, and run a mongoose-6-compatible
-//                           scratch copy to confirm the success-path assertion
-//                           set passes end to end.
-//   --redis <host:port>     the Redis this run uses. A dedicated instance is
-//                           the strongest isolation; the per-run key prefix is
-//                           what makes the shared default safe.
-//   --keep-run-dir          retains a run directory the harness created. It is
-//                           removed on a clean run and always kept on a failed
-//                           one, so the fixture evidence logs survive exactly
-//                           when they are wanted.
-//
-// ===========================================================================
-// WHAT THE EVIDENCE SAYS ABOUT ITSELF
-// ===========================================================================
-// A standalone artifact that records only paths and a runtime cannot name the
-// application revision it exercised or the generator that produced it, so it
-// cannot be authenticated against the delivery it is filed under. Every
-// artifact this file emits therefore carries a `provenance` block built by the
-// shared contract in `test/parity/manifest.js`, which records the HEAD, subject
-// and worktree state of the tree the worker was driven in, the git blob of THIS
-// file's exact bytes together with the commit VERIFIED to hold that blob at
-// this path - or an explicit non-git state where none does - and this tool's
-// own delivered HEAD, and which hash-links all of it to the artifact's bytes.
-// With `--out` the same record is written to `<out>.provenance.json` with a
-// digest of the bytes as written.
-//
-// The block carries nothing run-local: the contract's portability guard throws
-// on an absolute path, a wall-clock instant or a field named for run state, so
-// the tree under test is named by its HEAD rather than its path, and the worker
-// module and the overlay are recorded as `tool:`/`analysed:` labels that mean
-// the same thing in every clone. `--compare` is unaffected - `COMPARABLE` is an
-// allow-list of what the run observed about the application, and `provenance`
-// sits outside it exactly as `tool` always has, because two runs from two trees
-// differ in provenance while the behaviour they recorded is identical.
-//
-// THE SAME RULE REACHES THE ARTIFACT AROUND THE BLOCK, because a guard on one
-// key is no use when the file it sits in names the machine anyway. Every path
-// this harness chose is recorded as a label, the database it drove is recorded
-// as a configuration digest rather than as a connection string, and every
-// message describing the harness's OWN operation - a failed check, a teardown
-// step, a module it could not require, a captured warning - is passed through
-// `provenance.portableText`, which keeps the words and replaces the host parts.
-// What is deliberately left verbatim is what the application produced: a
-// persisted document field, a job's error, a capability probe's error. Those
-// strings are the measurement, and rewriting a measurement to make it tidy
-// would change what this gate reports. See "WHAT IS MADE PORTABLE" below.
-//
-// ===========================================================================
-// PUBLIC API
-// ===========================================================================
-//   run(options)             the whole harness; resolves to an exit code and
-//                            never throws for an assertion failure
-//   buildProvenanceRecord(options[, invocation])
-//                            this run's evidence identity, buildable without a
-//                            database or a driven job
-//   describeInvocation(opts) how the harness was invoked, in portable form
-//   describeDataStore(addr)  the store as a configuration digest, never as its
-//                            address
-//   portableReason(v, root) / portableRecord(v, root) / pathLabelFor(p, root)
-//                            the routes by which a harness-authored message or
-//                            path reaches an artifact
-//   parseArguments(argv)     the CLI contract, exported because its failure
-//                            modes are worth testing directly
-//   normalizeEvidence(ev)    the artifact comparison's volatile-field pass
-//   compareEvidence(a, b)    the determinism check, as a list of differences
-//   buildExpectedTrinkets(seed)  the archive expectation, derived per owner
-//   installBullPrefix(root, p)    the namespace injection, in one place
-//   probeQueueSurface(q, o)  what the selected worktree's queue actually is
-//   installQueueObserver(q)  the listen-only event recorder
-//   installTemplateWatchSuppression(root)  watch:false through nunjucks' own
-//                            API, so no watcher starts and no undeclared
-//                            chokidar is loaded
-//   verifySeedIntegrity(exp) the pre-migration objects, re-read and digested
-//   readSourceAnchors(root)  the current line addresses of the symbols this
-//                            gate is written against, generated per run
-//   main()                   argv -> exit code, used by the require.main guard
-//   EXIT_OK / EXIT_ERROR / EXIT_USAGE
-//   JOBS / VOLATILE / WARNING_POLICY / HANDLE_ALLOWANCES / USAGE
-//
-// ===========================================================================
 // INVOCATION
-// ===========================================================================
 //   node --pending-deprecation --trace-deprecation test/parity/worker.js
-//   node test/parity/worker.js --out evidence.json    # re-executes itself
-//                                                     # WITH the two flags:
-//                                                     # they are the gate's
-//                                                     # precondition, not a
-//                                                     # detail of the call
-//   node test/parity/worker.js --out b.json --compare a.json   # determinism
-//   node test/parity/worker.js --redis 127.0.0.1:6390          # dedicated
-//   node test/parity/worker.js --app ../baseline               # the load-order
-//                                                              # measurement
+//   node test/parity/worker.js --out evidence.json
+//   node test/parity/worker.js --out b.json --compare a.json  # determinism
+//   node test/parity/worker.js --redis 127.0.0.1:6390         # dedicated Redis
+//   node test/parity/worker.js --app <baseline-worktree>      # another install
+//   node test/parity/worker.js --help                         # every option
 //
-// Exit codes: 0 every assertion passed and the worker completed the success
-// job; 1 an assertion failed, a timeout expired, the worker could not be
-// required, or something this harness opened was still open at the end; 2 a
-// usage error.
+//   A pending deprecation is silent without `--pending-deprecation`, so under
+//   direct execution the run re-executes itself once with both flags rather
+//   than reporting a silence it cannot vouch for. Everything human-readable
+//   goes to STDERR, because stdout carries the worker's own console.log lines
+//   and those are evidence this file asserts against. Exit codes: 0 every
+//   assertion passed and the export completed; 1 an assertion failed, a bound
+//   expired, the worker could not be required, or a handle this run opened was
+//   still open at the end; 2 a usage error.
 //
-// ===========================================================================
-// PROHIBITIONS OBSERVED
-// ===========================================================================
-// No bare require treated as validation. No queue event emitted by this file -
-// it listens, it never emits, and the one time it reaches into Redis it deletes
-// a lock so that BULL will report what a lost lock does. No real S3, no real
-// SMTP and no network beyond the loopback Redis this gate is named for. No
-// modification of lib/workers/exports.js, lib/util/queues.js,
-// lib/util/nunjucks.js, any configuration file, any fixture or any baseline
-// worktree. Three run-time interventions and no more, each on an object rather
-// than a file, each declared in the artifact and each removed in teardown with
-// the removal asserted: one option (`prefix`) added to the `bull` constructor
-// the application resolved; `watch: false` passed through the `nunjucks`
-// configure the application calls; and a recorder around the Export model's
-// `findByIdAndUpdate`. Nothing under `test/lib` and nothing in
-// the sibling `helpers` directory is required - in particular not its
-// `queue.js`, which this migration DELETES because it targets
-// `queues.snapshots()`, a getter that is not exported, for a queue that is in
-// `disabledQueues`; nothing here is modelled on it. The directory and the
-// filename are kept in separate spans throughout, so the mechanical
-// independence check - a grep of this file for the joined path - returns
-// nothing but this comment. No `url.parse` either: it emits DEP0169 and this
-// harness's own stderr is inside the zero-warning gate's stream. No unbounded
-// wait, no `process.exit(0)` on a timeout, no forced exit that can report
-// success, and no assertion that can pass when the handler never ran.
+// ARTIFACT
+//   `--out` writes one JSON document, atomically, with `<out>.provenance.json`
+//   beside it carrying the same provenance record and a digest of the bytes as
+//   written. `tool` and `provenance` record how the run was invoked and which
+//   revisions produced it, the COMPARABLE sections are what it observed and
+//   what `--compare` compares, and `checks`, `comparison`, `notesOwed` and
+//   `verdict` are what it decided.
+//
+// ORDER IS LOAD-BEARING. The environment, the fixtures, the template-watch
+// suppression and the Bull prefix all precede the first application require:
+// the fixtures read PARITY_APP_ROOT and PARITY_S3_ROOT at load, the prefix is a
+// constructor option, and one `nunjucks.configure` call decides whether a
+// filesystem watcher starts. Jobs then run SEQUENTIALLY, each asserted before
+// the next is enqueued, so no job's cleanup can mask another's side effects.
+//
+// EVERY EXIT PATH CLOSES THE QUEUE, and teardown is asserted step by step
+// against TEARDOWN_STEPS by name. An open Bull queue holds three Redis clients
+// and a lock-renewal timer, so one left behind keeps the event loop alive and
+// leaves this run's keys in Redis for the next run to read. No handle this run
+// opened may survive it.
+//
+// EVERY WAIT IS BOUNDED, because a hung worker gate cannot be told from a
+// passing one. An expired bound is a FAILURE and never a skip: the job is
+// reported by name with what it was still waiting for.
+//
+// WHAT THE GATE ASSERTS: the processor's promise completion; the job id the
+// `failed` handler reads, on a Job whose `id` is present and `jobId` absent;
+// `job.remove()` on completion, through the job being gone from Redis rather
+// than a counter; retry, with `attemptsMade` climbing across two runs of the
+// processor; stalled recovery through Bull's own `moveUnlockedJobsToWait`; the
+// queue-level `error` payload; status, progress and error persistence on the
+// Export document; the archive layout, key and download URL; the notification
+// mail; and cleanup of the temporary file on the success and failure paths.
+//
+// THE RUNTIME DEFECT THIS GATE REPORTS AS A FAILURE. The success half is
+// unreachable while the worker carries two idioms the installed dependency set
+// no longer supports:
+//
+//   Q ASSIMILATION  `Q.nsend`/`ninvoke` dispatch the method and then assimilate
+//                   a thenable return value by calling `.then()` on it. A
+//                   mongoose 6 Query IS a thenable, so each call executes its
+//                   query a second time and mongoose rejects the re-execution
+//                   with "Query was already executed". It reaches the worker's
+//                   `findByIdAndUpdate`, `findById` and `count` calls.
+//   REMOVED STREAM  `Query.prototype.stream` does not exist on mongoose 6, and
+//                   `createExportArchive` streams the owner's trinkets, so
+//                   archive creation cannot start.
+//
+// Both are measured by `probeCapabilities`, which records the error text and
+// the call-site counts, so the failure arrives with its remedy: `Q.nsend` calls
+// become `Model.<method>(...).exec()` and `.stream()` becomes `.cursor()`.
 
 var assert       = require('assert');
 var crypto       = require('crypto');
 var fs           = require('fs');
+var net          = require('net');
 var os           = require('os');
 var path         = require('path');
 var EventEmitter = require('events').EventEmitter;
@@ -509,13 +95,14 @@ var EventEmitter = require('events').EventEmitter;
 var warningPolicy = require('./warning-policy');
 
 // Under direct execution the flags come first, before anything else is loaded.
-// This process IS the worker whose stderr AAP 0.9.3 inspects, and a pending
-// deprecation is SILENT without --pending-deprecation: a run that lacks the
-// flags cannot tell "nothing was emitted" from "nothing was asked for". So the
-// run re-executes itself once with them - here rather than in the entry point
-// at the foot of the file, so the parent spawns and forwards without loading
-// the harness at all. A re-execution that still lacks them fails closed:
-// `assertWarnings` reports the missing evidence and the run fails on it.
+// This process IS the worker whose stderr the zero-warning gate inspects, and a
+// pending deprecation is SILENT without --pending-deprecation: a run that lacks
+// the flags cannot tell "nothing was emitted" from "nothing was asked for". So
+// the run re-executes itself once with them - here rather than in the entry
+// point at the foot of the file, so the parent spawns and forwards without
+// loading the harness at all. A re-execution that still lacks them fails
+// closed: `assertWarnings` reports the missing evidence and the run fails
+// on it.
 if (require.main === module) {
   warningPolicy.elevate();
 }
@@ -581,6 +168,12 @@ var EXIT_GRACE_MS        = 1500;
 // safe beside another run is the per-run key prefix, not the address.
 var DEFAULT_REDIS_HOST = '127.0.0.1';
 var DEFAULT_REDIS_PORT = 6379;
+
+// How long the reachability preflight waits for that Redis to answer a TCP
+// connect. Short, because it is a loopback service that either exists or does
+// not, and a caller who has to wait to be told its precondition is unmet is
+// being told slowly what could be said at once.
+var REDIS_PROBE_TIMEOUT_MS = 3000;
 
 // The key-prefix stem. Bull's own default is `bull`; the run id appended to
 // this is what keeps two runs, and two agents, out of each other's keyspace.
@@ -732,15 +325,15 @@ var VOLATILE = Object.freeze([
   'expiresAt',       // new Date() + EXPORT_EXPIRY_DAYS
   'fileSize',        // the zip embeds timestamps, so its length can move
   'etag',            // md5 of those same bytes
-  // 'database' and 'uri' are no longer recorded as evidence fields at all -
+  // 'database' and 'uri' are not recorded as evidence fields of their own -
   // `evidence.dataStore` carries the store's configuration digest instead - and
   // they stay in this list as a guard: any nested occurrence, such as one
-  // inside a fixture's own description, is still generated per run by
+  // inside a fixture's own description, is generated per run by
   // mongo.generateDatabaseName or carries the in-memory server's port.
   'database',
   'uri',
-  // Recorded as `ephemeral:` labels rather than paths, so their values no
-  // longer move between runs; still normalized here, because a caller-supplied
+  // Recorded as `ephemeral:` labels rather than paths, so their values do not
+  // move between runs; still normalized here, because a caller-supplied
   // --run-dir changes the basename the label ends in.
   'runDir',
   's3Root',
@@ -756,7 +349,7 @@ var VOLATILE = Object.freeze([
 
 // The evidence sections the determinism comparison covers, as an allow-list.
 //
-// An allow-list rather than an exclusion list, and for a reason worth stating:
+// An allow-list rather than an exclusion list, and the reason is structural:
 // the artifact records the comparison's OWN result, so comparing it wholesale
 // compares a run that has run the check against one that has not - `verdict`,
 // `checks` and `comparison` itself all differ by construction, and a
@@ -797,39 +390,28 @@ var TEARDOWN_STEPS = Object.freeze([
   'remove the run directory this harness created'
 ]);
 
-// THERE IS NO WARNING ALLOWANCE, and the list that used to hold one is gone
-// rather than emptied: it lives in test/parity/warning-policy.js, where
-// `ALLOWANCES` is empty for every gate at once.
-//
-// The entry it held named the compress-commons DEP0005 reached through
-// archiver 2.1.1 and printed it as an allowed "deviation". Nothing authorized
-// that - and the notice itself is gone, cleared at its source by moving
-// archiver to 6.0.2 rather than by excusing it here. AAP 0.7 and 0.5.1.4 grant exactly two deviations from this
-// migration - the file-stream response and the `marked` audit high - and
-// neither is a warning; 0.9.5 states that no exception is granted to the plan
-// by the plan; and 0.9.3's pass condition covers "any dependency this plan
-// retains" explicitly, which is precisely what archiver is. So the notice is a
-// GATE FAILURE here, and it stays one until the dependency decision that owns
-// archiver removes the emitting path. Clearing it is not this harness's call to
-// make, and neither is excusing it.
+// THERE IS NO WARNING ALLOWANCE. The policy lives in
+// test/parity/warning-policy.js, where `ALLOWANCES` is empty for every gate at
+// once, and a notice attributable to the application's own source or to a
+// dependency this migration retains is a GATE FAILURE here. Clearing one is
+// the dependency decision's work, at the source that emits it; excusing one by
+// name would leave this gate excusing the thing it exists to detect.
 
 // Handle allowance. There is no allowance for a handle this harness or the
 // application opened: every one of those is closed in teardown and the closing
 // is asserted, which is what keeps a genuinely leaked connection, queue, socket
 // or timer visible. The single entry below is not such a handle - it is this
 // process's own stdio, whose existence depends on how the process was invoked.
-// The nunjucks/chokidar watchers that used to sit here are not started at all
-// any more: `installTemplateWatchSuppression` passes `watch: false` through
-// nunjucks' own `configure`, and teardown asserts that no chokidar module even
-// entered the require cache. See the header.
 //
-// The measurement that made the old shortfall real is kept, because it is why
-// the suppression exists: `lib/util/nunjucks.js:8` calls
-// `nunjucks.configure(..., {watch: config.isDev || config.isTest})`, so under
-// NODE_ENV=test the FileSystemLoader watched every directory under
-// `config.app.templates`, and nunjucks 3.2.4 keeps the FSWatcher in a
-// constructor-local variable with no `watcher` property on the loader - so no
-// caller could close it. docs/preserved-quirks.md 10.3 owns that measurement.
+// No nunjucks watcher handle appears here, and the reason it cannot is worth
+// keeping: `lib/util/nunjucks.js` calls `nunjucks.configure(...)` with
+// `watch: config.isDev || config.isTest`, so under NODE_ENV=test the
+// FileSystemLoader would watch every directory under `config.app.templates`
+// and keep each FSWatcher in a constructor-local variable, with no `watcher`
+// property on the loader for any caller to close.
+// `installTemplateWatchSuppression` therefore passes `watch: false` through
+// nunjucks' own `configure` before the first application require, and teardown
+// asserts that no chokidar module even entered the require cache.
 var HANDLE_ALLOWANCES = Object.freeze([
   Object.freeze({
     // stdout and stderr, when either is a pipe or a tty rather than a file.
@@ -857,6 +439,16 @@ var USAGE = [
   'archive, the upload, the mail and Bull\'s own completion, failure, retry and',
   'stalled semantics.',
   '',
+  'Precondition, and the only one: a Redis that ANSWERS PING. The in-memory',
+  'queue in lib/util/queues.js emits no events, so Bull 4\'s completion,',
+  'failure, retry and stalled semantics cannot be asserted against it; this',
+  'gate therefore builds a genuine Bull queue and needs a Redis to build it',
+  'on. Nothing here provisions one. The run isolates itself with a per-run key',
+  'prefix and obliterates that namespace on the way out, so a shared Redis is',
+  'supported. Before anything is created the endpoint is sent an inline PING',
+  'and must answer `+PONG` or a RESP error such as -NOAUTH; a listener that is',
+  'not a Redis, or a TLS-only endpoint, is refused by name rather than hung on.',
+  '',
   'Options:',
   '  --app <path>            worktree under test (default: this file\'s own).',
   '  --overlay <path>        NODE_CONFIG overlay (default:',
@@ -876,6 +468,15 @@ var USAGE = [
   '                          as written.',
   '  --compare <path>        compare this run against a previous artifact and',
   '                          fail on any non-volatile difference.',
+  '  --verify <path>         AUDIT an artifact this gate wrote and exit: check',
+  '                          its hash links and the shared provenance',
+  '                          contract, that it is not a control run, its',
+  '                          verdict and check tally, that its jobs ran on a',
+  '                          real Bull 4 queue, its warning measurement, its',
+  '                          handle inventory, that the captured mail is',
+  '                          redacted and that no absolute path is recorded.',
+  '                          Drives nothing: no Redis, no database, no worker.',
+  '                          `<path>.provenance.json` must be beside it.',
   '  --worker-module <path>  the module to require as the worker, relative to',
   '                          appRoot (default: lib/workers/exports). A CONTROL.',
   '  --timeout <ms>          overall bound (default: ' + OVERALL_TIMEOUT_MS + ').',
@@ -1006,14 +607,207 @@ function writeArtifactAtomically(out, text) {
   }
 }
 
+/**
+ * Publishes the evidence artifact and its provenance sidecar as ONE pair.
+ *
+ * WHY A PAIR AND NOT TWO WRITES. The sidecar's whole content is a digest of
+ * the artifact's bytes, so a sidecar without its artifact is meaningless and
+ * an artifact without its sidecar is an evidence file whose bytes nothing
+ * attests. Writing them in sequence produced exactly the second case, and it
+ * was reproduced rather than imagined: with `<out>.provenance.json` created as
+ * a DIRECTORY, the artifact published saying `written: true` and `VERDICT
+ * PASS` while the process reported FAIL and printed that the artifact had not
+ * been written. A reader who trusted the file was reading a document the run
+ * itself disowned.
+ *
+ * So both members are STAGED first - written, flushed and closed as temporary
+ * files in their own directories - and only then published by rename. A
+ * failure while staging leaves both targets untouched, which is the common
+ * case (an unwritable directory, a full filesystem). A failure publishing the
+ * SECOND rename is the one window left, and it is closed by removing the
+ * artifact that was just published: the target is removed rather than
+ * restored, because this path is the run's own output and a stale previous
+ * artifact left in place would be worse than none - it would carry a
+ * different run's verdict under this run's name.
+ *
+ * The `orphaned` flag is the honest outcome of the last resort: the artifact
+ * published, the sidecar could not, AND the removal failed too. The caller
+ * records that rather than claiming the disk is clean, and `--verify` refuses
+ * such an artifact anyway because it requires both members.
+ *
+ * `report` is an OUT-PARAMETER rather than a return value because the caller
+ * runs this inside a ledger check, which swallows the throw into its own
+ * record: an exception cannot carry the filesystem state back to the code that
+ * has to write it down. It is mutated before any throw, so the caller's record
+ * describes the disk in every outcome.
+ *
+ * @param {string} out Artifact destination; the sidecar is `<out>.provenance.json`.
+ * @param {string} artifactText Exact artifact bytes.
+ * @param {string} sidecarText Exact sidecar bytes, digesting `artifactText`.
+ * @param {Object} report Mutated with `{published, sidecar, orphaned}`.
+ * @returns {{artifact: string, sidecar: string}}
+ * @throws {ToolError} If either member cannot be staged or published; the
+ *   message says what is on disk.
+ */
+function writeEvidencePair(out, artifactText, sidecarText, report) {
+  var artifactTarget    = path.resolve(out);
+  var sidecarTarget     = artifactTarget + '.provenance.json';
+  var staged            = [];
+  var state             = report || {};
+  var artifactTemporary;
+  var sidecarTemporary;
+
+  state.published = false;
+  state.sidecar   = false;
+  state.orphaned  = false;
+
+  // Stages one member and returns its temporary path, so that neither target
+  // is touched until both members are known to be writable.
+  function stage(target, text) {
+    var temporary;
+    var descriptor = null;
+
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive : true });
+    }
+    catch (err) {
+      throw new ToolError('cannot create the directory for ' + target + ': ' +
+        ((err && err.message) || err));
+    }
+
+    artifactSequence += 1;
+    temporary = target + '.parity-tmp-' + process.pid + '-' + artifactSequence;
+
+    try {
+      // 'wx' rather than 'w': a temporary name that already exists is a
+      // collision worth failing on, not a file to overwrite.
+      descriptor = fs.openSync(temporary, 'wx');
+      fs.writeFileSync(descriptor, text);
+      fs.fsyncSync(descriptor);
+      fs.closeSync(descriptor);
+      descriptor = null;
+    }
+    catch (err) {
+      if (descriptor !== null) {
+        try {
+          fs.closeSync(descriptor);
+        }
+        catch (closeError) {
+          // Swallowed deliberately: the staging failure below is the reason
+          // worth reporting, and a close error while already failing would
+          // mask it.
+        }
+      }
+
+      discard(temporary);
+
+      throw new ToolError('cannot stage ' + target + ': ' +
+        ((err && err.message) || err));
+    }
+
+    staged.push(temporary);
+
+    return temporary;
+  }
+
+  function discard(temporary) {
+    try {
+      fs.unlinkSync(temporary);
+    }
+    catch (err) {
+      // The temporary may never have been created, or may already be gone.
+      // Either way the targets are what this function is accountable for.
+    }
+  }
+
+  function discardStaged() {
+    staged.forEach(discard);
+  }
+
+  try {
+    artifactTemporary = stage(artifactTarget, artifactText);
+    sidecarTemporary  = stage(sidecarTarget, sidecarText);
+  }
+  catch (err) {
+    discardStaged();
+
+    throw err;
+  }
+
+  try {
+    // A same-directory rename is atomic, so a reader sees either the previous
+    // file or the complete new one - never a half-written one.
+    fs.renameSync(artifactTemporary, artifactTarget);
+  }
+  catch (err) {
+    discardStaged();
+
+    throw new ToolError('cannot publish ' + artifactTarget + ': ' +
+      ((err && err.message) || err) + '. Nothing was published.');
+  }
+
+  state.published = true;
+
+  try {
+    fs.renameSync(sidecarTemporary, sidecarTarget);
+  }
+  catch (err) {
+    discard(sidecarTemporary);
+
+    try {
+      fs.unlinkSync(artifactTarget);
+      state.published = false;
+    }
+    catch (rollbackError) {
+      state.orphaned = true;
+    }
+
+    throw new ToolError('cannot publish ' + sidecarTarget + ': ' +
+      ((err && err.message) || err) + '. ' + (state.orphaned
+        ? 'THE ARTIFACT AT ' + artifactTarget + ' IS ON DISK WITHOUT ITS ' +
+          'SIDECAR and could not be removed either (' +
+          ((rollbackErrorMessage(artifactTarget)) || 'removal failed') +
+          ') - it is an orphan, it is not evidence, and it should be deleted.'
+        : 'The artifact published a moment earlier has been removed, so the ' +
+          'pair is all-or-nothing and nothing was left behind.'));
+  }
+
+  state.sidecar = true;
+
+  return {
+    artifact : artifactTarget,
+    sidecar  : sidecarTarget
+  };
+}
+
+/**
+ * Why a target could not be removed, for the orphan message.
+ *
+ * Read at message time rather than carried from the failed unlink, so the
+ * reason describes the file as it stands when the operator is told about it.
+ *
+ * @param {string} target
+ * @returns {(string|null)}
+ */
+function rollbackErrorMessage(target) {
+  try {
+    fs.accessSync(target, fs.constants.W_OK);
+
+    return 'it is writable, so the removal failed for another reason';
+  }
+  catch (err) {
+    return (err && err.message) || null;
+  }
+}
+
+
 // ---------------------------------------------------------------------------
 // Bounded waiting
 // ---------------------------------------------------------------------------
-// Every timer this file creates is cleared, without exception. That is not
-// tidiness: an uncleared timer shows up in process.getActiveResourcesInfo() as
-// a `Timeout` handle and would be reported by this harness's own clean-close
-// assertion as an application leak. It was measured happening in a prototype,
-// which is why the rule is written down here.
+// Every timer this file creates is cleared, without exception, and the reason
+// is not tidiness: an uncleared timer appears in
+// process.getActiveResourcesInfo() as a `Timeout` handle, which this harness's
+// own clean-close assertion then reports as an application leak.
 
 /**
  * Suspends for `ms`, clearing its own timer.
@@ -1101,7 +895,7 @@ async function pollFor(probe, ms, label) {
 // Stream capture
 // ---------------------------------------------------------------------------
 // Both streams are TEED, never swallowed: the run has to remain readable while
-// it happens, and AAP 0.9.3's zero-warning gate inspects stderr for the whole
+// it happens, and the zero-warning gate inspects stderr for the whole
 // exercise. Two things are asserted off these buffers and nothing else is:
 //   * stdout - the worker's own console.log lines, which is how
 //     `exports failed job: <id>` proves the failed handler read `job.id`;
@@ -1206,6 +1000,7 @@ function parseArguments(argv) {
     keepRunDir   : false,
     outPath      : null,
     comparePath  : null,
+    verifyPath   : null,
     workerModule : 'lib/workers/exports',
     redisHost    : DEFAULT_REDIS_HOST,
     redisPort    : DEFAULT_REDIS_PORT,
@@ -1221,11 +1016,10 @@ function parseArguments(argv) {
   // from the next token otherwise.
   //
   // A DASH-LEADING NEXT TOKEN IS A USAGE ERROR, not a value. `--out
-  // --no-emitter-patch` used to write its evidence to a file called
-  // "--no-emitter-patch" and then run WITHOUT the control flag it was told to
-  // drop - two wrong things from one missing argument, neither of them
-  // reported. The `=` form is the escape hatch for a path that genuinely
-  // begins with a dash.
+  // --keep-run-dir` would otherwise write its evidence to a file called
+  // "--keep-run-dir" and then delete the run directory it was told to keep -
+  // two wrong things from one missing argument, neither of them reported. The
+  // `=` form is the escape hatch for a path that genuinely begins with a dash.
   function valueFor(name) {
     var equals = arg.indexOf('=');
     var value;
@@ -1321,6 +1115,14 @@ function parseArguments(argv) {
     else if (arg === '--compare' || arg.indexOf('--compare=') === 0) {
       options.comparePath = path.resolve(valueFor('--compare'));
     }
+    else if (arg === '--verify' || arg.indexOf('--verify=') === 0) {
+      // A MODE, not a phase of a run: it drives nothing, needs no Redis and
+      // no database, and reads one artifact. `--out` and `--verify` in one
+      // invocation would be a caller asking for a run and an audit at once,
+      // which is two commands and is how the gate script spells it.
+      options.mode       = 'verify';
+      options.verifyPath = path.resolve(valueFor('--verify'));
+    }
     else if (arg === '--worker-module' || arg.indexOf('--worker-module=') === 0) {
       options.workerModule = valueFor('--worker-module');
     }
@@ -1363,6 +1165,153 @@ function assertAppRoot(appRoot) {
 }
 
 /**
+ * Whether the endpoint this gate needs is a REDIS, bounded.
+ *
+ * A TCP CONNECT IS NOT THE QUESTION, and an earlier revision of this preflight
+ * asked only that. Measured against a silent TCP server that speaks no
+ * protocol: the connect succeeded, the preflight called it "redis reachable",
+ * Bull connected, and the run then hung on a PING that never came - which is
+ * the exact failure this preflight exists to prevent, reproduced through the
+ * check meant to prevent it. So the probe speaks RESP: it sends `PING` as an
+ * inline command and requires an answer that only a Redis produces.
+ *
+ * WHAT COUNTS AS AN ANSWER. `+PONG` is the plain case. An ERROR reply - a `-`
+ * line such as `-NOAUTH Authentication required` or `-ERR ...` - also counts,
+ * and deliberately: it proves the peer parsed a RESP command and replied in
+ * RESP, which is the property being established, and the credentials Bull
+ * needs are `lib/util/queues.js`'s to forward rather than this probe's to
+ * hold. Anything else - silence within the bound, a non-RESP first byte, a
+ * refused or reset connection - is a refusal, and the message quotes what did
+ * arrive so a TLS-only endpoint or a wrong service is identifiable rather than
+ * merely rejected.
+ *
+ * `PING` mutates nothing and touches no keyspace, so this cannot disturb a
+ * shared Redis or a sibling clone's namespace. The socket is destroyed on
+ * every path, so the handle inventory at the end of the run cannot see it.
+ *
+ * @param {string} host
+ * @param {number} port
+ * @param {number} timeoutMs
+ * @returns {Promise<(string|null)>} null when a Redis answered, else why not.
+ */
+function probeRedisEndpoint(host, port, timeoutMs) {
+  return new Promise(function(resolve) {
+    var socket   = net.connect({ host : host, port : port });
+    var received = '';
+    var settled  = false;
+
+    function done(reason) {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      socket.destroy();
+      resolve(reason);
+    }
+
+    socket.setTimeout(timeoutMs, function() {
+      done(received.length
+        ? 'an incomplete reply within ' + timeoutMs + 'ms: ' +
+          JSON.stringify(received.slice(0, 40))
+        : 'a TCP connection but no reply to PING within ' + timeoutMs +
+          'ms, so the listener is not a Redis (a TLS-only endpoint answers ' +
+          'exactly like this)');
+    });
+
+    socket.once('connect', function() {
+      // The inline command form, which every Redis accepts and which needs no
+      // RESP encoder here.
+      socket.write('PING\r\n');
+    });
+
+    socket.on('data', function(chunk) {
+      received += chunk.toString('latin1');
+
+      if (received.indexOf('\r\n') === -1) {
+        return;
+      }
+
+      if (/^\+PONG\b/.test(received)) {
+        done(null);
+
+        return;
+      }
+
+      if (received.charAt(0) === '-') {
+        // A RESP error reply: it is a Redis, and what it objects to - most
+        // often authentication - is the queue's business rather than this
+        // probe's.
+        done(null);
+
+        return;
+      }
+
+      done('a reply that is not RESP: ' +
+        JSON.stringify(received.split('\r\n')[0].slice(0, 40)) +
+        ', so the listener is not a Redis');
+    });
+
+    socket.once('error', function(err) {
+      done((err && err.code) || (err && err.message) || 'connection failed');
+    });
+  });
+}
+
+/**
+ * Refuses to start a run whose external precondition is not met, and says so.
+ *
+ * THE PRECONDITION IS REAL AND IT IS THIS GATE'S ONLY ONE. AAP 0.9.3 requires
+ * Bull 4's own changed semantics asserted - processor promise completion,
+ * `job.id` in the `failed` handler, `job.remove()` on `completed`, retry and
+ * stalled recovery - and `lib/util/queues.js`'s in-memory branch cannot carry
+ * any of them: its `on` is a no-op that emits nothing. So the run needs a real
+ * Redis for a real queue, and that is a service this repository does not
+ * provision: adding one would mean a new dependency or a container, both
+ * outside AAP R-a's four categories.
+ *
+ * WHY IT FAILS CLOSED HERE rather than wherever the connection is first
+ * needed. Measured against an address with no listener: the run reached the
+ * queue construction, printed its one Redis line, and then HUNG - past its own
+ * `--timeout`, because the wait that never returns is inside a client this
+ * harness does not own. A gate that hangs is the failure mode this file is
+ * named for, and an unmet precondition that looks like a slow pass is worse
+ * than a failure. This check costs one loopback connect and turns that into a
+ * named, bounded refusal before anything is created or connected.
+ *
+ * @param {Object} options From parseArguments.
+ * @returns {Promise<undefined>}
+ * @throws {ToolError} When nothing answers at the configured endpoint.
+ */
+async function assertRedisReachable(options) {
+  var endpoint = options.redisHost + ':' + options.redisPort;
+  var reason   = await probeRedisEndpoint(options.redisHost,
+    options.redisPort, REDIS_PROBE_TIMEOUT_MS);
+
+  if (reason === null) {
+    note('redis answered PING at ' + endpoint);
+
+    return;
+  }
+
+  throw new ToolError('no Redis answered at ' + endpoint + ' (' + reason +
+    '). THIS GATE HAS ONE EXTERNAL PRECONDITION and that is it: AAP 0.9.3 ' +
+    'requires Bull 4\'s completion, failure, retry and stalled semantics ' +
+    'asserted, and lib/util/queues.js\'s in-memory queue emits no events at ' +
+    'all, so the run drives a genuine Bull queue and needs a Redis to build ' +
+    'it on. Nothing is provisioned for you: start one (for example ' +
+    '`docker run -d -p 6379:6379 redis:7-alpine`, or a local ' +
+    '`redis-server --port 6379`) and re-run, or point this run at one you ' +
+    'have with `--redis host:port` - `npm run verify:worker` passes ' +
+    'PARITY_REDIS through for exactly that. The run is isolated by its own ' +
+    'per-run key prefix and obliterates that namespace on the way out, so a ' +
+    'shared Redis is a supported configuration and a dedicated one is not ' +
+    'required. Refused here rather than at the first connection because a ' +
+    'run whose Redis is absent HANGS instead of failing - measured - and a ' +
+    'gate that hangs cannot be told from one that passed slowly.');
+}
+
+/**
  * Refuses to produce evidence in a process that may already be contaminated.
  *
  * The harnesses that spawn the application REMOVE the preload and resolution
@@ -1379,8 +1328,8 @@ function assertAppRoot(appRoot) {
  * promise completion, `job.id` in the `failed` handler, `job.remove()` on
  * `completed` - is an assertion about the retained dependency in the tree under
  * test, and it is worth nothing if some other module was given the chance to
- * patch that dependency first. Failing closed with the remedy named is the only
- * honest outcome.
+ * patch that dependency first. So the run fails closed, with the remedy named
+ * in the error.
  *
  * @returns {undefined}
  * @throws {ToolError} If any preload vector is set in this process.
@@ -1614,23 +1563,23 @@ async function applyEnvironment(options, layout) {
   process.env.NODE_CONFIG = address.nodeConfig;
 
   // NODE_CONFIG_DIR plus the three runtime-layer controls, from ./mongo's one
-  // implementation rather than a copy of the rule kept here. The addition over
-  // what this function used to set is NODE_CONFIG_DISABLE_FILE_WATCH: `config`
-  // 0.4.37 creates its runtime JSON unless persistence is off AND the watch is
-  // disabled, so the redirect below was carrying the whole burden and a `config`
-  // that ignored it would have written into the tree under test.
+  // implementation rather than a copy of the rule kept here.
+  // NODE_CONFIG_DISABLE_FILE_WATCH is one of them because the `config` package
+  // creates its runtime JSON unless persistence is off AND the watch is
+  // disabled: without it the redirect below carries the whole burden, and a
+  // `config` that ignored the redirect would write into the tree under test.
   mongo.isolateRuntimeConfig({
     appRoot         : options.appRoot,
     configDir       : 'set',
     runtimeJsonPath : layout.runtimeJsonPath
   });
 
-  // `config` 0.4.37 watches runtime.json and re-reads it on every change,
-  // logging `Error loading <path>` when the read fails. Measured: removing this
-  // run's own directory in teardown fires that watcher three times, putting
-  // library output into the very stderr stream this gate asserts on - noise
-  // this harness creates, at the moment it is cleaning up after itself.
-  // Disabling the watch is the supported way to stop it.
+  // The `config` package watches runtime.json and re-reads it on every change,
+  // logging `Error loading <path>` when the read fails. Removing this run's own
+  // directory in teardown fires that watcher, putting library output into the
+  // very stderr stream this gate asserts on - noise this harness creates, at
+  // the moment it is cleaning up after itself. Disabling the watch is the
+  // supported way to stop it.
   process.env.NODE_CONFIG_DISABLE_FILE_WATCH = 'Y';
 
   process.env.PARITY_APP_ROOT = options.appRoot;
@@ -1966,23 +1915,21 @@ function installBullPrefix(appRoot, prefix) {
  * never a reason to stop measuring.
  *
  * `--app` exists so that this harness, which lives only in the migrated
- * worktree, can drive an INDEPENDENTLY INSTALLED one (AAP 0.9.3). Such a
- * worktree resolves its own dependency graph, and the baseline worktree at
- * `2f8712a` resolves bull 0.7.2 - a queue with `on`, `add`, `getJob` and
- * `process`, and without Bull 4's `moveUnlockedJobsToWait`, `obliterate`,
- * ioredis-shaped clients or `prefix` support. An earlier revision asserted the
- * Bull 4 surface while merely CONSTRUCTING the observer, so it threw during
- * setup and the run produced no load-order measurement, no fixtures and no
- * capability diagnosis: it refused the very architecture it was built for.
- *
- * This function replaces that refusal with a measurement. Two facts are
- * separated because they fail for different reasons and carry different
- * consequences:
+ * worktree, can drive an INDEPENDENTLY INSTALLED one. Such a worktree resolves
+ * its own dependency graph, and a pre-migration install resolves a Bull 0.x
+ * queue - `on`, `add`, `getJob` and `process`, without Bull 4's
+ * `moveUnlockedJobsToWait`, `obliterate`, ioredis-shaped clients or `prefix`
+ * support. Asserting the Bull 4 surface while constructing the observer would
+ * throw during setup, and the run would then produce no load-order
+ * measurement, no fixtures and no capability diagnosis - refusing the very
+ * architecture `--app` is built for. So the surface is MEASURED here and
+ * asserted later. Two facts are separated because they fail for different
+ * reasons and carry different consequences:
  *
  *   `bull4Api`  the semantic surface the assertions in this file drive. Absent
  *               means the assertions cannot mean what they say.
  *   `isolated`  whether the injected `prefix` actually took effect, i.e.
- *               `keyPrefix` is this run's namespace. Bull 0.7.2 ignores the
+ *               `keyPrefix` is this run's namespace. Bull 0.x ignores the
  *               option, so its keyspace is the SHARED `bull:exports:*` that
  *               every clone on this host would share.
  *
@@ -2015,9 +1962,9 @@ function probeQueueSurface(queue, options) {
       }
     });
 
-  // ioredis reports a string `status` per client; node_redis 0.x/2.x, which
-  // bull 0.7.2 uses, reports none. That difference is why teardown cannot
-  // assert `status === 'end'` unconditionally.
+  // ioredis reports a string `status` per client; the node_redis client Bull
+  // 0.x uses reports none. That difference is why teardown cannot assert
+  // `status === 'end'` unconditionally.
   ['client', 'bclient', 'eclient'].forEach(function(key) {
     var client = queue[key];
 
@@ -2078,9 +2025,9 @@ function probeQueueSurface(queue, options) {
 /**
  * Records what Bull emits, per job, and emits nothing itself.
  *
- * THIS IS THE FILE'S CENTRAL DISCIPLINE. The events asserted downstream -
+ * THE DISCIPLINE THIS FILE TURNS ON. The events asserted downstream -
  * `completed`, `failed`, `error`, `stalled`, `active` - all come from Bull
- * 4.16.5 running against a real Redis; the observer only listens. It attaches
+ * itself, running against a real Redis; the observer only listens. It attaches
  * its own listeners ALONGSIDE the worker's, which changes nothing about what
  * Bull does and is removed again in teardown.
  *
@@ -2307,19 +2254,17 @@ function listenerCounts(queue) {
  * through config/app.config and lib/util/routeParser - calls
  * `nunjucks.configure(config.app.templates, {watch: config.isDev ||
  * config.isTest, ...})`. Under NODE_ENV=test that `watch` is true, and
- * nunjucks 3.2.4's FileSystemLoader then does two things this gate cannot
- * live with (node-loaders.js, the `if (opts.watch)` branch):
+ * nunjucks' FileSystemLoader then does two things this gate cannot live with,
+ * both in its `if (opts.watch)` branch:
  *
- *   it `require`s `chokidar`, which THIS REPOSITORY DOES NOT DECLARE. AAP
- *   0.5.1.3 removes it as dead, and it is present only because npm 7 and
- *   later install nunjucks' optional peer automatically. A gate that reaches
- *   for it is a gate whose result depends on an install detail nobody
- *   declared;
+ *   it `require`s `chokidar`, which THIS REPOSITORY DOES NOT DECLARE - it is
+ *   present only because npm installs nunjucks' optional peer automatically. A
+ *   gate that reaches for it is a gate whose result depends on an install
+ *   detail nobody declared;
  *
  *   and it keeps the resulting FSWatcher in a constructor-local variable, so
  *   nothing can reach it to close it. Left running it keeps the event loop
- *   alive, which is what made an earlier revision allow-list FSEventWrap
- *   handles and force its own exit.
+ *   alive, and a handle no caller can close cannot be reported as closed.
  *
  * Both follow from ONE option, so one option is what this changes: `configure`
  * is wrapped before the first application require and the wrapper passes
@@ -2747,17 +2692,17 @@ async function createStallingInstance(appRoot, prefix, redis) {
 /**
  * Requires the worker and reports the outcome as a measurement.
  *
- * At 2f8712a this THROWS `Error: Schema can only contain plain objects`,
- * because the worker's first two requires load config/db before
- * config/app.config, so mongoose-schema-extend's transitive Proxy polyfill
- * replaces the global `Object.getPrototypeOf` before the schema libraries
- * reached through app.config load. On the baseline worktree that failure is
- * this harness's DELIVERABLE, and the caller reports it as the measured
- * baseline rather than as a pass - which is why the error is captured and
- * returned rather than swallowed by a try/catch that carries on.
+ * A worker whose first two requires load config/db before config/app.config
+ * THROWS `Error: Schema can only contain plain objects`, because
+ * mongoose-schema-extend's transitive Proxy polyfill replaces the global
+ * `Object.getPrototypeOf` before the schema libraries reached through
+ * app.config load. On a pre-migration worktree that failure is this harness's
+ * DELIVERABLE, and the caller reports it as the measured behaviour of the tree
+ * rather than as a pass - which is why the error is captured and returned
+ * rather than swallowed by a try/catch that carries on.
  *
- * On the target worktree it must succeed, and `run` treats a failure here as a
- * run failure.
+ * On the migrated worktree the require must succeed, and `run` treats a failure
+ * here as a run failure.
  *
  * @param {Object} options Resolved options.
  * @returns {Object} `{required, module, durationMs, error}`
@@ -2898,12 +2843,11 @@ function stripComments(source) {
  * resolves, and both reported whether they pass or fail:
  *
  *   `nsend` - `Q.nsend(Model, 'findById', id)`, which is the exact form the
- *     worker uses for the user lookup. `q` 1.0.1's ninvoke assimilates a
- *     thenable return
- *     value by calling `.then()` on it, and a mongoose 6 Query is a thenable,
- *     so the query executes twice and mongoose throws "Query was already
- *     executed". No document is needed for the probe: the second execution is
- *     what fails, not the lookup.
+ *     worker uses for the user lookup. `q`'s ninvoke assimilates a thenable
+ *     return value by calling `.then()` on it, and a mongoose 6 Query is a
+ *     thenable, so the query executes twice and mongoose throws "Query was
+ *     already executed". No document is needed for the probe: the second
+ *     execution is what fails, not the lookup.
  *
  *   `stream` - whether `Query.prototype.stream` is a function.
  *     `createExportArchive` calls `.find(...).select(...).stream()`,
@@ -2936,11 +2880,11 @@ async function probeCapabilities(appRoot, mongooseInstance, workerModule) {
   var code   = '';
 
   // The RUNTIME half needs a registered model on a live connection, which only
-  // exists once the worker's own require graph has run. When it has not - the
-  // baseline worktree cannot require the worker at all (AAP 0.6.5) - the
-  // source half is still measured and the runtime half is recorded as
-  // UNPROBED. Unprobed is never usable: the whole point of this probe is that
-  // the absence of evidence is not evidence of a working export path.
+  // exists once the worker's own require graph has run. When it has not - a
+  // pre-migration worktree cannot require the worker at all - the source half
+  // is still measured and the runtime half is recorded as UNPROBED. Unprobed is
+  // never usable: the absence of evidence is not evidence of a working export
+  // path.
   if (probed) {
     stream.usable = typeof mongooseInstance.Query.prototype.stream ===
       'function';
@@ -2971,11 +2915,12 @@ async function probeCapabilities(appRoot, mongooseInstance, workerModule) {
   // makes the verdict follow the module rather than the environment. It is also
   // what lets a repaired worker - or the scratch control copy - flip the
   // expectation set automatically instead of by a flag.
-  // An unreadable source is FATAL, and the reason is the whole point of the
-  // counts: a failed read used to leave `source` empty, which reads as zero
-  // call sites, which reads as "this worker uses neither idiom" - the most
-  // favourable answer available, produced by the absence of evidence. The
-  // counts only mean something when the file behind them was actually read.
+  //
+  // An unreadable source is FATAL rather than an empty `source`: an empty
+  // source reads as zero call sites, which reads as "this worker uses neither
+  // idiom" - the most favourable answer available, produced by the absence of
+  // evidence. The counts mean something only when the file behind them was
+  // actually read.
   try {
     source = fs.readFileSync(
       require.resolve(path.resolve(appRoot, workerModule)), 'utf8');
@@ -3100,8 +3045,9 @@ async function seedFixtures(deps) {
 
   // The pre-migration objects the export path reads: the user asset an
   // asset-bearing trinket points at, and the seeded completed export's own
-  // archive. Prepopulating is what makes a changed key surface as a lookup
-  // failure rather than passing on freshly written data (AAP 0.6.7).
+  // archive. Because an upload key is the sha1 of the file's own contents,
+  // prepopulating is what makes a changed key surface as a lookup failure
+  // rather than as a pass on freshly written data.
   //
   // The RESULT is returned rather than discarded, and the run asserts it. A
   // rejected entry - a bad base64 body, a missing bucket, an unreadable file -
@@ -3113,11 +3059,11 @@ async function seedFixtures(deps) {
   loaded   = awsFixture.prepopulate(manifest);
 
   // The expectation is DERIVED FROM THE MANIFEST BODY, not read back out of
-  // the store. That direction is the whole point: a digest taken from what the
-  // store now holds would agree with itself whatever it holds, which is how an
-  // earlier revision let a pre-seeded object be replaced after prepopulation
-  // and still pass. Every byte the seeder asked for is hashed here, and
-  // `verifySeedIntegrity` re-reads the store and compares against these.
+  // the store, and the direction matters: a digest taken from what the store
+  // now holds would agree with itself whatever it holds, so a pre-seeded object
+  // replaced after prepopulation would still pass. Every byte the seeder asked
+  // for is hashed here, and `verifySeedIntegrity` re-reads the store and
+  // compares against these.
   expected = manifest.map(function(entry) {
     var body = Buffer.from(entry.bytesBase64 || '', 'base64');
 
@@ -3151,10 +3097,10 @@ async function seedFixtures(deps) {
  * Reads every pre-migration object back out of the store and compares it, byte
  * for byte, against the manifest body that was supposed to be there.
  *
- * AAP 0.6.7 turns on one property: because an upload key is the sha1 of the
- * file's own contents, a changed digest must surface as a LOOKUP FAILURE on
- * pre-migration data rather than as a pass on data the run wrote itself. That
- * only holds if the pre-migration data is what the fixture says it is, and
+ * The storage contract turns on one property: because an upload key is the sha1
+ * of the file's own contents, a changed digest must surface as a LOOKUP FAILURE
+ * on pre-migration data rather than as a pass on data the run wrote itself.
+ * That only holds if the pre-migration data is what the fixture says it is, and
  * presence at the right key does not establish that: an object can be present,
  * addressable, the right length even, and still not be the bytes the manifest
  * described.
@@ -3191,16 +3137,15 @@ function verifySeedIntegrity(expected) {
  * Asserts that the fixtures this gate depends on are actually there - in the
  * database the WORKER reads, and in the object store it reads through.
  *
- * Two things are proved here that used to be assumed.
+ * Two things are proved here rather than assumed.
  *
  * The pre-population RESULT is asserted. `awsFixture.prepopulate` reports
- * `{loaded, rejected, errors}` and an earlier revision discarded it, so a
- * manifest entry the fixture rejected - a bad base64 body, an absent bucket, an
- * unreadable file - left the object simply missing. The asset lookup would then
- * fail as a NoSuchKey that reads like a worker defect, or, worse, an assertion
- * would pass against an object the worker had just written itself, which is
- * precisely the case AAP 0.6.7 says must surface as a lookup failure on
- * PRE-MIGRATION data.
+ * `{loaded, rejected, errors}`, and a discarded result leaves a manifest entry
+ * the fixture rejected - a bad base64 body, an absent bucket, an unreadable
+ * file - simply missing. The asset lookup would then fail as a NoSuchKey that
+ * reads like a worker defect, or, worse, an assertion would pass against an
+ * object the worker had just written itself, when what a changed key has to
+ * surface as is a lookup failure on PRE-MIGRATION data.
  *
  * The seeded documents are READ BACK THROUGH THE APPLICATION'S OWN GRAPH. When
  * `--app` names an independently installed worktree there are two mongoose
@@ -3245,9 +3190,8 @@ async function assertSeeded(ctx, ledger, seeded) {
 
       // The complete set, compared as a set: an absent object reads as a null
       // digest, a truncated or replaced one as a different digest, and a
-      // reordered store as a different array. Presence alone is what an
-      // earlier revision checked, and a body swapped after prepopulation
-      // passed it - measured.
+      // reordered store as a different array. Presence alone would not do it -
+      // a body swapped after prepopulation is present at the right key.
       assert.deepStrictEqual(comparable, wanted,
         'the export path reads these by key and by content. A changed key is ' +
         'supposed to surface as a lookup failure rather than as a pass on ' +
@@ -3451,7 +3395,7 @@ function listWorkerTempFiles() {
  *               deleted, and Bull's own stalled check hands it back.
  *   'lock-loss' `provokeLockLoss` below: the lock expires while the processor
  *               runs, so Bull raises "Missing lock" instead of recording an
- *               outcome. Nothing settles, and that is the point.
+ *               outcome, so nothing settles for the job.
  *
  * Three waits, and every one is bounded. The processor's settlement comes from
  * Bull's own event, through the observer. The document's terminal state is then
@@ -3480,6 +3424,14 @@ async function driveJob(ctx, spec) {
     : {};
   var stdoutBefore  = capture.stdout.length;
   var callsBefore   = awsFixture.calls().length;
+  // The REDACTED mail window's start, taken as an offset for the same reason
+  // every other window here is: `mailFixture.reset()` clears the raw assertion
+  // window below, but `evidence()` is the fixture's complete run log and reset
+  // does NOT clear it (by design - a mid-run reset must not be able to delete
+  // evidence of a send). So the per-job slice of the redacted records is
+  // whatever arrived after this offset, and it stays 1:1 and in order with
+  // `calls()`, which is what makes the two windows describe the same sends.
+  var mailBefore    = mailFixture.evidence().length;
   var updatesBefore = ctx.updates.calls.length;
   var errorsBefore  = ctx.observer.queueErrors().length;
   var tempBefore    = listWorkerTempFiles();
@@ -3581,7 +3533,26 @@ async function driveJob(ctx, spec) {
     doc         : doc,
     startedAt   : startedAt,
     durationMs  : Date.now() - startedAt,
+    // TWO MAIL WINDOWS, AND ONLY ONE OF THEM IS EVER SERIALIZED.
+    //
+    // `mail` is the fixture's RAW assertion window: the recipient, subject,
+    // type and rendered body exactly as `lib/util/mailer.send` received them,
+    // which is what the per-job assertions compare against the seeded user -
+    // the export owner's address, `sendCompletionEmail`'s subject, the type
+    // the call site passed and the rendered template's length. Those live and
+    // die inside this process and `projectJob` never touches them.
+    //
+    // `mailEvidence` is the fixture's REDACTED projection of the same sends,
+    // 1:1 and in order, and it is the only one that reaches the artifact.
+    // test/parity/fixtures/mail.js exports `evidence()` for exactly this
+    // purpose and says so in its own header: `to` and `subject` become
+    // `{kind, length, digest}` identity descriptors, and every `options`
+    // member becomes shape, length and digest. Serializing `calls()` - which
+    // this file did - re-created in a retained artifact the leak the fixture
+    // exists to close, and the mail on this path is a real recipient address
+    // and a real subject line (CWE-532).
     mail        : mailFixture.calls(),
+    mailEvidence: mailFixture.evidence().slice(mailBefore),
     awsCalls    : awsFixture.calls().slice(callsBefore),
     updates     : ctx.updates.calls.slice(updatesBefore).filter(function(entry) {
       return entry.id === String(exportId);
@@ -3693,8 +3664,11 @@ async function provokeLockLoss(ctx, data) {
   var found = null;
   var index;
 
+  // The attempts are SEQUENTIAL, not concurrent: each one narrows the queue's
+  // shared lock settings and restores them in its `finally`, and the next runs
+  // only if the previous observed no error, so two overlapping attempts would
+  // race over the same two settings and over one processor's lock window.
   for (index = 0; index < LOCK_LOSS_ATTEMPTS && found === null; index++) {
-    /* eslint-disable no-await-in-loop */
     ctx.queue.settings.lockDuration  = LOCK_LOSS_DURATION_MS;
     ctx.queue.settings.lockRenewTime = LOCK_LOSS_RENEW_MS;
 
@@ -3831,10 +3805,11 @@ async function observeRemoval(ctx, id) {
 /**
  * The `status` values the worker wrote for one job, in order.
  *
- * The sequence is the assertion AAP 0.9.3 asks for - `processing` then
- * `completed` - and it comes from the recorded calls rather than from polling,
- * because the intermediate state can be overwritten between two polls and an
- * assertion that only sometimes sees what it claims is not one.
+ * The sequence is the assertion this gate makes about status persistence -
+ * `processing` then `completed` - and it comes from the recorded calls rather
+ * than from polling, because the intermediate state can be overwritten between
+ * two polls and an assertion that only sometimes sees what it claims is not
+ * one.
  *
  * @param {Object} outcome
  * @returns {string[]}
@@ -3968,20 +3943,19 @@ async function failUndrivenJobs(ctx, ledger, reason) {
  * Asserts that the queue the worker registered on is a real Bull queue in this
  * run's own namespace, carrying Bull's own defaults.
  *
- * Four claims, each of which an earlier revision of this file could not have
- * made: the constructor is Bull's, the key prefix is the per-run one so nothing
- * this run does can be seen by or confused with another, the three Redis
- * clients Bull opens are actually connected, and the queue's SETTINGS are
+ * Four claims: the constructor is Bull's, the key prefix is the per-run one so
+ * nothing this run does can be seen by or confused with another, the three
+ * Redis clients Bull opens are actually connected, and the queue's SETTINGS are
  * Bull's defaults - `lockDuration` 30000, `stalledInterval` 30000,
- * `maxStalledCount` 1. The last one is the guard on this file's own honesty:
- * the only option the harness injects is `prefix`, and a future injection of
- * timings would change what every semantic assertion below means.
+ * `maxStalledCount` 1. The last one guards the rest: the only option the
+ * harness injects is `prefix`, and a future injection of timings would change
+ * what every semantic assertion below means.
  *
  * Every claim is a LEDGER CHECK and none of them throws. When `--app` names a
- * worktree whose install predates the migration - the baseline at `2f8712a`
- * resolves bull 0.7.2 - these checks FAIL, by name, carrying the measured
- * surface and the remedy, and the run continues to collect the load-order,
- * fixture and capability evidence that `--app` exists to obtain. What it does
+ * worktree whose install predates the migration, and so resolves a Bull 0.x
+ * queue, these checks FAIL by name, carrying the measured surface and the
+ * remedy, and the run continues to collect the load-order, fixture and
+ * capability evidence that `--app` exists to obtain. What it does
  * NOT do is enqueue: `ctx.queueUsable` is what gates that, because a queue
  * whose `prefix` option was ignored addresses the shared `bull:exports:*`
  * keyspace, and this host runs up to sixty-four clones against one Redis.
@@ -4038,13 +4012,23 @@ async function assertQueueIsRealBull(ctx, ledger) {
       'the client statuses below are ioredis properties; this queue exposes ' +
       surface.missing.join(', ') + '. Remedy: ' + surface.remedy);
 
-    await ctx.queue.isReady();
+    // BOUNDED, both of them. The preflight establishes that a Redis answered
+    // before the run began; it cannot establish that the same service is
+    // still there a moment later, and ioredis retries a lost connection
+    // indefinitely by design. Unbounded, these two awaits reproduced the hang
+    // the preflight was added to prevent - a service that disappears between
+    // the probe and here, or one that accepts a connection and then stops
+    // answering. `withTimeout` turns either into this named failed check.
+    await withTimeout(Promise.resolve(ctx.queue.isReady()),
+      CONNECT_TIMEOUT_MS, 'the queue\'s Redis clients becoming ready');
 
     assert.ok(['ready', 'connect', 'connecting']
       .indexOf(ctx.queue.client.status) > -1,
       'the command client must be usable; statuses were ' +
       JSON.stringify(surface.clients));
-    assert.strictEqual(await ctx.queue.client.ping(), 'PONG',
+    assert.strictEqual(await withTimeout(
+      Promise.resolve(ctx.queue.client.ping()), CONNECT_TIMEOUT_MS,
+      'the command client\'s PING'), 'PONG',
       'the command client must answer PING');
   });
 
@@ -4220,6 +4204,11 @@ async function assertNoExternalEffects(ctx, ledger, outcome) {
     assert.deepStrictEqual(outcome.mail.map(function(call) {
       return call.type;
     }), [], 'no mail is expected on this path');
+    // Both windows, because the artifact carries the redacted one: a
+    // projection that lost a send would look exactly like a path that sent
+    // nothing.
+    assert.deepStrictEqual(outcome.mailEvidence, [],
+      'and the redacted window the artifact carries must be empty too');
   });
 
   await ledger.check(outcome.name + ': no temporary file was left in /tmp',
@@ -4243,7 +4232,7 @@ async function assertNoExternalEffects(ctx, ledger, outcome) {
 // ---------------------------------------------------------------------------
 
 /**
- * Every AAP 0.9.3 success assertion, against the job the worker completed.
+ * Every success-path assertion, against the job the worker completed.
  *
  * Unconditional. There is no expectation set for "the export could not run":
  * a worker that cannot complete this job fails the gate, with the capability
@@ -4424,6 +4413,23 @@ async function assertSuccessCompleted(ctx, ledger, outcome) {
         'the body is the rendered export-ready template');
       assert.ok(outcome.mail[0].options.html.length > 0,
         'the rendered body must not be empty');
+      // The raw window above is asserted and discarded; the REDACTED window is
+      // what the artifact carries, so the two are held to describing the same
+      // send. The fixture keeps them 1:1 and in order by construction
+      // (recordSend pushes to both), and this is where that construction is
+      // checked rather than assumed - a projection that silently reported no
+      // mail would otherwise read as a worker that sent none.
+      assert.strictEqual(outcome.mailEvidence.length, outcome.mail.length,
+        'the redacted window must hold one record per captured send');
+      assert.strictEqual(outcome.mailEvidence[0].redacted, true,
+        'the persisted record must be the redacted projection');
+      assert.strictEqual(outcome.mailEvidence[0].type, 'export-ready',
+        'the type survives redaction, because it is a template name');
+      assert.strictEqual(outcome.mailEvidence[0].to.digest,
+        'sha256:' + crypto.createHash('sha256')
+          .update(ctx.seed.credentials.user.email, 'utf8').digest('hex'),
+        'the recipient is recorded as an algorithm-tagged digest of the ' +
+        'owner\'s address, and nowhere as the address');
     });
 
   await ledger.check('success: the temporary file /tmp/' + filename +
@@ -4446,10 +4452,10 @@ async function assertSuccessCompleted(ctx, ledger, outcome) {
 /**
  * Bull 4 retry: `attempts: 2` on a rejecting processor.
  *
- * AAP 0.5.1.2 lists retry among the behaviours the 0.7.2 -> 4.16.5 move
- * alters, and this is the assertion that it works with THIS worker's
- * processor: Bull re-runs it, the failed handler sees the attempt count
- * climb, and the persisted document carries the last failure. `attemptsMade`
+ * Retry is one of the behaviours the Bull major changed, and this is the
+ * assertion that it works with THIS worker's processor: Bull re-runs it, the
+ * failed handler sees the attempt count climb, and the persisted document
+ * carries the last failure. `attemptsMade`
  * is Bull's own counter and is read off the Job the event carried, which is
  * why the sequence - 1 then 2 - is evidence of two real attempts rather than
  * of one event emitted twice.
@@ -4594,9 +4600,9 @@ async function assertStalledJob(ctx, ledger, outcome) {
  * refuses to record the outcome and emits
  * `Missing lock for job <id> failed` on the queue. Three things follow, and all
  * three are asserted: the worker's `error` handler ran and logged the error it
- * was handed - which is the payload-shape claim AAP 0.9.3 asks for - no
- * terminal event was emitted for the job, and therefore the Export document
- * was never written. That last one matters for R-e: a lost lock is not a
+ * was handed, which is the payload shape this gate holds the handler to; no
+ * terminal event was emitted for the job; and therefore the Export document was
+ * never written. The last one is the error-mapping edge - a lost lock is not a
  * failure the application records, and a harness that quietly expected
  * `status: 'failed'` here would be asserting something Bull does not do.
  *
@@ -4674,9 +4680,8 @@ async function assertLockLossJob(ctx, ledger, outcome) {
  * The `User not found` job: the failure edge with NO user resolved.
  *
  * The throw happens before `user` is ever assigned, so the failure mail's
- * `if (user)` guard
- * is false and NO failure mail is sent. That is the edge R-e binds here, and it
- * is asserted as an absence rather than assumed.
+ * `if (user)` guard is false and NO failure mail is sent. That is this edge's
+ * error mapping, and it is asserted as an absence rather than assumed.
  *
  * @param {Object} ctx
  * @param {Object} ledger
@@ -4708,6 +4713,8 @@ async function assertMissingUserJob(ctx, ledger, outcome) {
     'resolved', function() {
       assert.deepStrictEqual(outcome.mail, [],
         'the `if (user)` guard is false on this edge, so nothing is sent');
+      assert.deepStrictEqual(outcome.mailEvidence, [],
+        'and the redacted window the artifact carries must be empty too');
     });
 
   await assertFailedHandlerRan(ctx, ledger, outcome);
@@ -4770,6 +4777,15 @@ async function assertLateFailureJob(ctx, ledger, outcome) {
       assert.strictEqual(outcome.mail[0].type, 'export-failed', 'the type');
       assert.strictEqual(typeof outcome.mail[0].options.html, 'string',
         'the rendered export-failed template');
+      // As on the success path: the raw window is asserted here and the
+      // REDACTED window is what the artifact keeps, so the two are held to
+      // describing the same send.
+      assert.strictEqual(outcome.mailEvidence.length, outcome.mail.length,
+        'the redacted window must hold one record per captured send');
+      assert.strictEqual(outcome.mailEvidence[0].redacted, true,
+        'the persisted record must be the redacted projection');
+      assert.strictEqual(outcome.mailEvidence[0].type, 'export-failed',
+        'the type survives redaction, because it is a template name');
     });
 
   await ledger.check('late-failure: the temporary file existed and was ' +
@@ -4803,10 +4819,10 @@ async function assertLateFailureJob(ctx, ledger, outcome) {
  *
  * The processor rejects before `processBulkExport` is entered, so the `.fail`
  * chain never runs and the failed handler is the ONLY writer of `status`
- * and `errorMessage`. That isolation is the point: it is the one job that
- * asserts the handler's persistence on its own, and it is reachable whatever
- * the capability probes say, because it touches no database call inside the
- * chain.
+ * and `errorMessage`. That isolation is what the case is for: it is the one
+ * job that asserts the handler's persistence alone, and it is reachable
+ * whatever the capability probes say, because it touches no database call
+ * inside the chain.
  *
  * @param {Object} ctx
  * @param {Object} ledger
@@ -4985,15 +5001,13 @@ function classifyWarnings(stderr, appRoot) {
 /**
  * Asserts the zero-warning bar. There is no allowance.
  *
- * AAP 0.8's requirement is zero deprecation warnings across the entire running
- * application, and 0.9.3's pass condition is "no warning or deprecation notice
- * attributable to the application's own source or to any dependency this plan
- * retains". Measured on the delivered tree, this run emits NONE. The one it
- * used to emit - DEP0005 from `compress-commons`, reached through `archiver`
- * 2.1.1 - was a dependency this plan retained, so it FAILED here, and that
- * failure is what moved archiver to 6.0.2. It had previously been allowed by
- * name and printed as a deviation; nothing in the AAP authorizes that, and a
- * gate that excuses the one thing it was built to detect is not a gate.
+ * The bar is zero deprecation warnings across the entire running application:
+ * no notice attributable to the application's own source or to any dependency
+ * this migration retains. A retained dependency's notice is therefore a
+ * failure here and never an entry in an allowance list - a gate that excuses
+ * the one thing it was built to detect is not a gate - and clearing one is
+ * work for the dependency decision, at the source that emits it. What this run
+ * observed either way is in `evidence.warnings`, with nothing subtracted.
  *
  * Two further failures are asserted here rather than left to a reader of the
  * invocation. A run missing `--pending-deprecation` or `--trace-deprecation`
@@ -5228,9 +5242,8 @@ async function teardown(ctx, clean) {
       // The per-client status assertions are ioredis properties, and only a
       // Bull 4 queue has them. An older selected queue is closed through the
       // application's own `closeAll` exactly the same way; what cannot be
-      // asserted is the internal state, and asserting it anyway is what made
-      // an earlier revision report a spurious teardown failure against a
-      // baseline worktree.
+      // asserted is its internal state, and asserting it anyway would report a
+      // spurious teardown failure against a pre-migration worktree.
       if (!opened.queueClients) {
         return;
       }
@@ -5432,9 +5445,9 @@ async function assertTeardown(ctx, ledger, steps) {
         // record rather than accepted. The equivalence runs both ways: a step
         // that skipped a resource the run opened would leave that resource
         // open, and a step that ran for a resource the run never opened is
-        // asserting about something that does not exist - which is how an
-        // earlier revision produced a spurious teardown failure against a
-        // worktree whose queue exposed no ioredis clients.
+        // asserting about something that does not exist - which on a worktree
+        // whose queue exposes no ioredis clients is a spurious teardown
+        // failure.
         if (entry.resource) {
           assert.strictEqual(entry.skipped, opened[entry.resource] !== true,
             entry.skipped
@@ -5591,8 +5604,8 @@ async function registerTeardownStep(ledger, entry) {
  * are pipes depends on how the process was invoked and neither ever keeps the
  * loop alive.
  *
- * That is what makes the exit path honest: `main` returns, `process.exitCode`
- * is set, and the loop drains on its own. A process that will not leave has a
+ * That is what the exit path relies on: `main` returns, `process.exitCode` is
+ * set, and the loop drains on its own. A process that will not leave has a
  * handle open, this check has already failed, and the watchdog that follows can
  * only exit non-zero.
  *
@@ -5681,14 +5694,33 @@ function projectJob(outcome, expectation) {
           : null
       }
       : null,
-    mail : outcome.mail.map(function(call) {
+    // FROM THE REDACTED WINDOW, never from the raw one. `outcome.mail` holds
+    // the sends as `lib/util/mailer.send` received them and is what the
+    // in-process assertions read; this projection is persisted, so it is built
+    // from `outcome.mailEvidence` - the fixture's own `evidence()` records -
+    // and it carries no recipient and no subject text.
+    //
+    // What a reviewer needs survives the redaction: `sequence` is the send's
+    // position in the whole run, so a mail attributed to the wrong job is
+    // visible; `type` is the template name the call site chose - a literal,
+    // never content - and is what every expectation keys on; `to` and
+    // `subject` are `{kind, length, digest}`, so a changed recipient or a
+    // reworded subject still shows up as a different digest without the value
+    // being written down; and `htmlLength` keeps its name, because the
+    // rendered body embeds `expiresAt` and `VOLATILE` normalizes that key by
+    // name - renaming it would have quietly taken the value out of the
+    // normalization and into the comparison.
+    mail : (outcome.mailEvidence || []).map(function(record) {
+      var html = record.options && record.options.values &&
+                 record.options.values.html;
+
       return {
-        to         : call.to,
-        subject    : call.subject,
-        type       : call.type,
-        htmlLength : call.options && typeof call.options.html === 'string'
-          ? call.options.html.length
-          : null
+        sequence   : record.sequence,
+        type       : record.type,
+        redacted   : record.redacted === true,
+        to         : record.to,
+        subject    : record.subject,
+        htmlLength : html && html.kind === 'string' ? html.length : null
       };
     }),
     s3 : outcome.awsCalls.map(function(call) {
@@ -5801,7 +5833,7 @@ function projectComparable(evidence) {
 /**
  * Deep-compares two normalized artifacts and lists the differences.
  *
- * The determinism check AAP 0.9.6 asks for, as a mechanical operation:
+ * The determinism check, as a mechanical operation:
  *
  *   node test/parity/worker.js --out a.json
  *   node test/parity/worker.js --out b.json --compare a.json
@@ -5877,10 +5909,10 @@ function compareEvidence(actual, expected) {
 /**
  * The measurements this run owes `docs/baseline-parity.md`.
  *
- * Emitted rather than written: that document is owned by another lane and this
- * file edits no documentation. Each entry is a fact a reviewer of the parity
- * evidence needs and cannot derive from a pass or a fail - what the run used,
- * what it proved, and what it relies on that the manifest does not declare.
+ * Emitted rather than written, because this file edits no documentation. Each
+ * entry is a fact a reviewer of the parity evidence needs and cannot derive
+ * from a pass or a fail - what the run used, what it proved, and what it relies
+ * on that the manifest does not declare.
  *
  * @param {Object} ctx
  * @param {Object} evidence
@@ -5894,9 +5926,56 @@ function buildNotesOwed(ctx, evidence) {
   var watch        = evidence.dependencies &&
                      evidence.dependencies.templateWatch;
   var chokidar     = watch && watch.chokidar;
+  // The inventory `settleHandles` produced, which is what the clean-close note
+  // below is derived from. Absent only when the run never reached the
+  // inventory, in which case that note claims nothing.
+  var handles      = evidence.handles;
+  // The tree under test, as every other recorded path in this file is
+  // recorded. Notes are persisted, so an absolute `--app` interpolated into
+  // one puts a machine path in the artifact. The helper reduces a root to a
+  // bare `analysed:` or `tool:` - the prefix is the whole label when the path
+  // IS the root - so the label is glossed here rather than dropped into a
+  // sentence on its own, and the gloss says which of the two configurations
+  // produced it.
+  var appRootLabel = 'the tree under test (' +
+    pathLabelFor(ctx.options.appRoot, ctx.options.appRoot) + ', ' +
+    (ctx.options.appRoot === TOOL_ROOT
+      ? 'this harness\'s own worktree'
+      : 'an independently installed --app worktree') + ')';
+
+  /**
+   * What this run OBSERVED about template watching, in one sentence.
+   *
+   * Shared by both clean-close branches so that the passing and the failing
+   * note quote the same measured numbers rather than two hand-written
+   * paraphrases of them.
+   *
+   * @returns {string}
+   */
+  function watchClause() {
+    if (!watch) {
+      return 'Template watching was not measured in this run, so nothing here ' +
+        'says whether a watcher was requested.';
+    }
+
+    return 'lib/util/nunjucks.js asks for watching outside production, and ' +
+      'under NODE_ENV=test ' + watch.watchRequested + ' of ' +
+      watch.configureCalls + ' configure() call(s) in this run passed ' +
+      'watch:true; the suppression applied it ' + watch.watchApplied +
+      ' time(s), and ' +
+      (chokidar && chokidar.loaded
+        ? chokidar.modulesInCache + ' chokidar module(s) ARE in the require ' +
+          'cache'
+        : 'no chokidar module entered the require cache') + '.';
+  }
 
   if (queue && !queue.usable) {
-    notes.push('Selected worktree queue surface: ' + evidence.tool.appRoot +
+    // The LABEL, as everywhere else a note names the tree. This read
+    // `evidence.tool.appRoot`, which stopped existing when the three paths
+    // beside `execArgv` were reduced to labels: the note would have opened
+    // "Selected worktree queue surface: undefined resolves bull 0.7.2", and
+    // nothing catches it because the branch is unreached on a healthy run.
+    notes.push('Selected worktree queue surface: ' + appRootLabel +
       ' resolves ' + queue.package + ' at ' + queue.module + ', constructor `' +
       queue.constructor + '`, keyPrefix ' + JSON.stringify(queue.keyPrefix) +
       ', missing ' + (queue.missing.join(', ') || 'nothing') + '. This is a ' +
@@ -6005,11 +6084,9 @@ function buildNotesOwed(ctx, evidence) {
     'worker.');
 
   // Every notice, as a note owed to the parity record - and as a FAILURE of
-  // this run, not a footnote to it. There is no allowance to report: AAP 0.9.3
-  // covers retained dependencies and 0.9.5 grants the plan no exception, so a
-  // notice from a retained dependency is a gate failure whose resolution is a
-  // dependency decision this harness does not own - as archiver's
-  // compress-commons DEP0005 was, and was resolved that way.
+  // this run, not a footnote to it. There is no allowance to report: the bar
+  // covers retained dependencies, so a notice from one is a gate failure whose
+  // resolution is a dependency decision this harness does not take.
   (evidence.warnings.notices || []).forEach(function(notice) {
     notes.push('Zero-warning gate FAILED on: ' + notice.summary +
       (notice.origin && notice.origin.length
@@ -6030,14 +6107,62 @@ function buildNotesOwed(ctx, evidence) {
       'quiet stream here is not a clean one.');
   }
 
-  notes.push('Clean close: the process cannot self-exit under NODE_ENV=test. ' +
-    'lib/util/nunjucks.js configures nunjucks with watch:true when isTest, and ' +
-    'nunjucks 3.2.4 keeps the chokidar FSWatcher in a constructor-local ' +
-    'variable, so no caller can close it. Those FSEventWrap handles are NOT ' +
-    'allowed and FAIL this check - they are an unresolved shortfall against ' +
-    'clean teardown (docs/preserved-quirks.md 10.3 and 11.3), not an approved ' +
-    'deviation. The inventory is reported and ' +
-    'exits with its own code.');
+  // DERIVED FROM THE INVENTORY THIS RUN TOOK, not from the mechanism that
+  // could produce one. An earlier revision stated unconditionally that the
+  // test-mode template watcher leaves FSEventWrap handles behind and that this
+  // check therefore FAILS as an unresolved shortfall. That was true of the
+  // revision which allow-listed those handles and forced its own exit, and it
+  // stopped being true when `installTemplateWatchSuppression` began passing
+  // watch:false through nunjucks' own API before the first application
+  // require: no watcher starts, no chokidar is required, and the clean-close
+  // check passes on an empty inventory. A note asserting a failure that the
+  // same artifact's own `handles` section contradicts is worse than no note -
+  // it is the artifact disagreeing with itself about whether the gate passed,
+  // and the note four entries above already said no handle is allow-listed.
+  // Both branches below are reachable from `evidence.handles`, so what a
+  // reader gets is the measurement.
+  //
+  // The CLASSIFICATION is unchanged either way, and that is the part worth
+  // keeping: HANDLE_ALLOWANCES carries only the stdio partition, so a
+  // surviving watcher handle is `unexpected`, is not allowed, and fails
+  // (docs/preserved-quirks.md 10.3 and 11.3). What the suppression changes is
+  // whether the condition arises at all.
+  if (handles) {
+    if (handles.unexpected.length === 0 && handles.allowed.length === 0) {
+      notes.push('Clean close, measured: the handle inventory is EMPTY - ' +
+        JSON.stringify(handles.counts) + ' outside the stdio partition, ' +
+        'nothing allow-listed, nothing unexpected - and this process leaves ' +
+        'on its own rather than being exited. ' + watchClause() + ' No ' +
+        'FSEventWrap handle therefore exists to classify. The classification ' +
+        'stands and is why this is a measurement rather than an allowance: ' +
+        'HANDLE_ALLOWANCES carries only the stdio partition, so a surviving ' +
+        'watcher handle would be `unexpected` and would fail this check ' +
+        '(docs/preserved-quirks.md 10.3 and 11.3). In this run that condition ' +
+        'does not arise.');
+    }
+    else {
+      notes.push('Clean close FAILED on the handle inventory: ' +
+        JSON.stringify(handles.counts) + ' outside the stdio partition, ' +
+        'unexpected ' + JSON.stringify(handles.unexpected) +
+        (handles.allowed.length
+          ? ', allowed ' + JSON.stringify(handles.allowed) +
+            ' - and an `allowed` entry means an allowance was ADDED, because ' +
+            'HANDLE_ALLOWANCES carries only the stdio partition'
+          : '') +
+        '. Nothing here is absorbed by an allowance and nothing forces the ' +
+        'exit, so the run fails with its own code. ' +
+        (handles.unexpected.indexOf('FSEventWrap') > -1
+          ? 'An FSEventWrap is the test-mode template watcher, which means the ' +
+            'suppression this gate installs did NOT hold: nunjucks 3.2.4 keeps ' +
+            'each FSWatcher in a constructor-local variable, so no caller can ' +
+            'close it and the handle can only be prevented. ' + watchClause() +
+            ' That is the shortfall docs/preserved-quirks.md 10.3 and 11.3 ' +
+            'classify - unexpected, unallowed, failing - and it has arisen here.'
+          : 'A Timeout is usually an uncleared timer and a TCP or Socket handle ' +
+            'an unclosed connection; the teardown steps in `evidence.teardown` ' +
+            'name what each one was meant to close.'));
+    }
+  }
 
   notes.push('config/default.yaml declares no aws.buckets.exports although ' +
     'the worker reads its `name` and `host`, so the overlay supplies one. The ' +
@@ -6050,8 +6175,17 @@ function buildNotesOwed(ctx, evidence) {
     // all - still shipped an artifact stating that the second graph had
     // connected and the fixtures had been read back and asserted. Both halves
     // are now recorded facts, and the note says which of them held.
+    //
+    // The tree under test is named by its LABEL in both halves. These notes
+    // are persisted - `notesOwed` is part of the artifact and part of what the
+    // provenance digests - and the raw `--app` path they used to interpolate
+    // named one machine, which is the same policy this file applies to every
+    // other recorded path. The two mongoose resolutions beside it are already
+    // labelled by `evidence.moduleGraph`, so all three now read the same way,
+    // and `applyEnvironment` still prints the real path to stderr for an
+    // operator who has to go and look at the tree.
     if (ctx.crossGraph.connected && ctx.crossGraph.asserted) {
-      notes.push('Dual module graph: ' + ctx.options.appRoot + ' resolves its ' +
+      notes.push('Dual module graph: ' + appRootLabel + ' resolves its ' +
         'own mongoose, so the seeder in this worktree connected to the same ' +
         'database separately and the fixtures were then read back THROUGH the ' +
         'application\'s own graph before any job was driven. That cross-graph ' +
@@ -6059,7 +6193,7 @@ function buildNotesOwed(ctx, evidence) {
         '--app worktree a supported configuration rather than a refusal.');
     }
     else {
-      notes.push('Dual module graph, NOT exercised: ' + ctx.options.appRoot +
+      notes.push('Dual module graph, NOT exercised: ' + appRootLabel +
         ' resolves its own mongoose (' + evidence.moduleGraph.appMongoose +
         ') while this harness resolves ' + evidence.moduleGraph.toolMongoose +
         ', and in this run the harness\'s second connection ' +
@@ -6090,9 +6224,8 @@ function buildNotesOwed(ctx, evidence) {
 //   the GENERATOR    by the git blob of THIS file's exact bytes, plus the
 //                    commit that has been VERIFIED to hold that blob at this
 //                    path - or an explicit non-git state (`uncommitted-source`,
-//                    `not-a-checkout`) when no commit does, which is an honest
-//                    answer instead of a commit id that cannot reproduce the
-//                    artifact;
+//                    `not-a-checkout`) when no commit does, rather than a
+//                    commit id that cannot reproduce the artifact;
 //   the DELIVERY     by this tool's own worktree HEAD, which is what lets one
 //                    command establish that a whole set of parity artifacts
 //                    describes one target state.
@@ -6122,16 +6255,16 @@ function buildNotesOwed(ctx, evidence) {
 //   before they are recorded. They say nothing about the application, and their
 //   absolute form says only which machine the run happened on. `assertAppRoot`
 //   is the plainest example: its message names the `--app` path, and a
-//   bootstrap failure records that message as a failed check, so the artifact
-//   ended up carrying a host path from a message that was never meant for it.
+//   bootstrap failure records that message as a failed check, so an unlabelled
+//   message carries a host path into a file that is read as evidence.
 //
 //   APPLICATION-MEASURED values - a persisted `Export` field, a job's error
 //   name and message, the `q`/mongoose capability probe errors, the template
 //   resolution errors - are recorded VERBATIM even when they contain a path or
-//   an instant. Those strings ARE the measurement: `lib/workers/exports.js:125`
-//   hard-codes `'/tmp/' + filename`, so a message naming it is evidence about
-//   the application, and rewriting it would change what the run reports and
-//   what `--compare` compares.
+//   an instant. Those strings ARE the measurement: `processBulkExport` in
+//   `lib/workers/exports.js` hard-codes `'/tmp/' + filename`, so a message
+//   naming it is evidence about the application, and rewriting it would change
+//   what the run reports and what `--compare` compares.
 //
 // A message printed to stderr is not an artifact and is never rewritten: an
 // operator reading a failed run needs the real path, which is why every `note`
@@ -6364,22 +6497,37 @@ function describeDataStore(address) {
  *
  * @param {Object} options From parseArguments.
  * @returns {{workerModule: (string|null), overlay: (string|null),
- *            emitterPatch: boolean, controlRun: boolean,
- *            analysedTreeIsToolWorktree: boolean}}
+ *            controlRun: boolean, analysedTreeIsToolWorktree: boolean}}
  */
 function describeInvocation(options) {
   return {
     workerModule : pathLabelFor(
       path.resolve(options.appRoot, options.workerModule), options.appRoot),
     overlay      : pathLabelFor(options.overlayPath, options.appRoot),
-    emitterPatch : !!options.emitterPatch,
-    // A control run measures the harness rather than the application - either
-    // the queue patch was withheld so no job outcome is observable, or a module
-    // other than the shipped worker was driven. Recorded in the provenance
-    // because a control artifact must never be mistaken for gate evidence, and
-    // the two flags that produce one are otherwise only in the stderr log.
-    controlRun   : !options.emitterPatch ||
-      options.workerModule !== 'lib/workers/exports',
+    // A control run measures the harness rather than the application, and
+    // there is exactly ONE invocation-time lever left that produces one:
+    // `--worker-module` naming something other than the shipped worker. It is
+    // recorded in the provenance because a control artifact must never be
+    // mistaken for gate evidence, and the flag that produces one is otherwise
+    // only in the stderr log.
+    //
+    // It used to be two. The other was `emitterPatch`, and it was the
+    // harness-side emitter patch this file no longer has: an earlier revision
+    // replaced the queue instance's `on` and wrapped `_processJob` so that the
+    // HARNESS emitted `completed` and `failed`, and withholding that patch was
+    // a control. That mechanism is GONE - the header records why, and every
+    // event this file asserts now comes from a genuine Bull queue on loopback
+    // Redis - but the DIMENSION outlived it: `parseArguments` declares no
+    // `--emitter-patch`, so `options.emitterPatch` was permanently undefined
+    // and this disjunct labelled every real run a control run. Measured: a run
+    // that drove seven real Bull 4.16.5 jobs shipped `controlRun: true`. A
+    // provenance field that is always true says nothing, and a false claim
+    // about what an artifact measured is worse than a missing one, so the
+    // dimension is removed rather than defaulted. What replaced it is not an
+    // invocation flag at all but an OBSERVATION - `queue.observed` below, from
+    // the module patch and the queue this run actually found - because whether
+    // the application was really driven is now a measurement.
+    controlRun   : options.workerModule !== 'lib/workers/exports',
     // The boolean, not the two paths: whether the tree driven IS this tool's
     // own worktree. False means a foreign `--app`, in which case the two HEADs
     // in the block differ by construction.
@@ -6391,27 +6539,26 @@ function describeInvocation(options) {
  * The role this run's evidence may claim, decided by the tree it drove.
  *
  * The role follows the TREE, not the mode: this harness drives whichever
- * worktree `--app` names, so a run against a worktree at AAP 0.10.3's base
+ * worktree `--app` names, so a run against a worktree at the migration's base
  * commit is baseline evidence and a run against the migrated tree is target
  * evidence.
  *
  * THE ONE CASE THAT NEEDS DECIDING is a DIRTY worktree at the base commit.
- * `tree.isBaselineCommit` alone used to be enough to stamp `baseline` on the
- * block, and it is not: the base commit plus uncommitted edits is not the base
- * commit's content, so what such a run drove is not retrievable from this
- * repository while the block reads exactly like a clean baseline capture. The
- * decision is delegated to `provenance.assertBaseline` rather than
- * re-implemented here, so this harness and every sibling refuse the same thing
- * for the same reason.
+ * `tree.isBaselineCommit` is not on its own enough to stamp `baseline` on the
+ * block: the base commit plus uncommitted edits is not the base commit's
+ * content, so what such a run drove is not retrievable from this repository
+ * while the block reads exactly like a clean baseline capture. The decision is
+ * delegated to `provenance.assertBaseline` rather than re-implemented here, so
+ * this harness and every sibling refuse the same thing for the same reason.
  *
  * It is a DOWNGRADE, not a crash, and that matters more here than anywhere:
- * this harness runs for minutes, drives four jobs and asserts every check in
- * its ledger, so throwing at the point the block is built would discard a
- * complete run over a label. The jobs are still driven, the artifact is still written,
- * and the role is recorded as `unreviewed` - which every gate treats as
- * non-qualifying - with the contract's own explanation printed, including how
- * to list the uncommitted changes. A caller that wants the refusal to be fatal
- * reads `role` off the returned block.
+ * this harness runs for minutes, drives every job in JOBS and asserts every
+ * check in its ledger, so throwing at the point the block is built would
+ * discard a complete run over a label. The jobs are still driven, the artifact
+ * is still written, and the role is recorded as `unreviewed` - which every gate
+ * treats as non-qualifying - with the contract's own explanation printed,
+ * including how to list the uncommitted changes. A caller that wants the
+ * refusal to be fatal reads `role` off the returned block.
  *
  * @param {Object} tree From `provenance.treeIdentity`.
  * @returns {string} 'target', 'baseline' or 'unreviewed'.
@@ -6471,7 +6618,6 @@ function buildProvenanceRecord(options, invocation) {
         'document, the archive, the upload and the notification mail',
       workerModule              : detail.workerModule,
       overlay                   : detail.overlay,
-      emitterPatch              : detail.emitterPatch,
       controlRun                : detail.controlRun,
       analysedTreeIsToolWorktree: detail.analysedTreeIsToolWorktree
     }
@@ -6496,8 +6642,11 @@ function buildProvenanceRecord(options, invocation) {
  * classification covers the whole captured stream including teardown; the
  * determinism comparison is a check like any other; the run directory's fate
  * depends on whether anything failed, so it is decided after the checks that
- * could fail; and the artifact is written LAST, once `notesOwed`, the check
- * summary and the verdict are all in it.
+ * could fail; and the artifact is written LAST, ONCE and atomically, after
+ * `notesOwed`, the check summary, the verdict and the artifact record are all
+ * in it and its provenance has been attached over exactly that payload - so
+ * the embedded digest and the sidecar's digest both describe the bytes on
+ * disk.
  *
  * @param {Object} options From parseArguments.
  * @returns {Promise<Object>} `{code, verdict, evidence}`
@@ -6515,10 +6664,9 @@ async function run(options) {
     opened          : {},
     // Whether the second module graph was CONNECTED and whether the
     // cross-graph read was ASSERTED. Both start false and the notes claim
-    // nothing until they are true: an earlier revision emitted the dual-graph
-    // success note whenever the mode was dual-graph, so a baseline run whose
-    // seeding never happened still shipped an artifact saying the fixtures had
-    // been read back and asserted.
+    // nothing until they are true, so a run whose seeding never happened
+    // cannot ship an artifact saying the fixtures were read back and
+    // asserted.
     crossGraph      : { connected : false, asserted : false },
     queueUsable     : false
   };
@@ -6528,12 +6676,11 @@ async function run(options) {
   // generator it came from, so it cannot be authenticated against a delivery.
   //
   // `execArgv` stays verbatim because it is the evidence for a different gate -
-  // it carries the `--pending-deprecation --trace-deprecation` flags AAP 0.8's
+  // it carries the `--pending-deprecation --trace-deprecation` flags the
   // zero-warning bar is measured under, and a run without them has not made
-  // that measurement. The three paths that used to sit beside it do not stay:
-  // `appRoot` is now named by its HEAD in `provenance.analysedTree`, and the
-  // worker module and the overlay are reduced to symbolic labels that identify
-  // the same file in every clone.
+  // that measurement. No path sits beside it: `appRoot` is named by its HEAD in
+  // `provenance.analysedTree`, and the worker module and the overlay are
+  // reduced to symbolic labels that identify the same file in every clone.
   var invocation = describeInvocation(options);
   var evidence = {
     tool : {
@@ -6541,7 +6688,6 @@ async function run(options) {
       node         : process.version,
       execArgv     : process.execArgv.slice(),
       workerModule : invocation.workerModule,
-      emitterPatch : invocation.emitterPatch,
       overlay      : invocation.overlay
     },
     provenance : buildProvenanceRecord(options, invocation),
@@ -6558,6 +6704,13 @@ async function run(options) {
   // The exact bytes written to `--out`, kept so the sidecar can digest what
   // was written rather than a second serialization of the same object.
   var artifactText;
+  // Whether the one artifact write passed, as `ledger.check` reported it.
+  var artifactWritten;
+  // What `writeEvidencePair` reported about the filesystem, so the corrected
+  // record below states what is on disk rather than what was intended. An
+  // out-parameter, because the write runs inside a ledger check that swallows
+  // its throw.
+  var pairOutcome = { published : false, sidecar : false, orphaned : false };
   var comparisonError;
   var decision;
   var teardownIndex;
@@ -6595,6 +6748,10 @@ async function run(options) {
     // set up.
     assertUncontaminatedProcess();
     assertAppRoot(options.appRoot);
+    // The external precondition, checked before anything is created: no run
+    // directory, no database, no fixture and no patched module, so a refusal
+    // here leaves nothing behind and costs one loopback connect.
+    await assertRedisReachable(options);
 
     ctx.layout = createRunDirectory(options.runDir);
     ctx.opened.runDir = true;
@@ -6658,6 +6815,15 @@ async function run(options) {
       crypto.randomBytes(3).toString('hex');
     ctx.bull = installBullPrefix(options.appRoot, ctx.prefix);
     ctx.opened.bull = true;
+    // READ HERE, WHERE IT IS TRUE. `patched()` reports the live state of the
+    // `bull` module's cache entry, and teardown restores that entry long
+    // before the evidence is serialized - so the only place the observation
+    // can be taken is immediately after the installation it describes. It is
+    // what `queue.observed.bullModulePatched` records: not the claim that this
+    // harness injects a prefix, which `queue.injected` already makes, but the
+    // measurement that the module the application resolves was actually
+    // carrying this run's wrapper when the queue was built.
+    ctx.bullPatchedAtInstall = ctx.bull.patched();
 
     // The queue instance FIRST, then the listener baseline, then the observer,
     // and only then the worker: the baseline has to be taken before the
@@ -6670,19 +6836,27 @@ async function run(options) {
     ctx.observer = installQueueObserver(ctx.queue);
     ctx.opened.observer = true;
 
-    // MEASURED, then asserted - in that order, and the order is the fix. The
-    // surface record goes into the artifact whatever it says, so a selected
-    // worktree that resolves an older bull is reported as the measurement it
-    // is; `assertQueueIsRealBull` then fails by name, and the run carries on
-    // to collect the load-order, fixture and capability evidence that `--app`
-    // exists to obtain.
+    // MEASURED, then asserted, and the order matters. The surface record goes
+    // into the artifact whatever it says, so a selected worktree that resolves
+    // an older bull is reported as the measurement it is; only then does
+    // `assertQueueIsRealBull` fail by name, and the run still collects the
+    // load-order, fixture and capability evidence that `--app` exists to
+    // obtain.
     ctx.queueSurface = probeQueueSurface(ctx.queue, {
       modulePath     : ctx.bull.module,
       expectedPrefix : ctx.bull.prefix,
       redis          : options.redisHost + ':' + options.redisPort,
       appRoot        : options.appRoot
     });
-    evidence.queue = ctx.queueSurface;
+    // The RECORDED copy is portable; `ctx.queueSurface` stays raw for the
+    // assertions, which compare the real module path and quote the real
+    // remedy. Those were the last two absolute paths in the artifact -
+    // `module` is the resolved `bull/index.js` and `remedy` is a sentence
+    // naming the worktree to install into - and a machine path in a file a
+    // reviewer reads is what the label policy exists to prevent. Labelling
+    // also makes the field comparable across an `--app` run, where the raw
+    // path differs by construction while the label does not.
+    evidence.queue = portableRecord(ctx.queueSurface, options.appRoot);
     ctx.opened.queueClients = ctx.queueSurface.bull4Api;
 
     ctx.queueUsable = await assertQueueIsRealBull(ctx, ledger);
@@ -6806,9 +6980,9 @@ async function run(options) {
         // An independently installed worktree resolves its own mongoose, so
         // the seeder beside this file has a connection of its own to open -
         // to the SAME database, which is what makes the fixtures visible to
-        // the worker. Refusing the configuration was the old behaviour and it
-        // refused the very architecture `--app` exists for; the cross-graph
-        // read in `assertSeeded` is what replaces the refusal with evidence.
+        // the worker. This is a supported configuration rather than a refusal,
+        // and the cross-graph read in `assertSeeded` is the evidence that makes
+        // it one.
         note('dual module graph: ' + options.appRoot + ' resolves its own ' +
           'mongoose (' + ctx.graph.appMongoose + ') while this harness ' +
           'resolves ' + ctx.graph.toolMongoose + '. The seeder connects ' +
@@ -6816,12 +6990,12 @@ async function run(options) {
           'through the application\'s graph before any job is driven.');
 
         // The same disposition `config/db.js` applies to the application's own
-        // mongoose, applied here to the harness's second instance. Measured:
-        // without it this connection emits the Mongoose 7 `strictQuery`
-        // deprecation notice into the very stderr stream this gate asserts on -
-        // a warning the application never emits, produced by the harness's own
-        // connection. Mirroring the application's setting is the fix; silencing
-        // the stream is not.
+        // mongoose, applied here to the harness's second instance. Without it
+        // this connection emits the Mongoose 7 `strictQuery` deprecation notice
+        // into the very stderr stream this gate asserts on - a warning the
+        // application never emits, produced by the harness's own connection.
+        // Mirroring the application's setting is the only correct remedy;
+        // filtering the stream would hide a real notice with it.
         ctx.toolMongoose.set('strictQuery', true);
 
         await withTimeout(Promise.resolve(ctx.toolMongoose.connect(
@@ -6959,10 +7133,10 @@ async function run(options) {
       await assertIsolation(ctx, ledger);
     }
     else {
-      // The worker could not be required, which is the measured baseline
-      // behaviour at 2f8712a (AAP 0.6.5) and a failure here. The evidence
-      // that does not depend on it is still collected: the source-only
-      // capability probe, and a named failure for every job.
+      // The worker could not be required - the measured behaviour of a
+      // pre-migration tree, and a failure here. The evidence that does not
+      // depend on it is still collected: the source-only capability probe, and
+      // a named failure for every job.
       try {
         ctx.capabilities = await probeCapabilities(options.appRoot, null,
           options.workerModule);
@@ -7003,13 +7177,13 @@ async function run(options) {
   evidence.teardown = portableRecord(teardownRecord, options.appRoot);
 
   // EVERY TEARDOWN STEP REACHES THE VERDICT. `teardown` reports each failed
-  // step on stderr and returns it in the evidence, and both of those are kept -
-  // but neither is a failure the exit code could see, so a run that could not
+  // step on stderr and returns it in the evidence, but neither of those is a
+  // failure the exit code can see - so without this loop a run that could not
   // close a queue, disconnect mongoose, stop the database or restore the
-  // working directory used to report PASS or BLOCKED with a live connection or
-  // a live process behind it. One failed check per failed step, so the report
-  // names which one rather than counting them, and `deriveVerdict` - which is
-  // read again after the artifact write below - turns any of them into FAIL.
+  // working directory would report PASS with a live connection or a live
+  // process behind it. One failed check per failed step, so the report names
+  // which one rather than counting them, and `deriveVerdict` - read again after
+  // the artifact write below - turns any of them into FAIL.
   for (teardownIndex = 0; teardownIndex < evidence.teardown.length;
     teardownIndex++) {
     await registerTeardownStep(ledger, evidence.teardown[teardownIndex]);
@@ -7029,12 +7203,12 @@ async function run(options) {
   judgedWarnings = await assertWarnings(ledger, classified);
   await assertCleanClose(ledger, handles);
 
-  // The gate's own record, in the shape every parity gate now writes it: the
+  // The gate's own record, in the shape every parity gate writes it: the
   // policy it was judged against, the flags it was measured under - without
   // which a quiet stream is not evidence - and every notice, with none
   // subtracted. `test/parity/replay.js --worker-evidence` reads exactly this,
-  // which is how the worker third of AAP 0.9.3's exercise is accounted in the
-  // replay gate that cannot drive it.
+  // which is how the worker's part of the exercise is accounted for in the
+  // replay gate, which cannot drive it.
   evidence.warnings = {
     policy      : judgedWarnings.policy.id,
     flags       : judgedWarnings.flags,
@@ -7044,6 +7218,24 @@ async function run(options) {
     notices     : judgedWarnings.notices,
     failures    : judgedWarnings.failures
   };
+  // WHAT THE RUN FOUND, beside what the harness claims it does. `injected` and
+  // `emission` above are this file's own static description of its one
+  // intervention; these two are measurements, and they are the fields that
+  // answer "was the application really driven" now that the `emitterPatch`
+  // dimension is gone. `bullModulePatched` is the install-time reading of the
+  // module cache entry, taken where it is still true because teardown restores
+  // it; `jobsDriven` is the queue having been found drivable AND at least one
+  // job having gone through it, which is the difference between a gate that
+  // asserted Bull semantics and one that failed every job-dependent check by
+  // name. Both are booleans, so `queue` stays comparable between two runs of
+  // one tree under `--compare`.
+  if (evidence.queue) {
+    evidence.queue.observed = {
+      bullModulePatched : ctx.bullPatchedAtInstall === true,
+      jobsDriven        : ctx.queueUsable === true && evidence.jobs.length > 0
+    };
+  }
+
   evidence.handles = handles;
   evidence.dependencies = {
     // Taken from teardown's own reading when it ran, so the artifact records
@@ -7052,7 +7244,13 @@ async function run(options) {
     templateWatch : ctx.templateWatchClosure ||
       (ctx.templateWatch ? ctx.templateWatch.describe() : null)
   };
-  evidence.runDirectory = ctx.runDirectory || null;
+  // Labelled for the same reason `runDir` above is: this record carries the
+  // run directory's own path, which names a machine and a TMPDIR, and the
+  // teardown note has already printed the real one to stderr for an operator
+  // who has to go and look at it.
+  evidence.runDirectory = ctx.runDirectory
+    ? portableRecord(ctx.runDirectory, options.appRoot)
+    : null;
   evidence.stalling = ctx.staller
     ? { errors : ctx.staller.errors() }
     : null;
@@ -7124,14 +7322,58 @@ async function run(options) {
   // reviewer of the parity evidence cannot derive from a pass or a fail.
   evidence.notesOwed = buildNotesOwed(ctx, evidence);
 
-  // The check tally as of serialization. It cannot include the artifact
-  // write's own check - a document cannot record the outcome of writing
-  // itself - so the terminal tally below is one higher whenever `--out` was
-  // given. The difference is exactly that check, and reading the artifact at
-  // all is proof it passed.
+  // WHERE THE ARTIFACT NAMES ITSELF, and it belongs to the completed document
+  // rather than to the write. A consumer reads `artifact`, so it has to be
+  // inside the payload the provenance digests - assigning it after `attach`,
+  // which the previous shape did, left the embedded `payloadDigest` covering a
+  // payload one field smaller than the one on disk, and a recomputation over
+  // the file therefore failed. Measured on a produced artifact before this
+  // change: embedded 587e3753..., recomputed 9da0e465....
+  //
+  // The path is a LABEL, not the path. `--out` is caller-supplied and
+  // absolute, and this file's rule is that no artifact carries an absolute
+  // path - the run directory, the object-store root, the overlay and the
+  // worker module are all reduced the same way. `written` stays, because
+  // whether the file exists is what a reader of the returned object needs and
+  // it is not derivable from a label. The operator who has to go and look at
+  // the file still gets the real path on stderr, from the note below.
+  //
+  // `sidecar` is recorded beside it because the two are published as a PAIR
+  // and either member can fail on its own: a reader that was told only
+  // "written" could not tell a complete pair from an artifact whose sidecar
+  // never landed, and an audit needs both members to check a digest of the
+  // bytes.
+  if (options.outPath) {
+    evidence.artifact = {
+      path    : pathLabelFor(options.outPath, options.appRoot),
+      written : true,
+      sidecar : true
+    };
+  }
+
+  // The check tally as of serialization, AND THE IDENTITIES BEHIND IT. It
+  // cannot include the artifact write's own check - a document cannot record
+  // the outcome of writing itself - so the terminal tally below is one higher
+  // whenever `--out` was given. The difference is exactly that check, and
+  // reading the artifact at all is proof it passed.
+  //
+  // `names` is what makes the tally mean something. A count and a pass count
+  // are satisfied by ANY pair of equal numbers, `0/0` included, so an artifact
+  // carrying only the two numbers cannot distinguish a run that asserted 109
+  // things from one that asserted nothing - and 109 of 109 is precisely the
+  // figure the parity record quotes. The ordered list of names is the evidence
+  // for the number: an audit can check that the list is as long as the count,
+  // that the assertions AAP 0.9.3 enumerates by name are in it, and a reviewer
+  // can read what was actually asserted instead of trusting an integer.
+  // Sanitized like every other recorded string, because a check name can embed
+  // a caller-supplied path - `--compare <path>` is quoted into the determinism
+  // check's own name.
   evidence.checks = {
     count    : ledger.count(),
     passed   : ledger.passed(),
+    names    : ledger.checks.map(function(entry) {
+      return portableReason(entry.name, options.appRoot);
+    }),
     failures : portableFailures(ledger.failures(), options.appRoot)
   };
 
@@ -7140,17 +7382,17 @@ async function run(options) {
   code     = decision.code;
   evidence.verdict = verdict;
 
-  // The provenance is hash-linked to the evidence HERE, as late as possible and
-  // immediately before serialization, because `attach` digests the evidence
-  // WITHOUT its provenance: every field a consumer will read has to be final or
-  // the block would certify a payload the artifact does not contain. The block
-  // itself was built at the top of the run, so a run that fails early still
-  // says which revisions failed.
+  // The provenance is hash-linked to the evidence HERE, once the document is
+  // COMPLETE, because `attach` digests the evidence WITHOUT its provenance:
+  // every field a consumer will read has to be final or the block would
+  // certify a payload the artifact does not contain. The block itself was
+  // built at the top of the run, so a run that fails early still says which
+  // revisions failed.
   //
-  // The digest therefore covers exactly the evidence as serialized below,
-  // `notesOwed` included: the notes are assembled just above, before the
-  // artifact is written, so what a reviewer of the file reads is what the
-  // digest certifies.
+  // NOTHING MAY MUTATE `evidence` BELOW THIS LINE WITHOUT ATTACHING AGAIN.
+  // That is the invariant the previous shape lost in two places at once, and
+  // it is why there is now exactly one write: the digest is over the payload
+  // as serialized, `notesOwed`, `checks`, `verdict` and `artifact` included.
   provenance.attach(evidence, evidence.provenance);
 
   note('provenance: ' + evidence.provenance.role + ' evidence about tree ' +
@@ -7163,97 +7405,117 @@ async function run(options) {
       : ', ' + evidence.provenance.generator.commitState));
 
   if (options.outPath) {
-    // Recorded before the write, so the saved file names the path it was
-    // saved to; corrected below if the write itself fails.
-    evidence.artifact = { path : options.outPath, written : true };
+    // ONE WRITE, AND IT IS A CHECK. Both halves of that matter and the
+    // previous shape had neither.
+    //
+    // One write, because there were two: an atomic write with its sidecar
+    // here, and then a plain `fs.writeFileSync` of a re-serialized object
+    // inside the ledger-checked block below. The second was not atomic, so a
+    // reader could observe a truncated artifact where the first write
+    // guaranteed all-or-nothing; it did not refresh the sidecar, so
+    // `artifactDigest` described bytes that were no longer the ones on disk
+    // the moment anything in `evidence` had changed between the two; and it
+    // printed `artifact <path>` a second time, so one run reported two writes.
+    //
+    // A check, because writing the artifact is requested work: `--out` must
+    // not be able to produce nothing while the process exits 0. `ledger.check`
+    // returns whether it passed, which is what the correction below reads -
+    // scanning the failure list for this check's own name would couple the
+    // control flow to the wording of a message.
+    //
+    // The sidecar is written from `artifactText` and never from a second
+    // serialization, so its digest is over the exact bytes that reached the
+    // filesystem. The embedded block is what makes the artifact
+    // self-describing; the sidecar is for a caller that wants the record
+    // outside bytes it intends to compare, and it is a run output rather than
+    // a delivered file.
+    //
+    // AND THE TWO MEMBERS ARE PUBLISHED AS A PAIR, which is the second thing
+    // this block had wrong. Writing the artifact and then the sidecar means a
+    // sidecar failure leaves a published artifact behind - reproduced with
+    // `<out>.provenance.json` as a DIRECTORY: the file landed saying
+    // `written: true` and `VERDICT PASS` while the process reported FAIL and
+    // "the artifact was NOT written". `writeEvidencePair` stages both, then
+    // publishes both, and removes the artifact it just published if the
+    // sidecar cannot follow it - so what is on disk is either a complete pair
+    // or nothing, and `evidence.artifact` cannot contradict the filesystem.
+    artifactWritten = await ledger.check('the evidence artifact and its ' +
+      'provenance sidecar were published to ' + options.outPath, function() {
+        artifactText = JSON.stringify(evidence, null, 2) + '\n';
 
-    try {
-      artifactText = JSON.stringify(evidence, null, 2) + '\n';
+        writeEvidencePair(options.outPath, artifactText,
+          JSON.stringify(provenance.sidecar(evidence.provenance, artifactText),
+            null, 2) + '\n', pairOutcome);
 
-      writeArtifactAtomically(options.outPath, artifactText);
-      note('artifact ' + options.outPath);
+        note('artifact ' + options.outPath);
+        note('provenance ' + options.outPath + '.provenance.json');
+      });
 
-      // The same record, plus a digest of the bytes exactly as written. The
-      // embedded block is what makes the artifact self-describing; the sidecar
-      // is for a caller that wants the record outside bytes it intends to
-      // compare, and it is a run output rather than a delivered file.
-      fs.writeFileSync(options.outPath + '.provenance.json', JSON.stringify(
-        provenance.sidecar(evidence.provenance, artifactText), null, 2) + '\n');
-      note('provenance ' + options.outPath + '.provenance.json');
-    }
-    catch (err) {
-      note('the artifact could not be written to ' + options.outPath + ': ' +
-        ((err && err.message) || err));
-
-      await ledger.check('the requested artifact was written to ' +
-        options.outPath, function() {
-          throw err;
-        });
-
-      // The run asked for evidence and produced none, so the summary and the
-      // verdict are re-derived: a run that could not write its artifact has
-      // not done what it was asked to do.
+    if (!artifactWritten) {
+      // THE RETURNED DOCUMENT IS CORRECTED TO WHAT IS ACTUALLY ON DISK, which
+      // `writeEvidencePair` reports rather than assumes. Three outcomes and
+      // all three are recorded honestly: nothing published, so `written` and
+      // `sidecar` are both false; the artifact published and rolled back, same
+      // record with the rollback named on stderr; or - the one case where a
+      // file survives a failure - the artifact published, the sidecar failed
+      // AND the rollback failed too, in which case `written` stays true,
+      // `sidecar` goes false, and the note says the orphan must not be used as
+      // evidence. `--verify` refuses it either way, because it requires both
+      // members.
+      //
+      // The summary and the verdict are then re-derived - a run that could not
+      // publish its evidence has not done what it was asked to do, and the
+      // failed check is already in the ledger - and the provenance is ATTACHED
+      // AGAIN over the corrected payload, so the returned object still
+      // recomputes.
+      evidence.artifact.written = !!(pairOutcome && pairOutcome.orphaned);
+      evidence.artifact.sidecar = false;
       evidence.checks = {
         count    : ledger.count(),
         passed   : ledger.passed(),
+        names    : ledger.checks.map(function(entry) {
+          return portableReason(entry.name, options.appRoot);
+        }),
         failures : portableFailures(ledger.failures(), options.appRoot)
       };
+
       decision = deriveVerdict();
       verdict  = decision.verdict;
       code     = decision.code;
       evidence.verdict = verdict;
-      evidence.artifact = { path : options.outPath, written : false };
+
+      provenance.attach(evidence, evidence.provenance);
+
+      note('the evidence pair was NOT published to ' + options.outPath + ': ' +
+        (evidence.artifact.written
+          ? 'THE ARTIFACT IS ON DISK WITHOUT ITS SIDECAR and could not be ' +
+            'removed, so it is an orphan and is not evidence - delete it. '
+          : 'nothing was left on disk. ') +
+        'The returned evidence records written:' + evidence.artifact.written +
+        ' sidecar:false, its verdict is re-derived as ' + verdict + ' and its ' +
+        'provenance is re-attached over the corrected payload.');
     }
   }
+
   note('notes owed to docs/baseline-parity.md (emitted here; this file edits ' +
     'no documentation):');
   evidence.notesOwed.forEach(function(entry, index) {
     note('  ' + (index + 1) + '. ' + entry);
   });
 
-  // Stamped onto the document so the saved artifact carries a verdict, and
-  // derived again after the write below, which is where the authoritative
-  // exit code comes from.
+  // The authoritative derivation: after every check that can fail, the write's
+  // own included. It is read into the LOCALS only - `evidence` is hash-linked
+  // from the `attach` above and a mutation here would break exactly the link
+  // this shape exists to keep - and the document on disk needs no reconciling
+  // with it, which is provable rather than hoped for. The write's check is the
+  // only check registered between the derivation above and this one: when it
+  // PASSED the failure set is unchanged, so the verdict in the file is already
+  // this one; when it FAILED there is no file, and the branch above re-derived
+  // the verdict and re-attached the provenance before reaching here. So an
+  // unwritable `--out` cannot exit 0, and no second write is attempted.
   decision = deriveVerdict();
   verdict  = decision.verdict;
   code     = decision.code;
-  evidence.verdict = verdict;
-
-  if (options.outPath) {
-    // Writing the artifact is requested work, so failing to write it is a
-    // failed check rather than a note: `--out` must not be able to produce
-    // nothing while the process exits 0. Recording it as a check only has
-    // teeth because the verdict is derived AGAIN below - the previous shape
-    // computed the verdict before this point, so a write failure could not
-    // have reached the exit code even had it been recorded.
-    await ledger.check('the evidence artifact was written to ' + options.outPath,
-      function() {
-        try {
-          fs.writeFileSync(options.outPath,
-            JSON.stringify(evidence, null, 2) + '\n');
-        }
-        catch (err) {
-          note('the artifact could not be written to ' + options.outPath + ': ' +
-            ((err && err.message) || err));
-          throw err;
-        }
-
-        note('artifact ' + options.outPath);
-      });
-  }
-
-  // The authoritative derivation: after every check that can fail, the write
-  // included. One further write to reconcile the file with this verdict is
-  // provably unnecessary, which is why none is attempted and an unwritable
-  // --out can neither loop nor be counted twice. The write's check is the only
-  // check between the two derivations: when it PASSES the failure set is
-  // unchanged, so the verdict on disk is already this one; when it FAILS there
-  // is no fresh artifact for a stale verdict to mislead anybody from, the
-  // verdict becomes FAIL here, and the process exits non-zero.
-  decision = deriveVerdict();
-  verdict  = decision.verdict;
-  code     = decision.code;
-  evidence.verdict = verdict;
 
   note('checks ' + ledger.passed() + '/' + ledger.count() + ' passed, ' +
     evidence.jobs.length + ' job(s) driven on ' +
@@ -7275,6 +7537,525 @@ async function run(options) {
   restoreCapture();
 
   return { code : code, verdict : verdict, evidence : evidence };
+}
+
+// ---------------------------------------------------------------------------
+// Verifying an artifact this gate produced
+// ---------------------------------------------------------------------------
+
+/**
+ * Absolute machine paths carried by a value, if any.
+ *
+ * The label-only policy applies to the whole artifact and not merely to the
+ * fields this file happens to label, so the audit checks it by measurement.
+ * `/tmp/trinket-export-<hex>.zip` is excluded and is the one exclusion: that
+ * path is `lib/workers/exports.js`'s OWN hard-coded temporary file, asserted
+ * by name, and quoting it is a statement about the application rather than
+ * about the host.
+ *
+ * @param {*} value
+ * @returns {string[]} `<key path> = <string>` for each offender.
+ */
+function absolutePathsIn(value) {
+  // THE SHARED CONTRACT'S OWN SEMANTICS, not a list of directory names. An
+  // earlier revision of this scan enumerated selected POSIX roots, so
+  // `/app/...`, `/workspace/...` and every Windows form passed it - measured,
+  // with `/app/checkout/private/file.json` reported as "every path is a
+  // label". The two expressions below are the contract's EMBEDDED_PATH and
+  // ABSOLUTE_PATH (test/parity/manifest.js:1687,1703), which cover an
+  // arbitrary POSIX root as well as a Windows drive path; they are applied
+  // here rather than imported because the contract does not export them and
+  // manifest.js is not this lane's file to change. Measured over a clean
+  // artifact: zero matches, so the broader form costs no false positive.
+  var embeddedPath = /(?:^|[\s'"`=(\[<:,])(?:\/[A-Za-z0-9_.@+-]+(?:\/[A-Za-z0-9_.@+-]*)*|[A-Za-z]:[\\/][A-Za-z0-9_.@+\\/-]+)/;
+  var uncPath      = /(?:^|[\s'"`=(\[<:,])\\\\[A-Za-z0-9_.$-]+\\/;
+  // The ONE exception, bound to an exact filename pattern rather than to a
+  // field: `lib/workers/exports.js` hard-codes `'/tmp/' + filename` for the
+  // archive it builds, and this gate asserts that path by name. Occurrences
+  // of that exact shape are removed before the test, so quoting the
+  // application's own temporary file is not mistaken for recording the host's
+  // filesystem - and nothing else about the string is forgiven.
+  var appTemporary = /\/tmp\/trinket-export-[0-9a-f]{12}\.zip/g;
+  var found = [];
+
+  (function walk(node, where) {
+    if (typeof node === 'string') {
+      var subject = node.replace(appTemporary, '<app-temp>');
+
+      if (embeddedPath.test(subject) || uncPath.test(subject)) {
+        found.push(where + ' = ' + node.slice(0, 160));
+      }
+
+      return;
+    }
+
+    if (node === null || typeof node !== 'object') {
+      return;
+    }
+
+    Object.keys(node).forEach(function(key) {
+      walk(node[key], where + '.' + key);
+    });
+  })(value, 'artifact');
+
+  return found;
+}
+
+// The provenance roles a worker-gate artifact may carry and still be evidence.
+// One value, and the reasoning is in the check that reads it: `analysis`
+// executes nothing, `unreviewed` is the contract's own non-qualifying escape,
+// and `baseline` is impossible for this gate because the worker cannot be
+// required at the base commit.
+var QUALIFYING_ROLES = Object.freeze(['target']);
+
+// The assertions AAP 0.9.3 names, as fragments of the check names this file
+// registers. Presence by name is what makes a tally attributable: an artifact
+// can carry any count at all, and these are the checks the parity record
+// quotes it for. Fragments rather than whole names, because a name may carry a
+// job's own prefix or a measured value.
+// Each fragment below was matched against a real run's recorded names before
+// being listed, so a miss here means the assertion is genuinely absent rather
+// than renamed by this list's author.
+var REQUIRED_CHECKS = Object.freeze([
+  // R-b's load order: at the base commit the worker cannot be required at all.
+  'the worker can be required (the load-order fix)',
+  // The queue is real, and its clients are connected.
+  'Bull\'s three Redis clients are connected',
+  'the worker registered exactly one processor',
+  'the worker attached exactly one error, one failed and one completed handler',
+  // The Bull 4 semantics AAP 0.5.1.2 says the version move alters.
+  '(id present, jobId absent, remove callable)',
+  'Bull emitted `completed` and the completed handler\'s job.remove()',
+  'the failed handler ran and read `job.id`',
+  'retry: Bull ran the processor twice and reported each attempt',
+  'stalled: Bull emitted `stalled` for this job',
+  'Bull raised its own `Missing lock` error on the queue',
+  // The persisted document, the archive, the upload and the mail.
+  'the status sequence is processing -> completed',
+  'the document carries status `failed` and that exact errorMessage',
+  'the archive satisfies storage.js\'s assertArchiveLayout',
+  'the filename, s3Key and downloadUrl are the exact strings',
+  'one `export-ready` mail to the owner',
+  // Cleanup on both paths, the warning measurement and the close.
+  'no temporary file was left in',
+  'zero warnings (AAP 0.9.3, no allowances)',
+  'clean close: nothing this run opened is still open'
+]);
+
+// The exact shape of a persisted mail record, and of the two identity
+// descriptors inside it. Anything outside these key sets is a fault, which is
+// what keeps a plaintext member from arriving under a redacted schema.
+var MAIL_RECORD_KEYS   = Object.freeze(['sequence', 'type', 'redacted', 'to',
+  'subject', 'htmlLength']);
+var MAIL_IDENTITY_KEYS = Object.freeze(['kind', 'length', 'digest']);
+var MAIL_DIGEST        = /^sha256:[0-9a-f]{64}$/;
+
+/**
+ * Every way one persisted mail record departs from the redacted schema.
+ *
+ * @param {*} record One entry of a job's `mail` list.
+ * @param {number} index Its position, for the message.
+ * @returns {string[]} Empty when the record is exactly the redacted shape.
+ */
+function redactedMailFaults(record, index) {
+  var at     = 'mail[' + index + ']';
+  var faults = [];
+
+  function identity(name, value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      faults.push(at + '.' + name + ' is not an identity descriptor');
+
+      return;
+    }
+
+    Object.keys(value).forEach(function(key) {
+      if (MAIL_IDENTITY_KEYS.indexOf(key) === -1) {
+        faults.push(at + '.' + name + '.' + key + ' is not part of the ' +
+          'redacted schema');
+      }
+    });
+
+    if (value.kind === 'null' || value.kind === 'uncoercible') {
+      // A genuine absence, which carries no length and no digest.
+      return;
+    }
+
+    if (typeof value.length !== 'number') {
+      faults.push(at + '.' + name + '.length is not a number');
+    }
+
+    if (!MAIL_DIGEST.test(String(value.digest))) {
+      faults.push(at + '.' + name + '.digest is not an algorithm-tagged ' +
+        'sha256 digest');
+    }
+  }
+
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return [at + ' is not a record'];
+  }
+
+  Object.keys(record).forEach(function(key) {
+    if (MAIL_RECORD_KEYS.indexOf(key) === -1) {
+      faults.push(at + '.' + key + ' is not part of the redacted schema');
+    }
+  });
+
+  if (record.redacted !== true) {
+    faults.push(at + '.redacted is not true, so this is not the projection');
+  }
+
+  if (typeof record.sequence !== 'number') {
+    faults.push(at + '.sequence is not a number');
+  }
+
+  if (record.type !== null && typeof record.type !== 'string') {
+    faults.push(at + '.type is neither a template name nor null');
+  }
+
+  if (record.htmlLength !== null && typeof record.htmlLength !== 'number') {
+    faults.push(at + '.htmlLength is neither a number nor null');
+  }
+
+  identity('to', record.to);
+  identity('subject', record.subject);
+
+  return faults;
+}
+
+/**
+ * Audits an artifact this gate wrote, and says whether it qualifies.
+ *
+ * WHY THE GATE CONSUMES ITS OWN OUTPUT. An artifact nobody reads is not
+ * evidence, and `--out` alone cannot tell a caller whether what it wrote is
+ * self-consistent: the run reports a verdict, and the FILE is the thing a
+ * reviewer or a later replay actually reads. This mode reads it - the hash
+ * links, the shared provenance contract, the verdict, the check tally, the
+ * queue the jobs ran on, the warning measurement, the handle inventory, the
+ * redaction of the captured mail and the label-only policy - so
+ * `npm run verify:worker` generates the pair and then establishes that the
+ * pair is worth keeping, in one command and one exit code.
+ *
+ * It drives NOTHING: no Redis, no database, no fixture, no worker. That is
+ * what makes it runnable against an artifact from another host, another clone
+ * or an `--app` run, and it is why an audit failure names a property of the
+ * file rather than a property of this machine.
+ *
+ * The generator-resolution checks are WAIVED, with their reason printed, when
+ * the block itself says its generator source is uncommitted - the contract's
+ * own escape for a tool still being changed. Waived is not passed: each one is
+ * printed, so a run against a dirty worktree says which guarantees it did not
+ * establish. Freezing the delivered generators is the provenance contract's
+ * own gate and is not re-decided here.
+ *
+ * @param {Object} options From parseArguments; `verifyPath` is required.
+ * @returns {Promise<number>} EXIT_OK when every check passed.
+ */
+async function verifyArtifact(options) {
+  var target      = options.verifyPath;
+  var sidecarPath = target + '.provenance.json';
+  var failures    = [];
+  var text        = null;
+  var sidecarText = null;
+  var artifact    = null;
+  var sidecar     = null;
+  var payload     = {};
+  var block       = null;
+  var verdict;
+  var names;
+  var missing;
+  var jobNames;
+  var mailRecords;
+  var mailFaults;
+  var leaked;
+
+  function check(name, ok, detail) {
+    note((ok ? 'ok   ' : 'FAIL ') + name +
+      (detail === undefined || detail === null ? '' : ': ' + detail));
+
+    if (!ok) {
+      failures.push(name);
+    }
+  }
+
+  note('verifying ' + target);
+
+  try {
+    text        = fs.readFileSync(target, 'utf8');
+    sidecarText = fs.readFileSync(sidecarPath, 'utf8');
+  }
+  catch (err) {
+    // Both files or neither: the sidecar is written from the same bytes in the
+    // same checked operation, so one without the other means the write this
+    // artifact claims did not complete as reported.
+    check('the artifact and its provenance sidecar are readable', false,
+      ((err && err.message) || err) + ' - both are required, and a run with ' +
+      '--out writes them together');
+
+    note('VERIFY FAIL (1 of 1 check failed)');
+
+    return EXIT_ERROR;
+  }
+
+  check('the artifact and its provenance sidecar are readable', true,
+    text.length + ' and ' + sidecarText.length + ' bytes');
+
+  try {
+    artifact = JSON.parse(text);
+    sidecar  = JSON.parse(sidecarText);
+  }
+  catch (err) {
+    check('both parse as JSON', false, (err && err.message) || err);
+
+    note('VERIFY FAIL (1 of 2 checks failed)');
+
+    return EXIT_ERROR;
+  }
+
+  check('both parse as JSON', true);
+
+  block = artifact.provenance;
+
+  check('the artifact carries an embedded provenance block',
+    !!block && typeof block === 'object',
+    block ? 'schema ' + block.provenanceSchema + ', role ' + block.role
+      : 'absent, so the file does not say which tree it measured');
+
+  if (block) {
+    Object.keys(artifact).forEach(function(key) {
+      if (key !== 'provenance') {
+        payload[key] = artifact[key];
+      }
+    });
+
+    // STRICTLY, AND WITH NO ESCAPE. An earlier revision passed
+    // `allowUncommitted: true` and treated a waived check as a pass, so it
+    // certified as "qualifying worker-gate evidence" a pair whose generator
+    // blob resolves in no repository - which is exactly what the shared
+    // contract says a delivery must not do. `requireGeneratorVerified` is
+    // added for the same reason: an artifact is evidence about a tree AS
+    // MEASURED BY A KNOWN GENERATOR, and a generator nobody can retrieve
+    // leaves the measurement unattributable. A run against a dirty worktree
+    // therefore fails this audit by name, and the remedy - commit the
+    // generator and re-run - is what the message says.
+    verdict = provenance.validate(block, {
+      artifact                : target,
+      payload                 : payload,
+      sidecar                 : sidecar,
+      artifactText            : text,
+      repositoryRoot          : TOOL_ROOT,
+      roles                   : QUALIFYING_ROLES,
+      requireGeneratorVerified: true,
+      allowUncommitted        : false
+    });
+
+    verdict.checks.forEach(function(entry) {
+      if (entry.waived) {
+        // Unreachable with `allowUncommitted: false`, and reported rather than
+        // ignored if a future contract revision waives something anyway: a
+        // waiver is a guarantee NOT established, so it cannot pass silently.
+        note('WAIVED ' + entry.name + ': ' + entry.detail);
+        failures.push(entry.name + ' (waived, and a waiver is not a pass)');
+      }
+    });
+
+    // The remedy, appended where the reason is a working tree rather than a
+    // bad artifact. `uncommitted-source` is by far the most likely refusal in
+    // practice - anyone who has just edited this file will meet it - and a
+    // gate that refuses without naming the fix reads as a broken gate.
+    check('the shared provenance contract validates it strictly - hash links, ' +
+      'a retrievable generator, no waiver',
+      verdict.ok, verdict.failures.length
+        ? verdict.failures.join('; ') +
+          (block.generator && block.generator.commitState ===
+            'uncommitted-source'
+            ? '. THE REMEDY IS TO COMMIT: this artifact was produced by a ' +
+              'generator that exists only in the working tree, so no ' +
+              'repository can be asked what measured it. Commit ' +
+              block.generator.path + ' and re-run the gate; the audit is ' +
+              'strict on purpose, because the contract itself says a ' +
+              'delivery must validate without the uncommitted escape.'
+            : '')
+        : 'schema ' +
+        block.provenanceSchema + ', generator ' + block.generator.path +
+        ' blob ' + String(block.generator.blob).slice(0, 12) +
+        ' verified in ' + String(block.generator.commit).slice(0, 7) +
+        ', tree ' + String(block.analysedTree && block.analysedTree.head)
+          .slice(0, 12));
+
+    // THE ROLE THIS GATE CAN LEGITIMATELY PRODUCE, and only that. `analysis`
+    // is the contract's word for evidence derived by READING a tree with no
+    // application executed, and this gate's whole claim is that it executed
+    // one; `unreviewed` is the contract's explicit non-qualifying escape;
+    // `baseline` cannot be worker-gate evidence at all, because at AAP
+    // 0.10.3's base commit `lib/workers/exports.js` cannot even be required
+    // (AAP 0.6.5), so a passing baseline worker artifact is a contradiction.
+    // A run against the migrated tree records `target`, which is the one value
+    // accepted here.
+    check('its role is the one this gate can produce',
+      QUALIFYING_ROLES.indexOf(block.role) > -1,
+      block.role + (QUALIFYING_ROLES.indexOf(block.role) > -1
+        ? ''
+        : ' - expected ' + QUALIFYING_ROLES.join(' or ') +
+          '; `analysis` executes nothing, `unreviewed` is the contract\'s ' +
+          'own non-qualifying escape, and `baseline` cannot pass this gate ' +
+          'because the worker cannot be required at the base commit'));
+
+    check('it is not a control run',
+      !!block.detail && block.detail.controlRun === false,
+      'controlRun ' + (block.detail ? block.detail.controlRun : 'unrecorded') +
+      ', worker module ' + (block.detail ? block.detail.workerModule : '?'));
+  }
+
+  check('the run it records passed', artifact.verdict === 'PASS',
+    'VERDICT ' + artifact.verdict);
+
+  // A TALLY IS NOT A RESULT. `count === passed` is satisfied by `0/0`, and an
+  // artifact claiming "109 of 109" has to be distinguishable from one that
+  // asserted nothing - so the identities are required, they are required to be
+  // as many as the count, and the assertions AAP 0.9.3 enumerates are required
+  // to be among them by name. `count > 0` is stated separately so a vacuous
+  // record fails on its own terms rather than incidentally.
+  names = (artifact.checks && artifact.checks.names) || null;
+
+  check('every check it records passed, and there were some',
+    !!artifact.checks && artifact.checks.count > 0 &&
+      artifact.checks.count === artifact.checks.passed &&
+      artifact.checks.failures.length === 0,
+    artifact.checks
+      ? artifact.checks.passed + '/' + artifact.checks.count + ' passed' +
+        (artifact.checks.failures.length
+          ? ', failed: ' + artifact.checks.failures.map(function(entry) {
+            return entry.name;
+          }).join('; ')
+          : '') + ' (the terminal tally is one higher: a document cannot ' +
+        'record the outcome of writing itself)'
+      : 'no check summary');
+
+  check('the checks it records are named, one name per counted check',
+    Array.isArray(names) && !!artifact.checks &&
+      names.length === artifact.checks.count &&
+      new Set(names).size === names.length,
+    Array.isArray(names)
+      ? names.length + ' name(s) for ' + artifact.checks.count + ' check(s), ' +
+        new Set(names).size + ' distinct'
+      : 'no names recorded, so the tally is unattributable');
+
+  missing = Array.isArray(names)
+    ? REQUIRED_CHECKS.filter(function(fragment) {
+      return !names.some(function(name) {
+        return name.indexOf(fragment) > -1;
+      });
+    })
+    : REQUIRED_CHECKS.slice();
+
+  check('the assertions AAP 0.9.3 requires are among them, by name',
+    missing.length === 0,
+    missing.length
+      ? 'absent: ' + missing.map(function(fragment) {
+        return JSON.stringify(fragment);
+      }).join(', ')
+      : 'all ' + REQUIRED_CHECKS.length + ' present');
+
+  // IDENTITIES, NOT A LENGTH. `jobs.length === 7` is satisfied by seven copies
+  // of one job, which would report the success case as the whole gate.
+  jobNames = (artifact.jobs || []).map(function(job) {
+    return job.name;
+  });
+
+  check('it drove every job this gate defines, each exactly once',
+    jobNames.length === JOBS.length &&
+      JOBS.every(function(spec) {
+        return jobNames.filter(function(name) {
+          return name === spec.name;
+        }).length === 1;
+      }),
+    jobNames.length + ' of ' + JOBS.length + ': ' +
+      JSON.stringify(jobNames) + ' against ' +
+      JSON.stringify(JOBS.map(function(spec) {
+        return spec.name;
+      })));
+
+  check('the jobs ran on a real Bull 4 queue this run patched and drove',
+    !!artifact.queue && /^bull 4\./.test(artifact.queue.package) &&
+      !!artifact.queue.observed &&
+      artifact.queue.observed.bullModulePatched === true &&
+      artifact.queue.observed.jobsDriven === true,
+    artifact.queue
+      ? artifact.queue.package + ' ' +
+        JSON.stringify(artifact.queue.observed || null)
+      : 'no queue recorded');
+
+  check('the zero-warning measurement was made, and found nothing',
+    !!artifact.warnings && artifact.warnings.flags.complete === true &&
+      artifact.warnings.notices.length === 0,
+    artifact.warnings
+      ? artifact.warnings.notices.length + ' notice(s) under ' +
+        (artifact.warnings.flags.required || []).join(' ') +
+        (artifact.warnings.flags.complete ? '' : ' - FLAGS INCOMPLETE, so ' +
+          'a quiet stream here is not a clean one')
+      : 'no warning record');
+
+  // THE COUNTS AND THE CLASSIFICATION ARE CROSS-CHECKED. Empty `allowed` and
+  // `unexpected` arrays are not evidence of a clean close on their own: an
+  // inventory recording `counts {"FSEventWrap": 1}` beside two empty arrays
+  // is internally contradictory, and reading only the arrays would certify it.
+  // `counts` is what `inspectHandles` reports OUTSIDE the stdio partition, so
+  // on a clean run it is `{}`; anything in it must also be classified.
+  check('it closed cleanly - an empty inventory outside stdio, nothing ' +
+    'allow-listed, and the counts agreeing with the classification',
+    !!artifact.handles && Object.keys(artifact.handles.counts).length === 0 &&
+      artifact.handles.unexpected.length === 0 &&
+      artifact.handles.allowed.length === 0,
+    artifact.handles ? JSON.stringify(artifact.handles.counts) +
+      ' outside the stdio partition, allowed ' +
+      JSON.stringify(artifact.handles.allowed) + ', unexpected ' +
+      JSON.stringify(artifact.handles.unexpected) : 'no handle inventory');
+
+  mailRecords = (artifact.jobs || []).reduce(function(all, job) {
+    return all.concat(job.mail || []);
+  }, []);
+
+  // A WHITELIST, NOT A SHAPE TEST. Requiring `to` and `subject` to be objects
+  // leaves `to: {kind, length, digest, value: "someone@example.com"}` passing,
+  // which is the leak this check exists to close wearing the redacted
+  // schema's clothes. So the key sets are exact, the digest format is exact,
+  // and any additional member anywhere in the record is a failure - including
+  // one a future fixture revision adds innocently, which is the point: an
+  // unreviewed field in a persisted mail record is how plaintext gets back in.
+  mailFaults = mailRecords.reduce(function(faults, record, index) {
+    return faults.concat(redactedMailFaults(record, index));
+  }, []);
+
+  check('the captured mail is recorded only as the fixture\'s redacted ' +
+    'projection, field by field (CWE-532)',
+    mailRecords.length > 0 && mailFaults.length === 0,
+    mailRecords.length
+      ? (mailFaults.length ? mailFaults.slice(0, 6).join('; ')
+        : mailRecords.length + ' record(s), every field a marker, a length or ' +
+          'a sha256 digest')
+      : 'no mail record to judge, and this gate\'s jobs send two');
+
+  leaked = absolutePathsIn(artifact);
+
+  check('it carries no absolute machine path', leaked.length === 0,
+    leaked.length ? leaked.slice(0, 4).join(' | ') : 'every path is a label');
+
+  if (failures.length) {
+    note('VERIFY FAIL (' + failures.length + ' check(s) failed: ' +
+      failures.join('; ') + ')');
+
+    return EXIT_ERROR;
+  }
+
+  note('VERIFY OK - ' + target + ' is qualifying worker-gate evidence: ' +
+    block.role + ' evidence about tree ' +
+    String(block.analysedTree && block.analysedTree.head).slice(0, 12) +
+    ', generator ' + block.generator.path + ' blob ' +
+    String(block.generator.blob).slice(0, 12) + ', ' + artifact.jobs.length +
+    ' job(s) on ' + artifact.queue.package + ', ' + artifact.checks.passed +
+    '/' + artifact.checks.count + ' checks recorded passed.');
+
+  return EXIT_OK;
 }
 
 // ---------------------------------------------------------------------------
@@ -7304,21 +8085,33 @@ async function main() {
     return EXIT_OK;
   }
 
+  // The audit needs no Redis, no database and no fixture, so it is dispatched
+  // before `run` rather than inside it.
+  if (options.mode === 'verify') {
+    return await verifyArtifact(options);
+  }
+
   result = await run(options);
 
   return result.code;
 }
 
 module.exports = {
-  // The harness.
   run  : run,
   main : main,
+
+  // The audit of an artifact the harness wrote, and the two checks behind it
+  // that are worth driving alone: the external precondition and the
+  // label-only scan.
+  verifyArtifact       : verifyArtifact,
+  assertRedisReachable : assertRedisReachable,
+  absolutePathsIn      : absolutePathsIn,
 
   // Building blocks, exported because each has a failure mode worth testing
   // directly rather than only through a full run - the namespace injection,
   // the queue-surface probe, the template-watch suppression and the seed
-  // integrity check in particular, since each replaces a mechanism this gate
-  // used to be criticised for and each should be inspectable alone.
+  // integrity check in particular, each of which carries an isolation
+  // guarantee the rest of the gate's assertions rest on.
   parseArguments         : parseArguments,
   assertAppRoot          : assertAppRoot,
   assertUncontaminatedProcess : assertUncontaminatedProcess,

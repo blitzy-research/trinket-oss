@@ -1,295 +1,85 @@
 /**
  * test/parity/storage.js - the storage and archive contract cases.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * AAP 0.6.7 states the contract and the trap in one sentence: the S3 key IS a
- * content hash, so any change to the digest silently orphans every stored
- * object - no error, no exception, only files that cannot be found.
- * `lib/util/file.js:66-78` streams a file through `crypto.createHash('sha1')`
- * with hex encoding, and `:32-43` uses that 40-character digest as the object's
- * `Key`. Change the algorithm, the encoding or the bytes, and every object
- * written before the change becomes unreachable while every new write still
- * looks perfect.
+ * Executes the persisted-data and file-format contract of `lib/util/file.js`
+ * and `lib/workers/exports.js` against an isolated in-memory MongoDB and a
+ * filesystem-backed S3 fixture, recording what each case MEASURED - keys
+ * composed, buckets resolved, archive produced - and not a pass mark.
  *
- * That failure mode is INVISIBLE on freshly written data: a write-then-read
- * round trip passes under any digest algorithm, because both halves use the
- * same one. It only surfaces when a record seeded BEFORE the change is read
- * back afterwards. `test/parity/seed.js` provides exactly that - File documents
- * whose `hash`, `name` and `url` match objects the S3 fixture is pre-populated
- * with - and proving the application can still find them is this file's
- * headline case.
- *
- * AAP 0.6.7 is also explicit that NO existing test asserts any of this, which
- * is why the contract cannot rest on prose. Every claim below is executable.
- *
- * RULES
- * -----
- * NO USER-SPECIFIED RULES WERE PROVIDED for this project - `review_rules`
- * returns exactly "No user rules provided", which AAP 0.7 and 0.10.1 also
- * record. None is invented here, and their absence is not treated as licence to
- * lower the bar: enterprise-standard practice for a runtime and framework
- * migration governs instead, and the commitment that produced this file is that
- * every parity claim is backed by an inspectable artifact.
- *
- * The AAP's own RULES block IS binding, and four of its items shape this file.
- * R-c permits a package change for a stated reason, which makes `adm-zip`
- * 0.4.16 -> 0.6.0 a CHANGED SURFACE to be covered rather than assumed - see the
- * finding below. R-d prohibits behaviour "improvements", so the swallowed upload
- * error, the un-unlinked user-asset upload and the document saved before a
- * failing upload are asserted as they behave, not as they ought to. R-e requires
- * error-to-response mappings to survive, so every failure path asserts the exact
- * error and message the caller receives. R-f makes observed behaviour at base
- * commit 2f8712a the tie-breaker, which is why every expectation here was
- * measured against the source rather than inferred from it. The BOUNDARIES &
- * PRESERVATION clause on persisted data and file formats is bound to precisely
- * these cases.
- *
- * WHAT IS ASSERTED
- * ----------------
- * Each case names what it pins, so a reader can go from a failure to the
- * contract without a search:
- *
- *   _upload                  lib/util/file.js:10-19    all four putObject params
- *   key composition          lib/util/file.js:26,32-43 digest [-fileId] [.ext]
- *   content-type override    lib/util/file.js:28-30    extensionWhitelist
- *   swallowed upload error   lib/util/file.js:49       logged, then discarded
- *   temp-file cleanup        lib/util/file.js:52       both outcomes
- *   materials read           lib/util/file.js:84-86    createReadStream form
- *   avatar gate              lib/util/file.js:96-102   accept and reject
- *   snapshots                lib/util/file.js:105-130  1000 ms, exists, buffer
- *   delete                   lib/util/file.js:132-147  bucket + basename Key
- *   user assets              lib/util/file.js:149-194  save BEFORE upload
- *   user asset read          lib/util/file.js:196-212  resolve and reject
- *   export key format        lib/workers/exports.js (processBulkExport,
- *                            uploadToS3)              s3Key, headers, url
- *   archive layout           lib/workers/exports.js (createExportArchive,
- *                            addTrinketToArchive, parseCodeFiles,
- *                            sanitizeFolderName)      manifest and directories
- *
- * WHY THE WORKER PINS NAME SYMBOLS AND NOT LINES
- * ----------------------------------------------
- * `lib/util/file.js` pins are line numbers because that module is stable under
- * this migration - AAP rule T-3 and 0.2.2 keep it callback-based and
- * unconverted, so a line pin there stays true. `lib/workers/exports.js` is the
- * opposite case: it IS being changed by this migration (require ordering, the
- * Bull 4 adaptations, two `url.parse` sites - AAP 0.4.1), and its line pins
- * here were written against an earlier revision and had drifted by 22-24 lines
- * before anyone read them. A pin that silently stops pointing at its contract
- * is worse than no pin, so every reference to that file below names the
- * FUNCTION and, where the function is long, quotes the expression - both of
- * which survive an edit above them. Verified against the module as it now
- * stands: `processBulkExport` composes `s3Key = 'exports/' + userId + '/' +
- * filename`, `uploadToS3` sets `ContentType: 'application/zip'` and resolves
- * `config.aws.buckets.exports.host + '/' + s3Key`, `createExportArchive`
- * appends the top-level `manifest.json`, `addTrinketToArchive` writes the
- * per-trinket directory, and `sanitizeFolderName` and `parseCodeFiles` are the
- * two named helpers whose behaviour is reimplemented below.
- *
- * EXPECTATIONS ARE COMPUTED, NEVER OBSERVED
- * -----------------------------------------
- * Every payload is a committed byte literal and every expected digest and key
- * is computed here with `crypto.createHash('sha1')`. Nothing is derived from
- * what the application produced - an expectation copied out of the output under
- * test asserts only that the code agrees with itself. The digests are also
- * checked against committed constants at LOAD time, so a stray edit to a
- * payload fails immediately and by name instead of quietly re-keying every
- * object the cases write.
- *
- * NO RANDOMNESS, NO CLOCK
- * -----------------------
- * Fixed bytes, fixed digests, fixed ids, fixed filenames. The one place a real
- * clock is read is the snapshot case, which MEASURES that
- * `lib/util/file.js:107`'s 1000 ms `setTimeout` really elapsed rather than
- * defeating it with a shortened timer.
- *
- * THE MODULE UNDER TEST STAYS CALLBACK-BASED
- * ------------------------------------------
- * AAP rule T-3 keeps the promise boundary at the lifecycle method, and
- * `lib/util/file.js` is provisionally excluded from the async conversion (AAP
- * 0.2.2, gated by 0.9.2). So this harness wraps callbacks; it does not
- * modernize, promisify or otherwise reshape the module under test. If the
- * repaired suite ever forces that module's conversion, these cases must still
- * pass unchanged - which is why every call goes through `callback()` below
- * rather than through a promisified alias.
- *
- * ISOLATION
- * ---------
- * No real S3 and no network on any path. `test/parity/fixtures/aws.js` patches
- * `AWS.S3` on the application's own `config/aws` module and backs it with a
- * filesystem store under a per-run temporary root. MongoDB is the isolated
- * in-memory instance `test/parity/mongo.js` owns. Nothing in `test/helpers/**`
- * or `test/lib/**` is required: the sinon shapes in the store helper under
- * `test/helpers` were read as a pattern reference and nothing more.
- *
- * ORDERING, WHICH IS LOAD-BEARING
- * -------------------------------
- * Nothing application-facing is required at module scope. `config` 0.4.37
- * freezes its values on first require, so the database address has to be
- * published into NODE_CONFIG before anything reaches it, and the S3 fixture has
- * to patch `AWS.S3` before `lib/util/file.js` captures `new aws.S3()`. The
- * sequence inside `run()` is therefore: publish the environment, chdir, patch
- * the namespace, install the `File` global, then require the module under test.
- *
- * A MEASURED FAILURE OF THE ARCHIVE READ SURFACE
- * ----------------------------------------------
- * `adm-zip` moves 0.4.16 -> 0.6.0 (AAP 0.5.1.2), so archive reads are a changed
- * surface. Measured on an archive produced by this repository's own `archiver`
- * 2.1.1 on Node 22:
- *
- *   archiver 2.1.1 -> zip-stream -> compress-commons -> crc32-stream 2.0.0
- *   writes crc32 = 0 and uncompressed size = 0 into the local header, the data
- *   descriptor AND the central directory. `new DeflateCRC32Stream()` returns
- *   digest() = 0 and size() = 0 on Node 22 while size(true) is correct, so the
- *   compressed size is the only length the archive states truthfully.
- *
- *   adm-zip 0.4.16  entry.getData() returns an EMPTY Buffer, silently.
- *   adm-zip 0.6.0   entry.getData() THROWS 'ADM-ZIP: CRC32 checksum failed'.
- *
- * Neither version can read an export archive's contents through `getData()`, so
- * this file ALSO reads through adm-zip's own public
- * `entry.getCompressedData()` and inflates with core zlib, which recovers the
- * bytes exactly and lets every layout assertion still run.
- *
- * THAT SECOND READ IS EVIDENCE AND NOT A VERDICT, and the difference is the
- * whole point. The `archive-layout` case reads the archive through the
- * application's own `entry.getData()` FIRST, with no bypass, and FAILS when
- * that read fails - naming the measured cause, the affected entry count and
- * the files that must change. It previously asserted that the defect was
- * PRESENT and recorded a finding that never reached the exit code, so a
- * corrupt persisted format returned success.
- *
- * THE CAUSE, so nobody re-derives it: `compress-commons` 1.2.2's `_smartStream`
- * uses `crc32-stream` 2.0.0's `DeflateCRC32Stream`, which computes the crc and
- * the raw size inside an override of `Writable.prototype.write`. Modern Node's
- * `Writable.prototype.end(chunk)` calls the internal `_write` helper instead of
- * `this.write(...)`, so the override never runs when `zip-stream` 1.2.0
- * delivers a buffer entry with `.end(source)`.
- *
- * THE FIX IS NOT IN THIS FILE. It belongs to `package.json` and
- * `package-lock.json` (the writer chain archiver 2.1.1 -> zip-stream 1.2.0 ->
- * compress-commons 1.2.2 -> crc32-stream 2.0.0) and to `lib/workers/exports.js`
- * as the call site, and it is pre-existing at base commit 2f8712a. This case
- * turns green by itself the moment the writer states a valid crc for every
- * entry; until then it reports the failure honestly and the run exits non-zero.
- * The finding for `docs/dependency-inventory.md` is still recorded alongside.
- *
- * USAGE
- * -----
+ * INVOCATION
  *   node test/parity/storage.js [--app <path>] [--out <path>] [--help]
  *   PARITY_ALLOW_EXTERNAL_MONGO=1 node test/parity/mongo.js -- \
  *     node test/parity/storage.js
  *
- * The first form starts and stops its own in-memory MongoDB and needs nothing.
+ *   The first form starts and stops its own MongoDB; the second joins the
+ *   lifecycle `test/parity/mongo.js` owns, which publishes PARITY_MONGO_URI.
+ *   The opt-in is REQUIRED there: this run seeds and DELETES documents in
+ *   whatever it connects to, and an address found in the environment is
+ *   indistinguishable from one exported by hand. Such an address must carry
+ *   the disposable prefix too, and every refusal precedes any connection.
  *
- * The second is what AAP 0.9.2 means by running in the same lifecycle as the
- * joi matrix: `test/parity/mongo.js` publishes `PARITY_MONGO_URI` into the
- * child's environment, and this file connects to that instance instead of
- * starting a second one. **The opt-in is required for that form**, because an
- * address arriving in the environment cannot be distinguished from one an
- * operator exported by hand - and this run SEEDS AND DELETES documents in
- * whatever it connects to. `mongo.js` copies the whole environment into the
- * child it spawns, so setting the variable on that command line is enough. The
- * disposable-database guard below is the whole of the reasoning.
+ *   Progress goes to stderr; stdout carries the JSON result alone, and only
+ *   when `--out` is absent - loading the controllers prints an SDK notice and
+ *   a queue line the artifact stream is kept clear of by construction.
  *
- * On a host with no cached mongod, point the package at an existing binary with
- * MONGOMS_SYSTEM_BINARY - `test/parity/mongo.js` honours MONGOMS_* and never
- * overrides it.
+ * ARTIFACT
+ *   `test/parity/storage-result.json`: `{tool, nodeFlags, volatile, nodeEnv,
+ *   dataStore, total, passed, failed, notRun, cases, warnings, warningGate,
+ *   findings, gate, provenance}`. Each case carries its own `evidence`, read
+ *   back from the store, the document or the fixture's call log rather than
+ *   copied from the expectation, and `provenance` is the shared contract in
+ *   `test/parity/manifest.js` - never a path, port, pid or database name.
  *
- * ARTIFACT AND STREAMS
- * --------------------
- * Human-readable progress goes to stderr. stdout carries the JSON result only,
- * and only when `--out` is absent; with `--out` the result is written there and
- * stdout stays empty. This is the same split the sibling gates use, because
- * AAP 0.9.1 requires an artifact stream that application side effects cannot
- * contaminate.
+ * THE KEY IS A CONTENT HASH, SO A DIGEST CHANGE FAILS SILENTLY
+ *   `lib/util/file.js` streams an upload through `crypto.createHash('sha1')`
+ *   and uses the hex digest as the object's `Key`, so changing the algorithm,
+ *   the encoding or the bytes leaves every object written earlier unreachable
+ *   while every new write still looks perfect - no error, only files that
+ *   cannot be found. A round trip cannot detect that, both halves using the
+ *   same digest; the pre-migration cases can, reading objects and File
+ *   documents `test/parity/seed.js` created with fixed digests. So every
+ *   payload is a committed byte literal, every expected key and digest is
+ *   computed here and re-checked at load time, and only the snapshot cases
+ *   read a clock, to MEASURE that the module's own delay elapsed.
  *
- * THE ARTIFACT CARRIES THE MEASURED VALUES, NOT A VERDICT
- * ------------------------------------------------------
- * A result of `{name, status: 'passed'}` per case is not evidence about
- * storage: it records that this file agreed with itself on a day nobody kept
- * the terminal. Every case therefore reports what it MEASURED under its own
- * `evidence` key - the sha1 keys the application composed, the fileId and
- * extension suffixes, the content types the whitelist did and did not override,
- * the bucket each container resolved to, the export `s3Key` and download url,
- * the archive's entry names and manifest counts, and the observed cleanup - all
- * read back from the store, the document or the fixture's call log rather than
- * copied from the expectation. The committed artifact is
- * `test/parity/storage-result.json`, alongside its provenance, which is what
- * makes the claim in `docs/baseline-parity.md` checkable by someone who was not
- * here.
+ * ORDERING, WHICH IS LOAD-BEARING
+ *   Nothing application-facing is required at module scope. `config` freezes
+ *   its values on first require, so the database address must reach
+ *   NODE_CONFIG first; the S3 fixture must patch `AWS.S3` on the application's
+ *   own `config/aws` before `lib/util/file.js` constructs a client from it;
+ *   and the `File` model must be the undeclared global `app.js` assigns in
+ *   `init()` before that module is required, or `new File()` reaches Node's
+ *   built-in WHATWG `File` and fails naming neither.
  *
- * WHAT THE ARTIFACT SAYS ABOUT ITSELF
- * -----------------------------------
- * Standalone evidence that records only a path and a runtime cannot name the
- * application revision or the generator revision that produced it, so it
- * cannot be authenticated against the delivery it is filed under. Every result
- * this file emits therefore carries a `provenance` block built by the shared
- * contract in `test/parity/manifest.js`, which records the HEAD of the tree
- * under test, the git blob of THIS file's exact bytes and the commit verified
- * to hold that blob - or an explicit non-git state where there is no such
- * commit - and hash-links the pair to the artifact's own bytes. With `--out`
- * the same record is written to `<out>.provenance.json` with a digest of the
- * bytes as written. The block carries no absolute path, no process id, no port
- * and no database name: the contract's portability guard throws rather than
- * writing one, which is why the tree under test is named by its HEAD and the
- * database address by the digest in `dataStore`.
+ * ISOLATION AND CLEANUP
+ *   No real S3 and no network on any path: `test/parity/fixtures/aws.js` backs
+ *   the client with a filesystem store, rooted by PARITY_S3_ROOT inside this
+ *   run's scratch directory so its objects go with it. The directory is
+ *   CREATED, never adopted, and its recursive removal is proven to target it
+ *   by device and inode - a predictable name under a shared temporary
+ *   directory may exist already, or be another user's symlink.
+ *
+ * THE ARCHIVE IS READ TWICE, AND ONLY ONE READ IS THE VERDICT
+ *   `probeApplicationRead` reads through the `adm-zip` the tree under test
+ *   declares, with no bypass, and `archive-layout` fails on THAT read: an
+ *   archive the repository's own ZIP library cannot open is a broken persisted
+ *   format whatever its layout. `readArchiveEntries` then inflates
+ *   `entry.getCompressedData()` with core zlib, so the layout assertions still
+ *   run and the failure arrives with a diagnosis - as EVIDENCE.
  *
  * THE EXIT PREDICATE
- * ------------------
- * ONE FAILURE SET, ASSEMBLED ONCE, READ ONCE. `run()` builds `result.gate`
- * from every failure the run observed - failed cases, captured process
- * warnings, recorded contract findings, callbacks that delivered more than
- * once, failed teardown operations and an artifact that could not be written -
- * and `main()` derives the exit code from `result.gate.passed` and nothing
- * else. `result.total`, `result.passed` and `result.failed` remain the CASE
- * TALLY; they are not the verdict.
- *
- * There is no warning allowance list and none may be added. The AAP approves
- * exactly two deviations - the `lib/controllers/files.js` image-stream response
- * (AAP 0.7) and the `marked` audit high (AAP 0.5.1.4) - and neither of them is
- * a warning, so a captured warning always fails this gate.
- *
- * EXIT CODES
- * ----------
- *   0  the failure set is empty
- *   1  the failure set is not empty, or the run could not be completed
- *   2  a usage error
- *
- * A case that TIMED OUT stops the run, and every case after it is recorded
- * `not-run` rather than measured - see `runCases`. `not-run` is reported
- * separately from `failed` in both the artifact and on stderr, because an
- * unmeasured contract must not read as a satisfied one.
- *
- * PUBLIC API
- * ----------
- *   assertArchiveLayout(zipBytes[, expected])  the shared archive assertion,
- *                                              reused by test/parity/worker.js
- *   sanitizeFolderName(name)                   the expected sanitizer
- *   parseCodeFiles(trinket)                    the expected code-file split
- *   readArchiveEntries(zipBytes)               entry name -> {name, content}
- *   buildArchive(entries)                      archiver-produced test bytes
- *   PAYLOADS, DIGESTS                          the committed fixtures
- *   cases                                      the ordered case list
- *   run(options)                               the harness, as a promise
- *   main(argv)                                 the CLI entry point
- *   assertDisposableMongoUri(uri)              the destructive-write guard
- *   createScratch() / removeScratch(owned)     the owned scratch lifecycle
- *   captureProcessState() / restoreProcessState(snapshot)
- *                                              the process-state bookend
- *   buildProvenanceRecord(spec)                this run's evidence identity,
- *                                              buildable without a database
- *   describeDataStore(uri)                     the portable form of the
- *                                              database address
- *   parseStoreUri(uri)                         its components, so the digest
- *                                              is taken over the parsed form
- *   portableReason(value[, appRoot])           a harness-authored message with
- *                                              every host path and instant
- *                                              made reproducible
+ *   ONE FAILURE SET, ASSEMBLED ONCE, READ ONCE. `run()` builds `result.gate`
+ *   from every failure observed - failed cases, captured process warnings,
+ *   recorded findings, callbacks that delivered more than once, failed
+ *   teardowns, an unwritable artifact - and `main()` derives the exit code
+ *   from `result.gate.passed` alone; `total`, `passed` and `failed` stay the
+ *   CASE TALLY. No warning allowance list exists and none may be added:
+ *   `test/parity/warning-policy.js` owns that bar. A TIMED-OUT case stops the
+ *   run and every case after it is recorded `not-run`, apart from `failed`.
+ *   Exit 0 on an empty failure set, 1 otherwise, 2 on a usage error.
  */
 
 var assert   = require('node:assert');
-var childProcess = require('node:child_process');
 var crypto   = require('node:crypto');
 var fs       = require('node:fs');
 var os       = require('node:os');
@@ -320,8 +110,8 @@ var provenance = require('./manifest').provenance;
 var warningPolicy = require('./warning-policy');
 
 // Under direct execution the flags come first. This file loads the application
-// modules it exercises INTO ITS OWN PROCESS, so its stderr is inside AAP
-// 0.9.3's stream, and a pending deprecation is silent without
+// modules it exercises INTO ITS OWN PROCESS, so its own stderr is the stream
+// the zero-warning gate judges, and a pending deprecation is silent without
 // --pending-deprecation: a run that lacks the flags cannot tell "nothing was
 // emitted" from "nothing was asked for". So it re-executes itself once with
 // them. A re-execution that still lacks them fails closed - the gate reports
@@ -352,31 +142,44 @@ var EXIT_USAGE = 2;
 // name is a stable label rather than a path, a stream name or nothing at all.
 var DEFAULT_ARTIFACT = 'storage-contract.json';
 
-// `lib/util/file.js:107` waits 1000 ms before it even looks for the snapshot.
-// The snapshot cases must outlast that rather than shorten it, so every case
-// gets a ceiling comfortably above it and the snapshot cases get their own.
+// `lib/util/file.js`'s `uploadSnapshot` waits 1000 ms in a `setTimeout` before
+// it even looks for the snapshot. The snapshot cases must outlast that rather
+// than shorten it, so every case gets a ceiling comfortably above it and the
+// snapshot cases get their own.
 var CASE_TIMEOUT_MS     = 20000;
 var SNAPSHOT_TIMEOUT_MS = 30000;
 
-// `git rev-parse` for the provenance block. Bounded because this runs inside a
-// gate: a git invocation that hung would hold the whole harness open, and an
-// unknown revision is a recordable outcome where a hang is not.
-var GIT_TIMEOUT_MS = 5000;
-
 // The fields two runs of this harness against the SAME tree are expected to
-// differ in, and the only ones the committed result's digest excludes. Every
-// one is a physical fact of a single run rather than a statement about the
-// storage contract: `appRoot` is a per-clone absolute path, `uri` carries an
-// ephemeral port and a per-run database name, `durationMs` is wall clock, and
-// `stack` is a set of frames carrying absolute paths and the line numbers of
-// THIS file - so leaving it in would make the digest change whenever a comment
-// here moved, which is the opposite of what it is for. A failed case's `error`
-// message stays inside the digest, and that is where the diagnosis lives.
-// Anything NOT on this list is part of the digest, so a change to the contract
-// cannot hide behind normalization.
+// differ in. Every one is a physical fact of a single run rather than a
+// statement about the storage contract: `appRoot` is a per-clone absolute path,
+// `uri` carries an ephemeral port and a per-run database name, `durationMs` is
+// wall clock, and `stack` is a set of frames carrying absolute paths and the
+// line numbers of THIS file - so leaving it in would make the digest change
+// whenever a comment here moved, which is the opposite of what it is for. A
+// failed case's `error` message stays inside the digest, and that is where the
+// diagnosis lives.
 var VOLATILE_FIELDS = ['appRoot', 'uri', 'durationMs', 'stack', 'digest'];
 
-// `lib/util/file.js:107`, as a value the assertion can name.
+// What the digest is taken over: the volatile fields above, plus `provenance`.
+//
+// PROVENANCE IS EXCLUDED BECAUSE THE OTHER DIGEST COVERS IT, and getting this
+// wrong made the committed number unrecomputable. `provenance.attach` writes
+// the block AFTER the digest exists and hash-links it in the opposite
+// direction - its `payloadDigest` covers the artifact WITHOUT its provenance
+// and WITH this `digest` field - so a number taken over a payload that
+// included the block could never be reproduced from the delivered bytes.
+// Measured on the artifact this replaces: the stored value was
+// a4c96245eb21..., recomputing it from the committed file gave 73b10ebfb378...,
+// and recomputing with the block removed gave 1820db9efac7... - three different
+// answers, none of which a reviewer could act on. Excluding it here makes the
+// pair complete and non-circular: `digest` certifies the result, and
+// `provenance.payloadDigest` certifies the result plus that digest.
+//
+// Anything NOT on this list is part of the digest, so a change to the contract
+// cannot hide behind normalization.
+var DIGEST_EXCLUDED_FIELDS = VOLATILE_FIELDS.concat(['provenance']);
+
+// `uploadSnapshot`'s own `setTimeout` delay, as a value the assertion can name.
 var SNAPSHOT_DELAY_MS = 1000;
 
 // The fixture delivers every callback through setImmediate, so a state change
@@ -481,18 +284,15 @@ function note(message) {
 // ---------------------------------------------------------------------------
 // ONE AUTHORITATIVE FAILURE SET, AND ONE PLACE THAT READS IT.
 //
-// This harness previously derived its exit code from the failed-case tally
-// alone, so four classes of observed failure could not reach the shell: a
-// captured process warning, a recorded contract finding, a callback that
-// delivered twice, and a failed stop, disconnect or removal. Each was printed
-// to stderr - and three of them written into the artifact - while the process
-// still exited 0, which is the worst possible shape for a gate: it reports the
-// defect in a stream nobody has to read and reports success in the one every
-// caller acts on.
+// Four classes of failure are observed outside the case tally - a captured
+// process warning, a recorded contract finding, a callback that delivered
+// twice, and a failed stop, disconnect or removal. A gate that printed those to
+// stderr and still exited 0 would report the defect in a stream nobody has to
+// read and report success in the one every caller acts on.
 //
 // The contract this section implements: THIS TOOL MAY EXIT 0 ONLY WHEN ITS
 // FAILURE SET IS EMPTY, and the exit code is derived from that set at exactly
-// one place - `main`, from `result.gate.passed`. Six kinds belong to the set:
+// one place - `main`, from `result.gate.passed`. Seven kinds belong to the set:
 //
 //   case               a case's assertions failed, or it did not finish
 //   warning            a process warning was captured during the run. There is
@@ -501,6 +301,13 @@ function note(message) {
 //                      lib/controllers/files.js image-stream response (AAP 0.7)
 //                      and the `marked` audit high (AAP 0.5.1.4) - and neither
 //                      is a warning, so no warning is approved
+//   warning-gate       the shared zero-warning policy judged this run not-ok.
+//                      It is a SEPARATE kind from `warning` because it fails
+//                      for reasons a captured warning cannot express - the
+//                      measurement flags not in force, output suppressed, a
+//                      notice seen only by the stderr tee - and because the
+//                      same notice reaching both collectors must read as one
+//                      observation reported by two, not as two defects
 //   finding            a case recorded a contract finding on the context
 //   double-settlement  a callback adapter observed a second delivery
 //   teardown           a stop, disconnect or removal operation failed, so the
@@ -531,6 +338,7 @@ function note(message) {
 var FAILURE_KIND = Object.freeze({
   CASE              : 'case',
   WARNING           : 'warning',
+  WARNING_GATE      : 'warning-gate',
   FINDING           : 'finding',
   DOUBLE_SETTLEMENT : 'double-settlement',
   TEARDOWN          : 'teardown',
@@ -652,9 +460,8 @@ function recordFailure(kind, subject, detail, owner) {
 /**
  * Records a failed stop, disconnect or removal, and notes it on stderr.
  *
- * The note is emitted here so the stderr text every one of these sites used to
- * print is preserved verbatim - `WARNING: <subject>: <detail>` - while the
- * observation now also reaches the verdict. A failed teardown is not a
+ * One place emits the note, in one shape - `WARNING: <subject>: <detail>` -
+ * and the same observation reaches the verdict. A failed teardown is not a
  * cosmetic complaint: it means the run may have left a live connection, a live
  * process or a leftover file behind, and a gate that exits 0 in that state is
  * asserting something it did not establish.
@@ -680,15 +487,18 @@ function recordTeardownFailure(subject, cause) {
  * the owning case, and `buildGate` sweeps whatever no case claimed.
  *
  * `owner` IS THE CASE THAT CREATED THE ADAPTER, not the case running when the
- * second delivery arrived, and the difference is not academic - it was measured.
- * A negative control that delivered 50 ms late was blamed on the case that
- * happened to be running at that moment, which is a report naming the wrong
- * contract. The owner is therefore captured when the adapter is created and
- * travels with the entry.
+ * second delivery arrived, and the difference decides which contract the report
+ * names: a delivery that arrives late lands while some other case is running,
+ * so reading the active case here would blame the wrong one. The owner is
+ * captured when the adapter is created and travels with the entry.
  *
+ * @param {(Object|null)} sink The ledger of the run that CREATED the adapter,
+ *   handed in rather than read from module scope so a late delivery is
+ *   accountable to its own run. A closed or absent sink escalates instead.
  * @param {number} calls How many times the callback has now fired.
  * @param {string} where The call site's description, for the report.
- * @param {(string|null)} owner The case that created the adapter.
+ * @param {(string|null|undefined)} owner The case that created the adapter;
+ *   `undefined` is recorded as `null`.
  * @returns {Object} The entry.
  */
 function recordDoubleSettlement(sink, calls, where, owner) {
@@ -702,13 +512,11 @@ function recordDoubleSettlement(sink, calls, where, owner) {
     attributed : false
   };
 
-  // The sink is the ledger of the run that CREATED the adapter, handed in by
-  // the caller rather than read from module scope, and that is what makes a
-  // late delivery accountable. Reading `ledger` here instead was measured to
-  // fail twice over: after `endLedger()` the entry went nowhere and the gate
-  // had already been assembled without it, and if a second run had begun the
-  // entry landed in THAT run's ledger - a defect reported against the wrong
-  // experiment.
+  // Reading the module-scoped `ledger` here instead of taking the sink would
+  // fail twice over: after `endLedger()` the entry would go nowhere, the gate
+  // having already been assembled without it, and once a second run had begun
+  // the entry would land in THAT run's ledger - a defect reported against the
+  // wrong experiment.
   if (sink) {
     sink.settlements.push(entry);
   }
@@ -815,9 +623,14 @@ function addGateFailure(gate, kind, subject, detail, owner) {
  *
  * This is the only function that decides what a failure is, and `main` is the
  * only caller that turns the answer into an exit code. Nothing else in this
- * file may return a code.
+ * file may return a code, and nothing outside this function may add a reason
+ * to the verdict after it - which is what keeps the serialized `gate` and the
+ * process's exit status statements about the same thing.
  *
- * @param {Object} result The run result, with `cases`, `warnings`, `findings`.
+ * @param {Object} result The run result, with `cases`, `warnings`, `findings`
+ *   and `warningGate` - the last of which must already be set, because the
+ *   zero-warning verdict is folded into this failure set rather than checked
+ *   beside it.
  * @param {Object} closed The closed ledger.
  * @returns {{passed: boolean, failures: Array<Object>, counts: Object}}
  */
@@ -839,7 +652,7 @@ function buildGate(result, closed) {
     });
   });
 
-  // 2. Captured process warnings. Unconditional: see the allowance note above.
+  // 2. Captured process warnings. Unconditional - there is no allowance list.
   (result.warnings || []).forEach(function(warning) {
     failures.push({
       kind    : FAILURE_KIND.WARNING,
@@ -853,7 +666,33 @@ function buildGate(result, closed) {
     });
   });
 
-  // 3. Contract findings a case recorded. The warning-derived findings are
+  // 3. THE SHARED ZERO-WARNING GATE'S OWN VERDICT, folded in HERE rather than
+  //    consulted beside this one. That separation was the defect: `main` read
+  //    `gate.passed` for the exit code and checked `warningGate.ok` afterwards,
+  //    so a run that failed the policy wrote an artifact saying the gate passed
+  //    and then exited 1 - the artifact and the shell disagreeing about the
+  //    same run. The rendering rules live in test/parity/warning-policy.js so
+  //    every gate folds the verdict the same way, and they are the reason no
+  //    `gateApplies` test is needed here: a run against another worktree
+  //    measures that tree and contributes nothing.
+  //
+  //    A notice raised inside THIS process is also in (2) above; `fromWarning`
+  //    there and `fromWarningGate` here say which collector saw it, so the two
+  //    sets read as one observation reported twice rather than two defects.
+  warningPolicy.gateFailures(result.warningGate, {
+    owner    : 'the tree under test',
+    selfOwner: 'test/parity/storage.js'
+  }).forEach(function(entry) {
+    failures.push({
+      kind            : FAILURE_KIND.WARNING_GATE,
+      subject         : entry.subject,
+      detail          : entry.detail,
+      owner           : entry.owner,
+      fromWarningGate : true
+    });
+  });
+
+  // 4. Contract findings a case recorded. The warning-derived findings are
   //    skipped here and only here: they are the same observations as (2) and
   //    are marked `fromWarning` for exactly this reason, so a warning is one
   //    failure and not two.
@@ -870,10 +709,10 @@ function buildGate(result, closed) {
     });
   });
 
-  // 4. The double-delivery sweep. A delivery a case owned has already failed
+  // 5. The double-delivery sweep. A delivery a case owned has already failed
   //    that case; one that arrived after its case finished - or with no case
-  //    running at all - would otherwise be invisible, which is the whole reason
-  //    the registry exists.
+  //    running at all - would otherwise be invisible, which is why the registry
+  //    exists at all.
   ((closed && closed.settlements) || []).forEach(function(entry) {
     if (entry.attributed) {
       return;
@@ -894,7 +733,7 @@ function buildGate(result, closed) {
     });
   });
 
-  // 5. Whatever the helpers recorded: teardown failures, and anything else
+  // 6. Whatever the helpers recorded: teardown failures, and anything else
   //    observed outside a case.
   ((closed && closed.failures) || []).forEach(function(entry) {
     failures.push(entry);
@@ -913,7 +752,7 @@ function buildGate(result, closed) {
 // ---------------------------------------------------------------------------
 
 /**
- * `lib/util/file.js:66-78`'s digest, over a buffer instead of a stream.
+ * `lib/util/file.js`'s `hashcontents` digest, over a buffer instead of a stream.
  *
  * Identical algorithm and encoding - sha1, hex - so the value this returns is
  * the object key the application will produce for the same bytes. The two
@@ -946,7 +785,8 @@ function sha1Hex(value) {
 
 var PAYLOADS = Object.freeze({
   // The key-composition cases. One payload across four containers, so the four
-  // keys differ only in the parts lib/util/file.js:38-43 appends.
+  // keys differ only in the fileId and extension suffixes `_fileToContainer`
+  // appends.
   keyBytes : Buffer.from(
     'Parity storage case: key composition.\n' +
     'Fixed bytes, fixed digest.\n',
@@ -954,16 +794,16 @@ var PAYLOADS = Object.freeze({
   ),
 
   // A filename with several dots, to prove the extension comes from the LAST
-  // one (lib/util/file.js:26 uses lastIndexOf).
+  // one (`_fileToContainer` derives the extension with `lastIndexOf('.')`).
   multiDotBytes : Buffer.from(
     'Parity storage case: last-dot extension.\n',
     'utf8'
   ),
 
   // A structurally valid but minimal notebook. The EXTENSION is what matters:
-  // `ipynb` is the only entry in config/default.yaml:236-237's
-  // extensionWhitelist, so this is the sole payload that can exercise the
-  // content-type override at lib/util/file.js:28-30.
+  // `ipynb` is the only entry in `config/default.yaml`'s
+  // `app.extensionWhitelist`, so this is the sole payload that can exercise
+  // `_fileToContainer`'s content-type override.
   notebookBytes : Buffer.from(
     '{\n' +
     '  "cells": [],\n' +
@@ -991,7 +831,7 @@ var PAYLOADS = Object.freeze({
   ),
 
   // A real 1x1 PNG - 69 bytes. Snapshots are keyed by their FILENAME
-  // (lib/util/file.js:112 takes fileinfo.name from file.name, not from a
+  // (`uploadSnapshot` takes `fileinfo.name` from `file.name`, not from a
   // digest), so this payload's digest is never a key and cannot collide.
   snapshotPng : Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/AAAADAAEAAQD6AAAAAElFTkSuQmCC',
@@ -1024,8 +864,8 @@ var DIGESTS = Object.freeze(Object.keys(PAYLOADS).reduce(function(acc, name) {
 // Deriving alone would make each digest whatever the bytes happen to be, so an
 // accidental edit would re-key every object this file writes and every
 // assertion would still agree with itself. Committing both turns that into a
-// load-time failure naming both values - the same guard seed.js applies to its
-// own fixtures, and the guard AAP 0.6.7 asks for applied to the test data.
+// load-time failure naming both values, which is the same guard seed.js
+// applies to its own fixtures.
 var EXPECTED_DIGESTS = Object.freeze({
   keyBytes         : '07481165fe77e6f3ab46ac69a7100245a0eb645c',
   multiDotBytes    : '17a919e9bf5c3234848d19a552de7868e99551e8',
@@ -1092,13 +932,12 @@ if (ALTERED_ASSET_DIGEST === DIGESTS.assetGif) {
 // conversion can introduce - an `await` added inside a callback, a promise
 // chain that both resolves and calls back - so it has to end the run.
 //
-// It could not be reported through the promise the adapter returns: by the time
-// a second call arrives the promise has already settled with the first, and a
-// settled promise cannot be rejected. Previously the second call was written to
-// stderr and nothing else, so a passing run and a run that delivered every
-// callback twice were indistinguishable in the artifact and in the exit code -
-// and `calls === 1` was asserted by exactly one case out of thirty-four, which
-// left the other thirty-three silent about it.
+// It cannot be reported through the promise the adapter returns: by the time a
+// second call arrives the promise has already settled with the first, and a
+// settled promise cannot be rejected. Writing the second call to stderr and
+// nothing else would leave a passing run and a run that delivered every
+// callback twice indistinguishable in the artifact and in the exit code, since
+// only a case that asserts `calls === 1` itself would notice.
 //
 // So deliveries beyond the first are recorded on a ledger stamped with the case
 // that was running, and `runCase` turns any entry into that case's failure. That
@@ -1259,7 +1098,7 @@ async function quiesceDuplicateDeliveries() {
 // ---------------------------------------------------------------------------
 // Callback adapters
 // ---------------------------------------------------------------------------
-// `lib/util/file.js` is callback-based and stays that way (AAP rule T-3). These
+// `lib/util/file.js` is callback-based and stays that way. These adapters
 // wrap a call for `await` WITHOUT touching the module under test: the module
 // still sees an ordinary `function(err, result)`, and everything about its
 // timing, its argument count and its error handling is preserved. Nothing here
@@ -1269,18 +1108,18 @@ async function quiesceDuplicateDeliveries() {
  * Invokes a callback-taking function and resolves with BOTH arguments.
  *
  * Deliberately not node-style: several contracts here are about a callback
- * receiving an error AND a result together - `lib/util/file.js:190` calls
- * `cb(err, file)` - or about a success-shaped result arriving after an error was
- * swallowed at `:49`. A promisifier that rejected on a truthy first argument
- * would discard exactly the evidence those cases need.
+ * receiving an error AND a result together - `uploadUserAsset` ends in
+ * `cb(err, file)` - or about a success-shaped result arriving after
+ * `_fileToContainer` swallowed an upload error at `err && console.log(err)`. A
+ * promisifier that rejected on a truthy first argument would discard exactly
+ * the evidence those cases need.
  *
  * EXACTLY ONCE IS THIS ADAPTER'S DEFAULT CONTRACT, not a per-case opt-in.
  * Every one of the 18 call sites below asserts the outcome of a single
  * delivery, so a second delivery invalidates the case that observed it whether
- * or not that case thought to check `outcome.calls`. Previously a second
- * delivery only printed a warning and every case still passed - which meant a
- * response delivered twice, the defect this adapter is best placed in the whole
- * harness to detect, could not fail the run.
+ * or not that case thought to check `outcome.calls`. A second delivery that
+ * only printed a warning would leave every case passing while a response was
+ * delivered twice, which is the defect this adapter is placed to detect.
  *
  * The mechanism is a registry rather than a rejection, and that is forced
  * rather than chosen: the promise settled on the first delivery and a settled
@@ -1290,9 +1129,9 @@ async function quiesceDuplicateDeliveries() {
  *
  * NO CALL SITE OPTS OUT, and that is an audit rather than an assumption. All 18
  * were read: FIFTEEN drive a `lib/util/file.js` entry point whose contract is
- * one callback - `_fileToContainer` (:19, :49, :58), `uploadMaterialFile`,
- * `uploadUserAvatar` (:100), `uploadSnapshot` and `uploadSnapshotFromBuffer`
- * (:129), `removeFile` (:147) and `uploadUserAsset` (:190); ONE adapts
+ * one callback - `_fileToContainer`, `uploadMaterialFile`, `uploadUserAvatar`,
+ * `uploadSnapshot`, `uploadSnapshotFromBuffer`, `removeFile` and
+ * `uploadUserAsset`; ONE adapts
  * `hashcontents`, whose callback takes the digest alone and fires once; and TWO
  * drive the S3 fixture's own `deleteObject`. Not one of them documents or
  * exhibits a second delivery. If a future contract legitimately delivers twice,
@@ -1379,10 +1218,11 @@ function callback(invoke, timeoutMs, options) {
  * Waits until `predicate` is true, or fails.
  *
  * Used only where the application reports nothing back: `removeFile` called
- * without a callback (lib/util/file.js:135-139) performs a delete whose only
+ * without a callback - `removeFile` substitutes one - performs a delete whose
+ * only
  * evidence is the store, and the fixture delivers through setImmediate. The
- * ceiling is short on purpose - a miss here means the behaviour is absent, and
- * a long wait would only delay saying so.
+ * ceiling is short on purpose - a miss means the behaviour is absent, and a
+ * long wait would only delay saying so.
  *
  * @param {string} description What is being waited for, for the failure message.
  * @param {function(): boolean} predicate
@@ -1420,7 +1260,7 @@ function delay(ms) {
 /**
  * Drains a readable stream into one Buffer.
  *
- * `lib/util/file.js:80-89` returns a PassThrough that the application's callers
+ * `lib/util/file.js`'s `downloadMaterialFile` returns a PassThrough its callers
  * pipe onward, so reading it is how the materials contract is asserted. An
  * 'error' listener is attached here even though the success case cannot emit
  * one, because a stream that errors with no listener takes the process down and
@@ -1477,11 +1317,11 @@ function drain(stream, timeoutMs) {
 /**
  * Captures `console.log` for the duration of `body`, and restores it.
  *
- * `lib/util/file.js:49` is `err && console.log(err)`: the upload error is LOGGED
+ * `_fileToContainer` does `err && console.log(err)`: the upload error is LOGGED
  * and then discarded. Capturing turns that into a positive assertion - the
  * error really was reported before being dropped - and keeps the application's
- * own output off this harness's stdout, which AAP 0.9.1 requires to stay an
- * artifact stream.
+ * own output off this harness's stdout, which carries the artifact and nothing
+ * else.
  *
  * The restore is in a `finally`, so a throwing body cannot leave the process
  * with a swallowed console.
@@ -1512,8 +1352,8 @@ async function captureConsoleLog(body) {
 // ---------------------------------------------------------------------------
 // The scratch directory
 // ---------------------------------------------------------------------------
-// Uploads arrive as a temporary file the application unlinks
-// (lib/util/file.js:52), so every upload case needs a fresh one. They are
+// Uploads arrive as a temporary file the application unlinks - the `fs.unlink`
+// in `_fileToContainer` - so every upload case needs a fresh one. They are
 // created inside one per-run directory that is removed at the end, which is how
 // "leaves no temp files behind" is made true rather than hoped for.
 //
@@ -1638,12 +1478,12 @@ function createScratch() {
 
 /**
  * Writes an upload's temporary file and returns the shape
- * `lib/util/file.js:22-30,149-152` reads: `path`, `filename`, `bytes` and
- * `headers['content-type']`.
+ * `lib/util/file.js`'s `_fileToContainer` and `uploadUserAsset` read: `path`,
+ * `filename`, `bytes` and `headers['content-type']`.
  *
- * `bytes` is the payload's real length, because `:58` copies it into the result
- * as `size` and `:174` onto the File document, so a wrong value here would make
- * a passing assertion meaningless.
+ * `bytes` is the payload's real length, because `_fileToContainer` copies it
+ * into its result as `size` and `uploadUserAsset` onto the File document, so a
+ * wrong value here would make a passing assertion meaningless.
  *
  * @param {Object} ctx The run context, for the scratch directory.
  * @param {string} name The scratch file name; fixed per case.
@@ -1651,11 +1491,15 @@ function createScratch() {
  * @param {string} filename The upload's declared filename.
  * @param {string} contentType The upload's declared content type.
  * @param {Object} [options]
- * @param {boolean} [options.harnessOwned=false] Set when the application is
- *   NOT expected to unlink the file - `uploadUserAsset` never does, and
- *   `uploadUserAvatar` returns before it would on the reject path. Such a path
- *   is registered on the context and removed by the runner after the case,
- *   whether it passed or failed.
+ * @param {boolean} [options.harnessOwned=false] Registers the path for the
+ *   runner's own teardown, which removes it after the case whether it passed
+ *   or failed. It is set on the user-asset and avatar-reject paths, whose
+ *   cases assert WHETHER the application removed the file: the assertion is
+ *   the case's, and the teardown only guarantees nothing survives a case that
+ *   failed before reaching it. Teardown is `fs.rmSync(force: true)`, so a file
+ *   the application already removed - which `lib/util/file.js` now does on
+ *   every terminal path of `uploadUserAsset` and on the avatar reject - is not
+ *   an error here.
  *
  *   Unconditional cleanup matters for a reason measured rather than imagined:
  *   with cleanup at the end of a case body, one failing assertion left its
@@ -1739,9 +1583,14 @@ function removeScratch(owned) {
     }
     // Reported AND recorded: the note keeps the diagnostic it always wrote and
     // the ledger entry is what stops a surviving temporary directory - the S3
-    // store lives in it - from exiting 0.
+    // store lives in it - from exiting 0. The subject is `owned.path`, which is
+    // the only name for the directory in scope here: an earlier version named a
+    // `dir` that this function never declares, so the one path that reaches
+    // this line threw a ReferenceError out of the catch block - losing the
+    // ledger entry, losing the note below, and replacing the real teardown
+    // error with a defect in the reporting of it.
     recordTeardownFailure(
-      'could not remove the scratch directory ' + dir, err
+      'could not remove the scratch directory ' + owned.path, err
     );
 
     note('WARNING: could not inspect the scratch directory ' + owned.path +
@@ -1946,7 +1795,7 @@ function assertAppRoot(appRoot) {
 // never mattered, because the process exits immediately afterwards. Called
 // programmatically it matters twice over:
 //
-//   * `config` 0.4.37 freezes its values on first require, so a SECOND run in
+//   * `config` freezes its values on first require, so a SECOND run in
 //     the same process inherits the first run's NODE_CONFIG whatever it sets -
 //     but the leaked variables also reach anything else in the process that
 //     reads them, and a caller that ran this gate and then started the
@@ -2081,24 +1930,23 @@ function restoreProcessState(snapshot) {
  * Publishes the environment the application will read, and changes into
  * `appRoot`.
  *
- * Ordering is the whole point of this function. `config` 0.4.37 freezes its
- * values when it is first required, and `lib/util/file.js`, `config/aws.js` and
- * every model reach it, so NODE_CONFIG and NODE_CONFIG_DIR have to be right
- * BEFORE any of them loads. Three layers, lowest first:
+ * ORDERING IS THIS FUNCTION'S REASON FOR EXISTING. `config` freezes its values
+ * when it is first required, and `lib/util/file.js`, `config/aws.js` and every
+ * model reach it, so NODE_CONFIG and NODE_CONFIG_DIR have to be right BEFORE
+ * any of them loads. Three layers, lowest first:
  *
  *   1. `test/parity/server-overlay.json`, which is where `db.redis.enabled:
  *      false` and the `aws.buckets.exports` entry committed configuration
- *      lacks come from (AAP 0.6.7, 0.9.3).
+ *      lacks come from.
  *   2. Whatever NODE_CONFIG was inherited - which, when this runs as a child of
  *      `test/parity/mongo.js`, already carries the published database address
  *      and must therefore win over the overlay's placeholder database name.
- *   3. `db.redis.enabled: false`, forced last. The agent brief requires it in
- *      the composed configuration, and forcing it means an inherited overlay
- *      cannot switch Redis back on and have `lib/util/queues.js` dial
- *      localhost:6379 from inside a storage gate.
+ *   3. `db.redis.enabled: false`, forced last, so an inherited overlay cannot
+ *      switch Redis back on and have `lib/util/queues.js` dial localhost:6379
+ *      from inside a storage gate.
  *
- * PARITY_APP_ROOT is what `test/parity/fixtures/aws.js:1786` resolves
- * `config/aws` from, so it is published here rather than left to `process.cwd()`
+ * PARITY_APP_ROOT is what `test/parity/fixtures/aws.js` resolves `config/aws`
+ * from, so it is published here rather than left to `process.cwd()`
  * - and PARITY_S3_ROOT points the fixture's store inside this run's scratch
  * directory, so the objects it writes are removed with everything else instead
  * of accumulating under the system temporary directory.
@@ -2122,10 +1970,10 @@ function prepareEnvironment(appRoot, scratch) {
   }
 
   // NODE_CONFIG_DIR plus the three runtime-layer controls, from ./mongo's one
-  // implementation. All three and not persistence alone: `config` 0.4.37
-  // creates its runtime JSON unless persistence is off AND the file watch is
-  // disabled, so this tool previously wrote config/runtime.json into the
-  // worktree it was reading - gitignored, hence invisible to `git status`, and
+  // implementation. All three and not persistence alone: `config` creates its
+  // runtime JSON unless persistence is off AND the file watch is disabled, so
+  // setting one of them still leaves config/runtime.json written into the
+  // worktree being read - gitignored, hence invisible to `git status`, and
   // layered over every other configuration source on the following run.
   // Redirecting the path also discards an inherited one, which would otherwise
   // import a previous run's persisted values into this one.
@@ -2223,11 +2071,12 @@ function requireFromApp(appRoot, relative) {
 /**
  * Resolves an npm package from the tree under test rather than from this file.
  *
- * This matters for exactly one package and for a substantive reason: `adm-zip`
- * is the version whose read surface changed (0.4.16 -> 0.6.0, AAP 0.5.1.2), so
- * the archive cases have to exercise the version the tree under test declares.
- * `archiver` is resolved the same way so that the bytes the cases read were
- * produced by the same writer the application would use.
+ * The archive cases turn on which `adm-zip` and which `archiver` the tree under
+ * test declares: the read is asserted through the reader that tree would use,
+ * and the bytes are produced by the writer that tree would use. Resolving
+ * either from this file would exercise this tool's own installation instead.
+ * The resolved versions are read at runtime and recorded in the artifact rather
+ * than stated here.
  *
  * @param {string} appRoot Absolute path.
  * @param {string} name Package name.
@@ -2259,17 +2108,17 @@ function resolveDependency(appRoot, name) {
  * Loads the S3 fixture, installs the `File` global and requires the module
  * under test, in that order.
  *
- * THE ORDER IS THE CONTRACT. `lib/util/file.js:11,82,141,197` each do
- * `new aws.S3()`, resolving `AWS.S3` at CALL time from the `config/aws` module
- * object - so the fixture only has to be loaded before the first call, but
- * loading it first is what makes that unconditional rather than a race with
- * whatever else pulls `config/aws` in.
+ * THE ORDER IS THE CONTRACT. `_upload`, `downloadMaterialFile`, `removeFile`
+ * and `downloadUserAsset` each do `new aws.S3()`, resolving `AWS.S3` at CALL
+ * time from the `config/aws` module object - so the fixture only has to be
+ * loaded before the first call, but loading it first is what makes that
+ * unconditional rather than a race with whatever else pulls `config/aws` in.
  *
- * THE GLOBAL. `lib/util/file.js:167` does `file = new File()` against an
- * UNDECLARED global that `app.js:317` installs with a bare assignment inside
- * `init()`. A harness that requires `lib/util/file.js` without installing it
- * does NOT get the ReferenceError one would expect, because Node 22 ships its
- * own global `File` - the WHATWG one, writable and configurable, both measured.
+ * THE GLOBAL. `uploadUserAsset` does `file = new File()` against an UNDECLARED
+ * global that `app.js` installs with a bare assignment inside `init()`. A
+ * harness that requires `lib/util/file.js` without installing it does NOT get
+ * the ReferenceError one would expect, because Node 22 ships its own global
+ * `File` - the WHATWG one, writable and configurable, both measured.
  * `new File()` therefore reaches that constructor and fails with
  * `TypeError: The "fileBits" and "fileName" arguments must be specified` from
  * inside `uploadUserAsset`, which names neither this module nor the model and
@@ -2329,7 +2178,10 @@ function loadApplication(appRoot, acquired) {
 
   FileModel = requireFromApp(appRoot, 'lib/models/file');
 
-  // See THE GLOBAL, above.
+  // Installed BEFORE `lib/util/file.js` is required below, because
+  // `uploadUserAsset` constructs `new File()` against this undeclared global
+  // and Node's own built-in `File` would otherwise answer, with neither
+  // `setOwner` nor `save` on it.
   global.File = FileModel;
 
   FileUtil = requireFromApp(appRoot, 'lib/util/file');
@@ -2338,7 +2190,7 @@ function loadApplication(appRoot, acquired) {
     appRoot     : appRoot,
     awsFixture  : awsFixture,
     // The application's own `config/aws` module object - the one
-    // `lib/util/file.js:4` binds and calls `new aws.S3()` on. Required here so
+    // `lib/util/file.js` binds and calls `new aws.S3()` on. Required here so
     // the preflight can assert the patch sits on THIS instance rather than on
     // whatever reference the fixture retained: `status().patched` inspects the
     // fixture's own bookkeeping, and only resolving the module from `appRoot`
@@ -2364,16 +2216,15 @@ function loadApplication(appRoot, acquired) {
  * `rootReady` flag it set alongside it. Every run owns a NEW scratch directory
  * and publishes a new PARITY_S3_ROOT inside it, and the old one has been deleted
  * by then - so on a second `run()` in the same process Node returns the cached
- * fixture, uninstalled and still pointing at the first run's deleted root.
- * Measured: the second call failed its own preflight with
- * "did not patch AWS.S3 (installed=false, patched=false)".
+ * fixture, uninstalled and still pointing at the first run's deleted root, and
+ * the second call fails its own preflight with `patched=false`.
  *
- * The fixture has no lifecycle API that re-resolves the root - `reset()` clears
- * the call log and the objects, not the root - and that file belongs to another
- * work unit, so this is the deliberate cache lifecycle on this side of the
- * boundary: evict the entry, and `loadApplication`'s own `require` re-executes
- * the fixture's load block, which re-reads PARITY_S3_ROOT and re-patches the
- * namespace for the run that is starting.
+ * The fixture exposes no lifecycle API that re-resolves the root - `reset()`
+ * clears the call log and the objects, not the root - so the cache lifecycle is
+ * handled on this side of the boundary: evict the entry, and
+ * `loadApplication`'s own `require` re-executes the fixture's load block, which
+ * re-reads PARITY_S3_ROOT and re-patches the namespace for the run that is
+ * starting.
  *
  * Evicting is safe because this module is the fixture's only consumer here:
  * `test/parity/worker.js` requires this file for `assertArchiveLayout` and
@@ -2410,13 +2261,13 @@ function releaseAwsFixtureModule() {
  * ordinary case - `require` returns the same cached module and this connects
  * once. When `--app` names a different worktree they are two module instances
  * with two connection pools, so both are dialled at the same URI: the documents
- * seed.js writes and the documents `lib/util/file.js:181` writes then land in
+ * seed.js writes and the documents `uploadUserAsset` saves then land in
  * the same database and each side can read the other's, which is what the
  * pre-migration cases depend on.
  *
  * `strictQuery` is pinned on every instance for the same reason
- * `config/db.js` pins it: without it Mongoose 6 prints a deprecation warning,
- * and AAP 0.9.3's zero-warning gate covers this tooling's stderr as well as the
+ * `config/db.js` pins it: without it Mongoose prints a deprecation warning,
+ * and the zero-warning gate covers this tooling's stderr as well as the
  * application's.
  *
  * PARTIAL ACQUISITION. Connecting is a loop, so it can fail halfway: with two
@@ -2493,11 +2344,11 @@ async function disconnectAll(instances) {
 // anything else.
 //
 // PARITY_MONGO_URI is how `test/parity/mongo.js` hands its in-memory instance
-// to a command it spawns, and the address was previously taken from the
-// environment and used verbatim - so any value at all, including a developer's
-// working database or a staging address that happened to be exported in the
-// shell, was seeded and deleted without a word. The variable is a plain string
-// in the environment: nothing about its presence proves who wrote it.
+// to a command it spawns. Taking that address and using it verbatim would seed
+// and delete in any value at all, including a developer's working database or a
+// staging address that happened to be exported in the shell. The variable is a
+// plain string in the environment: nothing about its presence proves who wrote
+// it.
 //
 // PROVENANCE COMES FROM THE CALL PATH, NEVER FROM THE NAME. There are exactly
 // two ways this harness obtains an address, and only one of them is trustworthy
@@ -2512,12 +2363,12 @@ async function disconnectAll(instances) {
 //     explicit destructive opt-in is required - unconditionally, whatever the
 //     database is called.
 //
-// The earlier version of this guard exempted any name matching the shape
-// `test/parity/mongo.js` generates. That was wrong, and a probe demonstrated it:
-// `mongodb://db.example.invalid:27017/parity_12345_abc123_deadbe` was accepted
-// with no opt-in at all, because the shape is a public regular expression that
-// anyone can satisfy by typing. A name is a claim; it is not evidence about who
-// created the database or whether it can be destroyed.
+// EXEMPTING THE GENERATED NAME SHAPE WOULD NOT BE SAFE, and the counter-example
+// is one line long: `mongodb://db.example.invalid:27017/parity_12345_abc123_
+// deadbe` satisfies the shape below while naming a host nothing here created.
+// The shape is a public regular expression anyone can satisfy by typing. A name
+// is a claim; it is not evidence about who created the database or whether it
+// can be destroyed.
 //
 // The name checks are RETAINED, as validation rather than as provenance: an
 // external address must still carry the disposable prefix, so a typo that
@@ -2549,11 +2400,11 @@ var MONGO_SOURCE_EXTERNAL  = 'external';
  * Extracts the database name from a MongoDB connection string.
  *
  * Written out rather than delegated: `url.parse` is prohibited in this file
- * (DEP0169, and this tooling's stderr sits inside AAP 0.9.3's zero-warning
- * gate), and `new URL` rejects the multi-host form `mongodb://a:1,b:2/db` that
- * a replica-set address takes. Only the database segment is needed, and it is
- * unambiguous: everything between the first `/` after the host section and the
- * first `?` or `#`.
+ * because it emits DEP0169 and this tooling's stderr is inside the stream the
+ * zero-warning gate judges, and `new URL` rejects the multi-host form
+ * `mongodb://a:1,b:2/db` that a replica-set address takes. Only the database
+ * segment is needed, and it is unambiguous: everything between the first `/`
+ * after the host section and the first `?` or `#`.
  *
  * @param {string} uri
  * @returns {(string|null)} The database name, `''` when the URI names none, or
@@ -2839,8 +2690,8 @@ var URL_BASE = 'https://parity.invalid';
  *
  * `asset.name` when it has one, otherwise the basename of the url's pathname.
  *
- * `new URL` and NOT `url.parse`: the latter emits DEP0169 on Node 22 and this
- * tooling's stderr is inside AAP 0.9.3's zero-warning gate. The base is what
+ * `new URL` and NOT `url.parse`: the latter emits DEP0169 and this tooling's
+ * stderr is inside the stream the zero-warning gate judges. The base is what
  * makes the substitution faithful rather than merely warning-free - `url.parse`
  * returns a pathname for a RELATIVE url too, and bare `new URL('x/y.gif')`
  * throws instead. Only the pathname is read, so the base cannot leak into an
@@ -2862,11 +2713,11 @@ function archiveAssetName(asset) {
 /**
  * CRC-32 of a buffer.
  *
- * `zlib.crc32` landed in Node 22.2.0, and AAP 0.5.3 bounds the runtime at
- * `>=22.0.0 <23.0.0` - so on 22.0 or 22.1 it is absent and a gate that assumed
- * it would fail for a reason that has nothing to do with storage. The fallback
- * is the standard reflected table algorithm, verified against `zlib.crc32` by
- * the `archive-layout` case whenever both are available.
+ * `zlib.crc32` was added part-way through the Node 22 line, and `package.json`
+ * admits the whole of it, so on an early 22 the function is absent and a gate
+ * that assumed it would fail for a reason that has nothing to do with storage.
+ * The fallback is the standard reflected table algorithm, verified against
+ * `zlib.crc32` by the `archive-layout` case whenever both are available.
  *
  * @param {Buffer} buffer
  * @returns {number} Unsigned 32-bit.
@@ -2910,21 +2761,25 @@ function crc32(buffer) {
 /**
  * Reads a ZIP into `{name, content}` records, byte-exactly.
  *
- * WHY NOT `entry.getData()`. Measured on an archive this repository's own
- * `archiver` 2.1.1 produces on Node 22: `crc32-stream` 2.0.0's
- * `DeflateCRC32Stream` reports `digest()` 0 and `size()` 0, so zero crc32 and
- * zero uncompressed size are written into the local header, the data descriptor
- * and the central directory alike. `adm-zip` 0.4.16 then returns an EMPTY
- * buffer for every entry - silently, because it trusts the declared size - and
- * `adm-zip` 0.6.0 THROWS 'CRC32 checksum failed', because it validates against
- * the central directory's crc. Neither version can read the contents that way.
+ * WHY NOT `entry.getData()`. A ZIP writer that computes an entry's crc and raw
+ * size inside an override of `Writable.prototype.write` loses both when the
+ * entry is delivered through `Writable.prototype.end(chunk)`, which does not
+ * route through `write()`. Such a writer states crc32=0 and uncompressed size=0
+ * in the local header, the data descriptor and the central directory alike, and
+ * `adm-zip` cannot recover an entry in that state through `getData()`: it
+ * either returns an empty buffer, because it trusts the declared size, or
+ * throws a CRC32 failure, because it validates against the declared crc. This
+ * reader still has to be able to say what is inside such an archive.
  *
  * `entry.getCompressedData()` is adm-zip's own public accessor for the stored
  * bytes and performs no validation, and the COMPRESSED size is the one length
- * the archive states truthfully, so inflating from there recovers the bytes
+ * such an archive states truthfully, so inflating from there recovers the bytes
  * exactly - verified against the input. Integrity is not abandoned: where a
  * declared crc32 is actually present it is checked, and where it is absent that
- * is recorded as the defect it is rather than passed over.
+ * is recorded as the defect it is rather than passed over. The verdict rests on
+ * `probeApplicationRead` instead, which reads through `getData()` with no
+ * bypass; this reader produces the evidence beside it, and the reader version
+ * it used is reported on `reader.version`.
  *
  * @param {Buffer} zipBytes
  * @param {Object} [options]
@@ -2985,18 +2840,18 @@ function readArchiveEntries(zipBytes, options) {
 
     declaredCrc = entry.header.crc >>> 0;
 
-    // THE PRODUCTION READ PATH, exercised rather than assumed.
+    // THE LIBRARY'S OWN READ PATH, exercised rather than assumed.
     //
-    // `getData()` is the API the application itself uses - `[T
-    // lib/controllers/courses.js:20]` reads uploaded archives through it - and
-    // it is the one that validates the declared crc32. Inflating
+    // `adm-zip` is the ZIP library this repository declares and
+    // `lib/controllers/courses.js` requires, and `getData()` is its content
+    // accessor and the only one that validates the declared crc32. Inflating
     // `getCompressedData()` above recovers the bytes whatever the archive
-    // declares, so on its own it can pass while the API the application calls
-    // fails. That is exactly the defect this reader was written to diagnose,
-    // so `getData()` is called here and its bytes are compared against the
+    // declares, so on its own it can pass while `getData()` on the same entry
+    // fails - which is the state this reader exists to diagnose. `getData()` is
+    // therefore called here too and its bytes compared against the
     // independently inflated ones. A throw is captured rather than propagated,
-    // because a baseline archive is expected to fail this and the diagnosis
-    // below is what should report it.
+    // because an archive in that state is expected to fail this and the
+    // diagnosis below is what reports it.
     try {
       var viaGetData = entry.isDirectory ? Buffer.alloc(0) : entry.getData();
       getDataOk      = Buffer.compare(viaGetData, content) === 0;
@@ -3030,8 +2885,8 @@ function readArchiveEntries(zipBytes, options) {
 
     if (!isDirectory) {
       if (declaredCrc === 0 && entry.header.size === 0 && content.length > 0) {
-        // The archiver/crc32-stream defect: the archive states no crc and no
-        // uncompressed size, so there is nothing to verify against.
+        // The writer stated neither a crc nor an uncompressed size for an
+        // entry that has content, so there is nothing to verify against.
         reader.crcAbsent++;
         reader.defect = 'archiver 2.1.1 via crc32-stream 2.0.0 writes crc32=0 ' +
           'and uncompressed size=0 in the local header, the data descriptor ' +
@@ -3074,24 +2929,25 @@ function readArchiveEntries(zipBytes, options) {
 }
 
 /**
- * Reads every entry through the tree's OWN `adm-zip`, exactly as the
- * application does, and reports what happened.
+ * Reads every entry through the `adm-zip` the tree under test declares, with
+ * no bypass, and reports what happened.
  *
  * THIS IS THE ASSERTION THE PERSISTED-FORMAT GATE RESTS ON. `readArchiveEntries`
- * above deliberately bypasses `entry.getData()` and inflates
+ * above deliberately avoids `entry.getData()` and inflates
  * `entry.getCompressedData()` instead, which recovers the bytes and makes every
  * layout assertion possible - but a bypass that produces evidence is useful
- * only while it is not also producing a PASS. An export archive that this
- * repository's own reader cannot open is a broken persisted format whatever the
- * layout inside it looks like, so the read is performed with no bypass at all
- * and its result is what the `archive-layout` case fails on.
+ * only while it is not also producing a PASS. An export archive that the ZIP
+ * library this repository ships cannot open is a broken persisted format
+ * whatever the layout inside it looks like, so the read is performed here with
+ * no bypass at all and its result is what the `archive-layout` case fails on.
  *
  * The comparison value is computed here rather than taken from the diagnostic
  * reader, so this probe stands alone and runs FIRST: the stored payload is
  * inflated with core zlib and `getData()` must return exactly those bytes.
- * That covers both measured failure modes of the two adm-zip versions in play -
- * 0.6.0 THROWS `ADM-ZIP: CRC32 checksum failed`, and 0.4.16 returns an EMPTY
- * buffer with no error at all, which a "did it throw" check would pass.
+ * Comparing the bytes rather than asking whether the call threw is what covers
+ * both ways a reader fails on an entry whose crc and size were never recorded -
+ * a CRC32 failure raised, and an empty buffer returned with no error at all,
+ * which a "did it throw" check would pass.
  *
  * @param {Buffer} zipBytes The archive.
  * @param {Function} [AdmZip] The constructor from the tree under test.
@@ -3171,10 +3027,10 @@ function probeApplicationRead(zipBytes, AdmZip, options) {
 }
 
 /**
- * The adm-zip version actually in use, for the report.
+ * The `adm-zip` version actually in use, for the report.
  *
- * Read rather than assumed, because the whole point of the reader notes above is
- * which version's behaviour was observed.
+ * Read from the resolved package rather than stated in a comment, so the
+ * artifact records which reader produced the result it carries.
  *
  * @param {string} appRoot
  * @returns {(string|null)}
@@ -3198,25 +3054,28 @@ function readAdmZipVersion(appRoot) {
  * only optional input is `expected`, and without it the function still asserts
  * every invariant the archive states about itself.
  *
- * WHAT IS ASSERTED, and the lines each claim pins:
+ * WHAT IS ASSERTED, and the writer each claim pins:
  *
- *   :252      a top-level `manifest.json`, valid JSON, with `exportedAt`,
- *             `trinkets`, `totalTrinkets` and `failedTrinkets`, and
- *             `trinkets.length === totalTrinkets`.
- *   :277-278  every trinket's entries live under
- *             `<lang>/<sanitizeFolderName(name || shortCode)>_<shortCode>/`.
- *             The directory name is recomputed from the manifest entry through
- *             this file's own sanitizer, so a change to the sanitizer's rules
- *             fails here.
- *   :290      each such directory holds a `metadata.json` whose `shortCode`,
- *             `name` and `lang` match the manifest entry, and whose `url` ends
- *             in `/<lang>/<shortCode>`.
- *   :294-296  the parsed code files, at `<basePath><file.name>`.
- *   :304-308  downloaded assets, at `<basePath>assets/<name || basename>`.
- *   the whole: nothing else. An entry outside `manifest.json` and the manifest's
- *             own trinket directories is a failure, because a stray entry is
- *             how a leaked temporary file or another user's trinket would show
- *             up in an export.
+ *   manifest         a top-level `manifest.json`, valid JSON, with
+ *                    `exportedAt`, `trinkets`, `totalTrinkets` and
+ *                    `failedTrinkets`, and `trinkets.length ===
+ *                    totalTrinkets`. `createExportArchive` appends it.
+ *   directories      every trinket's entries live under
+ *                    `<lang>/<sanitizeFolderName(name || shortCode)>_
+ *                    <shortCode>/`, which is `addTrinketToArchive`'s
+ *                    `basePath`. The directory name is recomputed from the
+ *                    manifest entry through this file's own sanitizer, so a
+ *                    change to the sanitizer's rules fails here.
+ *   metadata         each such directory holds a `metadata.json` whose
+ *                    `shortCode`, `name` and `lang` match the manifest entry,
+ *                    and whose `url` ends in `/<lang>/<shortCode>`.
+ *   code files       `parseCodeFiles`' output, at `<basePath><file.name>`.
+ *   assets           downloaded assets, at
+ *                    `<basePath>assets/<asset.name || basename>`.
+ *   the whole        nothing else. An entry outside `manifest.json` and the
+ *                    manifest's own trinket directories is a failure, because
+ *                    a stray entry is how a leaked temporary file or another
+ *                    user's trinket would show up in an export.
  *
  * `expected` additionally asserts CONTENT: each code file's exact bytes, each
  * asset's exact bytes, and that the archive contains no entry beyond the
@@ -3453,17 +3312,18 @@ function assertArchiveLayout(zipBytes, expected, options) {
  * Builds a ZIP from `{name, content}` records with the tree's own `archiver`.
  *
  * Used only to produce input for the `archive-*` cases. It uses the same writer
- * and the same options as `lib/workers/exports.js` (`createExportArchive`) -
- * `archiver('zip',
- * {zlib: {level: 6}})` - so the bytes the reader is asserted against are the
- * bytes the application's writer really emits, including the crc32 defect
- * documented on `readArchiveEntries`. Building with a different writer would
- * have concealed exactly that.
+ * and the same options as `lib/workers/exports.js`'s `createExportArchive` -
+ * `archiver('zip', {zlib: {level: 6}})` - so the bytes the reader is asserted
+ * against are the bytes the application's writer really emits, including
+ * whatever each entry declares about its own crc and uncompressed size.
+ * Building with a different writer would conceal exactly that.
  *
- * @param {Array<{name: string, content: (Buffer|string)}>} entries
+ * @param {Array<{name: string, content: (Buffer|string)}>} entries Appended in
+ *   the order given, one archive entry each.
  * @param {Object} [options]
  * @param {Function} [options.archiver] A pre-resolved archiver factory.
- * @param {string} [options.appRoot]
+ * @param {string} [options.appRoot] Tree whose `archiver` is resolved when no
+ *   factory is supplied; defaults to this tool's own root.
  * @returns {Promise<Buffer>}
  */
 function buildArchive(entries, options) {
@@ -3520,10 +3380,10 @@ function buildArchive(entries, options) {
 /**
  * A synthetic container.
  *
- * `_fileToContainer` reads only `name`, `host` and `fileId`, and NO configured
- * bucket declares `fileId` - measured across config/default.yaml:394-415, and
- * recorded independently in seed.js's note on KEYS. The `container.fileId`
- * branch at lib/util/file.js:38-40 is therefore unreachable through any public
+ * `_fileToContainer` reads only `name`, `host` and `fileId`, and no bucket in
+ * `config/default.yaml`'s `aws.buckets` declares `fileId` - recorded
+ * independently in seed.js's note on KEYS. `_fileToContainer`'s
+ * `if (container.fileId)` branch is therefore unreachable through any public
  * entry point, and passing a synthetic container is the only way to assert the
  * naming it produces rather than asserting against a shape nothing has written.
  *
@@ -3588,9 +3448,8 @@ function callsFor(ctx, operation) {
  * someone is watching the run and useless afterwards: `{status: 'passed'}` says
  * a key was correct without saying what the key WAS, so a committed result
  * cannot be reviewed, cannot be diffed against another tree's, and cannot show
- * a reader the sha1 the contract turns on. AAP 0.6.7's whole point is that this
- * contract "cannot rest on prose" - and a pass/fail list is prose with a
- * tickmark.
+ * a reader the sha1 the contract turns on. This contract cannot rest on prose,
+ * and a pass/fail list is prose with a tickmark.
  *
  * So every case that establishes a contract value records it here, and it
  * reaches the JSON under that case's `evidence`. The values are the ones the
@@ -3644,9 +3503,9 @@ function assertFixtureHealthy(ctx, where) {
  * Runs `_fileToContainer` against a container and returns everything asserted
  * about it.
  *
- * `_fileToContainer` is called directly, and legitimately: it is assigned on the
- * instance (lib/util/file.js:22) and is the only entry point that accepts a
- * container, which is what the fileId cases require.
+ * `_fileToContainer` is called directly, and legitimately: it is assigned on
+ * the instance and is the only entry point that accepts a container, which is
+ * what the fileId cases require.
  *
  * @param {Object} ctx
  * @param {Object} spec {scratchName, payload, filename, contentType, container}
@@ -3665,7 +3524,7 @@ async function fileToContainer(ctx, spec) {
 }
 
 /**
- * Asserts the success-shaped result `lib/util/file.js:53-59` produces.
+ * Asserts the success-shaped result `_fileToContainer` passes to its callback.
  *
  * All five fields, because `path` and `name` are the same value read by
  * different callers - `lib/controllers/files.js` stores `name` while the
@@ -3696,9 +3555,9 @@ function assertUploadResult(result, expect) {
 // ---------------------------------------------------------------------------
 // The cases
 // ---------------------------------------------------------------------------
-// Ordered, and run in order. Each carries the lines it pins so a failure leads
-// straight to the contract. Nothing between cases is shared except the store
-// and the database, both of which are per-run.
+// Ordered, and run in order. Each carries the contract it pins in its `pins`
+// field, so a failure leads straight to it. Nothing between cases is shared
+// except the store and the database, both of which are per-run.
 
 var cases = [];
 
@@ -3715,8 +3574,9 @@ cases.push({
       'the fixture must have patched the tree under test');
 
     // The application's own module object, not the fixture's bookkeeping.
-    // lib/util/file.js:4 binds config/aws and calls `new aws.S3()` at :11, so
-    // THIS is the reference every upload resolves through.
+    // `lib/util/file.js` binds `config/aws` at require time and calls
+    // `new aws.S3()` inside `_upload`, so THIS is the reference every upload
+    // resolves through.
     assert.strictEqual(ctx.awsModule.S3, ctx.awsFixture.ParityS3,
       'config/aws.S3 must BE the fixture constructor. status().patched checks ' +
       'the reference the fixture retained; this checks the require-cache entry ' +
@@ -3803,7 +3663,7 @@ cases.push({
       assert.match(digest, /^[0-9a-f]{40}$/,
         'the digest must be lowercase hex');
 
-      // hashcontents does not unlink; only _fileToContainer:52 does. The
+      // `hashcontents` does not unlink; only `_fileToContainer` does. The
       // runner removes it, so a failure above cannot leave it behind.
       assert.strictEqual(fs.existsSync(source), true,
         'hashcontents must not remove the file it read');
@@ -3883,7 +3743,8 @@ cases.push({
   name : 'key-bare-digest',
   pins : 'lib/util/file.js:26, 32-37',
   run  : async function(ctx) {
-    // No dot in the filename, so :26 yields '' and :41 appends nothing.
+    // No dot in the filename, so the extension is '' and the `if (extension)`
+    // suffix is not appended.
     var target  = container('parity-keys');
     var outcome = await fileToContainer(ctx, {
       scratchName : 'key-bare',
@@ -4007,9 +3868,9 @@ cases.push({
       size   : PAYLOADS.keyBytes.length
     });
 
-    // The order of the two suffixes is part of the contract: :39 appends the
-    // fileId and :42 the extension, so the extension is always last and the
-    // key remains recognisable by its file type.
+    // The order of the two suffixes is part of the contract: `_fileToContainer`
+    // appends the fileId first and the extension second, so the extension is
+    // always last and the key remains recognisable by its file type.
     assert.ok(key.endsWith('.txt'), 'the extension is appended last');
 
     measured(ctx, {
@@ -4025,8 +3886,9 @@ cases.push({
   name : 'key-last-dot-extension',
   pins : 'lib/util/file.js:26',
   run  : async function(ctx) {
-    // Three dots. :26 uses lastIndexOf, so the extension is 'gz' and not
-    // 'tar.gz' - and certainly not 'parity-last'.
+    // Three dots. `_fileToContainer` derives the extension with
+    // `lastIndexOf('.')`, so it is 'gz' and not 'tar.gz' - and certainly not
+    // 'parity-last'.
     var target  = container('parity-keys-multidot');
     var outcome = await fileToContainer(ctx, {
       scratchName : 'key-multidot.tar.gz',
@@ -4159,7 +4021,8 @@ cases.push({
     });
     var outcome = captured.value;
 
-    // Logged - :49 is `err && console.log(err)`, so the error was reported...
+    // Logged - `_fileToContainer` does `err && console.log(err)`, so the error
+    // was reported...
     assert.strictEqual(captured.logged.length, 1,
       'the upload error is logged exactly once at :49');
     assert.strictEqual(captured.logged[0].length, 1,
@@ -4168,10 +4031,10 @@ cases.push({
       'the logged value is the S3 error');
 
     // ...and then discarded. The callback fires with the SUCCESS shape and the
-    // upload error never reaches the caller. This is preserved behaviour under
-    // R-d, not a defect to repair: a caller cannot distinguish a stored object
-    // from a lost one, and every consumer of this callback is written as though
-    // the upload succeeded.
+    // upload error never reaches the caller. That is the behaviour under test
+    // rather than a defect to repair here: a caller cannot distinguish a stored
+    // object from a lost one, and every consumer of this callback is written as
+    // though the upload succeeded.
     assert.strictEqual(outcome.err, null,
       'the callback\'s error argument is the UNLINK\'s (:52), never the ' +
       'upload\'s; the upload error was dropped at :49');
@@ -4232,10 +4095,10 @@ cases.push({
       });
     });
 
-    // Both outcomes, side by side, because :52 sits OUTSIDE the error check at
-    // :49 and a conversion that moved it inside would leave the upload
-    // directory filling up only on failures - the slowest possible way to find
-    // out.
+    // Both outcomes, side by side, because `_fileToContainer`'s `fs.unlink`
+    // sits OUTSIDE its `err && console.log(err)` check, and a conversion that
+    // moved it inside would leave the upload directory filling up only on
+    // failures - the slowest possible way to find out.
     assert.strictEqual(fs.existsSync(good.upload.path), false,
       'the temporary file is removed after a successful upload');
     assert.strictEqual(fs.existsSync(bad.value.upload.path), false,
@@ -4306,27 +4169,26 @@ cases.push({
     // THE OTHER HALF OF THE MATERIALS CONTRACT, and the one with a consequence.
     //
     // For an absent key the SDK's read stream emits 'error' and never ends
-    // (test/parity/fixtures/aws.js reproduces exactly that), and :86 pipes it
-    // with `.pipe()`, which attaches NO error listener to the source. Two
-    // things follow, and both are measured here rather than described:
+    // (test/parity/fixtures/aws.js reproduces exactly that), and
+    // `downloadMaterialFile` pipes it with `.pipe()`, which attaches NO error
+    // listener to the source. Two things follow, both measured here rather
+    // than described:
     //
     //   1. the PassThrough the caller holds neither ends nor errors, so a
     //      consumer waiting on it waits forever - the request is left
-    //      unsettled. Preserved under R-d: it is baseline behaviour, and the
-    //      only alternative is to make the read reject, which is a change to
-    //      what a client sees.
+    //      unsettled. That is asserted rather than corrected, because the only
+    //      alternative is to make the read reject, which is a change to what a
+    //      client sees.
     //   2. the source's 'error' has no listener anywhere, so Node raises it as
     //      an UNCAUGHT EXCEPTION. In the running application that is an
     //      unhandled error on the request path; in this harness it would end
     //      the process mid-run.
     //
-    // Which is why this case was previously declared untestable and left out.
-    // It is testable: the uncaught exception is captured for the duration of
-    // this case and released in a `finally`, which is the only way to observe
-    // an error that by construction has no listener. The capture is scoped as
-    // narrowly as the mechanism allows - one case, one handler, removed
-    // whatever happens - and it asserts the identity of what it caught rather
-    // than merely swallowing it.
+    // So the uncaught exception is captured for the duration of this case and
+    // released in a `finally`, which is the only way to observe an error that
+    // by construction has no listener. The capture is scoped as narrowly as the
+    // mechanism allows - one case, one handler, removed whatever happens - and
+    // it asserts the identity of what it caught rather than swallowing it.
     var missingKey = 'parity-absent-material.txt';
     var before     = callsFor(ctx, 'createReadStream').length;
     var uncaught   = [];
@@ -4453,8 +4315,8 @@ cases.push({
     var key;
     var record;
 
-    // All three types the regexp at :97 admits, because a narrowed regexp would
-    // still pass a single-type assertion.
+    // All three types `uploadUserAvatar`'s content-type regexp admits, because
+    // a narrowed regexp would still pass a single-type assertion.
     for (i = 0; i < accepted.length; i++) {
       entry  = accepted[i];
       source = upload(
@@ -4522,11 +4384,18 @@ cases.push({
       assert.strictEqual(outcome.result, undefined,
         'the reject path calls back with the error alone (:98)');
 
-      // 'image/pngx' is in the list on purpose: :97's regexp is anchored at
+      // 'image/pngx' is in the list on purpose: that regexp is anchored at
       // both ends, so a trailing character must not sneak through.
-      assert.strictEqual(fs.existsSync(source.path), true,
-        'the reject returns BEFORE _fileToContainer, so nothing unlinks the ' +
-        'temporary file - the caller keeps it. Preserved as measured.'
+      // SEC-F34 (CWE-459/CWE-400): the reject path returns before
+      // `_fileToContainer`, which was the only site in the module that
+      // unlinked, so every rejected avatar left its multipart temp file
+      // behind - repeatable by any authenticated caller. `lib/util/file.js`
+      // now runs `removeTemporaryFile` on this terminal path, so the file is
+      // gone by the time the callback fires. Cleanup only: the callback's
+      // arity, its error and the absence of any upload are asserted above
+      // and are unchanged.
+      assert.strictEqual(fs.existsSync(source.path), false,
+        'the reject path removes the temporary file it was handed'
       );
     }
 
@@ -4537,7 +4406,7 @@ cases.push({
       rejectedTypes  : rejected,
       errorMessage   : 'unsupported image type, must be png or jpg',
       uploadsAttempted: callsFor(ctx, 'putObject').length - before,
-      sourceRetained : true
+      sourceRemoved  : fs.existsSync(source.path) === false
     });
   }
 });
@@ -4548,8 +4417,8 @@ cases.push({
   timeoutMs  : SNAPSHOT_TIMEOUT_MS,
   run        : async function(ctx) {
     var bucket = ctx.config.aws.buckets.snapshots;
-    // :108 concatenates `file.path + file.name` with no separator, so the path
-    // must carry its own trailing slash. Reproduced rather than corrected.
+    // `uploadSnapshot` concatenates `file.path + file.name` with no separator,
+    // so the path must carry its own trailing slash. Reproduced, not corrected.
     var dir     = path.join(ctx.scratch, 'snapshots') + path.sep;
     var name    = 'parity-snapshot.png';
     var started;
@@ -4565,9 +4434,9 @@ cases.push({
     }, SNAPSHOT_TIMEOUT_MS);
     record  = storedObject(ctx, bucket.name, name);
 
-    // The 1000 ms wait at :107 is honoured, not defeated. It is measured
+    // `uploadSnapshot`'s 1000 ms wait is honoured, not defeated. It is measured
     // because a conversion that dropped the timer would still pass every other
-    // assertion here while changing the timing the comment at :106 exists for.
+    // assertion here while changing the timing the timer exists for.
     assert.ok(
       Date.now() - started >= SNAPSHOT_DELAY_MS,
       'the setTimeout at :107 must still delay the upload by ' +
@@ -4737,11 +4606,11 @@ cases.push({
       contentType : 'image/png'
     });
 
-    // No callback. :135-139 substitutes `function(err, result) { return result }`
-    // - a callback whose return value goes nowhere, so the delete's only
-    // evidence is the store itself. The substitution matters because without it
-    // the SDK would receive `undefined` and, per its own contract, perform
-    // nothing at all.
+    // No callback. `removeFile` substitutes
+    // `function(err, result) { return result }` - a callback whose return value
+    // goes nowhere, so the delete's only evidence is the store itself. The
+    // substitution matters because without it the SDK would receive `undefined`
+    // and, per its own contract, perform nothing at all.
     result = ctx.FileUtil.removeFile('materials', value);
 
     assert.strictEqual(result, undefined,
@@ -4771,8 +4640,8 @@ cases.push({
 });
 
 // Fixed File ids for the `replaceFile` cases. Supplied rather than generated so
-// `remoteName` - which embeds the document id at lib/util/file.js:178 - is
-// predictable end to end and the assertion can be composed from constants
+// `remoteName` - which embeds the document id, as `uploadUserAsset` builds it -
+// is predictable end to end and the assertion can be composed from constants
 // instead of read back from the document the application just built. They sit
 // outside seed.js's own 05xx block so no seeded fixture is disturbed.
 var REPLACE_FILE_ID     = '0000000000000000000005a1';
@@ -4800,10 +4669,10 @@ cases.push({
     assert.match(file.id, /^[0-9a-f]{24}$/,
       'a new document gets a generated ObjectId');
 
-    // The naming pattern here is NOT _fileToContainer's. :178 always joins the
-    // digest, the document id and the extension with a '-' and a '.', with no
-    // conditional on either - so a user asset is keyed differently from a
-    // material even for identical bytes.
+    // The naming pattern here is NOT `_fileToContainer`'s. `uploadUserAsset`
+    // always joins the digest, the document id and the extension with a '-' and
+    // a '.', with no conditional on either - so a user asset is keyed
+    // differently from a material even for identical bytes.
     remoteName = DIGESTS.assetGif + '-' + file.id + '.gif';
 
     assert.strictEqual(file.url, bucket.host + '/' + remoteName,
@@ -4836,10 +4705,15 @@ cases.push({
     assert.strictEqual(persisted.size, PAYLOADS.assetGif.length, 'persisted size');
     assert.strictEqual(String(persisted._owner), seed.ids.user, 'persisted owner');
 
-    // uploadUserAsset never unlinks - unlike _fileToContainer:52 - so the
-    // caller still owns the temporary file. Measured, and preserved.
-    assert.strictEqual(fs.existsSync(source.path), true,
-      'uploadUserAsset leaves the temporary file in place');
+    // SEC-F34: all three of `uploadUserAsset`'s terminal paths - save error,
+    // upload failure and success - reached the callback without unlinking,
+    // so the temp directory grew one upload at a time. `lib/util/file.js`
+    // now destroys the stream and removes the file on each of them, and the
+    // removal completes before the callback fires, which is what makes this
+    // assertion deterministic. The stored key, the document and the callback
+    // shape are asserted above and are unchanged.
+    assert.strictEqual(fs.existsSync(source.path), false,
+      'uploadUserAsset removes the temporary file on its success path');
 
     measured(ctx, {
       bucket        : record.bucket,
@@ -4855,7 +4729,7 @@ cases.push({
       storedSha1    : sha1Hex(record.body),
       storedType    : record.contentType,
       persistedUrl  : persisted.url,
-      sourceRetained: fs.existsSync(source.path)
+      sourceRemoved : fs.existsSync(source.path) === false
     });
 
     ctx.createdFileIds.push(file.id);
@@ -4872,8 +4746,9 @@ cases.push({
       'parity-shift-asset.gif', 'image/gif', { harnessOwned : true }
     );
     // THREE arguments: the callback arrives where `replaceFile` is declared.
-    // Without the shift at :154-157, `cb` would be undefined and :182/:190
-    // would throw rather than call anything back - which is why the `callback`
+    // Without `uploadUserAsset`'s `typeof replaceFile === 'function'` shift,
+    // `cb` would be undefined and neither the save-error return nor the final
+    // `cb(err, file)` would call anything back - which is why the `callback`
     // helper's timeout is itself part of this assertion.
     var outcome = await callback(function(done) {
       ctx.FileUtil.uploadUserAsset(source, seed.ids.user, done);
@@ -4955,8 +4830,8 @@ cases.push({
       ctx, 'user-asset-noowner.gif', PAYLOADS.assetGif,
       'parity-noowner.gif', 'image/gif', { harnessOwned : true }
     );
-    // No owner. The ownable plugin declares `_owner` required, so save()
-    // rejects and :182 returns before any upload is attempted.
+    // No owner. The ownable plugin declares `_owner` required, so `file.save`
+    // rejects and `uploadUserAsset` returns before any upload is attempted.
     var outcome = await callback(function(done) {
       ctx.FileUtil.uploadUserAsset(source, undefined, null, done);
     });
@@ -4972,15 +4847,18 @@ cases.push({
       'the early return means NOTHING is uploaded: the document is saved ' +
       'first (:181), so a save failure leaves the store untouched'
     );
-    assert.strictEqual(fs.existsSync(source.path), true,
-      'and the temporary file is still the caller\'s');
+    // SEC-F34, the save-error half of the same finding: the early return is
+    // still `return cb(err)` with nothing uploaded, and it now removes the
+    // temporary file on the way out.
+    assert.strictEqual(fs.existsSync(source.path), false,
+      'and the temporary file is removed on the early return');
 
     measured(ctx, {
       errorName       : outcome.err.name,
       errorMessage    : String(outcome.err.message),
       callbackResult  : outcome.result,
       uploadsAttempted: callsFor(ctx, 'putObject').length - before,
-      sourceRetained  : fs.existsSync(source.path)
+      sourceRemoved   : fs.existsSync(source.path) === false
     });
   }
 });
@@ -5003,9 +4881,9 @@ cases.push({
 
     // The ONLY stub in this file, and it stubs the FIXTURE's client rather than
     // anything in the application: there is no configuration that makes a
-    // well-formed putObject fail, and the ordering at :181 versus :189 is only
-    // observable when the upload fails after the save succeeded. Restored in a
-    // `finally` so no later case inherits it.
+    // well-formed putObject fail, and `uploadUserAsset`'s save-before-upload
+    // ordering is only observable when the upload fails after the save
+    // succeeded. Restored in a `finally` so no later case inherits it.
     ParityS3.prototype.putObject = function(params, cb) {
       var err = new Error('parity fixture: forced upload failure');
 
@@ -5025,9 +4903,9 @@ cases.push({
       ParityS3.prototype.putObject = original;
     }
 
-    // :190 is `cb(err, file)` - BOTH arguments. A caller that only checks the
-    // error still has the document, and a caller that only checks the document
-    // never learns the object is missing.
+    // `uploadUserAsset` ends in `cb(err, file)` - BOTH arguments. A caller that
+    // only checks the error still has the document, and a caller that only
+    // checks the document never learns the object is missing.
     assert.ok(outcome.err, 'the upload error reaches the callback');
     assert.strictEqual(outcome.err.code, 'InternalError', 'the forced failure');
     assert.ok(outcome.result, ':190 passes the file alongside the error');
@@ -5109,9 +4987,10 @@ cases.push({
   run  : async function(ctx) {
     var bucket   = ctx.config.aws.buckets.exports;
     var userId   = seed.ids.user;
-    // Composed here from the specification at :97-102, with '0' standing in for
-    // Date.now().toString() - the only variable input. Compared against
-    // seed.js's independent derivation, so the two agree or the case fails.
+    // Composed here from `processBulkExport`'s own derivation, with '0'
+    // standing in for `Date.now().toString()` - the only variable input.
+    // Compared against seed.js's independent derivation, so the two agree or
+    // the case fails.
     var hash     = sha1Hex(userId + '0').substring(0, 12);
     var filename = 'trinket-export-' + hash + '.zip';
     var s3Key    = 'exports/' + userId + '/' + filename;
@@ -5183,8 +5062,9 @@ cases.push({
   pins : 'lib/util/file.js:178, 196-212, lib/models/file.js:41',
   run  : async function(ctx) {
     // Found by its HASH, through the model's own alternate-id lookup
-    // (lib/models/file.js:41 declares alternateIds ['hash'], which
-    // lib/models/model.js:117-131 turns into a findOne on that field). This is
+    // (`lib/models/file.js` declares `alternateIds: ['hash']`, which
+    // `lib/models/model.js`'s generated `findById` turns into a `findOne` on
+    // that field). This is
     // the application's real "find the record for this content" path.
     var doc  = await ctx.FileModel.findById(seed.fixtures.digests.assetGif);
     var key;
@@ -5201,7 +5081,8 @@ cases.push({
     key = seed.keyFromUrl(doc.url);
 
     // Composed from the digest constant and the seeded id, NOT read off the
-    // document: the claim is that the url resolves to the key :178 builds.
+    // document: the claim is that the url resolves to the key `uploadUserAsset`
+    // builds.
     assert.strictEqual(
       key, seed.fixtures.digests.assetGif + '-' + seed.ids.userAssetFile + '.gif',
       'the stored url resolves to the digest-fileId.extension key ' +
@@ -5260,9 +5141,9 @@ cases.push({
       drifted = await ctx.FileUtil.downloadUserAsset(key);
 
       // The read still SUCCEEDS - which is exactly the danger. Nothing on the
-      // read path recomputes a digest (lib/util/file.js:200-202 uses the key
-      // verbatim), so a changed object is served without complaint and only a
-      // caller that hashes the bytes can tell.
+      // read path recomputes a digest (`downloadUserAsset` passes the key to
+      // `getObject` verbatim), so a changed object is served without complaint
+      // and only a caller that hashes the bytes can tell.
       assert.strictEqual(sha1Hex(drifted), ALTERED_ASSET_DIGEST,
         'the altered bytes hash to the committed altered digest');
       assert.notStrictEqual(sha1Hex(drifted), doc.hash,
@@ -5379,8 +5260,8 @@ cases.push({
 // ---------------------------------------------------------------------------
 // The archive cases
 // ---------------------------------------------------------------------------
-// Fixed trinket specs covering every branch of lib/workers/exports.js's
-// addTrinketToArchive, parseCodeFiles and sanitizeFolderName:
+// Fixed trinket specs covering every branch of `lib/workers/exports.js`'s
+// `addTrinketToArchive`, `parseCodeFiles` and `sanitizeFolderName`:
 // both code shapes, a name that needs sanitizing, a falsy name, a lang the
 // extension map does not know, and a trinket with assets.
 
@@ -5388,7 +5269,7 @@ var ARCHIVE_EXPORTED_AT = '2024-04-01T00:00:00.000Z';
 
 var ARCHIVE_TRINKETS = Object.freeze([
   {
-    // The JSON file-array shape (:337-340): two named files, taken verbatim.
+    // `parseCodeFiles`' JSON file-array shape: two named files, taken verbatim.
     shortCode : 'AAAAAA',
     name      : 'Parity Python',
     lang      : 'python',
@@ -5398,25 +5279,27 @@ var ARCHIVE_TRINKETS = Object.freeze([
     ])
   },
   {
-    // The raw-string fallback for a lang MATCHING /blocks/ (:344) -> main.xml,
-    // and a name that exercises the sanitizer's strip-then-collapse order.
+    // `parseCodeFiles`' raw-string fallback for a lang MATCHING /blocks/ ->
+    // main.xml, and a name that exercises the sanitizer's strip-then-collapse
+    // order.
     shortCode : 'BBBBBB',
     name      : 'Parity  Blocks! (v2)',
     lang      : 'blocks',
     code      : '<xml><block type="parity"/></xml>'
   },
   {
-    // A falsy name, so :277 falls back to the shortCode - NOT to 'untitled',
-    // which needs both to be falsy - and a lang the extension map does not
-    // know, so :343 defaults to '.txt'.
+    // A falsy name, so `addTrinketToArchive`'s `trinket.name ||
+    // trinket.shortCode` falls back to the shortCode - NOT to 'untitled', which
+    // needs both to be falsy - and a lang `langExtensions` does not know, so
+    // `parseCodeFiles` defaults the extension to '.txt'.
     shortCode : 'CCCCCC',
     name      : '',
     lang      : 'ruby',
     code      : 'puts "parity"\n'
   },
   {
-    // Downloaded assets (:304-308), one named and one taking its name from the
-    // url's basename.
+    // `addTrinketToArchive`'s downloaded assets, one named and one taking its
+    // name from the url's basename.
     shortCode : 'DDDDDD',
     name      : 'Parity Assets',
     lang      : 'html',
@@ -5451,7 +5334,7 @@ function archiveEntriesForFixtures() {
   ARCHIVE_TRINKETS.forEach(function(trinket) {
     var basePath = archiveBasePath(trinket);
 
-    // :281-290
+    // The per-trinket metadata document.
     entries.push({
       name    : basePath + 'metadata.json',
       content : JSON.stringify({
@@ -5466,12 +5349,12 @@ function archiveEntriesForFixtures() {
       }, null, 2)
     });
 
-    // :293-296
+    // The parsed code files, one entry each, directly under the base path.
     parseCodeFiles(trinket).forEach(function(file) {
       entries.push({ name : basePath + file.name, content : file.content || '' });
     });
 
-    // :301-308
+    // The downloaded assets, under the base path's `assets/` directory.
     (trinket.assets || []).forEach(function(asset) {
       var assetName = archiveAssetName(asset);
 
@@ -5488,7 +5371,8 @@ function archiveEntriesForFixtures() {
     });
   });
 
-  // :250-252 - appended LAST, after every trinket, with the counters filled in.
+  // The manifest is appended LAST, after every trinket, with its counters
+  // filled in - the order `createExportArchive` writes it in.
   manifest.totalTrinkets  = manifest.trinkets.length;
   manifest.failedTrinkets = 0;
 
@@ -5643,8 +5527,8 @@ cases.push({
       '(`langExtensions`)'
     );
 
-    // Valid JSON that is not an array takes the SAME fallback, because :338-339
-    // throws its own error to get there.
+    // Valid JSON that is not an array takes the SAME fallback, because
+    // `parseCodeFiles` throws its own 'Not an array' to get there.
     assert.deepStrictEqual(
       parseCodeFiles({ lang : 'python', code : '{"name":"x"}' }),
       [{ name : 'main.py', content : '{"name":"x"}' }],
@@ -5658,10 +5542,10 @@ cases.push({
       'and so is a JSON scalar'
     );
 
-    // A JSON array of anything at all is accepted without validation. Recorded
-    // rather than corrected: :294-296 then appends an entry whose name is
-    // `basePath + undefined`, which is a real 2013 quirk and not this file's to
-    // repair.
+    // A JSON array of anything at all is accepted without validation, and
+    // `addTrinketToArchive` then appends an entry named `basePath + undefined`.
+    // Asserted as it behaves rather than corrected: the behaviour under test is
+    // the application's, not this harness's.
     assert.deepStrictEqual(
       parseCodeFiles({ lang : 'python', code : '["a"]' }),
       ['a'],
@@ -5752,10 +5636,11 @@ cases.push({
     ctx.reader.applicationRead = probe;
 
     if (report.reader.defect) {
-      // The measured state of this repository: archiver 2.1.1 via crc32-stream
-      // 2.0.0 states no crc and no uncompressed size. Not a property of one
-      // Node version - the trigger is `end(chunk)` not routing through the
-      // `write()` override - so this branch is not waiting on a runtime change.
+      // Reached when the writer stated no crc and no uncompressed size for an
+      // entry that has content. The trigger is a writer computing both inside
+      // an override of `Writable.prototype.write` while the entry arrives
+      // through `end(chunk)`, which does not route through it - not a property
+      // of one Node version, so this branch is not waiting on a runtime change.
       note('archive read surface: ' + report.reader.defect);
 
       ctx.findings.push({
@@ -5791,38 +5676,31 @@ cases.push({
     });
 
     if (probe.unreadable.length) {
-      // A FAILED CASE, not a bypassed one. The gate previously ASSERTED that
-      // the defect was present and pushed a finding that never reached the exit
-      // code, so a corrupt persisted format returned success. Inverted here:
-      // the archive the application writes must be readable by the library the
-      // application reads it with.
+      // WHAT THIS CASE DETECTS, AND WHY THE DETECTION IS A FAILURE RATHER THAN
+      // A FINDING. The archive the application writes must be readable by the
+      // ZIP library the application reads archives with. When it is not, the
+      // persisted format is broken however tidy the layout inside it is, so
+      // this branch fails the case; recording the observation without failing
+      // would let a corrupt archive format exit 0.
       //
-      // ON THE DELIVERED TREE THIS BRANCH IS DORMANT and the case passes: the
-      // writer chain moved to archiver 6.0.2 and every entry now declares a
-      // correct crc32 and length. It is retained as the regression guard for
-      // that move - the measurement below is why the move was necessary, and
-      // this branch is what fails if the writer chain is ever put back.
+      // THE MECHANISM, which is what makes the failure diagnosable. A ZIP
+      // writer that computes an entry's crc and raw size inside an override of
+      // `Writable.prototype.write` records neither when the entry is delivered
+      // through `Writable.prototype.end(chunk)`, because `end(chunk)` does not
+      // route through `write()`. Every deflated entry then states crc32=0 and
+      // uncompressed size=0 in the local header, the data descriptor AND the
+      // central directory, and `adm-zip` cannot recover such an entry through
+      // `getData()`: it returns an empty buffer where it trusts the declared
+      // size, and throws a CRC32 failure where it validates the declared crc.
       //
-      // THE MEASURED CAUSE, stated so nobody has to re-derive it.
-      // `compress-commons` 1.2.2's `_smartStream` uses `crc32-stream` 2.0.0's
-      // `DeflateCRC32Stream`, which computes the crc and the raw size inside an
-      // override of `Writable.prototype.write`. Modern Node's
-      // `Writable.prototype.end(chunk)` calls the internal `_write` helper
-      // instead of `this.write(...)`, so the override NEVER RUNS when
-      // `zip-stream` 1.2.0 delivers a buffer entry with `.end(source)`.
-      // Measured: `new DeflateCRC32Stream().end(buf)` yields digest 0 and raw
-      // size 0, while `write(buf); end()` yields the real digest and length.
-      // Every deflated entry therefore states crc32=0 and uncompressed size=0
-      // in the local header, the data descriptor AND the central directory.
-      //
-      // THE FIX WAS NOT HERE AND MUST NOT BE FAKED HERE. It belonged to the
-      // writer chain - `package.json` and `package-lock.json` for
-      // archiver 2.1.1 -> zip-stream 1.2.0 -> compress-commons 1.2.2 ->
-      // crc32-stream 2.0.0 - and it was taken there: the delivered tree
-      // resolves archiver 6.0.2 -> zip-stream 5.0.2 -> compress-commons 5.0.3
-      // -> crc32-stream 5.0.1. This case turned green by itself the moment the
-      // writer stated a valid crc, through the assertions below, which is
-      // exactly how it was meant to close.
+      // WHAT MAKES THE CASE PASS, which is a condition on the writer rather
+      // than on this tool: either the entry is appended as a stream, so the
+      // writer pipes it through `write()` and records a valid crc, or the
+      // writer records both values outside the `write()` override. The
+      // versions in play are read at runtime rather than stated here, and are
+      // reported in the artifact under `reader.version` for the reader and
+      // `writer` for the writer. The case passes once every entry declares a
+      // correct crc and length, and fails again if the writer stops doing so.
       failure = new Error(
         'the archive this repository\'s own archiver ' +
         (readPackageVersion(ctx.appRoot, 'archiver') || '?') + ' produced ' +
@@ -5860,9 +5738,9 @@ cases.push({
       throw failure;
     }
 
-    // The pass branch, reachable and MEASURED to be reachable: with the writer
-    // fixed, adm-zip reads every entry, the archive states a crc for every one
-    // of them and the diagnostic reader verified all of them.
+    // The pass branch: `adm-zip` read every entry, the archive declares a crc
+    // for each of them, and the diagnostic reader verified all of those crcs.
+    // A writer that states a valid crc and length per entry satisfies all four.
     assert.strictEqual(probe.readable, fileEntries,
       'every entry must be readable through the application\'s own getData()');
     assert.strictEqual(report.reader.crcAbsent, 0,
@@ -5879,7 +5757,7 @@ cases.push({
   pins : 'lib/util/file.js:52',
   run  : async function(ctx) {
     // Everything the cases wrote into the scratch root should be gone by now:
-    // either the application unlinked it at :52 or the case that owns it
+    // either `_fileToContainer` unlinked it or the case that owns it
     // removed it. Three entries this harness created on purpose remain - the
     // S3 store, the snapshot source directory, and the ownership marker
     // `removeScratch` requires before it will delete the tree - and all three
@@ -6123,6 +6001,42 @@ async function runCase(testCase, ctx) {
 }
 
 /**
+ * Reduces one process warning to the record the artifact carries.
+ *
+ * The message alone does not say who raised it, and "who" is the whole
+ * question: a warning from this harness's own source is a defect in this file,
+ * one from a dependency is a finding about that dependency. So the caller
+ * frames come with it, and `attributeWarning` reads them.
+ *
+ * @param {Object} warning A `process.on('warning')` argument.
+ * @returns {{name: string, code: string, message: string, origin: Array<string>}}
+ */
+function describeWarning(warning) {
+  var frames = ((warning && warning.stack) || '')
+    .split('\n')
+    .filter(function(line) { return /^\s+at /.test(line); })
+    .map(function(line) { return line.trim(); })
+    // Node's own frames are dropped, and not for brevity: a flagged
+    // deprecation is RAISED inside node - DEP0005's top two frames are
+    // `showFlaggedDeprecation` and `new Buffer`, both `node:buffer` - so
+    // keeping them would attribute every such warning to Node and hide the
+    // module that actually called the deprecated API, which is the decision
+    // `attributeWarning` reads these frames to make.
+    .filter(function(line) {
+      return !/^at node:/.test(line) && !/\(node:/.test(line);
+    });
+
+  return {
+    name    : warning && warning.name,
+    code    : warning && warning.code,
+    message : warning && warning.message,
+    // The first three caller frames are enough to attribute it, and keeping
+    // the whole stack out of the artifact keeps a diff of two runs readable.
+    origin  : frames.slice(0, 3)
+  };
+}
+
+/**
  * Collects every process warning raised while `body` runs, and judges the run
  * against the shared zero-warning policy.
  *
@@ -6137,7 +6051,8 @@ async function runCase(testCase, ctx) {
  * captures went into `findings`, which only printed, so a run that emitted a
  * deprecation still exited 0 and still read as a passing gate. They are now
  * judged by test/parity/warning-policy.js, which has no allowances, and the
- * verdict reaches the exit code.
+ * verdict reaches the exit code through the failure set `buildGate` assembles -
+ * not through a branch beside it, which was the second half of the same defect.
  *
  * Two collectors run, because one alone has a measured blind spot. The listener
  * below sees every `process.emitWarning` and attributes it to a frame; the
@@ -6160,36 +6075,10 @@ async function runCase(testCase, ctx) {
  * @param {function(): Promise<*>} body
  * @param {(string|null)} [appRoot] The tree under test, for the policy's
  *   foreign-tree rule: a run against a BASELINE worktree measures that tree
- *   rather than gating it, because only the target's config/aws.js suppresses
- *   the AWS SDK v2 notice.
+ *   rather than gating it, because only the target's `config/aws.js` suppresses
+ *   the AWS SDK's end-of-support notice.
  * @returns {Promise<{value: *, warnings: Array<Object>, gate: Object}>}
  */
-function describeWarning(warning) {
-  var frames = ((warning && warning.stack) || '')
-    .split('\n')
-    .filter(function(line) { return /^\s+at /.test(line); })
-    .map(function(line) { return line.trim(); })
-    // Node's own frames are dropped, and not for brevity: a flagged
-    // deprecation is RAISED inside node - DEP0005's top two frames are
-    // `showFlaggedDeprecation` and `new Buffer`, both `node:buffer` - so
-    // keeping them would attribute every such warning to Node and hide the
-    // module that actually called the deprecated API. Measured: attributing
-    // from the unfiltered top two frames reported 'unknown' for a warning
-    // whose real origin is compress-commons.
-    .filter(function(line) {
-      return !/^at node:/.test(line) && !/\(node:/.test(line);
-    });
-
-  return {
-    name    : warning && warning.name,
-    code    : warning && warning.code,
-    message : warning && warning.message,
-    // The first three caller frames are enough to attribute it, and keeping
-    // the whole stack out of the artifact keeps a diff of two runs readable.
-    origin  : frames.slice(0, 3)
-  };
-}
-
 async function captureWarnings(body, appRoot) {
   var warnings = [];
   var collector = warningPolicy.createCollector({
@@ -6212,7 +6101,7 @@ async function captureWarnings(body, appRoot) {
   finally {
     // Warnings already scheduled are delivered before the collector closes.
     // Node delivers an emitWarning on a later turn and a dependency can
-    // schedule one on a timer - the retained AWS SDK v2 emits its NOTE from a
+    // schedule one on a timer - the retained AWS SDK emits its NOTE from a
     // zero-delay timer - so closing synchronously here would report a clean run
     // and then let the notice print after the verdict.
     await warningPolicy.drainPendingWarnings();
@@ -6607,11 +6496,11 @@ async function execute(appRoot, scratch, env, uri, source) {
   }
 
   // WHAT IDENTIFIES THIS RESULT is the provenance block `run()` attaches, not
-  // a path: the tree under test is named by its HEAD there, and the absolute
-  // `appRoot` that used to sit here said only where that tree happened to be on
-  // one machine. The MongoDB URI is gone for the same reason plus one more - it
-  // carries a host, a port and a per-run database name, all of which are run
-  // state - and `dataStore` below records what a reader actually needs from it.
+  // a path: the tree under test is named there by its HEAD, whereas an absolute
+  // `appRoot` would say only where that tree sat on one machine. The MongoDB
+  // URI is absent for the same reason and one more - it carries a host, a port
+  // and a per-run database name, all of them run state - and `dataStore` below
+  // records what a reader actually needs from it.
   return {
     tool     : 'test/parity/storage.js',
     // The flags this run was started under, verbatim. They DECIDE what
@@ -6621,9 +6510,12 @@ async function execute(appRoot, scratch, env, uri, source) {
     // block, which the shared contract owns.
     nodeFlags: process.execArgv.slice(),
     // The keys two correct runs legitimately differ on, so a reviewer diffing
-    // two artifacts knows which differences mean nothing.
+    // two artifacts knows which differences mean nothing. This is the DIFF
+    // guide; what the `digest` covers is a narrower question and `digest.over`
+    // answers it in the artifact itself.
     volatile : [
-      'provenance.generatedAt',
+      'provenance, in full - the run\'s revisions and runtime, which is also ' +
+        'why the digest excludes it (see digest.over)',
       'dataStore.digest, when the run-local address differs',
       'cases[].durationMs',
       'cases[*].evidence.documentId, and the remoteName, url and ' +
@@ -6645,7 +6537,11 @@ async function execute(appRoot, scratch, env, uri, source) {
       admZip   : readAdmZipVersion(appRoot),
       archiver : readPackageVersion(appRoot, 'archiver')
     },
-    provenance : buildProvenance(appRoot),
+    // NO `provenance` KEY HERE, deliberately. `run` attaches the shared block
+    // from test/parity/manifest.js once the result is final, and a placeholder
+    // in its place used to be built here and then silently replaced - so the
+    // digest taken between the two certified a value the artifact never
+    // carried. The block is ADDED by `attach`, never a field it overwrites.
     reader          : ctx.reader,
     findings        : ctx.findings,
     documentsRemoved: removed,
@@ -6658,104 +6554,45 @@ async function execute(appRoot, scratch, env, uri, source) {
 }
 
 /**
- * The revision identity of a checkout, or an explicit record that it has none.
- *
- * `null` would be ambiguous between "not a git checkout" and "the command
- * failed", and a committed artifact is read long after the run, so the two are
- * distinguished in the value itself. Bounded and non-interactive because this
- * runs inside a gate: a hung `git` would hold the whole harness open.
- *
- * @param {string} root Absolute path to the checkout.
- * @returns {string} A 40-character sha, or a reason beginning 'no-git'.
- */
-function gitHead(root) {
-  var result;
-
-  try {
-    result = childProcess.spawnSync(
-      'git', ['-C', root, 'rev-parse', 'HEAD'],
-      { encoding: 'utf8', timeout: GIT_TIMEOUT_MS }
-    );
-  }
-  catch (err) {
-    return 'no-git: ' + ((err && err.message) || err);
-  }
-
-  if (result.error) {
-    return 'no-git: ' + ((result.error && result.error.message) || result.error);
-  }
-
-  if (result.status !== 0) {
-    return 'no-git: rev-parse exited ' + result.status + ' (' +
-      String(result.stderr || '').trim() + ')';
-  }
-
-  return String(result.stdout || '').trim();
-}
-
-/**
- * The identity a reader of the committed artifact needs.
- *
- * A standalone result answers "did the storage contract hold" and is worthless
- * without "of WHICH application, measured by WHICH generator" - the two
- * revisions are what make the answer re-checkable a year later, and AAP 0.9.3
- * requires provenance to be recorded alongside every artifact rather than
- * inferred from where the file happens to sit.
- *
- * `appLabel` is symbolic on purpose. The physical `appRoot` is a per-clone
- * absolute path, so committing it as the identity would make the artifact
- * describe one machine; the label says WHICH TREE was measured relative to this
- * repository, and the absolute path stays beside it as the physical fact of
- * that particular run.
- *
- * @param {string} appRoot Absolute path to the tree under test.
- * @returns {Object} The provenance block.
- */
-function buildProvenance(appRoot) {
-  return {
-    generator     : 'test/parity/storage.js',
-    generatorHead : gitHead(TOOL_ROOT),
-    appLabel      : appRoot === TOOL_ROOT
-      ? 'the repository this generator lives in'
-      : path.relative(TOOL_ROOT, appRoot) || appRoot,
-    appHead       : gitHead(appRoot),
-    node          : process.version,
-    platform      : process.platform + '-' + process.arch,
-    // Named here rather than left to a reader to infer, because a comparison
-    // that silently excluded a field would be the same defect as a gate that
-    // silently passed.
-    volatile      : VOLATILE_FIELDS.slice()
-  };
-}
-
-/**
- * A digest over everything about the result that a re-run must reproduce.
+ * A digest over everything about the result that a reader must be able to
+ * recompute from the delivered bytes.
  *
  * Two runs on the same tree differ in the fields `VOLATILE_FIELDS` names - a
- * per-clone absolute path, an ephemeral database address, wall-clock durations -
- * and in nothing else. So the digest is taken over the result with exactly
- * those removed, which gives a committed artifact one number a reviewer can
- * recompute instead of a diff they have to read past. Binding it here is also
- * what ties the verdict to the provenance above: a digest that matches with a
- * different `appHead` would be the interesting case, and it is visible.
+ * per-clone absolute path, an ephemeral database address, wall-clock durations.
+ * Those come out, and so does `provenance`, for the reason
+ * `DIGEST_EXCLUDED_FIELDS` states: the block is written after this value exists
+ * and hash-links the payload in the other direction. What is left is the
+ * storage verdict itself, which gives a committed artifact one number a
+ * reviewer can recompute instead of a diff they have to read past.
  *
- * @param {Object} result The result, before the digest is attached to it.
+ * THE RECOMPUTATION IS THE POINT, so it is stated as a recipe a reader can
+ * follow without this file: parse the artifact, delete the keys `over` names
+ * wherever they appear at any depth, `JSON.stringify` what remains in the
+ * artifact's own key order, and sha256 it. A number that cannot be reproduced
+ * that way is not evidence, which is exactly what the previous version
+ * delivered - it hashed a payload containing a provenance placeholder that
+ * `provenance.attach` then replaced.
+ *
+ * @param {Object} result The result, final except for the provenance block.
  * @returns {{algorithm: string, value: string, over: string}}
  */
 function digestResult(result) {
-  var projection = stripVolatile(result);
+  var projection = stripForDigest(result);
 
   return {
     algorithm : 'sha256',
     value     : crypto.createHash('sha256')
       .update(JSON.stringify(projection))
       .digest('hex'),
-    over      : 'the result with ' + VOLATILE_FIELDS.join(', ') + ' removed'
+    over      : 'the result with ' + DIGEST_EXCLUDED_FIELDS.join(', ') +
+                ' removed at any depth, serialized with JSON.stringify in the ' +
+                'artifact\'s own key order'
   };
 }
 
 /**
- * Deep copy of `value` with every `VOLATILE_FIELDS` key removed, at any depth.
+ * Deep copy of `value` with every `DIGEST_EXCLUDED_FIELDS` key removed, at any
+ * depth.
  *
  * By key name rather than by path, so a duration nested inside a case record is
  * removed by the same rule as one at the top - there is no list of paths to keep
@@ -6764,11 +6601,11 @@ function digestResult(result) {
  * @param {*} value
  * @returns {*}
  */
-function stripVolatile(value) {
+function stripForDigest(value) {
   var copy;
 
   if (Array.isArray(value)) {
-    return value.map(stripVolatile);
+    return value.map(stripForDigest);
   }
 
   if (!value || typeof value !== 'object') {
@@ -6778,11 +6615,11 @@ function stripVolatile(value) {
   copy = {};
 
   Object.keys(value).forEach(function(key) {
-    if (VOLATILE_FIELDS.indexOf(key) !== -1) {
+    if (DIGEST_EXCLUDED_FIELDS.indexOf(key) !== -1) {
       return;
     }
 
-    copy[key] = stripVolatile(value[key]);
+    copy[key] = stripForDigest(value[key]);
   });
 
   return copy;
@@ -6829,18 +6666,17 @@ function readPackageVersion(appRoot, name) {
 // it, and why the address is reduced to the descriptor below.
 //
 // THE SAME RULE REACHES THE ARTIFACT AROUND THE BLOCK, because a guard on one
-// key is no use when the file it sits in names the machine anyway. Two things
-// here are harness-authored rather than measured, and both used to carry host
-// state: the store's address, now the configuration digest below, and a
+// key is no use when the file it sits in names the machine anyway. Two values
+// here are harness-authored rather than measured, and either could carry host
+// state: the store's address, reduced to the configuration digest below, and a
 // captured warning's ORIGIN FRAMES, which are stack lines quoting the absolute
 // file that raised the warning and which are quoted again into the finding
-// built from them. Both go through `portableReason`, which keeps every word
-// and replaces each host path with the label `provenance.pathLabel` gives it -
-// so a frame reading `at Object.<anonymous> (<abs>/node_modules/compress-
-// commons/lib/archivers/zip/constants.js:11:10)` is recorded as `at
-// Object.<anonymous> (tool:node_modules/compress-commons/lib/archivers/zip/
-// constants.js:11:10)`, or `analysed:` in place of `tool:` when `--app` names
-// another tree: the same attribution, reproducible in any clone.
+// built from them. Both go through `portableReason`, which keeps every word and
+// replaces each host path with the label `provenance.pathLabel` gives it - so a
+// frame of the form `at fn (<abs>/node_modules/<pkg>/<file>:<line>:<col>)` is
+// recorded as `at fn (tool:node_modules/<pkg>/<file>:<line>:<col>)`, or with
+// `analysed:` in place of `tool:` when `--app` names another tree: the same
+// attribution, reproducible in any clone.
 //
 // What is left verbatim is what the CASES measured - a digest, a bucket name,
 // an S3 key, an assertion's own failure text about expected bytes - because
@@ -6851,8 +6687,9 @@ function readPackageVersion(appRoot, name) {
  *
  * The contract's guard rejects a value CONTAINING an absolute path or an ISO
  * instant, not merely one that is nothing else, and a message is where such a
- * value hides: a captured warning's origin frame is `at fn (/abs/path.js:1:2)`
- * and a filesystem error is `ENOENT ... open '/abs/path'`.
+ * value hides: a captured warning's origin frame has the form
+ * `at fn (<file>:<line>:<col>)` with `<file>` absolute, and a filesystem error
+ * is `ENOENT ... open '<abs>'`.
  * `provenance.portableText` replaces each path with the label `pathLabel`
  * would give it and each instant with a marker, keeping the sentence that says
  * what happened, and it is used rather than a local matcher so that this file,
@@ -6958,18 +6795,15 @@ function parseStoreUri(value) {
  * and a digest of the store's CONFIGURATION, taken through the shared contract
  * over the parsed components above.
  *
- * THAT DIGEST WAS `provenance.digest(String(uri))` AND THE CHANGE IS NOT
- * COSMETIC. A raw digest of the connection string was wrong twice over. It
- * changed on every run, because the ephemeral port and the generated database
- * name are inside the bytes being hashed - so the field identified the RUN
- * while claiming to identify the store, and an earlier version of this comment
- * described that drift as a feature ("two artifacts from one lifecycle produce
- * the same value"). That claim is withdrawn: this digest deliberately does NOT
- * join two artifacts of one lifecycle, because joining them was only ever
- * possible by hashing the address, and an artifact must not carry one. And a
- * connection string with credentials in it - `scheme://user:secret@host` -
- * became an unsalted sha256 of those credentials inside a file, which is an
- * offline oracle for any value cheap enough to enumerate.
+ * WHY NOT A DIGEST OF THE CONNECTION STRING, which is the obvious shortcut. It
+ * is wrong twice over. It changes on every run, because the ephemeral port and
+ * the generated database name are inside the bytes being hashed, so the field
+ * would identify the RUN while claiming to identify the store; this digest
+ * deliberately does NOT join two artifacts of one lifecycle, because the only
+ * way to join them is to hash the address and an artifact must not carry one.
+ * And a connection string with credentials in it - `scheme://user:secret@host` -
+ * would become an unsalted sha256 of those credentials inside a file, which is
+ * an offline oracle for any value cheap enough to enumerate.
  *
  * `provenance.configurationDigest` is the safe route and records what it did in
  * its own `canonicalization` string: secret-labelled leaves replaced, address-
@@ -6998,18 +6832,17 @@ function describeDataStore(uri) {
  * The role this run's evidence may claim, decided by the tree it measured.
  *
  * The role follows the TREE rather than the mode, exactly as the sibling
- * generators decide it: these cases are run against whichever worktree `--app`
- * names, so a run against a worktree at AAP 0.10.3's base commit is baseline
- * evidence and a run against the migrated tree is target evidence.
+ * generators decide it: these cases run against whichever worktree `--app`
+ * names, so a run against a worktree at the base commit is baseline evidence
+ * and a run against the migrated tree is target evidence.
  *
  * THE ONE CASE THAT NEEDS DECIDING is a DIRTY worktree at the base commit.
- * `tree.isBaselineCommit` alone used to be enough to stamp `baseline` on the
- * block, and it is not: the base commit plus uncommitted edits is not the base
- * commit's content, so what such a run measures is not retrievable from this
- * repository while the block it produces reads exactly like a clean baseline
- * capture. The decision is delegated to `provenance.assertBaseline` rather
- * than re-implemented here, so this harness and every sibling refuse the same
- * thing for the same reason.
+ * `tree.isBaselineCommit` is not sufficient on its own: the base commit plus
+ * uncommitted edits is not the base commit's content, so what such a run
+ * measures is not retrievable from this repository while the block it produces
+ * reads exactly like a clean baseline capture. The decision is delegated to
+ * `provenance.assertBaseline` rather than re-implemented here, so this harness
+ * and every sibling refuse the same thing for the same reason.
  *
  * It is a DOWNGRADE, not a crash, and that is deliberate for this file: the
  * storage cases are worth running against any tree, and their result is worth
@@ -7130,6 +6963,11 @@ async function run(options) {
   var result;
   var stale;
   var late;
+  // Declared with the rest, because this file is not in strict mode: assigning
+  // it without a declaration - which is what the closed ledger used to do -
+  // created a `closed` property on the global object that outlived the run and
+  // was visible to every other module in the process.
+  var closed;
 
   assertAppRoot(appRoot);
 
@@ -7213,7 +7051,8 @@ async function run(options) {
 
       // Close the adapters before finalizing: wait a bounded window for a
       // delivery still in flight, rather than reading the ledger at the instant
-      // the last case returned. See the note on quiescence above.
+      // the last case returned, which would read it before an already-queued
+      // callback had fired.
       late = await quiesceDuplicateDeliveries();
 
       // A callback that fired again after the last case finished. It belongs to
@@ -7237,7 +7076,7 @@ async function run(options) {
       }
 
       // Left over from a previous programmatic call. Reported rather than
-      // dropped, and named so nobody reads it as this run's defect.
+      // dropped, and named as such so it is not read as this run's defect.
       if (stale && stale.length) {
         result.cases.push({
           name       : 'duplicate-callback-delivery-before-run',
@@ -7267,8 +7106,8 @@ async function run(options) {
       // repository's own paths in them, so it has to see the paths as Node wrote
       // them. Only the recorded copy is made portable, and only after that
       // decision - the frames still name the module that raised the warning,
-      // which is the whole point of keeping them, but as a label rather than as
-      // a path on the machine this ran on.
+      // which is what they are kept for, but as a label rather than as a path
+      // on the machine this ran on.
       result.warnings = captured.warnings.map(function(warning) {
         return {
           name        : warning.name,
@@ -7297,9 +7136,10 @@ async function run(options) {
       };
       // A warning raised by this harness's own source is a defect in this file
       // - the brief is explicit that one would be a real finding, having
-      // measured that lib/util/file.js:52 and :108 emit nothing on Node 22. A
-      // warning from a dependency is a finding about that dependency, and
-      // belongs in the inventory rather than in a stack trace nobody re-reads.
+      // measured that `lib/util/file.js`'s callback `fs.unlink` and `fs.exists`
+      // emit nothing on Node 22. A warning from a dependency is a finding about
+      // that dependency, and belongs in the inventory rather than in a stack
+      // trace nobody re-reads.
       //
       // `fromWarning` marks these so the verdict counts a warning ONCE: it is
       // already a `warning` failure, and counting the finding it produces as a
@@ -7344,17 +7184,23 @@ async function run(options) {
     result.settlements = closed.settlements;
     result.gate        = buildGate(result, closed);
 
-    // Last, so it covers the verdict as well as the cases: a result whose
+    // After the verdict, so it covers it as well as the cases: a result whose
     // digest matches but whose `gate` differs would be a contradiction, and
-    // this is what makes that checkable. `digest` is itself on VOLATILE_FIELDS,
-    // so the value never has to be computed over a copy of itself.
+    // this is what makes that checkable. `digest` is itself on
+    // `DIGEST_EXCLUDED_FIELDS`, so the value never has to be computed over a
+    // copy of itself - and `provenance` is on that list too, which is what
+    // makes this number reproducible from the committed bytes even though the
+    // block below is written afterwards.
     result.digest = digestResult(result);
 
     // LAST, and that ordering is the whole point: `attach` hashes the result
-    // WITHOUT its provenance, so every field a consumer will read - the cases,
-    // the findings and the warnings appended just above - has to be final
-    // before the digest is taken. Attach earlier and the block would certify a
-    // payload the artifact no longer contains.
+    // WITHOUT its provenance and WITH the digest above, so every field a
+    // consumer will read - the cases, the findings, the warnings and the
+    // verdict - has to be final before it runs. Attach earlier and the block
+    // would certify a payload the artifact no longer contains. The two digests
+    // meet rather than overlap: `digest` certifies the result without the
+    // block, `payloadDigest` certifies the result WITH the digest, and each is
+    // recomputable from the delivered file on its own.
     provenance.attach(result, buildProvenanceRecord({
       appRoot: appRoot,
       out    : opts.out,
@@ -7396,19 +7242,18 @@ var artifactSequence = 0;
  *
  * With `--out` the artifact goes to that file and stdout stays empty; without
  * it the artifact IS stdout. Either way nothing human-readable reaches stdout,
- * because AAP 0.9.1 requires an artifact stream that application side effects
- * cannot contaminate - and loading the controllers to reach this point prints
- * an AWS SDK maintenance notice and a queue line that would otherwise be mixed
- * into it.
+ * because the artifact stream must be one application side effects cannot
+ * contaminate - and loading the controllers to reach this point prints an AWS
+ * SDK maintenance notice and a queue line that would otherwise be mixed into
+ * it.
  *
  * THE PROVENANCE goes out twice, and neither copy is redundant. It is EMBEDDED
  * in the result, so a delivered artifact says which application tree and which
- * generator produced it without a companion file that may not exist - the
- * defect that left one sibling artifact declaring a mandatory sidecar that was
- * never written. It is ALSO written to `<out>.provenance.json` from the same
- * record, with a digest of the artifact's exact bytes added, for a run that
- * wants the record outside bytes it intends to compare. The sidecar is a run
- * output, not a delivery artifact.
+ * generator produced it without depending on a companion file that may not
+ * exist. It is ALSO written to `<out>.provenance.json` from the same record,
+ * with a digest of the artifact's exact bytes added, for a run that wants the
+ * record outside the bytes it intends to compare. The sidecar is a run output,
+ * not a delivery artifact.
  *
  * @param {Object} result
  * @param {(string|null)} out
@@ -7586,10 +7431,13 @@ async function main(argv) {
     });
   }
 
-  // The zero-warning gate, reported before the case tally and reaching the exit
-  // code. Reported separately from the cases so nobody reads a warning failure
-  // as a storage-contract failure: they are different findings with different
-  // owners, and the message says which.
+  // The zero-warning gate, named before the case tally. These lines are
+  // DIAGNOSTICS and not the authority: the verdict itself was folded into the
+  // failure set by `buildGate`, so each reason below also appears as a
+  // `GATE FAILURE [warning-gate]` line with its owner. They are printed
+  // separately anyway - as test/parity/joi-matrix.js does - so nobody reads a
+  // warning failure as a storage-contract failure: they are different findings
+  // with different owners, and the message says which.
   if (result.warningGate && !result.warningGate.ok) {
     result.warningGate.failures.forEach(function(failure) {
       note('WARNING GATE: ' + failure);
@@ -7615,10 +7463,17 @@ async function main(argv) {
   // ---------------------------------------------------------------------
   // THE EXIT PREDICATE. One place, one input: the failure set `buildGate`
   // assembled. `result.failed` is the case tally and deliberately not consulted
-  // here - a run with no failed case can still have captured a warning,
-  // recorded a finding, observed a callback delivering twice or failed to tear
-  // its own fixtures down, and every one of those is a reason this tool may not
-  // report success.
+  // here - a run with no failed case can still have captured a warning, failed
+  // the shared zero-warning policy, recorded a finding, observed a callback
+  // delivering twice or failed to tear its own fixtures down, and every one of
+  // those is a reason this tool may not report success.
+  //
+  // `result.warningGate` is NOT consulted here either, and that is the point
+  // rather than an omission: its verdict is inside the failure set, folded in
+  // by `buildGate` before the artifact was written a few lines above. Reading
+  // it again here is how the previous version came to write `"passed": true`
+  // into the artifact and then exit 1 - two answers to one question, of which
+  // only the one nobody parses was correct.
   // ---------------------------------------------------------------------
   if (!result.gate.passed) {
     result.gate.failures.forEach(function(failure) {
@@ -7643,16 +7498,9 @@ async function main(argv) {
     return EXIT_ERROR;
   }
 
-  if (result.warningGate && !result.warningGate.ok) {
-    note('every storage case passed, and the run FAILS the zero-warning gate ' +
-      '(AAP 0.9.3, no allowances). See the WARNING GATE lines above: the ' +
-      'storage contract is intact and the run emitted a notice it is not ' +
-      'permitted to emit.');
-    return EXIT_ERROR;
-  }
-
-  note('gate PASSED: no failed case, no captured warning, no recorded ' +
-    'finding, no double delivery and no failed teardown');
+  note('gate PASSED: no failed case, no captured warning, the shared ' +
+    'zero-warning policy satisfied, no recorded finding, no double delivery ' +
+    'and no failed teardown');
 
   return EXIT_OK;
 }
@@ -7759,16 +7607,15 @@ module.exports = {
   captureWarnings : captureWarnings,
   describeWarning : describeWarning,
   quiesce         : quiesce,
-  parseArguments : parseArguments,
 };
 
 if (require.main === module) {
   // Read at the last possible moment, which is the only moment that covers an
   // arbitrarily late duplicate delivery: `main` has returned, the artifact is
   // written, and the process is about to leave. Nothing here can be waited for
-  // in advance - a callback firing after the run cannot be predicted - but it
-  // can be prevented from exiting 0, which is what made the earlier version
-  // report success while stderr said the run would fail.
+  // in advance - a callback firing after the run cannot be predicted - but the
+  // process can be prevented from exiting 0, so it cannot report success while
+  // stderr says the run would fail.
   process.on('exit', function() {
     if (lateDeliveries.length && process.exitCode === EXIT_OK) {
       process.exitCode = EXIT_ERROR;

@@ -1,102 +1,70 @@
 #!/usr/bin/env node
 'use strict';
 
-// The MongoDB lifecycle wrapper - what makes `npm test` able to exit 0 at all.
+// The MongoDB lifecycle wrapper that lets `npm test` provision its own database.
 //
-// AAP §0.9.2: "Nothing in the repository starts MongoDB today; the suite simply
-// connects to localhost:27017 [config/test.yaml:db.mongo]." So the suite cannot
-// pass on a clean host however well the migration goes, which is why R-b ("the
-// application must genuinely run on Node 22, in full") puts this file in scope.
-// It starts an isolated in-memory MongoDB, publishes its address to a CHILD
-// process through NODE_CONFIG, runs the command it was given, and stops the
-// server on every exit path - propagating the child's exit code verbatim.
+// Starts an isolated in-memory MongoDB, publishes its address to a CHILD process
+// through NODE_CONFIG, runs the command it was given, and stops the server on
+// every exit path. Nothing in the repository otherwise starts MongoDB, so the
+// suite has nothing to connect to without this; the root package.json declares
+// `"test": "node test/parity/mongo.js -- mocha"`, so `npm test` is unchanged.
 //
-// The root package.json declares `"test": "node test/parity/mongo.js -- mocha"`,
-// so the user's stated command (`git clean -xfd && npm ci && npm test`) is
-// unchanged and self-provisions its database.
-//
-// ===========================================================================
-// RULES
-// ===========================================================================
-// `review_rules` returns exactly "No user rules provided." for this project,
-// which AAP §0.7 and §0.10.1 independently record. No rules are invented here
-// and their absence is not read as licence to lower the bar: enterprise
-// practice governs. Two commitments of test/parity/ land squarely on this file:
-//
-//   Every parity claim is backed by an inspectable artifact. This wrapper is
-//   never the reason a claim looks true - it MUST NOT mask a failure. The
-//   child's exit code is propagated verbatim, a signal death exits non-zero,
-//   and a teardown failure RAISES a zero exit rather than being swallowed. It
-//   never lowers a non-zero code, because that would let a failing suite
-//   report success - the single worst thing this file could do.
-//
-//   The baseline is captured before anything changes. One tool drives BOTH
-//   worktrees, so this file may not depend on anything that exists only on the
-//   target tree: it requires no application module, and the tree the CHILD
-//   runs in is selected by `--app`. Only `mongodb-memory-server` is resolved
-//   from this file's own tree, which is correct - the harness is the target's,
-//   the application under test is whichever tree `--app` names.
-//
-// The request's own RULES block is binding and is not that document:
-//   R-a  The diff must read as migration work only, so this file adds no
-//        capability beyond provisioning: it seeds nothing, drops nothing and
-//        asserts nothing. test/parity/seed.js owns fixtures and
-//        test/helpers/db.js `reset` stays an empty-database operation.
-//   R-d  Behaviour improvements are prohibited. This wrapper reports and
-//        propagates; it never repairs, retries or smooths over.
-//
-// ===========================================================================
-// ORDERING - the one detail that decides whether this works
-// ===========================================================================
-// The npm `config` package (0.4.37 here) resolves and freezes its values on
-// first require, and config/db.js calls `connect()` at MODULE SCOPE (:35) using
-// `config.db.mongo.{host,port,database}` (:14-18). The address must therefore
-// be in the environment BEFORE the first application require - not after.
-//
-// That is why this file requires NO application module: not `config`, not
-// config/db, not app.js, nothing under lib/. config/app.config.js:6 requires
-// ./config/db, whose module-scope connect() would dial a database that does not
-// exist yet and terminate non-zero. There is nothing to mutate in this process
-// and there must not be; the server is started FIRST and the address reaches
-// the application through the child's environment.
-//
-// ===========================================================================
 // INVOCATION
-// ===========================================================================
 //   node test/parity/mongo.js -- mocha
 //   node test/parity/mongo.js --overlay -- node test/parity/server.js
 //   node test/parity/mongo.js --app /path/to/baseline-2f8712a -- mocha
 //
 // Everything after the FIRST bare `--` is the command and its arguments. The
-// separator is a fixed interface, not a suggestion: the `test` script depends
-// on it. Every human-readable byte this file produces goes to STDERR, because
-// `npm test`'s stdout is the Mocha report and test/parity/manifest.js and the
-// route-table gate capture stdout as an artifact.
+// separator is a fixed interface, not a convenience: the `test` script depends
+// on it, so a command supplied without one is a usage error rather than
+// something to guess at. Every human-readable byte goes to STDERR, because
+// stdout carries the Mocha report and the sibling gates capture stdout as their
+// artifact.
 //
-// As a module it starts nothing - `start`, `stop`, `uri` and `withMongo` are
-// exported for test/parity/{storage,worker,server,seed}.js so none of them
-// re-implements any of this, and the CLI runs only under direct execution.
+// As a module it starts nothing: `start`, `stop`, `uri` and `withMongo` are
+// exported for the sibling harnesses so none of them re-implements any of this,
+// and the CLI runs only under direct execution.
 //
-// ===========================================================================
+// ORDERING - the detail that decides whether this works
+// The npm `config` package resolves and freezes its values on first require,
+// and `config/db.js` calls `connect()` at module scope from
+// `config.db.mongo.{host,port,database}`. The address must therefore be in the
+// environment BEFORE the first application require. That is why this file
+// requires NO application module - not `config`, not `config/db`, not `app.js`,
+// nothing under lib/: `config/app.config.js` requires `config/db`, whose
+// module-scope connect would dial a database that does not exist yet and
+// terminate non-zero. The server is started FIRST and the address reaches the
+// application through the child's environment.
+//
 // THE BINARY - no fallback, by decision
-// ===========================================================================
-// AAP §0.9.2 selects `mongodb-memory-server` because it is the only option that
-// works under `git clean -xfd && npm ci && npm test` on a host with NO Docker.
-// There is deliberately no fallback to `docker` and none to a system `mongod`:
-// a silent fallback would make the gate untrustworthy, so a clear failure is
-// the correct behaviour and an undeclared package is a hard error naming where
-// the declaration belongs.
+// `mongodb-memory-server` is the only server this file will use: it is the one
+// option that works under `git clean -xfd && npm ci && npm test` on a host with
+// no Docker. There is deliberately no fallback to `docker` and none to a system
+// `mongod`, because a silent fallback would make the gate untrustworthy, and an
+// undeclared package is a hard error naming where the declaration belongs.
 //
 // MONGOMS_* variables are HONOURED, never overridden - only `instance.dbName`
 // is passed to the package, so the binary, its version, the download directory
 // and the bind address all remain the operator's to choose. That matters on a
-// cold binary cache, where the package downloads mongod and prints progress
-// through stdout (mongodb-memory-server-core/lib/util/MongoBinaryDownload.js:
-// 442-460): a host that wants neither the network nor that output points it at
-// a binary it already has, with `MONGOMS_SYSTEM_BINARY=/usr/local/bin/mongod`.
-// Whatever notice the package emits about that choice - a version mismatch
-// against the version it would have fetched, for instance - is the package's
-// own and is deliberately left visible rather than filtered.
+// cold binary cache, where the package downloads mongod and prints progress to
+// stdout: a host that wants neither the network nor that output points it at a
+// binary it already has, with `MONGOMS_SYSTEM_BINARY=/usr/local/bin/mongod`.
+// Whatever notice the package emits about that choice is the package's own and
+// is deliberately left visible rather than filtered.
+//
+// EXIT-CODE DISCIPLINE
+// The child's exit code is propagated verbatim, a signal death exits non-zero,
+// and a teardown failure RAISES a zero exit rather than being swallowed. A
+// non-zero code is never lowered at any point, because that would let a failing
+// suite report success.
+//
+// ONE TOOL, TWO WORKTREES
+// The same tool drives a baseline install and the target install, so this file
+// depends on nothing that exists only in one of them: the tree the CHILD runs
+// in is selected by `--app`, and only `mongodb-memory-server` is resolved from
+// this file's own tree. It provisions and nothing else - it seeds nothing,
+// drops nothing and asserts nothing; `test/parity/seed.js` owns fixtures and
+// `test/helpers/db.js`'s `reset` stays an empty-database operation.
 
 var childProcess = require('child_process');
 var crypto       = require('crypto');
@@ -163,25 +131,21 @@ var TOOL_ROOT = path.resolve(__dirname, '..', '..');
 // the child runs in moves.
 var DEFAULT_OVERLAY = path.join(__dirname, 'server-overlay.json');
 
-// The two `config` controls that together stop the npm `config` package
-// writing config/runtime.json (a path .gitignore lists) into the tree a parity
-// run is reading. BOTH are required, which was measured rather than assumed
-// after an earlier version of this file claimed persistence alone sufficed:
-// config 0.4.37 writes '{}' into RUNTIME_JSON_FILENAME whenever that file is
-// missing or empty, to give fs.watch something to watch, and skips the write
-// only when PERSIST_ON_CHANGE is 'N' AND DISABLE_FILE_WATCH is 'Y'
-// [node_modules/config/lib/config.js:867-880]. Measured on this tree: with
-// persistence alone, `node test/parity/joi-matrix.js --schema-only` created
-// config/runtime.json inside the worktree it was analysing - invisible to
-// `git status` because .gitignore covers it.
+// The two `config` controls that together stop the npm `config` package writing
+// config/runtime.json (a path .gitignore lists) into the tree a parity run is
+// reading. BOTH are required, and persistence alone is not enough: the package
+// creates that file with '{}' whenever it is missing or empty, to give its file
+// watch something to watch, and skips the write only when persistence is
+// disabled AND the file watch is disabled. With persistence alone, a tool that
+// merely analyses a worktree leaves a runtime.json inside it - invisible to
+// `git status`, because .gitignore covers it.
 //
 // Disabling the watch changes no application behaviour here: nothing in the
 // bootstrap, in lib/ or in config/ subscribes with `config.watch(...)`, so
-// nothing consumes the notifications it suppresses, and R-d is not engaged as a
-// result - no observable behaviour changes. In config 0.4.37 the
-// flag reaches exactly two places - the runtime.json creation above and the
-// early return in watchForConfigFileChanges [config/lib/config.js:470] - and no
-// configuration VALUE is affected.
+// nothing consumes the notifications it suppresses and no observable behaviour
+// changes. The flag reaches exactly two places - the runtime.json creation above
+// and the point where the `config` package returns early from its file-watch
+// when the environment disables it - and no configuration VALUE is affected.
 var PERSIST_ON_CHANGE   = 'N';
 var DISABLE_FILE_WATCH  = 'Y';
 
@@ -190,11 +154,11 @@ var DISABLE_FILE_WATCH  = 'Y';
 // `config` package may create. Redirecting is the third control and it is not
 // redundant: it means that even a `config` version that ignored the two flags
 // above, or an inherited path pointing into somebody else's tree, cannot put a
-// file inside the tree under test. An inherited value is never trusted - a
-// stale runtime.json is layered OVER every other configuration source
-// [config/lib/config.js:780], so reading one from a previous run would feed
-// this run whatever that run persisted (measured: a redirected file containing
-// {"a":999} overrode config/default.yaml's a: 1).
+// file inside the tree under test. An inherited value is never trusted, because
+// the `config` package persists a changed configuration to config/runtime.json
+// unless NODE_CONFIG_PERSIST_ON_CHANGE is set and layers that file OVER every
+// other configuration source - so reading one from a previous run would feed
+// this run whatever that run persisted, overriding config/default.yaml.
 var RUNTIME_DIR_PREFIX  = 'parity-config-';
 var RUNTIME_JSON_NAME   = 'runtime.json';
 
@@ -281,7 +245,7 @@ var USAGE = [
 // One server per process. The parity harnesses are single-purpose scripts, and
 // a second concurrent instance inside one process would be a caller mistake
 // rather than a case to support - `start` returns the running instance instead
-// of quietly starting a second mongod nobody would ever stop.
+// of quietly starting a second mongod that nothing would then stop.
 var state = {
   server         : null,   // MongoMemoryServer instance, once started.
   info           : null,   // The published address, as returned by start().
@@ -289,8 +253,8 @@ var state = {
   tmpDir         : null,   // Set only when the PACKAGE created the directory.
   owned          : [],     // The ChildProcess objects this file started,
                            // recorded at start because server.instanceInfo
-                           // becomes undefined once stop() has run - measured -
-                           // so neither the escalation in stopInstance nor the
+                           // becomes undefined once stop() has run, so
+                           // neither the escalation in stopInstance nor the
                            // synchronous sweep can read them off the instance
                            // afterwards. The objects, not just the pids: Node
                            // records the exit on the object it spawned, and a
@@ -381,7 +345,7 @@ function isPlainObject(value) {
 /**
  * Deep-merges `overlay` over `base`, returning a new plain object.
  *
- * DEEP, not `Object.assign`. The reason is concrete and measured:
+ * DEEP, not `Object.assign`. The reason is concrete:
  * test/parity/server-overlay.json declares both `db.mongo.database` and
  * `db.redis.enabled`, and this file must replace the first while preserving the
  * second. A shallow merge of `db` would discard `db.redis.enabled`, the in-memory
@@ -429,18 +393,15 @@ function deepMerge(base, overlay) {
  * belongs in rather than silently skipping the database. An undeclared package
  * is a hard error even when node_modules happens to contain it, because
  * `npm ci` would not install it on the next clean host and the gate would then
- * be unreproducible - which is the whole point of the exact pin.
+ * be unreproducible, which is exactly what the exact pin exists to prevent.
  *
- * A RANGE IS A HARD ERROR, not a warning. An earlier version of this function
- * tested only that the specifier began with a digit and then proceeded, which
- * accepted `>=11`, `11.x`, `~11.2.0` and `11.2.0 || 12.0.0` alike - so the
- * reproducibility the pin exists to provide was reported as missing and then
- * ignored. Two hosts resolving different servers is precisely the failure the
- * pin prevents, and a gate that announces its own unreproducibility while
- * continuing is not a gate. What is accepted is one VALID exact semantic
- * version - the complete SemVer 2.0.0 grammar, so a malformed string such as
- * `01.2.3` or `1.2.3-foo..bar` is rejected too rather than being reported as a
- * pin npm could resolve.
+ * A RANGE IS A HARD ERROR, not a warning: `>=11`, `11.x`, `~11.2.0` and
+ * `11.2.0 || 12.0.0` are all rejected. Two hosts resolving different servers is
+ * precisely the failure the pin prevents, and a gate that announces its own
+ * unreproducibility while continuing is not a gate. What is accepted is one
+ * VALID exact semantic version - the complete SemVer 2.0.0 grammar, so a
+ * malformed string such as `01.2.3` or `1.2.3-foo..bar` is rejected too rather
+ * than being reported as a pin npm could resolve.
  *
  * A package.json this file cannot read is reported and proceeds, which is a
  * different case: the require below remains the authoritative gate, and a
@@ -644,8 +605,8 @@ function parseInheritedNodeConfig(inherited) {
  * A missing or malformed overlay is a hard failure naming the path. The overlay
  * carries `db.redis.enabled: false`, `app.start: true`, the fixed non-production
  * session secret and the `aws.buckets.exports` entry committed configuration
- * lacks (AAP §0.9.3, §0.6.7); a run that continued without it would be a
- * different run wearing the same name.
+ * lacks; a run that continued without it would be a different run wearing the
+ * same name.
  *
  * @param {string} overlayPath Absolute or process-relative.
  * @returns {Object}
@@ -676,19 +637,19 @@ function readOverlay(overlayPath) {
 /**
  * Builds the runtime configuration layer - the address, and nothing else.
  *
- * `db.mongo.{host,port,database}` is what config/db.js:14-18 interpolates, so
- * publishing those three is what points the application at this server.
+ * `db.mongo.{host,port,database}` is what `config/db.js`'s `connect` builds its
+ * connection string from, so publishing those three is what points the
+ * application at this server.
  *
  * Four sibling keys are pinned to null with them, and the reason is that
- * config/db.js reads them too. `mongo.user`/`mongo.pass` produce a credential
- * prefix when both are truthy (:7-8) and the in-memory server runs without
+ * `connect` reads them too. `mongo.user`/`mongo.pass` produce a credential
+ * prefix when both are truthy, and the in-memory server runs without
  * authentication, so an inherited credential would break every connection.
  * `mongoread.host` appends a SECOND host to the connection string when it is
- * truthy (:20-30), and there is no second node. Committed configuration leaves
- * all four empty - measured - so this layer normally changes nothing; it exists
- * so that the published address is authoritative even under an inherited
- * NODE_CONFIG or a config/local.yaml, which is precisely the claim the
- * connectivity gate makes.
+ * truthy, and there is no second node. Committed configuration leaves all four
+ * empty, so this layer normally changes nothing; it exists so that the published
+ * address is authoritative even under an inherited NODE_CONFIG or a
+ * config/local.yaml, which is precisely the claim the connectivity gate makes.
  *
  * @param {{host: string, port: number, database: string}} address
  * @returns {Object} The top layer of NODE_CONFIG.
@@ -780,12 +741,10 @@ function privateRuntimeJsonPath() {
  *
  * Every parity tool sets these, in its own process before its first `config`
  * require and in the environment of every child it spawns, and they all get
- * them from here - which is the point. They previously existed as a per-tool
- * copy of a rule that was half right, so `test/parity/server.js` and
- * `test/parity/worker.js` redirected the runtime path while
- * `test/parity/{mongo,manifest,storage,joi-matrix}.js` and every capture and
- * replay child set persistence alone and wrote runtime.json into the tree they
- * were reading.
+ * them from here. One implementation is what keeps the rule whole: redirecting
+ * the runtime path without disabling the file watch, or disabling persistence
+ * alone, each leave one of the three ways a runtime.json reaches the tree under
+ * test open.
  *
  * A fourth variable travels with them, `PARITY_CONFIG_RUNTIME_OWNER`, and it is
  * not decoration. A child cannot tell a runtime path its launcher allocated for
@@ -959,8 +918,8 @@ function isolateRuntimeConfig(options) {
  *
  * Synchronous by necessity - it runs from an `exit` listener - and silent about
  * a failure to remove: the directory is a temporary artifact of this process
- * and a warning about it during exit would be noise inside the stream AAP
- * §0.9.3's zero-warning gate inspects. Nothing under a worktree is touched.
+ * and a warning about it during exit would be noise inside the stream the
+ * zero-warning gate inspects. Nothing under a worktree is touched.
  *
  * @returns {undefined}
  */
@@ -973,7 +932,9 @@ function removePrivateRuntimeConfig() {
     fs.rmSync(state.runtimeConfig.dir, { recursive: true, force: true });
   }
   catch (err) {
-    // Deliberately silent: see the note above.
+    // Deliberately silent: the directory is this process's own temporary
+    // artifact, and a warning during exit would land in the stream the
+    // zero-warning gate inspects.
   }
 }
 
@@ -999,10 +960,9 @@ function removePrivateRuntimeConfig() {
  * alone; it is not ours.
  *
  * The pids come from module state rather than from the instance because
- * `server.instanceInfo` is `undefined` once `server.stop()` has run - measured
- * on mongodb-memory-server 11.2.0 - so after a stop that failed part way
- * through, reading them off the instance finds nothing and the sweep would kill
- * nothing at exactly the moment it is needed.
+ * `server.instanceInfo` is `undefined` once `server.stop()` has run, so after a
+ * stop that failed part way through, reading them off the instance finds nothing
+ * and the sweep would kill nothing at exactly the moment it is needed.
  *
  * The data directory is removed only when no owned process survived the kills.
  * Removing the files under a live mongod produces a database that is running
@@ -1076,7 +1036,7 @@ function sweepSynchronously() {
  * dies - so they are the only processes this file may ever signal.
  *
  * The ChildProcess OBJECTS are kept, not just their pids, and that is what
- * makes exit verification honest. Node reaps a child it spawned and records the
+ * makes exit verification exact. Node reaps a child it spawned and records the
  * result on the object, so `exitCode`/`signalCode` answer "has it exited?"
  * exactly. A pid alone cannot: `process.kill(pid, 0)` succeeds for a zombie
  * that has terminated but not yet been reaped, so a pid-only check would report
@@ -1171,8 +1131,8 @@ function raiseExitCode() {
  * The last word on the exit code, from the `exit` listener.
  *
  * Says so when it has to act, because a consumer that reported success over a
- * failed teardown has a defect of its own worth seeing - the raise here keeps
- * the run honest, and the line says where to look.
+ * failed teardown has a defect of its own worth seeing - the raise restores the
+ * non-zero code, and the line says where to look.
  *
  * @returns {undefined}
  */
@@ -1186,19 +1146,6 @@ function reassertExitCode() {
       'tear down its MongoDB; the reported result had been set to success ' +
       'after that failure, which would have hidden it.');
   }
-}
-
-/**
- * True when a teardown failure has been recorded in this process.
- *
- * Exported so a harness can assert on it explicitly rather than inferring it
- * from an exit code, and so a caller that swallows `stop()`'s boolean still has
- * one honest question to ask before it reports success.
- *
- * @returns {boolean}
- */
-function cleanupFailed() {
-  return state.failed === true;
 }
 
 /**
@@ -1228,7 +1175,7 @@ function installSweep() {
  *
  * Concurrent callers share one in-flight start, and a caller that starts an
  * already-running server gets the running one back rather than a second mongod
- * nobody would stop. The address is reported once, on stderr.
+ * nothing would stop. The address is reported once, on stderr.
  *
  * @param {Object} [options]
  * @param {string} [options.database] A pinned database name. Defaults to a
@@ -1374,15 +1321,15 @@ async function startInstance(opts) {
  *
  * The host comes from parsing the package's own URI with `new URL` - never
  * `url.parse`, which emits DEP0169 under --pending-deprecation and would put a
- * deprecation notice from the harness itself into the stream AAP §0.9.3's
- * zero-warning gate inspects. Parsing rather than reading `instanceInfo.ip`
- * keeps an IPv6 address in its bracketed URI form, which is the form a
- * connection string needs.
+ * deprecation notice from the harness itself into the stream the zero-warning
+ * gate inspects. Parsing rather than reading `instanceInfo.ip` keeps an IPv6
+ * address in its bracketed URI form, which is the form a connection string
+ * needs.
  *
  * The URI is then composed by concatenation rather than taken from the package,
- * so that what is reported is character for character what config/db.js:14-18
- * will build from the three published values - the claim the connectivity gate
- * checks.
+ * so that what is reported is character for character what `config/db.js`'s
+ * `connect` will build from the three published values - the claim the
+ * connectivity gate checks.
  *
  * @param {Object} server The started MongoMemoryServer.
  * @param {string} database
@@ -1430,10 +1377,11 @@ function describeAddress(server, database, instanceInfo) {
  * server is brought down and every path goes through it.
  *
  * A failure to stop is REPORTED and recorded, not thrown: the caller's own
- * result - a suite's exit code - must still reach the shell. `recordCleanupFailure`
- * raises a zero `process.exitCode` and sets `state.failed`, so a leaked mongod
- * or a surviving data directory is visible whether the caller is the CLI, is
- * `withMongo`, or discards the boolean this returns.
+ * result - a suite's exit code - must still reach the shell.
+ * `recordCleanupFailure` raises a zero `process.exitCode` and sets
+ * `state.failed`, so a leaked mongod or a surviving data directory is visible
+ * whether the caller is the CLI, is `withMongo`, or discards the boolean this
+ * returns.
  *
  * A `false` here means the server is NOT down. The state is deliberately kept
  * in that case, so calling `stop()` again retries rather than being handed
@@ -1459,19 +1407,18 @@ function stop() {
 /**
  * Records a teardown operation that did not complete, and reports it.
  *
- * THREE THINGS HAPPEN HERE AND ALL THREE ARE LOAD-BEARING. The note is emitted
- * with the same text the site printed before, because the stderr diagnostic is
- * the evidence. `state.failed` is raised, which is what makes the CLI's own
- * exit code non-zero through `finalExitCode`. And the failure is APPENDED to a
- * list a caller can read, which is the part that was missing: `withMongo`
- * propagates its body's outcome untouched - a rejection stays a rejection, a
- * value stays that value - so a teardown fault has no channel through it, and
- * every sibling harness that embeds this lifecycle was therefore discarding the
- * boolean `stop()` returns and exiting 0 with a possibly-leaked mongod behind
- * it.
+ * THREE THINGS HAPPEN HERE AND ALL THREE ARE LOAD-BEARING. The note goes to
+ * stderr, which is the only place a teardown fault is human-readable.
+ * `state.failed` is raised, which is what makes the CLI's own exit code
+ * non-zero through `finalExitCode`. And the failure is APPENDED to a list a
+ * caller can read, which is the only channel a teardown fault has through
+ * `withMongo`: that function propagates its body's outcome untouched - a
+ * rejection stays a rejection, a value stays that value - so an embedding
+ * harness reading only the boolean `stop()` returns can otherwise exit 0 with
+ * a leaked mongod behind it.
  *
  * @param {string} operation What was attempted, one phrase.
- * @param {string} message The measured cause, without an 'ERROR: ' prefix.
+ * @param {string} message The underlying cause, without an 'ERROR: ' prefix.
  * @returns {Object} The recorded entry.
  */
 function recordCleanupFailure(operation, message) {
@@ -1482,8 +1429,8 @@ function recordCleanupFailure(operation, message) {
 
   note('ERROR: ' + message);
 
-  // AND THE EXIT CODE IS RAISED HERE TOO, which is the half the readable
-  // record does not cover. `state.failed` is what the CLI's `finalExitCode`
+  // AND THE EXIT CODE IS RAISED HERE TOO, which the readable record does not
+  // cover on its own. `state.failed` is what the CLI's `finalExitCode`
   // reads, but the sibling harnesses embed this lifecycle as a library and end
   // by assigning `process.exitCode` from their own artifact or verdict - so a
   // zero written then would report success over a leaked mongod. Raising it
@@ -1519,12 +1466,33 @@ function cleanupFailures() {
 }
 
 /**
- * Whether any teardown operation failed.
+ * Whether a teardown failure has been recorded in this process.
+ *
+ * This is the VERDICT, and `cleanupFailures()` above is the companion that
+ * answers "what failed"; read that one for the detail and this one to decide
+ * whether a run may report success. The predicate is the union of the two
+ * records this file keeps, because neither alone is the honest answer:
+ *
+ *   `state.failed` - raised by `recordCleanupFailure`, and also by `onFatal`
+ *   for an uncaught exception or an unhandled rejection, which the list never
+ *   covers. Nothing clears it, deliberately: this process's own exit code must
+ *   not be lowered by a later run's success, which is the same reason
+ *   `resetCleanupFailures` leaves it alone.
+ *
+ *   `state.cleanupFailures.length` - the currently-recorded teardown faults,
+ *   which IS cleared by `resetCleanupFailures()`, and which `startInstance`
+ *   clears whenever a genuinely new instance is created, so that a second
+ *   `withMongo` in one process does not inherit the first run's list.
+ *
+ * So a reset narrows what `cleanupFailures()` reports and never lowers this
+ * answer. Exported so a harness can assert on it explicitly rather than
+ * inferring it from an exit code, and so a caller that swallows `stop()`'s
+ * boolean still has one honest question to ask before it reports success.
  *
  * @returns {boolean}
  */
 function cleanupFailed() {
-  return state.cleanupFailures.length > 0;
+  return state.failed === true || state.cleanupFailures.length > 0;
 }
 
 /**
@@ -1552,19 +1520,19 @@ function resetCleanupFailures() {
  * The directory is then checked, and removed here if it survived - only when
  * the PACKAGE created it, which `instanceInfo.tmpDir` is what records.
  *
- * THE STOP IS NOT ASSUMED TO HAVE WORKED. An earlier version of this function
- * cleared `state.server`, cleared `state.info` and set `state.stopped = true`
- * whatever happened, and removed the data directory before knowing whether
- * mongod had died. Three consequences, all of them silent:
+ * THE STOP IS NOT ASSUMED TO HAVE WORKED. Clearing `state.server` and
+ * `state.info`, setting `state.stopped = true` whatever happens, or removing the
+ * data directory before knowing whether mongod has died, each break something
+ * silently:
  *
- *   A retry became impossible. `stop()` short-circuits on `state.stopped`, so
- *   the second call returned `true` for a server that was still running.
+ *   A retry becomes impossible. `stop()` short-circuits on `state.stopped`, so
+ *   a second call returns `true` for a server that is still running.
  *
- *   The synchronous sweep was disarmed. It returns early on `state.stopped` and
- *   on a null `state.server`, so the one mechanism that would have killed the
- *   survivor at exit had been switched off by the failure it exists for.
+ *   The synchronous sweep is disarmed. It returns early on `state.stopped` and
+ *   on a null `state.server`, so the one mechanism that would kill the
+ *   survivor at exit is switched off by the failure it exists for.
  *
- *   The data directory could be deleted from under a live mongod - a database
+ *   The data directory can be deleted from under a live mongod - a database
  *   that is running and corrupt, which is worse than the leak.
  *
  * So: attempt the package's own stop; if it throws, escalate to the processes
@@ -1669,9 +1637,9 @@ async function stopInstance() {
  * package's own stop resolved, the processes are expected to be gone already,
  * so this waits and verifies rather than killing - signalling on that path
  * would be signalling something the package may have already reaped and whose
- * pid could since have been reused. When the stop threw, the escalation is the
- * whole point: SIGTERM first so mongod can flush and close its files, SIGKILL
- * only after it has been given time.
+ * pid could since have been reused. When the stop threw, escalation is the
+ * only remaining lever: SIGTERM first so mongod can flush and close its files,
+ * SIGKILL only after it has been given time.
  *
  * The polling interval is short and the deadline is SHUTDOWN_GRACE_MS, the same
  * bound a forwarded signal gives the child, because the two are the same
@@ -1817,16 +1785,15 @@ function uri(database) {
  * form test/parity/{storage,seed}.js use so that neither re-implements the
  * lifecycle.
  *
- * THE TEARDOWN'S RESULT IS NOT DISCARDED. An earlier version put the stop in a
- * bare `finally`, so a `stop()` that fulfilled `false` - a mongod that would
- * not die, a data directory that could not be removed - vanished, and every
- * consumer that called this went on to report success while the leak stood.
- * Now a cleanup failure after a SUCCESSFUL `fn` rejects with a ToolError naming
- * what leaked, which is the only way the caller's success path can be stopped
- * from running; a cleanup failure after a FAILING `fn` leaves `fn`'s error as
- * the rejection, because that is the more useful one, and the leak is still
- * reported on stderr and still raises the exit code through
- * `recordCleanupFailure`.
+ * THE TEARDOWN'S RESULT IS NOT DISCARDED. A stop in a bare `finally` would
+ * discard a `stop()` that fulfilled `false` - a mongod that would not die, a
+ * data directory that could not be removed - and let the caller report success
+ * while the leak stood. So a cleanup failure after a SUCCESSFUL `fn` rejects
+ * with a ToolError naming what leaked, which is the only way the caller's
+ * success path can be stopped from running; a cleanup failure after a FAILING
+ * `fn` leaves `fn`'s error as the rejection, because that is the more useful
+ * one, and the leak is still reported on stderr and still raises the exit code
+ * through `recordCleanupFailure`.
  *
  * @param {function(Object): *} fn Receives the published address.
  * @param {Object} [options] As documented on `start`.
@@ -2370,11 +2337,11 @@ function childExitCode(result) {
  * Reconciles the child's code with any failure of this harness.
  *
  * The rule, and the reason for it: a non-zero child code is NEVER lowered,
- * because a failing suite must not report success and that is the single worst
- * thing this file could do. A zero IS raised when the harness itself failed - a
- * server that would not stop, a data directory that survived, a fatal error in
- * a handler - because a leak is a real failure and a silent one is worse than a
- * visible one. Teardown succeeding is never itself a reason to exit 0.
+ * because a failing suite must not report success. A zero IS raised when the
+ * harness itself failed - a server that would not stop, a data directory that
+ * survived, a fatal error in a handler - because a leak is a real failure and a
+ * silent one is worse than a visible one. Teardown succeeding is never itself a
+ * reason to exit 0.
  *
  * @param {number} code From childExitCode, or EXIT_ERROR for a harness failure.
  * @returns {number}
@@ -2401,11 +2368,11 @@ function finalExitCode(code) {
  * Handles SIGINT and SIGTERM.
  *
  * The child is signalled FIRST and given a bounded interval to exit, then
- * killed if it did not. That order is the whole point: killing the database
- * from under a running Mocha produces a cascade of connection errors instead of
- * the real reason for the interrupt. The server is stopped afterwards by the
- * ordinary exit path, which the child's exit releases, so there is exactly one
- * teardown no matter how the run ended.
+ * killed if it did not. That order matters: killing the database from under a
+ * running Mocha produces a cascade of connection errors instead of the real
+ * reason for the interrupt. The server is stopped afterwards by the ordinary
+ * exit path, which the child's exit releases, so there is exactly one teardown
+ * no matter how the run ended.
  *
  * A second signal escalates. With a child running it is killed outright; with
  * no child yet - an interrupt during the server's own startup, which on a cold
@@ -2678,21 +2645,16 @@ async function main() {
 // starts NOTHING: `main` runs only under direct execution, so no server is
 // created, no command is spawned and no signal listener is installed.
 module.exports = {
-  // The lifecycle.
   start        : start,
   stop         : stop,
   uri          : uri,
   withMongo    : withMongo,
 
-  // Whether a teardown failure has been recorded in this process, for a caller
-  // that wants to ask rather than infer it from an exit code.
-  cleanupFailed: cleanupFailed,
-
   // Configuration isolation - the one implementation every parity tool uses,
-  // exported so no tool re-derives it. `configIsolationEnv` for a child's
-  // environment, `applyConfigIsolation` for an environment object a caller is
-  // assembling, `isolateRuntimeConfig` for this process before its first
-  // `config` require.
+  // exported so each tool shares one definition. `configIsolationEnv` for a
+  // child's environment, `applyConfigIsolation` for an environment object a
+  // caller is assembling, `isolateRuntimeConfig` for this process before its
+  // first `config` require.
   configIsolationEnv          : configIsolationEnv,
   applyConfigIsolation        : applyConfigIsolation,
   isolateRuntimeConfig        : isolateRuntimeConfig,
@@ -2703,7 +2665,10 @@ module.exports = {
   // needs the answer reads it here, right after the call returns, and folds it
   // into its own verdict. This is the channel test/parity/{storage,seed,worker,
   // capture,replay,joi-matrix}.js use to keep a leaked mongod or a surviving
-  // data directory out of an exit code of 0.
+  // data directory out of an exit code of 0. `cleanupFailures` is what failed
+  // right now and is cleared by `resetCleanupFailures`; `cleanupFailed` is the
+  // whole-process verdict a reset does not lower, for a caller that wants to
+  // ask rather than infer it from an exit code.
   cleanupFailures      : cleanupFailures,
   cleanupFailed        : cleanupFailed,
   resetCleanupFailures : resetCleanupFailures,

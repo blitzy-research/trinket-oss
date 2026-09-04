@@ -28,6 +28,9 @@
       "enabled": false
     }
   },
+  "features": {
+    "assets": true
+  },
   "aws": {
     "buckets": {
       "exports": {

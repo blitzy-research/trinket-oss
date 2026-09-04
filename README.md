@@ -90,7 +90,7 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
    npm run build
    ```
 
-   The frontend components are not committed - they live in the gitignored `public/components/` and are distributed separately as `public-components.tgz`, so without them the SCSS build fails at `static/scss/_settings.scss:8`. `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. On a clean checkout the two commands above were measured to exit 0 and to write `public/css/base.css` and `public/css/embed.css`; the SCSS compile prints several hundred Sass deprecation notices from the vendored Foundation tree along the way, which is expected.
+   The frontend components are not committed - they live in the gitignored `public/components/` and are distributed separately as `public-components.tgz`, so without them the SCSS build fails at `static/scss/_settings.scss:8`. `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. On a clean checkout the two commands above exit 0 and write `public/css/base.css` and `public/css/embed.css`; the SCSS compile prints several hundred Sass deprecation notices from the vendored Foundation tree along the way, which is expected.
 
 3. Start MongoDB locally (Redis is optional)
 

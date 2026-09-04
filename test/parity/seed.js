@@ -3,165 +3,84 @@
 
 // Fixed-`_id` fixtures for the parity harnesses.
 //
-// This module exists for one reason, and it is a comparison strategy rather
-// than a convenience: AAP 0.9.3 compares baseline and target responses
-// EXACTLY - status, Location, Set-Cookie attributes, rendered HTML, JSON
-// scalars - and normalizes away only an enumerated volatile set. Every
-// identifier that is fixed here is an identifier `test/parity/replay.js` can
-// compare instead of scrub, so each entry below removes a member from that set.
-// A generated id, shortCode, hash or slug would have to be added back to it,
-// and a widened volatile set is a weakened gate that would owe an explanation
-// in `docs/baseline-parity.md`.
+// This module exists for a comparison strategy rather than for convenience.
+// `test/parity/replay.js` compares baseline and target responses EXACTLY -
+// status, Location, Set-Cookie attributes, rendered HTML, JSON scalars - and
+// normalizes away only an enumerated volatile set. Every identifier fixed here
+// is one replay can compare instead of scrub: a generated id, shortCode, hash
+// or slug would have to join that set, and a wider set is a weaker gate.
 //
-// ===========================================================================
-// RULES
-// ===========================================================================
-// `review_rules` returns exactly "No user rules provided." for this project,
-// which AAP 0.7 and 0.10.1 independently record. No rules are invented here and
-// their absence is not read as licence to lower the bar - enterprise practice
-// governs. The request's own RULES block is binding and is not that document:
+// INVOCATION
+//   var seed = require('./seed');
+//   await seed.seed();                                // everything, gated
+//   await seed.seed({ users: true, files: true });    // storage.js
 //
-//   R-a  The diff must read as migration work only. This file adds fixtures and
-//        nothing else: it starts no server, connects nothing, writes no file,
-//        touches no configuration and changes no application module.
-//   R-b  No module excluded. The fixtures cover every model the 233-route
-//        surface addresses through a path segment, so no route is unreachable
-//        for want of a document to point at.
-//   R-d  Behaviour improvements are prohibited. Fixtures are shaped to make
-//        baseline quirks REACHABLE - the never-settling image download branch,
-//        the queryless folder filter, the expired export - never to avoid them.
-//   R-f  Baseline observed behaviour at 2f8712a is the tie-breaker, so the same
-//        seed must load against the BASELINE worktree's model code as well as
-//        the target's. Only model APIs present in both are used: constructor,
-//        `save()`, `setOwner`, `setGlobalSettings`, `setRoles`, `findById`, and
-//        the private collection through `mongoose.model(name)`. Nothing here
-//        depends on a change this migration makes.
+//   node test/parity/seed.js --verify   // standalone self-check; starts its own
+//                                       // in-memory MongoDB through mongo.js
+// Every human-readable byte goes to STDERR, because the determinism projection
+// goes to stdout as an artifact.
 //
-// ===========================================================================
+// EXPORTS, each documented at module.exports: ids, credentials, oauth,
+// oauthIdentities, fixtures, GROUPS, storage(), s3Manifest(), keyFromUrl(),
+// seed(), verify(), reset(), resetOAuthNewcomer()
+//
 // THE BOUNDARY THAT MUST NOT MOVE
-// ===========================================================================
-// `db.js` under `test/helpers` has a `reset` (:26-32) that does nothing but
-// `dropDatabase`, and a `checkState` (:50) that drops again on first ready. The
-// serial suite DEPENDS on that emptiness: `registration.js` under
-// `test/lib/api` asserts the default user is absent and then creates it, and
-// `admin.js` beside it creates its own admin. Seeding from inside that `reset`
-// would break both, which is why this seeder is a separately named module used
-// only by `capture.js`, `replay.js`, `storage.js` and `worker.js` in this
-// directory, and why `reset()` here deletes only the documents in the eight
-// collections this file owns and NEVER drops a database.
+// `test/helpers/db.js`'s `reset` does nothing but `dropDatabase`, and the serial
+// suite DEPENDS on that emptiness: `test/lib/api/registration.js` asserts the
+// default user is absent and then creates it. Seeding from inside that `reset`
+// would break it, so this seeder is a separately named module used only by
+// `capture.js`, `replay.js`, `storage.js` and `worker.js`, and `reset()` here
+// deletes only the documents in the eight collections this file owns and NEVER
+// drops a database. Nothing under `test/helpers` or `test/lib` is required from
+// here: `test/helpers/db.js` requires `config/db`, which connects at module
+// scope, and `test/helpers/defaults.js`'s identity values are copied into
+// IDENTITIES below - the same accounts the suite means, with fixed ids.
 //
-// Nothing under `test/helpers` or `test/lib` is required from here. That
-// directory's `db.js` requires `config/db` at :2, which calls
-// `mongoose.connect()` at module scope; its `defaults.js` is a PATTERN
-// reference only - its identity values are copied verbatim into IDENTITIES
-// below so that "seeded normal user" and "seeded admin" mean the same accounts
-// the suite uses, but they are declared locally and carry fixed ids.
+// ORDERING
+// Models are resolved lazily, in `loadModels()`, because requiring one pulls in
+// the npm `config` package, which freezes its values on first require: a
+// module-scope require would fix the configuration when ANY caller required this
+// file - one wanting only the `ids` map, say - before `test/parity/mongo.js` had
+// published the database address. The connection is taken as ALREADY
+// ESTABLISHED - `test/parity/mongo.js` owns the lifecycle, `config/db.js` owns
+// the connect - and `seed()` reports which is missing rather than dialing one,
+// which would be a second place the address is decided.
 //
-// Those two paths are written unjoined throughout this file on purpose. The
-// independence proof for this module is mechanical - a recursive grep of this
-// file for a joined helper path must return nothing - and a path quoted in a
-// comment would satisfy that pattern while proving nothing about what the file
-// requires. Keep the directory and the filename in separate spans.
-//
-// ===========================================================================
-// ORDERING - why the models are loaded LAZILY
-// ===========================================================================
-// Requiring a model pulls in `config` (npm `config` 0.4.37 resolves and FREEZES
-// on first require) and `lib/util/store`, which reads `db.redis.enabled` at its
-// own module scope. A module-scope model require here would therefore fix the
-// configuration at the moment ANY caller required this file - including a
-// caller that wanted nothing but the `ids` map to materialize wildcard paths,
-// before `test/parity/mongo.js` had published the database address. So the
-// models are resolved inside `loadModels()`, on first use, and requiring this
-// module reads no configuration, opens no socket and registers no schema.
-//
-// The mongoose connection is taken as ALREADY ESTABLISHED: `test/parity/mongo.js`
-// owns the lifecycle and the application's own `config/db.js` owns the connect.
-// `seed()` asserts a usable connection and says which of the two is missing
-// rather than dialing one itself - a seeder that connected would be a second
-// place the database address is decided.
-//
-// ===========================================================================
 // DETERMINISM, AND THE THREE FIELDS THAT CANNOT BE FIXED
-// ===========================================================================
 // Every id, shortCode, hash, slug, digest, key, filename and expiry below is
 // fixed or is a pure function of a fixed value. No `Math.random`, no
 // `Date.now`, no `new ObjectId()`, no `url.parse` (DEP0169 - this tooling's
 // stderr is inside the zero-warning gate's stream; `new URL` is used instead).
 //
-// One field is written by an UNAWAITED hook rather than by a save, and it is
-// not in that set because it is made deterministic instead: `File.metrics.
-// trinkets` is incremented by `updateAssetMetrics` (`lib/models/trinket.js:326-
-// 348`) with the promise discarded, and `metrics` is in the File publicSpec, so
-// its value reaches a compared response. `reconcileAssetMetrics` below waits
-// for every increment it is owed, assigns the final value, reads it back - and
-// FAILS rather than publishing a fixture whose metric may still move. A
-// harness cannot tell a lost increment from a late one, so neither is shipped.
+// One field is written by an UNAWAITED hook and is made deterministic instead:
+// `lib/models/trinket.js`'s `updateAssetMetrics` increments
+// `File.metrics.trinkets` with the promise discarded, and `metrics` is in the
+// File publicSpec, so the value reaches a compared response.
+// `reconcileAssetMetrics` therefore samples the metric BEFORE any trinket is
+// created, waits for every increment owed, assigns the final value and reads it
+// back - an `$inc` is only decidable against the value that preceded it.
 //
-// Three fields are written by the models themselves and are NOT fixable from
-// here, so they stay in replay.js's enumerated volatile set:
-//   * `lastUpdated`  - `lib/models/plugins/timestamps.js` assigns `Date.now()`
-//                      on every save of a modified document, unconditionally.
-//   * `codeLastUpdated` - `lib/models/trinket.js:109` assigns `Date.now()`
-//                      whenever `code`, `assets` or `settings` is modified.
-//                      Not in the trinket publicSpec.
-//   * bcrypt `password` hash - salted per save by design, and never serialized.
-// `created` IS fixed: the timestamps plugin only defaults it when null, so an
-// explicit value survives. Every fixture therefore carries one.
+// Three fields the models write are NOT fixable from here and stay in replay's
+// volatile set: `lastUpdated`, assigned by `lib/models/plugins/timestamps.js` on
+// every modified save; `codeLastUpdated`, assigned by `lib/models/trinket.js`'s
+// `preSaveCreateHash` whenever `code`, `assets` or `settings` moves; and the
+// bcrypt `password` hash, salted per save and never serialized. `created` IS
+// fixed - the timestamps plugin only defaults it when null.
 //
-// ===========================================================================
-// API
-// ===========================================================================
-//   ids                  frozen map of every fixed identifier
-//   credentials          frozen login literals per seeded identity
-//   oauth                the OAuth identity contract - both addresses, their
-//                        derived usernames, the provider ids and the token
-//   oauthIdentities      the same, in the shape setIdentityEmails() accepts
-//   fixtures             frozen, configuration-INDEPENDENT fixture facts
-//                        (bytes, digests, sizes, keys, shortCodes, payloads)
-//   GROUPS               the selectable group names, in dependency order
-//   seed(options)        idempotent; async; GATES on verify(); returns a summary
-//   verify(options)      the fixture checks, scoped to a selection; throws
-//   reset(options)       deletes only this seeder's collections; async
-//   resetOAuthNewcomer() restores the new-user OAuth precondition alone
-//   storage()            resolved bucket/key/url descriptors (reads config)
-//   s3Manifest()         a seed manifest for test/parity/fixtures/aws.js
-//   keyFromUrl(url)      the object key a stored url resolves to
+// THE OAUTH IDENTITY CONTRACT, in short
+// `lib/controllers/auth.js`'s `googleCallback` selects between its existing-user
+// and new-user branches entirely by whether `User.findByMultiple` matches the
+// served profile, so the branch is chosen by seeding one identity and not the
+// other: `OAUTH.existing` IS seeded with a fixed `_id`, and `OAUTH.new` is NOT
+// seeded and is REMOVED if a previous new-user scenario left the account behind.
+// The existing identity carries no `password` - a Google-sourced account has
+// none - so it is asserted through the OAuth lookup, not `comparePassword`.
 //
-// ===========================================================================
 // THE GATE
-// ===========================================================================
-// `seed()` runs `verify()` over the groups it seeded before it returns, and
-// throws if any check fails. That is deliberate and it is what makes the
-// checks load-bearing: every harness in this directory already fails when
-// `seed()` rejects - `capture.js` and `replay.js` spawn a seeder child and
-// gate on its exit code, `storage.js` and `worker.js` let the rejection out of
-// their own prepare step, `joi-matrix.js` reports it as a tool error - so
-// gating here gives the strongest statement this file can make about its own
-// fixtures a caller in every one of them. Reachable only from `--verify`, it
-// was the one thing no harness consulted.
-//
-// `seed({verify: false})` opts out, for a caller that wants to assert
-// something about a deliberately incomplete database. Nothing in this
-// directory does.
-//
-// ===========================================================================
-// INVOCATION
-// ===========================================================================
-// As a module, inside a harness that already has a connection:
-//
-//   var seed = require('./seed');
-//   await seed.seed();                       // everything, gated
-//   await seed.seed({ users: true, files: true });   // storage.js
-//
-// Standalone, as a self-check that proves the fixtures load and satisfy every
-// assertion AAP 0.9.2 and 0.6.7 name - it starts its own in-memory MongoDB
-// through `test/parity/mongo.js`, so it re-implements no lifecycle:
-//
-//   node test/parity/seed.js --verify
-//
-// Every human-readable byte goes to STDERR, because sibling tools capture
-// stdout as an artifact.
+// `seed()` runs `verify()` over the groups it seeded and throws if any check
+// fails, which is what gives the checks a caller: every harness here already
+// fails when `seed()` rejects. `seed({verify: false})` opts out, for a caller
+// asserting something about a deliberately incomplete database.
 
 var crypto   = require('crypto');
 var mongoose = require('mongoose');
@@ -177,8 +96,8 @@ var LOG_PREFIX = '[parity:seed] ';
 
 // A model name -> module path map, resolved lazily by loadModels(). The keys
 // are the mongoose model names, which is what `mongoose.model()` and therefore
-// `reset()` address; note the trinket model is registered as 'Snippet'
-// (lib/models/trinket.js:584), a 2013 name the migration does not touch.
+// `reset()` address; note `lib/models/trinket.js` registers its model as
+// 'Snippet', a 2013 name the migration does not touch.
 var MODEL_MODULES = {
   User     : '../../lib/models/user',
   Snippet  : '../../lib/models/trinket',
@@ -200,9 +119,10 @@ var MODEL_MODULES = {
 // to NO document - the absence is the fixture.
 var ids = Object.freeze({
   // 01 - identities. `missingUser` is planted in a session by capture.js to
-  // reach app.js:255-259 ("User not found", session cleared); `disabledUser`
-  // reaches app.js:261-264 ("Account disabled", session cleared). Two of the
-  // five auth-scheme outcomes AAP 0.9.3 requires are unreachable without them.
+  // reach the "User not found" outcome of `app.js`'s session auth scheme, which
+  // clears the session; `disabledUser` reaches its "Account disabled" outcome,
+  // which also clears it. Two of that scheme's five outcomes are unreachable
+  // without them.
   user         : '000000000000000000000101',
   admin        : '000000000000000000000102',
   disabledUser : '000000000000000000000103',
@@ -212,8 +132,9 @@ var ids = Object.freeze({
   oauthUser    : '000000000000000000000104',
   missingUser  : '0000000000000000000001ff',
 
-  // 02 - trinkets. Both code shapes `lib/workers/exports.js:334-352` branches
-  // on are represented, across several of the 11 langs in config/constants.js.
+  // 02 - trinkets. Both code shapes `lib/workers/exports.js`'s `parseCodeFiles`
+  // branches on are represented, across several of the 11 langs in
+  // config/constants.js.
   trinketPython      : '000000000000000000000201',
   trinketPython3     : '000000000000000000000202',
   trinketHtml        : '000000000000000000000203',
@@ -234,7 +155,7 @@ var ids = Object.freeze({
   missingCourse    : '0000000000000000000003ff',
 
   // 04 - folders. Required by the `folders.trinkets` quirk case, which must be
-  // driven BOTH with and without a query string (AAP 0.6.4).
+  // driven BOTH with and without a query string.
   folder        : '000000000000000000000401',
   missingFolder : '0000000000000000000004ff',
 
@@ -247,8 +168,9 @@ var ids = Object.freeze({
   legacyImageFile : '000000000000000000000504',
   missingFile     : '0000000000000000000005ff',
 
-  // 06 - exports. Three states, because `lib/controllers/users.js:1291-1296`
-  // distinguishes not-completed from expired and each is a separate edge.
+  // 06 - exports. Three states, because `lib/controllers/users.js`'s
+  // `downloadExport` distinguishes not-completed from expired and each is a
+  // separate edge.
   exportPending   : '000000000000000000000601',
   exportCompleted : '000000000000000000000602',
   exportExpired   : '000000000000000000000603',
@@ -258,31 +180,32 @@ var ids = Object.freeze({
 // ---------------------------------------------------------------------------
 // Identities
 // ---------------------------------------------------------------------------
-// Values copied verbatim from `defaults.js:13-30` under `test/helpers` so a
-// seeded identity is the same account the existing suite means, declared
-// locally because that file must not be required (see THE BOUNDARY, above).
+// Values copied verbatim from `test/helpers/defaults.js` so a seeded identity is
+// the same account the existing suite means, declared locally because that file
+// must not be required (see THE BOUNDARY, above).
 //
 // The passwords are fixture literals, not credentials: they are already
 // committed in that same `defaults.js` and authenticate against nothing but an
 // in-memory database created for the run.
 //
-// The admin's `roles` array is reproduced exactly as the suite writes it
-// (`admin.js:11-12` under `test/lib/api` does `new User(defaults.admin)`), which means
-// a raw role with no `permissions` - `hasRole('admin')` is true, which is the
-// predicate `lib/util/helpers.js:22` and `app.js:261` actually use, and
-// `hasPermission` is false. That asymmetry is baseline and is preserved.
+// The admin's `roles` array is reproduced exactly as the suite writes it -
+// `test/lib/api/admin.js` does `new User(defaults.admin)` - which means a raw
+// role with no `permissions`: `hasRole('admin')` is true, which is the predicate
+// `lib/util/helpers.js`'s `internals.isAdmin` and `app.js`'s session auth scheme
+// actually use, and `hasPermission` is false. That asymmetry is baseline and is
+// preserved.
 //
 // ===========================================================================
 // THE OAUTH IDENTITY CONTRACT
 // ===========================================================================
-// `googleCallback` (`lib/controllers/auth.js:200-204`) chooses between its two
-// database branches with `User.findByMultiple`, an $or over the email, the
+// `lib/controllers/auth.js`'s `googleCallback` chooses between its two database
+// branches with `User.findByMultiple`, an $or over the email, the
 // derived username and `profiles.google.id` from the provider profile. There is
 // no other switch: which branch runs is decided ENTIRELY by whether a user
-// matching the served profile already exists. So the two branches AAP 0.4.2 and
-// 0.6.6 require - the existing user who signs in successfully, and the new user
-// who is persisted and then reported as a failure - are selected by seeding one
-// identity and not the other:
+// matching the served profile already exists. So the two branches - the existing
+// user who signs in successfully, and the new user who is persisted and then
+// reported as a failure - are selected by seeding one identity and not the
+// other:
 //
 //   OAUTH.existing   IS seeded, by `seedUsers` below, with a fixed `_id`.
 //   OAUTH.new        is NOT seeded, and `seedUsers` REMOVES it if a previous
@@ -317,8 +240,8 @@ var ids = Object.freeze({
 // ---------------------------------------------------------------------------
 
 /**
- * The username `lib/util/user.js:generate_username` derives from an email, and
- * therefore the username `googleCallback` looks up and writes.
+ * The username `lib/util/user.js`'s `generate_username` derives from an email,
+ * and therefore the username `googleCallback` looks up and writes.
  *
  * Replicated rather than required, for the same reason the identity values
  * above are copied rather than imported: this file requires no test helper and
@@ -405,28 +328,27 @@ var IDENTITIES = Object.freeze({
   // fields are chosen so that `googleCallback`'s existing-user branch performs
   // NO write, which is what makes the scenario independent of order:
   //
-  //   * `profiles.google` is already populated, so `!user.profiles.google`
-  //     (`lib/controllers/auth.js:229`) is false and `updateUser` stays false.
+  //   * `profiles.google` is already populated, so `googleCallback`'s
+  //     `!user.profiles.google` test is false and `updateUser` stays false.
   //     Were it absent, the first sign-in would link the account and MUTATE
   //     this document, and a second run would then take a different path
   //     through the same branch.
-  //   * `avatar` is supplied, so `!user.avatar` (`:222`) is false as well. The
-  //     value is deliberately NOT the fixture's `picture` URL: `normalizeAvatar`
-  //     (`lib/models/user.js:244-246`) rewrites any avatar containing
+  //   * `avatar` is supplied, so its `!user.avatar` test is false as well. The
+  //     value is deliberately NOT the fixture's `picture` URL:
+  //     `lib/models/user.js`'s `normalizeAvatar` rewrites any avatar containing
   //     'example.com' to a default that depends on whether
   //     `aws.buckets.useravatars.host` is configured, and a stored field must
-  //     not depend on the overlay in force. '/img/avatar-default.svg' is
-  //     returned verbatim by that function (`:249-251`) and is exactly what it
-  //     produces for an unconfigured host, so the seeded value is both fixed
-  //     and the one the application would have written.
-  //   * No `password`, because the schema does not require one
-  //     (`lib/models/user.js:15`) and a Google-sourced account has none -
-  //     `encryptPassword` skips an unmodified path (`:51`). `verify()`
-  //     therefore asserts this identity through the OAuth lookup rather than
-  //     through `comparePassword`.
+  //     not depend on the overlay in force. '/img/avatar-default.svg' is what
+  //     that function returns verbatim, and is exactly what it produces for an
+  //     unconfigured host, so the seeded value is both fixed and the one the
+  //     application would have written.
+  //   * No `password`, because `lib/models/user.js` does not require one and a
+  //     Google-sourced account has none - `encryptPassword` skips an unmodified
+  //     path. `verify()` therefore asserts this identity through the OAuth
+  //     lookup rather than through `comparePassword`.
   //   * `verified` is left at its default `false`: `googleCallback` does not
-  //     set it when it creates an account (`:247-267`), so a linked account
-  //     that this fixture stands in for would not carry it either.
+  //     set it on the account it creates, so a linked account that this fixture
+  //     stands in for would not carry it either.
   oauthExisting : Object.freeze({
     _id      : ids.oauthUser,
     // The `name` the fixture's userinfo profile serves, so a reviewer reading
@@ -437,7 +359,7 @@ var IDENTITIES = Object.freeze({
     username : OAUTH.existingUsername,
     email    : OAUTH.existing,
     avatar   : '/img/avatar-default.svg',
-    // What `googleCallback` writes for an account it created (`:252`).
+    // What `googleCallback` writes for an account it created.
     source   : 'google',
     profiles : {
       google : {
@@ -453,15 +375,18 @@ var IDENTITIES = Object.freeze({
 // ---------------------------------------------------------------------------
 // One `created` per document, so the field is exactly comparable. Distinct
 // values rather than one shared constant, because several routes sort on
-// `created` (`lib/models/user.js:144` sorts '-created', and the trinket lists
-// page by it) and identical timestamps would make that ordering arbitrary.
+// `created` (`lib/models/user.js`'s `findAdminList` sorts '-created', and the
+// trinket lists page by it) and identical timestamps would make that ordering
+// arbitrary.
 //
 // The completed export expires in 2099 and the expired one in 2020. A relative
-// date ("now + 3 days", which `lib/workers/exports.js:140-141` computes) would
-// be correct-looking and useless: `expiresAt` is serialized into the response
-// at `lib/controllers/users.js:1245`, so a moving value would have to be
-// normalized away. A fixed far-future date is both comparable and permanently
-// on the right side of the `expiresAt > new Date()` test at :1229 and :1293.
+// date - the "now + EXPORT_EXPIRY_DAYS" that `lib/workers/exports.js`'s
+// `processBulkExport` computes - would be correct-looking and useless:
+// `expiresAt` is serialized into the response by `lib/controllers/users.js`'s
+// `getExportStatus` and `listExports`, so a moving value would have to be
+// normalized away. A fixed far-future date is both comparable and permanently on
+// the right side of the `expiresAt > new Date()` tests those handlers and
+// `downloadExport` apply.
 var DATES = Object.freeze({
   user             : '2024-01-01T00:00:00.000Z',
   admin            : '2024-01-01T00:01:00.000Z',
@@ -489,8 +414,8 @@ var DATES = Object.freeze({
   exportExpired    : '2024-06-03T00:00:00.000Z',
 
   // Assignment dates on the seeded material. Fixed and in the past/future
-  // respectively so `lib/models/material.js:111-116` `isVisible()` returns a
-  // stable answer: available since 2024, hidden after 2099, therefore visible.
+  // respectively so `lib/models/material.js`'s `isVisible` returns a stable
+  // answer: available since 2024, hidden after 2099, therefore visible.
   materialAvailableOn : '2024-03-05T00:00:00.000Z',
   materialDueOn       : '2099-01-01T00:00:00.000Z',
   materialHideAfter   : '2099-06-01T00:00:00.000Z',
@@ -503,14 +428,14 @@ var DATES = Object.freeze({
 // Stored object bytes
 // ---------------------------------------------------------------------------
 // Five fixed payloads. Their sha1 digests ARE the S3 keys, because
-// `lib/util/file.js:32-43` and :159-178 name every stored object after the
-// digest of its own contents. AAP 0.6.7 states the consequence: a change to the
-// digest silently orphans every stored object, with no error and only files
-// that cannot be found - and that is invisible unless a seeded record points at
-// an object written BEFORE the migration, which is what these are.
+// `lib/util/file.js`'s `_fileToContainer` and `uploadUserAsset` name every
+// stored object after the digest of its own contents. The consequence is that a
+// change to the digest silently orphans every stored object, with no error and
+// only files that cannot be found - and that is invisible unless a seeded record
+// points at an object written BEFORE the migration, which is what these are.
 //
 // The bytes are inline rather than read from `test/data/**` so that the digest
-// cannot drift with a file this plan does not own, and each payload is a valid
+// cannot drift with a file this module does not own, and each payload is a valid
 // instance of its format (verified by signature in the self-check) so nothing
 // downstream has to special-case a fixture.
 
@@ -521,12 +446,12 @@ var MATERIAL_TEXT = Buffer.from(
   'utf8'
 );
 
-// A minimal but structurally valid Jupyter notebook. The extension matters
-// more than the contents: `ipynb` is the ONLY entry in
-// `config/default.yaml:236-237` extensionWhitelist, so this payload is the one
-// that exercises the content-type override branch at `lib/util/file.js:28-30`.
-// Written as an explicit literal, not JSON.stringify output, so the bytes -
-// and therefore the digest - are readable in this file.
+// A minimal but structurally valid Jupyter notebook. The extension matters more
+// than the contents: `ipynb` is the ONLY entry in `config/default.yaml`'s
+// `app.extensionWhitelist`, so this payload is the one that exercises the
+// content-type override in `lib/util/file.js`'s `_fileToContainer`. Written as
+// an explicit literal, not JSON.stringify output, so the bytes - and therefore
+// the digest - are readable in this file.
 var NOTEBOOK_JSON = Buffer.from(
   '{\n' +
   '  "cells": [\n' +
@@ -559,9 +484,9 @@ var ASSET_GIF = Buffer.from(
 );
 
 // A 1x1 PNG - 69 bytes, complete with IEND. Backs the LEGACY file record whose
-// `type` carries a mime-like string, which is the only way into the image
-// branch of `lib/controllers/files.js:153-173` (AAP 0.7's approved deviation:
-// baseline never settled that branch, the target serves the stream).
+// `type` carries a mime-like string, which is the only way into the image branch
+// of `lib/controllers/files.js`'s `download` - the branch baseline never settled
+// and the target serves as a stream.
 var LEGACY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/AAAADAAEAAQD6AAAAAElFTkSuQmCC',
   'base64'
@@ -577,9 +502,9 @@ var EXPORT_ZIP = Buffer.concat([
 ]);
 
 /**
- * The digest `lib/util/file.js:66-78` computes, over a buffer instead of a
- * stream. The algorithm is identical - `crypto.createHash('sha1')`, hex - and
- * the self-check proves it agrees with the streaming implementation.
+ * The digest `lib/util/file.js`'s `hashcontents` computes, over a buffer instead
+ * of a stream. The algorithm is identical - `crypto.createHash('sha1')`, hex -
+ * and the self-check proves it agrees with the streaming implementation.
  *
  * @param {Buffer} buffer
  * @returns {string} 40-character lowercase hex
@@ -588,12 +513,11 @@ function sha1Hex(buffer) {
   return crypto.createHash('sha1').update(buffer).digest('hex');
 }
 
-// Derived, then checked against the value measured when these payloads were
-// chosen. Deriving alone would make the digest whatever the bytes happen to be,
-// so a stray edit to a payload would silently re-key every stored object;
-// asserting against a committed constant turns that into a load-time failure
-// naming both values. This is the guard AAP 0.6.7 asks for, applied to the
-// fixtures themselves.
+// Derived, then checked against a committed constant. Deriving alone would make
+// the digest whatever the bytes happen to be, so a stray edit to a payload would
+// silently re-key every stored object; asserting against the constant turns that
+// into a load-time failure naming both values. It is the content-hash guard the
+// storage contract needs, applied to the fixtures themselves.
 var DIGESTS = Object.freeze({
   materialText : sha1Hex(MATERIAL_TEXT),
   notebook     : sha1Hex(NOTEBOOK_JSON),
@@ -632,8 +556,8 @@ Object.keys(EXPECTED_DIGESTS).forEach(function(name) {
 // ---------------------------------------------------------------------------
 // Both naming patterns in `lib/util/file.js`, reproduced exactly:
 //
-//   _fileToContainer (:32-43)  digest [+ '-' + container.fileId] [+ '.' + ext]
-//   uploadUserAsset  (:178)    digest + '-' + file.id + '.' + extension
+//   _fileToContainer  digest [+ '-' + container.fileId] [+ '.' + ext]
+//   uploadUserAsset   digest + '-' + file.id + '.' + extension
 //
 // The `container.fileId` branch has no configuration that reaches it - no
 // `config.aws.buckets.*` entry declares `fileId` - so no seeded File document
@@ -642,8 +566,9 @@ Object.keys(EXPECTED_DIGESTS).forEach(function(name) {
 // passing a container that carries one instead of asserting against a shape
 // nothing has ever written.
 var KEYS = Object.freeze({
-  // materials bucket, no fileId, extension present - what `files.upload`
-  // produces today (lib/controllers/files.js:67 -> uploadMaterialFile).
+  // materials bucket, no fileId, extension present - what
+  // `lib/controllers/files.js`'s `upload` produces today, through
+  // `uploadMaterialFile`.
   materialText       : DIGESTS.materialText + '.txt',
   materialWithFileId : DIGESTS.materialText + '-' + ids.file + '.txt',
 
@@ -660,7 +585,7 @@ var KEYS = Object.freeze({
 // ---------------------------------------------------------------------------
 // The export archive
 // ---------------------------------------------------------------------------
-// `lib/workers/exports.js:97-104` builds the filename from
+// `lib/workers/exports.js`'s `processBulkExport` builds the filename from
 // sha1(userId + Date.now()).substring(0, 12) and the key from
 // 'exports/' + userId + '/' + filename. The timestamp is the only variable
 // part, so substituting a fixed one yields a filename of exactly the real
@@ -671,8 +596,8 @@ var EXPORT_TIMESTAMP_SUBSTITUTE = '0';
 var EXPORT_EXPIRED_TIMESTAMP_SUBSTITUTE = '1';
 
 /**
- * `lib/workers/exports.js:97-102`, with the timestamp supplied instead of read
- * from the clock. Same algorithm, same 12-character hex substring, same
+ * The filename `processBulkExport` builds, with the timestamp supplied instead
+ * of read from the clock. Same algorithm, same 12-character hex substring, same
  * 'trinket-export-<hash>.zip' shape.
  *
  * @param {string} userId
@@ -692,20 +617,20 @@ var EXPORT_FILENAME = exportFilename(ids.user, EXPORT_TIMESTAMP_SUBSTITUTE);
 var EXPORT_S3_KEY   = 'exports/' + ids.user + '/' + EXPORT_FILENAME;
 
 // The expired export gets its own key and NO stored object, deliberately:
-// `lib/controllers/users.js:1293-1296` rejects on the expiry check BEFORE it
-// reaches `getSignedUrl`, so an object behind this key would never be read and
-// seeding one would imply a path that is not taken.
+// `lib/controllers/users.js`'s `downloadExport` rejects on the expiry check
+// BEFORE it reaches `getSignedUrl`, so an object behind this key would never be
+// read and seeding one would imply a path that is not taken.
 var EXPORT_EXPIRED_FILENAME = exportFilename(ids.user, EXPORT_EXPIRED_TIMESTAMP_SUBSTITUTE);
 var EXPORT_EXPIRED_S3_KEY   = 'exports/' + ids.user + '/' + EXPORT_EXPIRED_FILENAME;
 
 // ---------------------------------------------------------------------------
 // Trinket code payloads
 // ---------------------------------------------------------------------------
-// `lib/workers/exports.js:334-352` - reproduced at
-// `lib/controllers/trinket.js:1216-1240` - decides between a multi-file and a
-// single-file trinket by JSON.parse'ing `code` and checking for an Array. Both
-// sides of that branch are seeded, or the worker and download scenarios would
-// only ever exercise one of them:
+// `lib/workers/exports.js`'s `parseCodeFiles` - reproduced in
+// `lib/controllers/trinket.js`'s `downloadMain` - decides between a multi-file
+// and a single-file trinket by JSON.parse'ing `code` and checking for an Array.
+// Both sides of that branch are seeded, or the worker and download scenarios
+// would only ever exercise one of them:
 //
 //   JSON array of {name, content}  -> the files are written as named
 //   anything else (including valid non-array JSON) -> one 'main<ext>' file,
@@ -714,8 +639,9 @@ var EXPORT_EXPIRED_S3_KEY   = 'exports/' + ids.user + '/' + EXPORT_EXPIRED_FILEN
 // The JSON payloads are written as literals rather than JSON.stringify output
 // so the stored bytes are exactly what is read here.
 var CODE = Object.freeze({
-  // Raw, non-JSON. `lib/models/trinket.js:103-106` scans python and console
-  // code for imports, so `modules` becomes ['turtle'] - deterministically.
+  // Raw, non-JSON. `lib/models/trinket.js`'s `preSaveCreateHash` scans python
+  // and console code for imports through `findModulesUsed`, so `modules`
+  // becomes ['turtle'] - deterministically.
   python : 'import turtle\n\nt = turtle.Turtle()\nt.forward(100)\nt.left(90)\n',
 
   // A JSON array - the multi-file branch, two named files.
@@ -754,9 +680,9 @@ var CODE = Object.freeze({
 // Trinket descriptors
 // ---------------------------------------------------------------------------
 // `shortCode` is fixed here and NOT derived, for a reason worth stating:
-// `lib/models/trinket.js:115-121` `hashify()` computes `hash` from a seed of
-// fixed fields - code, lang, owner, creator, parent - but computes `shortCode`
-// from that seed PLUS `Date.now()`. So `hash` is left unset and the model
+// `lib/models/trinket.js`'s `hashify` computes `hash` from a seed of fixed
+// fields - code, lang, owner, creator, parent - but computes `shortCode` from
+// that seed PLUS `Date.now()`. So `hash` is left unset and the model
 // derives it (which keeps the fixture's hash exactly what the application
 // would have written), while `shortCode` must be supplied or determinism is
 // lost. Twelve characters each, matching the real substring length, and
@@ -834,13 +760,14 @@ var TRINKETS = Object.freeze([
     slug      : 'parity-asset-trinket',
     created   : DATES.trinketWithAssets,
     // Resolved against configuration when the fixture is built, because the
-    // asset url carries the userassets host. `lib/workers/exports.js:304`
-    // takes `path.basename(pathname)` as the object key, so the basename of
-    // this url is exactly KEYS.userAsset and the archived asset resolves.
+    // asset url carries the userassets host. `lib/workers/exports.js`'s
+    // `downloadAsset` takes `path.basename(pathname)` as the object key, so the
+    // basename of this url is exactly KEYS.userAsset and the archived asset
+    // resolves.
     asset     : 'userAssetFile',
     // An explicit snapshot, so the snapshot-bearing branch of
-    // `lib/models/trinket.js:350-357` is represented alongside the six
-    // trinkets that leave it unset. A local path, which is what that hook
+    // `lib/models/trinket.js`'s `checkSnapshot` is represented alongside the
+    // six trinkets that leave it unset. A local path, which is what that hook
     // itself produces while the snapshots bucket host is a placeholder.
     snapshot  : '/img/avatar-default.png'
   }),
@@ -887,8 +814,8 @@ var fixtures = Object.freeze({
       base64 : NOTEBOOK_JSON.toString('base64'),
       size   : NOTEBOOK_JSON.length,
       sha1   : DIGESTS.notebook,
-      // The whitelist override at lib/util/file.js:28-30 replaces whatever
-      // content type the upload declared with this one.
+      // The whitelist override in `lib/util/file.js`'s `_fileToContainer`
+      // replaces whatever content type the upload declared with this one.
       mime   : 'text/plain',
       filename : 'parity-notebook.ipynb'
     }),
@@ -947,9 +874,8 @@ var fixtures = Object.freeze({
       published : trinket.published,
       owner     : trinket.owner,
       code      : trinket.code,
-      // Which side of the lib/workers/exports.js:334-352 branch this payload
-      // lands on, so a worker assertion states its expectation rather than
-      // re-deriving it.
+      // Which side of `parseCodeFiles`'s branch this payload lands on, so a
+      // worker assertion states its expectation rather than re-deriving it.
       codeShape : isJsonFileArray(trinket.code) ? 'json-file-array' : 'raw-string'
     });
     return acc;
@@ -970,8 +896,8 @@ var fixtures = Object.freeze({
   course : Object.freeze({
     name        : 'test course',
     description : 'test course description',
-    // Fixed, because `lib/controllers/course.js:959` generates access codes
-    // with Math.random and the join-by-code routes need a stable one.
+    // Fixed, because `lib/controllers/course.js`'s `generateAccessCode` uses
+    // Math.random and the join-by-code routes need a stable one.
     accessCode  : 'PAR1TY'
   }),
 
@@ -983,8 +909,8 @@ var fixtures = Object.freeze({
 
 /**
  * Whether a `code` payload parses as the JSON array of `{name, content}` files
- * that `lib/workers/exports.js:337-340` accepts. Reproduces that test exactly,
- * including its treatment of valid-but-not-array JSON as a single file.
+ * that `lib/workers/exports.js`'s `parseCodeFiles` accepts. Reproduces that test
+ * exactly, including its treatment of valid-but-not-array JSON as a single file.
  *
  * @param {string} code
  * @returns {boolean}
@@ -1012,10 +938,11 @@ var loadedConfig = null;
 /**
  * Resolves the npm `config` object on first use.
  *
- * Deliberately not a module-scope require: `config` 0.4.37 freezes its values
- * when it is first required, so requiring it here would fix the configuration
- * at the moment a caller required this file for its `ids` map - which may be
- * before `test/parity/mongo.js` has published the database address.
+ * Deliberately not a module-scope require: the `config` package freezes its
+ * values when it is first required, so requiring it here would fix the
+ * configuration at the moment a caller required this file for its `ids` map -
+ * which may be before `test/parity/mongo.js` has published the database
+ * address.
  *
  * @returns {Object} the loaded configuration
  */
@@ -1076,8 +1003,8 @@ function assertConnection() {
 
 /**
  * The object key a stored url resolves to - the last path segment, which is
- * exactly how `lib/controllers/files.js:135-136` derives it and how
- * `lib/workers/exports.js:304` derives an asset's.
+ * exactly how `lib/controllers/files.js`'s `download` derives it and how
+ * `lib/workers/exports.js`'s `downloadAsset` derives an asset's.
  *
  * `new URL` rather than `url.parse`: the latter emits DEP0169 on Node 22 and
  * this tooling's stderr is inside the zero-warning gate's stream. Unlike the
@@ -1099,14 +1026,15 @@ function keyFromUrl(value) {
  * Reads one bucket's configuration, and fails with the reason rather than a
  * TypeError when it is absent.
  *
- * `config/default.yaml:394-415` declares userassets, snapshots, cdn, materials,
- * useravatars, appassets and vendorassets - and NO `exports` entry, although
- * `lib/workers/exports.js:367-368` and `lib/controllers/users.js:1305`
- * dereference its `name`. AAP 0.6.7 records that gap as an existing deployment
- * requirement and does not fix `config/default.yaml`, whose bucket values are
- * deployment-specific placeholders; `test/parity/server-overlay.json` supplies
- * the value so the path is exercisable. This message is what a caller sees if
- * it seeds exports without that overlay.
+ * `config/default.yaml`'s `aws.buckets` declares userassets, snapshots, cdn,
+ * materials, useravatars, appassets and vendorassets - and NO `exports` entry,
+ * although `lib/workers/exports.js`'s `uploadToS3` and
+ * `lib/controllers/users.js`'s `downloadExport` dereference its `name`. That gap
+ * is an existing deployment requirement rather than something this tooling
+ * fixes, since those bucket values are deployment-specific placeholders;
+ * `test/parity/server-overlay.json` supplies the value so the path is
+ * exercisable. This message is what a caller sees if it seeds exports without
+ * that overlay.
  *
  * @param {string} name bucket key under config.aws.buckets
  * @returns {{name: string, host: string}}
@@ -1210,7 +1138,8 @@ function storage(options) {
     descriptors.exportArchive = {
       bucket             : exportsBucket.name,
       key                : EXPORT_S3_KEY,
-      // What `lib/workers/exports.js:378` resolves and stores as downloadUrl.
+      // What `lib/workers/exports.js`'s `uploadToS3` resolves and stores as
+      // downloadUrl.
       url                : exportsBucket.host + '/' + EXPORT_S3_KEY,
       contentType        : fixtures.exportArchive.contentType,
       contentDisposition : fixtures.exportArchive.contentDisposition,
@@ -1269,22 +1198,21 @@ function s3Manifest(options) {
 // ---------------------------------------------------------------------------
 // Declared in dependency order, so seeding is a single pass over this list.
 // The dependencies are not stylistic - each one is a document another group's
-// fixture points at, and two of them were found by measurement rather than by
-// reading the schema:
+// fixture points at, and neither of these two is visible in the schema:
 //
-//   trinkets -> files   `lib/models/trinket.js:88-96` records added asset ids
-//     on the document, and the `updateAssetMetrics` pre-save hook (:326-348)
+//   trinkets -> files   `lib/models/trinket.js`'s `assets` setter records added
+//     asset ids on the document, and its `updateAssetMetrics` pre-save hook
 //     then calls `File.findByIdAndUpdateMetric(id, 'trinkets', 1)` with
 //     `upsert: true`. Seeding the asset-bearing trinket without its File would
 //     therefore CREATE a stub File document carrying nothing but an `_id` and a
 //     metric - a document no application path ever writes.
 //
 //   course -> trinkets  the assignment material embeds a trinket's id, name,
-//     shortCode and lang (`lib/models/material.js:11-16`). Seeding it against
-//     an absent trinket would leave a reference that resolves to nothing, and
-//     making the embed conditional on the selection would make the fixture's
-//     CONTENT depend on which groups were asked for - which is exactly the
-//     non-determinism this file exists to remove.
+//     shortCode and lang, as `lib/models/material.js` declares. Seeding it
+//     against an absent trinket would leave a reference that resolves to
+//     nothing, and making the embed conditional on the selection would make the
+//     fixture's CONTENT depend on which groups were asked for - which is
+//     exactly the non-determinism this file exists to remove.
 var GROUP_ORDER = ['users', 'files', 'trinkets', 'course', 'folders', 'exports'];
 
 var GROUP_DEPENDENCIES = Object.freeze({
@@ -1325,8 +1253,9 @@ var COURSE_TREE_IDS = Object.freeze({
 
 // Ids that must NOT resolve to a document, paired with the collection they
 // would have lived in. `missingUser` is the one with a behavioural contract -
-// `app.js:255-259` clears the session and answers "User not found" for it - and
-// the rest give every `{id}` route an input that resolves to nothing.
+// `app.js`'s session auth scheme clears the session and answers "User not
+// found" for it - and the rest give every `{id}` route an input that resolves
+// to nothing.
 var MISSING_IDS = Object.freeze([
   Object.freeze({ model : 'User',    id : ids.missingUser,    key : 'missingUser' }),
   Object.freeze({ model : 'Snippet', id : ids.missingTrinket, key : 'missingTrinket' }),
@@ -1458,12 +1387,12 @@ function describeDependency(group, dependency) {
 /**
  * The registered mongoose model behind a public model wrapper.
  *
- * `lib/models/model.js:18,103-105` exposes the private model on the wrapper
- * only when NODE_ENV is 'test' or 'migration', and the generated `findById`
- * applies `alternateIds` (username and email for User, hash for File) and any
- * default field projection. Existence checks, deletes and the one raw insert
- * below need none of that and must not depend on an environment variable, so
- * they go through the registry instead.
+ * `lib/models/model.js`'s `createModel` exposes the private model on the
+ * wrapper only when NODE_ENV is 'test' or 'migration', and the generated
+ * `findById` applies `alternateIds` (username and email for User, hash for
+ * File) and any default field projection. Existence checks, deletes and the one
+ * raw insert below need none of that and must not depend on an environment
+ * variable, so they go through the registry instead.
  *
  * @param {string} name
  * @returns {Object} the mongoose Model
@@ -1477,9 +1406,9 @@ function privateModel(name) {
 /**
  * `User.findByMultiple`, awaited.
  *
- * The application's own class method is callback-shaped
- * (`lib/models/user.js:105-115`, an `$or` over every key of the query) and this
- * file does not get to change that, so the call is wrapped rather than
+ * The application's own class method is callback-shaped -
+ * `lib/models/user.js`'s `findByMultiple` builds an `$or` over every key of the
+ * query - and this file does not change that, so the call is wrapped rather than
  * reimplemented. Reimplementing it would be the more convenient thing and the
  * wrong one: the point of using it in `verify()` is that the OAuth identity is
  * asserted through the exact lookup `googleCallback` performs, so a query built
@@ -1516,10 +1445,11 @@ function copy(value) {
 }
 
 /**
- * Merges fixture attributes into a fresh object.
+ * Merges any number of fixture attribute objects into a fresh object, left to
+ * right, skipping a falsy argument. Variadic through `arguments` rather than
+ * declared parameters, so a caller layers as many objects as it has.
  *
- * @param {...Object} sources
- * @returns {Object}
+ * @returns {Object} a new object; no argument is mutated
  */
 function attributes() {
   var result = {};
@@ -1562,9 +1492,9 @@ function tally(bucketMap, model, id) {
  *
  * This is the whole of the idempotence contract: a fixed `_id` that is already
  * present is left ALONE rather than overwritten, so calling `seed()` twice
- * neither throws a duplicate-key error (measured: MongoServerError 11000) nor
- * re-runs a hook. A caller that wants the fixtures restored after a corpus case
- * mutated them asks for `{force: true}`, which deletes them first.
+ * neither throws the duplicate-key error MongoDB raises on a repeated `_id`
+ * nor re-runs a hook. A caller that wants the fixtures restored after a corpus
+ * case mutated them asks for `{force: true}`, which deletes them first.
  *
  * @param {Object} summary
  * @param {string} model
@@ -1595,16 +1525,15 @@ async function ensure(summary, model, id, create) {
 /**
  * The four identities, and the one account that must not exist.
  *
- * Saved through the model, never inserted raw, because `encryptPassword`
- * (`lib/models/user.js:48-62`) is a pre-save hook: a raw insert would store the
- * plaintext, `POST /login` would reject it, and every authenticated corpus
- * scenario would be unreachable. The same save runs `ensureName` (name from
- * fullname, lowercased username and email, a normalized avatar) and
- * `checkPermissions`, which for the role-less normal user calls
- * `setRoles('user', 'site')` - `grant` with `_skipUpdate`, so it needs no
- * global `User` binding and takes its permissions from the static map in
- * `lib/models/roles.js`. Deterministic, and identical to what registration
- * writes.
+ * Saved through the model, never inserted raw, because `lib/models/user.js`'s
+ * `encryptPassword` is a pre-save hook: a raw insert would store the plaintext,
+ * `POST /login` would reject it, and every authenticated corpus scenario would
+ * be unreachable. The same save runs `ensureName` (name from fullname,
+ * lowercased username and email, a normalized avatar) and `checkPermissions`,
+ * which for the role-less normal user calls `setRoles('user', 'site')` -
+ * `grant` with `_skipUpdate`, so it needs no global `User` binding and takes
+ * its permissions from the static map in `lib/models/roles.js`. Deterministic,
+ * and identical to what registration writes.
  *
  * @param {Object} models
  * @param {Object} summary
@@ -1655,13 +1584,13 @@ async function seedUsers(models, summary) {
  * GENERATED - so it is not one of this file's fixed ids, `deleteFixtures` does
  * not reach it, and `seed({force: true})` leaves it behind. One run therefore
  * arms the next run's failure: the same request finds the account, takes the
- * existing-user branch, and the quirk AAP 0.6.6 requires stops being
- * observable while every status code stays exactly as it was.
+ * existing-user branch, and the quirk stops being observable while every status
+ * code stays exactly as it was.
  *
  * Deleted by email OR username, because those are two of the three arms of the
  * lookup `googleCallback` performs and either one alone would still match. The
- * third arm, `profiles.google.id`, is covered by the same document: the branch
- * writes all three together (`lib/controllers/auth.js:248-259`).
+ * third arm, `profiles.google.id`, is covered by the same document: its new-user
+ * branch writes all three together.
  *
  * Nothing else is touched. The addresses are this file's own fixtures, so
  * removing them is inside the ownership `reset()` describes - a document
@@ -1718,14 +1647,14 @@ async function resetOAuthNewcomer() {
  * The four file records, and the stored objects they name.
  *
  * Three go through the model. The fourth cannot: the image branch of
- * `lib/controllers/files.js:153-173` - AAP 0.7's approved deviation, where
- * baseline never settled and the target serves the stream - is entered only
- * when `file.type` matches /^image/, and `type` is an enum of 'embed' and
- * 'download' (`lib/models/file.js:9`). A document with `type: 'image/png'`
- * therefore fails validation and can only exist as what it is: a record written
- * by an older codebase. It is inserted through the collection with every field
- * supplied explicitly, including both timestamps, which makes it the most
- * deterministic document in the set as well as the most legacy one.
+ * `lib/controllers/files.js`'s `download` - the branch baseline never settled
+ * and the target serves as a stream - is entered only when `file.type` matches
+ * /^image/, and `lib/models/file.js` declares `type` as an enum of 'embed' and
+ * 'download'. A document with `type: 'image/png'` therefore fails validation
+ * and can only exist as what it is: a record written by an older codebase. It
+ * is inserted through the collection with every field supplied explicitly,
+ * including both timestamps, which makes it the most deterministic document in
+ * the set as well as the most legacy one.
  *
  * @param {Object} models
  * @param {Object} summary
@@ -1757,9 +1686,9 @@ async function seedFiles(models, summary) {
       url     : descriptors.notebook.url,
       type    : 'download',
       name    : fixtures.bytes.notebook.filename,
-      // The whitelist override, already applied: `config/default.yaml:236-237`
-      // maps ipynb to text/plain, and `lib/util/file.js:28-30` uses that in
-      // place of whatever the upload declared.
+      // The whitelist override, already applied: `config/default.yaml`'s
+      // `app.extensionWhitelist` maps ipynb to text/plain, and
+      // `_fileToContainer` uses that in place of whatever the upload declared.
       mime    : fixtures.bytes.notebook.mime,
       size    : fixtures.bytes.notebook.size,
       created : DATES.notebookFile
@@ -1819,12 +1748,12 @@ async function seedFiles(models, summary) {
 /**
  * The seven trinkets, then the asset metric they moved.
  *
- * `hash` is deliberately NOT supplied: `preSaveCreateHash`
- * (`lib/models/trinket.js:98-113`) computes it through `hashify()` from a seed
- * of code, lang, owner, creator and parent - all fixed here - so letting the
- * model derive it makes the fixture's hash exactly the value the application
- * would have written, and it is still reproducible. `shortCode` is the opposite
- * case and MUST be supplied, because `hashify` mixes `Date.now()` into it.
+ * `hash` is deliberately NOT supplied: `lib/models/trinket.js`'s
+ * `preSaveCreateHash` computes it through `hashify()` from a seed of code,
+ * lang, owner, creator and parent - all fixed here - so letting the model
+ * derive it makes the fixture's hash exactly the value the application would
+ * have written, and it is still reproducible. `shortCode` is the opposite case
+ * and MUST be supplied, because `hashify` mixes `Date.now()` into it.
  *
  * @param {Object} models
  * @param {Object} summary
@@ -1843,7 +1772,10 @@ async function seedTrinkets(models, summary) {
   for (i = 0; i < TRINKETS.length; i++) {
     descriptor = TRINKETS[i];
 
-    /* eslint-disable no-loop-func */
+    // The IIFE binds `descriptor` for this iteration, so the creator closes
+    // over its own spec rather than over the loop variable; the awaits are
+    // sequential because a fixed insertion order is part of what makes two runs
+    // comparable.
     await ensure(summary, 'Snippet', descriptor._id, (function(spec) {
       return async function() {
         var ownerId = ids[spec.owner];
@@ -1865,10 +1797,10 @@ async function seedTrinkets(models, summary) {
         }
 
         if (spec.asset) {
-          // The asset's url is what `lib/workers/exports.js:304` reduces to an
-          // object key with `path.basename`, so this url's last segment is
-          // KEYS.userAsset and the archived asset resolves against the S3
-          // fixture. Assigning `assets` also arms the metric hook - see
+          // The asset's url is what `lib/workers/exports.js`'s `downloadAsset`
+          // reduces to an object key with `path.basename`, so this url's last
+          // segment is KEYS.userAsset and the archived asset resolves against
+          // the S3 fixture. Assigning `assets` also arms the metric hook - see
           // reconcileAssetMetrics below.
           doc.assets = [{
             id   : ids[spec.asset],
@@ -1880,7 +1812,6 @@ async function seedTrinkets(models, summary) {
         return await doc.save();
       };
     })(descriptor));
-    /* eslint-enable no-loop-func */
   }
 
   await reconcileAssetMetrics(summary, metricBaseline);
@@ -1911,14 +1842,14 @@ function sleep(ms) {
 /**
  * Reads `metrics.trinkets` for every file an asset-bearing trinket references.
  *
- * Called before any trinket is created, because the hook this exists to
- * observe is an `$inc` (`lib/models/file.js:27-37`, `{$inc, upsert: true}`) and
- * an increment is only detectable against the value that preceded it. Waiting
- * for "the metric is at least the number of increments owed" - which is what
- * this function replaced - is satisfied instantly by a file that already
- * carried that value from an earlier run, so the wait would return while the
- * increment was still in flight and the whole reconciliation would be built on
- * a value that had not settled.
+ * Called before any trinket is created, because the hook this exists to observe
+ * is an `$inc` - `lib/models/file.js`'s `findByIdAndUpdateMetric`, with
+ * `{$inc, upsert: true}` - and an increment is only detectable against the value
+ * that preceded it. A weaker wait, for "the metric is at least the number of
+ * increments owed", is satisfied instantly by a file that already carried that
+ * value from an earlier run, so it would return while the increment was still in
+ * flight and the whole reconciliation would rest on a value that had not
+ * settled.
  *
  * @returns {Promise<Object>} file id -> the metric value before this call
  */
@@ -1941,12 +1872,10 @@ async function sampleAssetMetrics() {
   });
 
   for (var i = 0; i < fileIds.length; i++) {
-    /* eslint-disable no-await-in-loop */
     var document = await privateModel('File').collection.findOne(
       { _id : new mongoose.Types.ObjectId(fileIds[i]) },
       { projection : { 'metrics.trinkets' : 1 } }
     );
-    /* eslint-enable no-await-in-loop */
 
     baseline[fileIds[i]] = (document && document.metrics &&
       typeof document.metrics.trinkets === 'number')
@@ -1960,7 +1889,7 @@ async function sampleAssetMetrics() {
 /**
  * Fixes `File.metrics.trinkets` at the value the seeded set implies.
  *
- * `updateAssetMetrics` (`lib/models/trinket.js:326-348`) fires an UNAWAITED
+ * `lib/models/trinket.js`'s `updateAssetMetrics` fires an UNAWAITED
  * `File.findByIdAndUpdateMetric(id, 'trinkets', 1)` and discards the promise,
  * so the increment lands at a moment the caller cannot observe - and `metrics`
  * is in the File publicSpec, so its value is visible in a compared response.
@@ -1968,7 +1897,7 @@ async function sampleAssetMetrics() {
  * result reproducible in three steps:
  *
  *   1. For each file an asset-bearing trinket was CREATED against in this call,
- *      wait until every increment owed has actually landed - measured as
+ *      wait until every increment owed has actually landed - evaluated as
  *      `baseline + owed`, against the value sampled before the trinkets were
  *      created. Assigning the final value while an increment is still in flight
  *      would leave `expected + 1` behind, which is the whole race, so the wait
@@ -1985,11 +1914,11 @@ async function sampleAssetMetrics() {
  * missing increment and a late increment are indistinguishable from here, so
  * carrying on would either publish a fixture whose metric is about to change or
  * publish one whose hook never ran, and a harness cannot tell which it got.
- * Reporting it and assigning the value anyway - which is what this function
- * used to do - left a `summary.assetMetricsSettled` flag no driver read, so a
- * corpus captured against a metric that moved mid-run looked exactly like a
- * clean one. Throwing here means every consumer of `seed()` fails on it,
- * because every consumer already fails when `seed()` rejects.
+ * Reporting it on the summary and assigning the value anyway would leave the
+ * fault in a field no driver has to read, so a corpus captured against a metric
+ * that moved mid-run would look exactly like a clean one. Throwing here means
+ * every consumer of `seed()` fails on it, because every consumer already fails
+ * when `seed()` rejects.
  *
  * @param {Object} summary the seed summary; `created.Snippet` says which
  *   trinkets were created in this call, and therefore which increments are owed
@@ -2083,7 +2012,9 @@ async function waitForMetric(fileId, target) {
   var waited = 0;
   var observed;
 
-  /* eslint-disable no-await-in-loop */
+  // A poll, so the awaits are sequential by necessity: each read has to
+  // complete before the sleep that follows it, and the next read has to observe
+  // whatever landed during that sleep.
   while (true) {
     observed = await readMetric(fileId);
 
@@ -2098,7 +2029,6 @@ async function waitForMetric(fileId, target) {
     await sleep(METRIC_POLL_INTERVAL_MS);
     waited += METRIC_POLL_INTERVAL_MS;
   }
-  /* eslint-enable no-await-in-loop */
 }
 
 /**
@@ -2124,17 +2054,16 @@ async function readMetric(fileId) {
  * The course tree: two materials, two lessons, the course, and the role that
  * makes the seeded user its owner.
  *
- * `course.addUser()` is deliberately NOT used. It calls
- * `user.grant(role, 'course', {id})` WITHOUT `_skipUpdate`
- * (`lib/models/course.js:79`), and that path writes through the GLOBAL `User`
- * binding, which exists only inside a running `app.js`. A harness that seeds
- * before loading the application - `test/parity/worker.js` and
- * `test/parity/storage.js` both do - would take a ReferenceError. So the
- * course's own `users` subdocument is written literally, in exactly the shape
- * `addUser` pushes (`lib/models/course.js:61-68`), and the role is granted with
+ * `course.addUser()` is deliberately NOT used. `lib/models/course.js`'s
+ * `addUser` calls `user.grant(role, 'course', {id})` WITHOUT `_skipUpdate`, and
+ * that path writes through the GLOBAL `User` binding, which exists only inside a
+ * running `app.js`. A harness that seeds before loading the application -
+ * `test/parity/worker.js` and `test/parity/storage.js` both do - would take a
+ * ReferenceError. So the course's own `users` subdocument is written literally,
+ * in exactly the shape `addUser` pushes, and the role is granted with
  * `setRoles`, which is `grant` with `_skipUpdate` and therefore touches no
  * global. The resulting documents are indistinguishable from what
- * `createCourseCore` (`lib/controllers/course.js:1765-1782`) produces.
+ * `lib/controllers/course.js`'s `createCourseCore` produces.
  *
  * @param {Object} models
  * @param {Object} summary
@@ -2264,14 +2193,14 @@ async function seedCourseTree(models, summary) {
   });
 
   // Granted ONLY when the role is absent, and the guard is load-bearing rather
-  // than an optimization. Measured: `grant` (`lib/models/plugins/roles.js:52-57`)
-  // back-fills `thru` and `limits` with `{}` on a role entry that already
-  // exists, and assigning them marks the subdocument modified - so where the
-  // first save persisted the entry WITHOUT those two empty objects (mongoose
-  // omits them), a second `setRoles` persists it WITH them. The documents then
-  // differ after a repeat `seed()` even though nothing was created, which is
-  // precisely the non-determinism this file exists to prevent. `hasRole` is the
-  // same predicate `lib/controllers/course.js:201` uses, so the check asks the
+  // than an optimization. `lib/models/plugins/roles.js`'s `grant` back-fills
+  // `thru` and `limits` with `{}` on a role entry that already exists, and
+  // assigning them marks the subdocument modified - so where the first save
+  // persisted the entry WITHOUT those two empty objects (mongoose omits them),
+  // a second `setRoles` persists it WITH them. The documents then differ after a
+  // repeat `seed()` even though nothing was created, which is precisely the
+  // non-determinism this file exists to prevent. `hasRole` is the same predicate
+  // the course-owner checks in `lib/controllers/course.js` use, so this asks the
   // application's own question.
   if (!owner.hasRole('course-owner', 'course', { id : ids.course })) {
     await owner.setRoles('course-owner', 'course', { id : ids.course });
@@ -2284,15 +2213,15 @@ async function seedCourseTree(models, summary) {
  * The folder, and the folder reference on each trinket it contains.
  *
  * Both halves are needed and they are written by different application paths:
- * `Folder.addTrinket` (`lib/models/folder.js:26-42`) pushes the subdocument
- * onto the folder, and `Trinket.addFolder` (`lib/models/trinket.js:390-399`)
- * writes the reverse reference the trinket list filters on. A folder seeded
- * without the reverse references would make the `folders.trinkets` quirk case
- * unfalsifiable: AAP 0.6.4 requires it driven BOTH with and without a query
- * string, because baseline builds `/api/trinkets&folder=...` when no query is
- * present - an `&` where a `?` belongs, so no folder filter applies at all -
- * and a well-formed url when one is. Distinguishing those two outcomes requires
- * a filter that would otherwise have matched something.
+ * `lib/models/folder.js`'s `addTrinket` pushes the subdocument onto the folder,
+ * and `lib/models/trinket.js`'s `addFolder` writes the reverse reference the
+ * trinket list filters on. A folder seeded without the reverse references would
+ * make the `folders.trinkets` quirk case unfalsifiable: it has to be driven
+ * BOTH with and without a query string, because baseline builds
+ * `/api/trinkets&folder=...` when no query is present - an `&` where a `?`
+ * belongs, so no folder filter applies at all - and a well-formed url when one
+ * is. Distinguishing those two outcomes requires a filter that would otherwise
+ * have matched something.
  *
  * @param {Object} models
  * @param {Object} summary
@@ -2367,13 +2296,13 @@ async function seedFolders(models, summary) {
  * The three export records: pending, completed, and completed-but-expired.
  *
  * The completed record carries an `s3Key` of exactly the form
- * `lib/workers/exports.js:104` builds and a `downloadUrl` of exactly the form
- * :378 resolves, so `GET /api/exports/{exportId}` reports what the worker would
- * have reported and `GET /api/exports/{exportId}/download` reaches
- * `getSignedUrl` at `lib/controllers/users.js:1299` instead of failing an
- * earlier guard. The expired record exists because :1293 is a DISTINCT error
- * edge from :1291 - not-completed and expired are two branches, and one fixture
- * cannot reach both.
+ * `lib/workers/exports.js`'s `processBulkExport` builds and a `downloadUrl` of
+ * exactly the form its `uploadToS3` resolves, so `GET /api/exports/{exportId}`
+ * reports what the worker would have reported, and the download route reaches
+ * `getSignedUrl` in `lib/controllers/users.js`'s `downloadExport` rather than
+ * failing an earlier guard. The expired record exists because that handler's
+ * expiry check is a DISTINCT error edge from its not-completed check, and one
+ * fixture cannot reach both.
  *
  * @param {Object} models
  * @param {Object} summary
@@ -2559,9 +2488,8 @@ async function seed(options) {
   // them fails when it rejects - `capture.js` and `replay.js` spawn a child
   // whose exit code is the gate, `storage.js` and `worker.js` let the rejection
   // out of their own prepare step, `joi-matrix.js` turns it into a tool error -
-  // so running the checks here is what gives them a caller. It was reachable
-  // only from `--verify` before, which meant the strongest statement this file
-  // can make about its own fixtures was the one thing no harness consulted.
+  // so running the checks here is what gives them a caller, rather than
+  // leaving them reachable only from `--verify`.
   //
   // Scoped to the groups that were actually seeded, because a check about a
   // group a caller declined is a false failure, and `verify()` asserting the
@@ -2635,11 +2563,11 @@ async function reset(options) {
 // removes exactly these and nothing else - a wider list would hide a real
 // difference, which is the failure mode this artifact exists to catch.
 var VOLATILE_FIELDS = Object.freeze([
-  // lib/models/plugins/timestamps.js:20-28, assigned on every modified save.
+  // Assigned by lib/models/plugins/timestamps.js on every modified save.
   'lastUpdated',
-  // lib/models/trinket.js:108-110, assigned whenever code/assets/settings move.
+  // Assigned by trinket's preSaveCreateHash when code/assets/settings move.
   'codeLastUpdated',
-  // lib/models/user.js:48-62, salted per save by design.
+  // Salted per save by lib/models/user.js's encryptPassword, by design.
   'password'
 ]);
 
@@ -2862,8 +2790,9 @@ async function verify(options) {
   }
 
   // 2. Every `missing*` id resolves to nothing. `missingUser` carries a
-  //    behavioural contract - app.js:255-259 - and the rest exist so a `{id}`
-  //    route has an input that resolves to no document.
+  //    behavioural contract - the "User not found" outcome of `app.js`'s session
+  //    auth scheme - and the rest exist so a `{id}` route has an input that
+  //    resolves to no document.
   for (i = 0; i < MISSING_IDS.length; i++) {
     count = await privateModel(MISSING_IDS[i].model).collection.countDocuments({
       _id : new mongoose.Types.ObjectId(MISSING_IDS[i].id)
@@ -2909,7 +2838,8 @@ async function verify(options) {
   if (seededAdmin) {
     check('the admin\'s password accepts \'' + IDENTITIES.admin.password + '\'',
           await seededAdmin.comparePassword(IDENTITIES.admin.password));
-    // The exact predicate lib/util/helpers.js:22 and app.js:261 use.
+    // The exact predicate `lib/util/helpers.js`'s `internals.isAdmin` and
+    // `app.js`'s session auth scheme use.
     check('the admin satisfies hasRole(\'admin\')', seededAdmin.hasRole('admin'));
   }
 
@@ -2922,11 +2852,11 @@ async function verify(options) {
   // 3b. THE OAUTH IDENTITY CONTRACT, both halves.
   //
   //     Asserted through the application's own predicate rather than through a
-  //     query of this file's own devising: `googleCallback` selects its branch
-  //     with `User.findByMultiple` over the three arms below
-  //     (`lib/controllers/auth.js:200-204`), so running that exact call is what
-  //     proves the branch a served profile reaches. A check that merely
-  //     confirmed a document exists would pass while the lookup missed it.
+  //     query of this file's own devising: `lib/controllers/auth.js`'s
+  //     `googleCallback` selects its branch with `User.findByMultiple` over the
+  //     three arms below, so running that exact call is what proves the branch a
+  //     served profile reaches. A check that merely confirmed a document exists
+  //     would pass while the lookup missed it.
   if (has('users')) {
     var linked = await findByMultiple({
       email                : OAUTH.existing,
@@ -2998,15 +2928,15 @@ async function verify(options) {
     }
   }
 
-  // 4. The content-hash contract. AAP 0.6.7: the S3 key IS a content digest,
-  //    so a changed digest silently orphans every stored object. Three things
-  //    must agree - the bytes, the seeded record's `hash`, and the key the
-  //    record's `url` resolves to.
+  // 4. The content-hash contract: the S3 key IS a content digest, so a changed
+  //    digest silently orphans every stored object. Three things must agree -
+  //    the bytes, the seeded record's `hash`, and the key the record's `url`
+  //    resolves to.
   //    Configuration-independent apart from the bucket names, so it runs for
   //    every selection - except the export archive, whose descriptor needs the
-  //    `exports` bucket that `config/default.yaml` does not declare (AAP
-  //    0.6.7). Asking for it under a selection that did not seed exports would
-  //    turn a legitimate subset seed into a configuration error.
+  //    `exports` bucket that `config/default.yaml` does not declare. Asking for
+  //    it under a selection that did not seed exports would turn a legitimate
+  //    subset seed into a configuration error.
   var descriptors = storage({ exports : has('exports') });
   var names       = Object.keys(descriptors);
   var payloads    = {
@@ -3058,8 +2988,9 @@ async function verify(options) {
       }
     }
 
-    // 6. The legacy record is the only one whose `type` reaches the image branch
-    //    of lib/controllers/files.js:153 - and it must have survived the enum.
+    // 6. The legacy record is the only one whose `type` reaches the image
+    //    branch of `lib/controllers/files.js`'s `download` - and it must have
+    //    survived the enum.
     var legacy = await privateModel('File').findById(ids.legacyImageFile).exec();
     check('the legacy file record kept its mime-like `type`, which the enum ' +
           'would now reject and which is the only way into the image download ' +
@@ -3091,7 +3022,7 @@ async function verify(options) {
     }
   }
 
-  // 8. Both code shapes lib/workers/exports.js:334-352 branches on are present.
+  // 8. Both code shapes `parseCodeFiles` branches on are present.
   var shapes = Object.keys(fixtures.trinkets).map(function(key) {
     return fixtures.trinkets[key].codeShape;
   });
@@ -3238,11 +3169,11 @@ function note(message) {
  * The self-check entry point.
  *
  * The environment is published BEFORE anything requires `config` or a model:
- * `config` 0.4.37 freezes on first require, and the models are resolved lazily
- * precisely so this ordering is available. The connection is opened here rather
- * than through `config/db.js` because that module connects at module scope from
- * whatever configuration is loaded at the time, and this path has to publish
- * the address first.
+ * the `config` package freezes on first require, and the models are resolved
+ * lazily precisely so this ordering is available. The connection is opened here
+ * rather than through `config/db.js` because that module connects at module
+ * scope from whatever configuration is loaded at the time, and this path has to
+ * publish the address first.
  *
  * @param {string[]} [argv] defaults to process.argv.slice(2)
  * @returns {Promise<number>} the process exit code
@@ -3254,17 +3185,16 @@ async function main(argv) {
   var seen = {};
   var i, arg, name;
 
-  // TWO RULES, both reported the way this file already reports a usage fault -
-  // the message, the usage text, exit 2. NO OPTION HERE IS REPEATABLE, so a
+  // TWO RULES, both reported the way this file reports any usage fault - the
+  // message, the usage text, exit 2. NO OPTION HERE IS REPEATABLE, so a
   // second `--overlay` is an error rather than a silent last-one-wins: the
   // overlay decides which buckets the fixtures are resolved against, and
   // seeding against a configuration the caller did not name produces fixtures
   // that look right and are not. `--verify` is repeat-REJECTING like the rest,
   // deliberately: it names the default action, so a second one adds nothing
   // that could justify an exception, and one rule with no special cases is
-  // easier to rely on than two. It remains ACCEPTED AND IGNORED, exactly as
-  // before. And a dash-leading value is a usage error, which `--overlay`
-  // already enforced and which is left as it is.
+  // easier to rely on than two; a single `--verify` is accepted and otherwise
+  // ignored. And a dash-leading value is a usage error.
   for (i = 0; i < args.length; i++) {
     arg = args[i];
     name = arg.indexOf('=') > 0 ? arg.slice(0, arg.indexOf('=')) : arg;
@@ -3310,9 +3240,9 @@ async function main(argv) {
     process.env.NODE_CONFIG_PERSIST_ON_CHANGE = mongo.PERSIST_ON_CHANGE;
     process.env.NODE_CONFIG = info.nodeConfig;
 
-    // The same pin config/db.js:8 applies, so this path emits no Mongoose 7
-    // DeprecationWarning either - the zero-warning gate covers this tooling's
-    // stderr as well as the application's.
+    // The same `strictQuery` pin `config/db.js` applies, so this path emits no
+    // Mongoose 7 DeprecationWarning either - the zero-warning gate covers this
+    // tooling's stderr as well as the application's.
     mongoose.set('strictQuery', true);
 
     note('connecting to ' + info.uri);
@@ -3386,7 +3316,6 @@ async function main(argv) {
 }
 
 module.exports = {
-  // The fixtures.
   ids         : ids,
   credentials : Object.freeze({
     user     : IDENTITIES.user,
@@ -3411,7 +3340,6 @@ module.exports = {
   oauth           : OAUTH,
   oauthIdentities : OAUTH_IDENTITIES,
 
-  // The operations.
   seed   : seed,
   reset  : reset,
   verify : verify,

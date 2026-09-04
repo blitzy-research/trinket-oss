@@ -1,197 +1,85 @@
 #!/usr/bin/env node
 'use strict';
 
-// Generator for docs/error-edge-inventory.md - the per-edge error-to-response
-// checklist that rule R-e's parity claim rests on.
+// Generates the per-edge error-to-response inventory: one row for every site
+// in the ten controllers, the helpers module and the inline pre-handler at
+// which an error decides a response.
 //
-// Node core only, CommonJS, no third-party requires, no application requires.
-// Writes exactly one file, the one named by --out, and never writes to stdout.
+// The three shared funnels are reached from hundreds of local branches, each
+// branch decides WHICH funnel its error reaches, and some reach none - so the
+// parity claim is per edge, and so is this document: every row names the route
+// or code path that drives it and the outcome that must survive conversion.
+// Given a baseline worktree, each row is also joined to the row measuring the
+// same edge there and ticked only when the two agree.
 //
-// ===========================================================================
-// WHY THIS FILE EXISTS
-// ===========================================================================
-// R-e says every converted path must preserve its error-to-response mapping -
-// same status codes, same error payload shapes. The migration preserves three
-// shared funnels verbatim, and AAP 0.6.3 is explicit that this is *necessary
-// but not sufficient*: the funnels are reached from hundreds of local
-// branches, each branch decides *which* funnel its error reaches, and some
-// reach none at all. "The error mappings survived" is therefore a claim about
-// those branches, not about the three funnels, and the only form of it a
-// reviewer can inspect is a generated, per-edge checklist. This tool generates
-// it.
+// INVOCATION
+//   node test/parity/error-edges.js --help   prints the options, which live in
+//   the USAGE constant beside the parser. Node core only, CommonJS, so it runs
+//   against a tree with no install. Artifacts go only to the paths the flags
+//   name and stdout carries nothing; a failure prints its reason on stderr and
+//   exits 1. Both gates run BEFORE anything is written, so a failed gate never
+//   leaves a document asserting its own failure, and --out resolves against
+//   THIS repository rather than --app, so generating the baseline inventory
+//   cannot write into the baseline worktree.
 //
-// The document is a checklist, not a report: every row carries a checkbox so
-// an implementing agent closes rows one at a time, and every row names the
-// route or the reachable code path that drives it so test/parity/capture.js
-// can turn the row set into failure-path scenarios.
+// ARTIFACT
+//   --out  the Markdown inventory (default docs/error-edge-inventory.md):
+//     provenance, the funnels located in the analysed tree, the counts
+//     self-check, then a section per file whose rows carry the stable id, file
+//     and line, carrier, surface, class, Disposition, Shape, Funnel, the Target
+//     outcome with its side effects and timing, the driver, the closure verdict
+//     and the corpus coverage.
+//   --edge-index  the same rows with no prose, schema
+//     trinket-oss/error-edge-index@2: one record per target row AND per
+//     baseline row under the ids the document prints, plus an `unpaired` block
+//     naming every row missing, added, ambiguous or proven unreachable. Sorted
+//     and timestamp-free, so it diffs.
+//   --provenance-out  absolute paths, wall clock and the command as typed, none
+//     of which enters the document, so two machines analysing the same commits
+//     agree byte for byte.
 //
-// ===========================================================================
-// THE ROW COUNT IS NOT PREDETERMINED
-// ===========================================================================
-// AAP 0.1.1.1 records 132 functions with an `err` parameter in
-// lib/controllers/**. That is a SIZING METRIC AND NOTHING ELSE. A crude grep
-// over the baseline tree returns 133 rather than 132 depending on the pattern
-// used, which is itself the point:
+// STATIC ANALYSIS, NOT OBSERVATION. The files are read as text and never
+// required: requiring a controller creates the exports queue, loads the AWS
+// SDK and pulls in config/app.config, which connects Mongoose. A row states
+// what the source does, resolved from bindings, callers and reachability; a
+// measured response comes from the capture corpus through --scenarios, so
+// driven coverage is a separate field and a row can be closed yet undriven.
 //
-//   - one callback can carry zero error dispositions (it never inspects
-//     `err`) or several (a guard, a log, and a late resolve);
-//   - promise `.catch` handlers and synchronous `throw` statements add edges
-//     entirely outside the `err`-parameter count;
-//   - a `reply(` call site is only an error edge when what it carries is an
-//     error, and 61 of the baseline's 202 sites carry success payloads.
+// SCRUB, THEN SCAN. No JavaScript parser is installed, so classifySource marks
+// every offset as code, string, template, regex or comment and the structural
+// passes match a copy with the non-code offsets blanked to spaces, display text
+// coming from the raw source. Blanking preserves length and newlines, so
+// offsets still map to lines and a brace or keyword inside a literal cannot
+// mislead a pass. An unterminated literal is fatal - the signature of a
+// desynchronized scan, which drops edges silently.
 //
-// So this tool counts edges and reports the number it found. It does not
-// target a number, and the generated document says so near the top.
+// EDGE IDENTITY. A row's id is <file>.<carrier member>.<class>.<ordinal>, with
+// no line, disposition or funnel, because conversion moves lines and changes
+// both of the others. Class buckets the shapes that convert into one another,
+// and route declarations bind carriers by name, so both survive. The ordinal
+// shifts when a carrier gains or loses a site: exact-id pairs anchor the
+// alignment, position fills only gaps between anchors, and a group whose
+// anchors cross is reported ambiguous rather than given a verdict.
 //
-// ===========================================================================
-// MEASURED FIGURES, AND WHAT THEY GUARD
-// ===========================================================================
-// Measured over the baseline worktree at 2f8712a with `grep -o | wc -l`,
-// which is unaffected by this tool's tokenizer and therefore an independent
-// witness:
+// WHAT A ROW SAYS. Disposition is a closed vocabulary of seven values, exactly
+// one per row: six local dispositions plus `propagates to its caller`, for a
+// callback that hands its error to an outer continuation. Shape is open and
+// descriptive, carrying the sub-shapes a mechanical conversion changes
+// silently. Funnel is Layer 1, 2, 3 or `none`, and `none` is a real value: an
+// edge that answers nothing is the one most likely to acquire an answer by
+// accident. Target states the outcome to PRESERVE - status, payload or
+// redirect, side effects, timing - never a fix; where it is a defect, the row
+// requires the defect.
 //
-//   reply( sites          202  =  172 lib/controllers/*.js
-//                                +  29 lib/util/helpers.js
-//                                +   1 config/api_routes.js:1104
-//   .then( sites          183     across the ten controllers
-//   .catch( sites          85     across the ten controllers
-//   err-parameter fns     133     sizing metric only (AAP quotes 132)
-//
-// None of those tokens occurs inside a comment or a string literal in the
-// baseline tree - verified - so a tokenizer that is working must reproduce
-// the first three exactly. When it does not, it has desynchronized and the
-// inventory it would emit is quietly incomplete, which is worse than no
-// inventory at all. BASELINE_COUNTS below is asserted for that reason.
-//
-// The assertion is conditional, and it has to be. The baseline figures are
-// properties of 2f8712a, not of every tree: the same measurement over a
-// converted tree returns 26 + 11 + 0 reply( sites, 186 `.then(` and 95
-// `.catch(`, because conversion is exactly what removes the legacy idiom. A
-// tool that hard-failed on those numbers could not be run against the tree it
-// ships in, and AAP 0.4.1 requires it to be - "re-generated from the target to
-// show rows closing". So:
-//
-//   --counts-check=auto    (default) hard-assert when the analysed tree is
-//                          detected as the baseline; otherwise report the
-//                          observed counts as deltas against the baseline.
-//   --counts-check=strict  hard-assert always. Use this against a baseline
-//                          worktree, where it is the Phase 6 gate.
-//   --counts-check=off     report only. Recorded in the document as such.
-//
-// Baseline detection uses three independent signals, any one of which is
-// sufficient: the analysed tree's `git rev-parse HEAD` is BASELINE_COMMIT; or
-// all three counts already match; or the legacy-handler fingerprint - the
-// number of `function (request, reply)` declarations in the ten controllers -
-// is at or above LEGACY_FINGERPRINT_FLOOR. That fingerprint is 145 at
-// baseline and 2 after conversion, a clean separation, and it is what keeps
-// the guard live on a baseline tree with no usable git metadata.
-//
-// Independently of all of that, SELF_TESTS runs on every invocation and
-// hard-fails on any mismatch. It is the guard that does not depend on which
-// tree is being analysed, and it includes the exact hazard AAP 0.4.1 names:
-// the regex literal at config/routes.js:87 whose character class contains a
-// single quote and a double quote. A tokenizer that treats that quote as a
-// string delimiter desynchronizes everything after it - in a measured trial
-// it under-counted `payload` keys - and the same class of bug silently drops
-// error edges.
-//
-// ===========================================================================
-// STATIC ANALYSIS, AND WHY IT IS NOT `require`
-// ===========================================================================
-// The controllers are read as text and never required. This is not a
-// preference. lib/controllers/users.js creates the exports queue at module
-// load and loads the AWS SDK a line later; lib/controllers/* pull in
-// config/app.config transitively, which loads config/db and calls
-// mongoose.connect. Requiring one controller to inventory it would open
-// sockets, print the in-memory-queue line and the SDK maintenance notice, and
-// exit non-zero without a database - and this tool has to run on a baseline
-// worktree that has no install at all.
-//
-// No JavaScript parser is available: acorn, esprima, espree and @babel are
-// all absent from node_modules, and declaring one is package.json work this
-// file does not own. So the analysis is built on a hand-written scanner that
-// classifies every offset in a source file as code, string, template,
-// regex or comment, and then does all structural matching against a copy of
-// the source with the non-code offsets blanked to spaces. Blanking preserves
-// length and newlines, so every offset still maps to its original line, and
-// braces, parentheses and keywords inside literals and comments cannot
-// confuse the structural passes.
-//
-// ===========================================================================
-// WHAT A ROW SAYS
-// ===========================================================================
-// Disposition is a CLOSED vocabulary of SEVEN values, and every row carries
-// exactly one of them. Six are the ones AAP 0.6.3 enumerates:
-//
-//   calls request.fail locally | calls reply(err) | returns or throws a Boom
-//   logs and continues | swallows silently | resolves on a later callback
-//
-// The seventh is this tool's own addition and is marked as such wherever it
-// appears, here and in the document:
-//
-//   propagates to its caller
-//
-// It exists because none of the six can describe a callback that hands its
-// error to an outer continuation - `reject(err)`, `next(err)`,
-// `resolve({err: err})` - and labelling such an edge with the nearest of the
-// six states something false about it. "Swallows silently" is wrong twice
-// over, since the error is neither absorbed nor silent and the awaiting
-// caller decides the response; "logs and continues" is wrong for a callback
-// that logs AND rejects. R-e exists so these rows can be acted on without
-// re-deriving them, so the vocabulary carries the value the rows need. See
-// DISPOSITION for the same note at the definition.
-//
-// Seven values cannot express the sub-shapes that a mechanical conversion
-// changes silently, so each row also carries a Shape - `reply(err) with no
-// return`, `.catch(request.fail) bare reference`, `synchronous throw
-// (TypeError)`, `CPS callback boundary`, and so on. Shape is descriptive and
-// open; Disposition is the closed vocabulary. The document states the mapping.
-//
-// Funnel is Layer 1, Layer 2, Layer 3 or none. `none` is a legitimate and
-// important value: an edge that produces no response at all is the edge most
-// likely to be converted into one by accident.
-//
-// Target states the PRESERVED outcome - status, payload or redirect, side
-// effects, timing. It never proposes a fix. R-d prohibits improvements, and a
-// row that recommended repairing a swallowed error would send an implementing
-// agent in precisely the wrong direction. Where the baseline outcome is a
-// defect, the row says so and requires the defect.
-//
-// ===========================================================================
-// KNOWN LIMITS, STATED RATHER THAN HIDDEN
-// ===========================================================================
-//  - Expression-bodied arrow functions get an approximated body extent (to
-//    the enclosing delimiter). The analysed files contain none in the
-//    baseline tree; the approximation exists so a converted tree does not
-//    silently lose rows.
-//  - Downstream-catch resolution is lexical: it finds `.catch(` links in the
-//    same statement at the chain's own depth. A rejection that crosses a
-//    function boundary into a caller's chain is reported as reaching the
-//    handler catch-all, with the carrier named so a reviewer can confirm.
-//  - Route binding reads the literal `route :` declarations in
-//    config/routes.js and config/api_routes.js. The per-language expansion
-//    loop multiplies those declarations at parse time; the document reports
-//    the literal declaration and says so. test/parity/manifest.js owns the
-//    expanded 233-entry manifest.
-//
-// ===========================================================================
-// USAGE
-// ===========================================================================
-// The option list is NOT duplicated here. `--help` prints it from the USAGE
-// constant near the CLI at the foot of this file, which is the one place it is
-// written and the one place it is maintained - a second copy in this comment
-// was already a version behind the parser by the time it was read.
-//
-//   node test/parity/error-edges.js --help
-//
-// In outline: `--app` and `--baseline` name the two trees; `--scenarios`
-// names the capture corpus; `--out`, `--edge-index` and `--provenance-out`
-// name the three artifacts, each written only if asked for; `--closure-gate`
-// and `--coverage-gate` turn findings into exit codes and are evaluated
-// BEFORE anything is written, so a failed gate never leaves a document on
-// disk asserting its own failure.
-//
-// Exit 0 on success. Exit 1 on any failure, with the reason on stderr.
+// SELF-CHECKS, ALL FATAL. The scanner and classifier self-tests run on every
+// invocation, before any tree is read. The token counts are compared with the
+// figures BASELINE_COUNTS records for the baseline commit, asserted when the
+// analysed tree is detected as that baseline - by its HEAD, by the counts
+// themselves, or by the legacy-handler fingerprint - so the guard stays live on
+// a baseline tree without failing on a converted one, whose legacy idiom
+// conversion removes; --counts-check selects auto, strict or off. A row whose
+// Funnel contradicts its own Target prose is fatal, as is a closure summary
+// whose buckets do not reconcile with the row counts.
 
 const fs = require('fs');
 const path = require('path');
@@ -201,23 +89,25 @@ const { execFileSync } = require('child_process');
 // generated inventories in docs/. It is required from manifest.js because that
 // is the only tool that is Node-core-only at module scope, so requiring it
 // costs this generator nothing, and because a second copy of these guarantees
-// would drift from the first. What it adds to the block this file already
-// carried is the part a local implementation could not: the generator is
-// identified by its git BLOB (`git hash-object`) and by a commit only when
-// that commit's tree actually holds that blob, and the document is bound to
-// its own prose by a `bodyDigest`. `git log -1 -- <path>` names the last
-// commit that touched the path, which is a different claim and is false for an
-// uncommitted generator, so it is no longer the identity this document prints.
+// would drift from the first. What the shared contract guarantees is the part
+// a local implementation cannot: the generator is identified by its git BLOB
+// (`git hash-object`) and by a commit only when that commit's tree actually
+// holds that blob, and the document is bound to its own prose by a
+// `bodyDigest`. `git log -1 -- <path>` names the last commit that touched the
+// path, which is a different claim and is false for an uncommitted generator,
+// so it is not the identity this document prints.
 const { provenance } = require('./manifest');
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-// R-f's tie-breaker reference. Baseline claims are taken at this commit.
+// The parity baseline. Every baseline claim is taken at this commit.
 const BASELINE_COMMIT = '2f8712a112db46f923918c4507c75abc732d83d0';
 
-// Measured at BASELINE_COMMIT. See "MEASURED FIGURES" above.
+// The token counts the baseline commit carries, measured with
+// `grep -o '<token>' | wc -l`, which is independent of this tool's tokenizer
+// and therefore an independent witness that the scan stayed in sync.
 const BASELINE_COUNTS = Object.freeze({
   replyControllers: 172,
   replyHelpers: 29,
@@ -264,7 +154,7 @@ const INLINE_PRE_FILE = 'config/api_routes.js';
 // the reachable code path instead of a route.
 const ROUTE_MODULES = Object.freeze(['config/routes.js', 'config/api_routes.js']);
 
-// The closed Disposition vocabulary of AAP 0.6.3. Exactly one per row.
+// The closed Disposition vocabulary. Exactly one value per row.
 const DISPOSITION = Object.freeze({
   FAIL_LOCAL: 'calls request.fail locally',
   REPLY_ERR: 'calls reply(err)',
@@ -272,19 +162,19 @@ const DISPOSITION = Object.freeze({
   LOG_CONTINUE: 'logs and continues',
   SWALLOW: 'swallows silently',
   LATE_RESOLVE: 'resolves on a later callback',
-  // The seventh value, and the one addition this tool makes to AAP 0.6.3's
-  // list. It exists because the six above cannot describe a callback that
-  // hands its error to an outer continuation - `reject(err)`,
-  // `resolve({err: err, ...})`, `next(err)` - and marking such an edge with
-  // any of the six states something false about it. "Swallows silently" is
-  // the wrong one twice over: the error is neither absorbed nor silent, and a
-  // reviewer reading that row would conclude no response can follow from the
-  // failure when in fact the awaiting caller decides the response. "Logs and
-  // continues" is equally wrong for a callback that logs AND rejects, because
-  // the continuation is a rejection rather than the normal path. R-e exists so
-  // these rows can be trusted, so the vocabulary carries the value the rows
-  // need rather than the nearest of six. The document states this addition and
-  // its reason where it lists the vocabulary.
+  // The seventh value, and the one this tool adds to the specified six. It
+  // exists because those six cannot describe a callback that hands its error
+  // to an outer continuation - `reject(err)`, `resolve({err: err, ...})`,
+  // `next(err)` - and marking such an edge with any of them states something
+  // false about it. "Swallows silently" is wrong twice over: the error is
+  // neither absorbed nor silent, and a reviewer reading that row would
+  // conclude no response can follow from the failure when in fact the awaiting
+  // caller decides the response. "Logs and continues" is equally wrong for a
+  // callback that logs AND rejects, because the continuation is a rejection
+  // rather than the normal path. A row has to be actionable without being
+  // re-derived, so the vocabulary carries the value the rows need rather than
+  // the nearest of six. The document states this addition and its reason where
+  // it lists the vocabulary.
   PROPAGATE: 'propagates to its caller'
 });
 
@@ -298,9 +188,9 @@ const DISPOSITION_ORDER = Object.freeze([
   DISPOSITION.LATE_RESOLVE
 ]);
 
-// The six values AAP 0.6.3 enumerates, kept separately so the document can
-// state exactly which of its dispositions come from the plan and which one
-// does not.
+// The six specified values, kept separately from DISPOSITION so the document
+// can state exactly which of its dispositions are specified and which one is
+// this tool's own.
 const AAP_DISPOSITIONS = Object.freeze([
   DISPOSITION.FAIL_LOCAL,
   DISPOSITION.REPLY_ERR,
@@ -311,11 +201,11 @@ const AAP_DISPOSITIONS = Object.freeze([
 ]);
 
 // A row's stable identity is (file, carrier, class, ordinal). CLASS is the
-// coarse bucket that SURVIVES conversion, which is the whole point: a
-// `reply(err)` site becomes `return errors.notFound()` and its disposition
-// changes from REPLY_ERR to BOOM, so an identity keyed on disposition would
-// never match its own target row. Line numbers are excluded for the same
-// reason - every one of them moves.
+// coarse bucket that SURVIVES conversion: a `reply(err)` site becomes
+// `return errors.notFound()` and its disposition changes from REPLY_ERR to
+// BOOM, so an identity keyed on disposition would never match its own target
+// row. Line numbers are excluded for the same reason - every one of them
+// moves.
 const EDGE_CLASS = Object.freeze({
   // A site that produces an error response on its own stack: reply(err),
   // request.fail(...), throw, return Boom, the reply.<prop> TypeError, and an
@@ -330,11 +220,12 @@ const EDGE_CLASS = Object.freeze({
 });
 
 // Differences between a baseline row and its target row that are APPROVED
-// rather than failures. AAP 0.7 records exactly one approved behaviour
-// deviation - the never-settling image branch of the file download at
-// lib/controllers/files.js - and its `reply(stream)` sites carry a stream, not
-// an error, so Pass A skips them and no error edge exists for it. The list is
-// therefore empty, and it is empty by measurement rather than by omission.
+// rather than failures. Exactly one behaviour deviation is approved for this
+// migration - the never-settling image branch of the file download in
+// `lib/controllers/files.js` - and its `reply(stream)` sites carry a stream
+// rather than an error, so Pass A skips them and no error edge exists for it.
+// The list is therefore empty, and empty by measurement rather than by
+// omission.
 //
 // It is a LIST OF IDENTITIES, not a marker convention, deliberately: a
 // comparator that approved a difference because the tree said "approved"
@@ -350,10 +241,10 @@ const FUNNEL = Object.freeze({
   NONE: 'none'
 });
 
-// The two documents this one deliberately does not duplicate. Every claim
-// about *why* a defect is kept belongs to the quirk catalogue, and every
-// claim about which call sites still need a `return`/`await` belongs to the
-// conversion checklist. Rows cross-reference them; they do not restate them.
+// The two documents this one deliberately does not duplicate: the quirk
+// catalogue carries every claim about *why* a defect is kept, and the
+// conversion checklist carries every claim about which call sites still need a
+// `return`/`await`. Rows cross-reference them; they do not restate them.
 const SIBLING_DOCS = Object.freeze({
   quirks: 'docs/preserved-quirks.md',
   conversion: 'docs/conversion-inventory.md'
@@ -436,7 +327,7 @@ const QUIRK_CROSS_REFERENCES = Object.freeze([
 /**
  * The `See also` targets for one edge: the quirk sections that catalogue it,
  * and - where the missing `return` is what the conversion has to fix - the
- * conversion checklist that owns that call site.
+ * conversion checklist's entry for that call site.
  *
  * Deterministic: QUIRK_CROSS_REFERENCES is evaluated in declaration order and
  * the conversion reference is appended last.
@@ -516,6 +407,10 @@ const ERROR_IDENTIFIERS = new Set(['err', 'error', 'e', 'ex', 'exception', 'reas
 
 // Callee tails that make a function argument a promise continuation rather
 // than a continuation-passing callback.
+// Callee tails that register a LISTENER rather than take a continuation.
+// Pass F owns the error handlers among them; Pass I must not shadow it.
+const LISTENER_REGISTRARS = Object.freeze(['on', 'once', 'addListener', 'prependListener']);
+
 const PROMISE_CONTINUATIONS = new Set(['then', 'catch', 'finally']);
 
 // Callee tails whose function argument is a synchronous iteratee, not a
@@ -923,9 +818,10 @@ function countOccurrences(haystack, needle) {
 //
 // These run on every invocation, before any tree is touched, and they are the
 // desync guard that does not depend on which tree is analysed. Case 1 is the
-// exact hazard AAP 0.4.1 names: the regex literal at config/routes.js:87
-// carries both a single and a double quote inside its character class, and a
-// scanner that treats either as a string delimiter loses everything after it.
+// hazard the analysed set actually contains: a regex literal in
+// `config/routes.js` carries both a single and a double quote inside its
+// character class, and a scanner that treats either as a string delimiter
+// loses everything after it.
 
 const SELF_TESTS = Object.freeze([
   {
@@ -1071,21 +967,20 @@ function runSelfTests() {
 // Analysis self-tests
 //
 // The scanner tests above prove the tokenizer stays in sync. These prove the
-// CLASSIFIERS built on it are right, and each one is pinned to a defect that
-// was measured in this generator's own output: a wrong answer here put a
-// false statement in a generated R-e deliverable, which is worse than an
-// absent one because it reads as a measurement. They run on every invocation,
-// like the scanner tests, so the failure surfaces before a document is
-// written rather than in a review of the document.
+// CLASSIFIERS built on it are right, and each one pins a classification whose
+// wrong answer would put a false statement in the generated document - worse
+// than an absent one, because it reads as a measurement. They run on every
+// invocation, like the scanner tests, so a failure surfaces before a document
+// is written rather than in a review of the document.
 // ---------------------------------------------------------------------------
 
 const ANALYSIS_SELF_TESTS = Object.freeze([
   {
-    // A pipe inside a code span used to split the Markdown row it sat in, and
-    // `||` is common in error expressions - `err.message || String(err)` -
-    // so the rows most worth reading were the ones that broke. The assertion
-    // is a property rather than a literal: no pipe survives unescaped, and
-    // every pipe that was there is still represented.
+    // An unescaped pipe inside a code span splits the Markdown row it sits
+    // in, and `||` is common in error expressions - `err.message ||
+    // String(err)` - so the rows most worth reading are the ones at risk. The
+    // assertion is a property rather than a literal: no pipe survives
+    // unescaped, and every pipe that was there is still represented.
     name: 'no pipe survives a source fragment unescaped',
     run: function () {
       const rendered = code('err.message || String(err)');
@@ -1233,9 +1128,9 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
     expected: 'unbound-reference'
   },
   {
-    // The predecessor tested `carrierMember && surface !== module`, which
-    // every non-module row satisfies, so an uncalled function came back
-    // drivable and the guard it fed was dead a second time.
+    // Testing `carrierMember && surface !== module` instead would be
+    // satisfied by every non-module row, so an uncalled function would come
+    // back drivable and the guard reading it would be dead.
     name: 'an uncalled internal function is not drivable, and says which',
     run: function () {
       const proven = {
@@ -1266,9 +1161,9 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
     expected: 'caller-chain/true'
   },
   {
-    // The measured NEW-H2 shape: resolveFunnels answered a returned error
-    // value through Layer 3 and targetCore's tail prescribed Layer 1, on 49
-    // rows of one document.
+    // The shape this guards: resolveFunnels answers a returned error value
+    // through Layer 3 while targetCore's tail prescribes Layer 1, so the row's
+    // Funnel field and its own prose disagree.
     name: 'a Layer 3 row whose target text prescribes Layer 1 is fatal',
     run: function () {
       const edge = { id: 't.1', file: 'f.js', line: 1, funnel: FUNNEL.L3 };
@@ -1282,9 +1177,9 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
     expected: 'fatal'
   },
   {
-    // The second measured shape: two internal-callee rows said funnel `none`
-    // while their target said Layer 1, and their side effects then said no
-    // funnel logs anything.
+    // The mirror shape: an internal-callee row says funnel `none` while its
+    // target prescribes Layer 1, and its side effects then say no funnel logs
+    // anything.
     name: 'a funnel-none row whose target text prescribes a funnel is fatal',
     run: function () {
       const edge = { id: 't.2', file: 'f.js', line: 1, funnel: FUNNEL.NONE };
@@ -1378,8 +1273,11 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
     expected: 'boom'
   },
   {
-    // helpers.js:203 and trinket.js:881 are returned through a conditional,
-    // and were reported "with no return".
+    // `lib/util/helpers.js`'s `findTrinket` and `lib/controllers/trinket.js`'s
+    // conditional `reply(errors.forbidden()) : reply()` are this shape: the
+    // token behind the inner `reply(` is `?` or `:`, and both values ARE
+    // returned. A row saying "with no return" tells an implementing agent to
+    // start returning a value that is already returned.
     name: 'a value returned through a conditional operator is returned',
     run: function () {
       const src = 'function f() { return isValid ? reply(lang) : reply(Boom.notFound()); }';
@@ -1391,8 +1289,10 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
     expected: 'true/true'
   },
   {
-    // trinket.js:881 - the condition holds a string literal, which the
-    // tokenizer blanks, and the walk then lands on the `=` of `===`.
+    // The `err === "threshold exceeded" ? ... : ...` return in
+    // `lib/controllers/trinket.js`: the condition holds a string literal, which
+    // the tokenizer blanks, so the backward walk crosses a run of spaces and
+    // lands on the `=` of `===`, which must not be read as an assignment.
     name: 'a conditional whose condition contains a comparison and a string literal is still returned',
     run: function () {
       const src = 'function f() { return err === "threshold exceeded" ? reply(errors.forbidden()) : reply(); }';
@@ -1457,8 +1357,10 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
     expected: 'true'
   },
   {
-    // courses.js:289 belonged to `download`; the nested `var returnZip =`
-    // carrier swallowed it and reported it as unrouted.
+    // `lib/controllers/courses.js`'s `download` declares `var returnZip =`
+    // inside its own body, and the sites after it belong to `download`. A
+    // carrier extent measured to the next declaration instead absorbs them and
+    // reports a routed edge as unrouted.
     name: 'a nested function declaration does not absorb its enclosing carrier sites',
     run: function () {
       const src = 'module.exports = {\n' +
@@ -1532,16 +1434,128 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
     expected: DISPOSITION.LOG_CONTINUE
   },
   {
+    // MEASURED on `trinket.updateSlug`, whose baseline
+    // `reply(errors.conflict())` answers 409 and whose target expresses the
+    // same mapping as a ternary branch inside a `.then`. A pattern anchored
+    // on `return\s+Boom\.` saw neither the branch nor the row, so status 409
+    // went from one occurrence to zero tree-wide and the comparison reported
+    // the 409 mapping as lost while it was preserved.
+    //
+    // The negative halves matter as much: an argument to `reply(...)` is Pass
+    // A's row and a `throw` is Pass D's, so neither may be duplicated here.
+    name: 'a Boom whose value is returned is an edge wherever it sits in the expression',
+    run: function () {
+      const count = function (body) {
+        const analysed = analyseFile('lib/controllers/trinket.js',
+          'var errors = require("@hapi/boom");\nmodule.exports = {\n  updateSlug : function(request, reply) {\n' +
+          body + '\n  }\n};\n',
+          { byTarget: new Map(), byHelper: new Map(), modulesRead: [] });
+        return analysed.edges.filter(function (edge) {
+          return edge.returnedBoom === true;
+        }).length;
+      };
+      return [
+        count('    return errors.conflict();'),
+        count('    return ok ? request.success() : errors.conflict();'),
+        count('    return reply(errors.conflict());'),
+        count('    throw errors.conflict();')
+      ].join('/');
+    },
+    expected: '1/1/0/0'
+  },
+  {
+    // MEASURED on `users.savePassword`, `helpers.userByUsername` and four
+    // more: the baseline writes `catch (err) { return reply(err); }` and Pass
+    // A rows it; the conversion writes `catch (err) { return err; }` and NO
+    // pass rowed it, because Pass I reads a FUNCTION'S first parameter and a
+    // catch binding is not a parameter. Six preserved mappings per tree were
+    // therefore measured on the baseline side only, and read as six baseline
+    // edges whose counterpart had vanished.
+    name: 'a caught error handed back as the response is an edge',
+    run: function () {
+      const read = function (body) {
+        const analysed = analyseFile('lib/controllers/users.js',
+          'module.exports = {\n  savePassword : async function(request, h) {\n' +
+          body + '\n  }\n};\n',
+          { byTarget: new Map(), byHelper: new Map(), modulesRead: [] });
+        return analysed.edges.filter(function (edge) {
+          return edge.returnedBoom === true &&
+            /catch clause/.test(edge.shape || '');
+        }).length;
+      };
+      return [
+        // The target spelling: rowed.
+        read('    try { await save(); } catch (err) { return err; }'),
+        // `resolve(err)` inside a catch, the wrapped-boundary spelling.
+        read('    return await new Promise(function(resolve) {\n' +
+          '      try { save(); } catch (err) { return resolve(err); }\n' +
+          '    });'),
+        // The BASELINE spelling must NOT be rowed here - Pass A owns it and
+        // reads the shim's deferred settlement. Rowing it twice would have
+        // moved the baseline row count and broken the R-f reference.
+        read('    try { await save(); } catch (err) { return reply(err); }'),
+        // `reject` hands the error to the promise's rejection rather than
+        // answering with it: that is PROPAGATE, not a response edge.
+        read('    return await new Promise(function(resolve, reject) {\n' +
+          '      try { save(); } catch (err) { return reject(err); }\n' +
+          '    });'),
+        // A `return` inside a callback DECLARED in the clause returns from
+        // the callback, not from the clause, so the clause does not own it.
+        read('    try { await save(); } catch (err) {\n' +
+          '      list.forEach(function(x) { return err; });\n' +
+          '      throw err;\n' +
+          '    }')
+      ].join('/');
+    },
+    expected: '1/1/0/0/0'
+  },
+  {
+    // MEASURED on `admin.grantRole`. The conversion keeps a callback boundary
+    // by wrapping it in `return await new Promise(function (resolve) {...})`
+    // and handing the chain to `resolve`, which awaits strictly MORE than the
+    // baseline's bare `return chain`. Reading the `(` of `resolve(` as the
+    // end of the walk reported the target as awaited by nothing, so the
+    // comparison recorded a settlement-timing difference in the direction
+    // opposite to the one the code moved - on 10 rows, every one a carrier
+    // converted exactly as rule T-3 prescribes.
+    name: 'a chain handed to the resolve of an awaited promise is awaited',
+    run: function () {
+      const wrapped = 'module.exports = {\n' +
+        '  grantRole : async function(request, h) {\n' +
+        '    return await new Promise(function(resolve) {\n' +
+        '      User.findById(request.params.id, function(err, user) {\n' +
+        '        return resolve(user.grant(r).then(function(u) { return request.success(u); })\n' +
+        '          .catch(function(err) { return request.fail(err); }));\n' +
+        '      });\n' +
+        '    });\n' +
+        '  }\n};\n';
+      // The same chain with nothing awaiting the promise must still read as
+      // unawaited, or the fix would have replaced one wrong answer with a
+      // universally permissive one.
+      const loose = wrapped.replace('return await new Promise', 'new Promise');
+      const read = function (src) {
+        const analysed = analyseFile('lib/controllers/admin.js', src,
+          { byTarget: new Map(), byHelper: new Map(), modulesRead: [] });
+        const row = analysed.edges.find(function (edge) {
+          return edge.propagation && edge.propagation.kind === 'promise-chain';
+        });
+        return row ? String(row.propagation.chainReturned) : 'no chain row';
+      };
+      return read(wrapped) + '/' + read(loose);
+    },
+    expected: 'true/false'
+  },
+  {
     // The same conceptual edge is class `response` on one tree and `handler`
     // on the other, and a class-first join crossed the pairs and reported
     // both as changed.
-    name: 'the join aligns a carrier\'s edges by source order across edge classes',
+    name: 'a class flip inside a carrier does not cross the pairs',
     run: function () {
-      // Both sides sit inside a chain the carrier returns, which is what the
-      // measured `course.deleteCourse` case looks like - the class flips but
-      // the settlement does not move. An under-specified fixture with no
-      // propagation reported a timing difference that the real pair does not
-      // have, and would have hidden what this test is for.
+      // Both sides sit inside a chain the carrier returns, which is the real
+      // shape of this pair in `lib/controllers/course.js`'s `deleteCourse`:
+      // the class flips but the settlement does not move. A fixture with no
+      // propagation would differ on timing instead, and hide what this test is
+      // for.
       const chain = { kind: 'promise-chain', chainReturned: true };
       const mk = function (file, carrier, cls, ordinal, offset, funnel) {
         return {
@@ -1563,72 +1577,278 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
     expected: '2/0'
   },
   {
-    // An id match is evidence only while the carrier's population of that
-    // CLASS is unchanged. Here it is not - two response edges at baseline,
-    // one in the target - so `response.1` renumbered and the match must not
-    // override source order. The row records that the identically-named
-    // target row exists elsewhere.
-    name: 'a renumbered ordinal does not override source order, and says so',
+    // The timing rule is ONE-SIDED and both sides of it are asserted here,
+    // because a blanket exclusion of the dimension would have been the easy
+    // wrong answer. Under the shim a chain's own value was routinely
+    // discarded and rules T-1/T-3 exist to make it returned, so
+    // discarded -> awaited is the migration doing what it was told and is
+    // recorded rather than failed. Awaited -> discarded is a response the
+    // baseline delivered and the target may drop, and it still fails.
+    name: 'a settlement change is reported in both directions and prescribes nothing',
     run: function () {
-      const chain = { kind: 'promise-chain', chainReturned: true };
-      const mk = function (cls, ordinal, offset) {
+      const at = function (timing) {
         return {
-          file: 'f.js', carrierMember: 'del', edgeClass: cls, offset: offset,
-          identityBase: 'x.del.' + cls, ordinal: ordinal,
-          id: 'x.del.' + cls + '.' + ordinal,
-          disposition: DISPOSITION.BOOM, funnel: FUNNEL.L3, surface: SURFACE.HANDLER,
-          line: offset, endLine: offset, thrownKind: { kind: 'boom', status: 500 },
-          returnedBoom: true, routes: [], propagation: chain
+          funnel: FUNNEL.L3, status: 500, producesResponse: true,
+          surface: SURFACE.HANDLER, payload: 'p', effects: 'none',
+          logs: 'none', timing: timing
         };
       };
-      const joined = joinTrees(
-        [mk(EDGE_CLASS.RESPONSE, 1, 10), mk(EDGE_CLASS.RESPONSE, 2, 20)],
-        [mk(EDGE_CLASS.HANDLER, 1, 11), mk(EDGE_CLASS.RESPONSE, 1, 21)]
-      );
-      const first = joined.rows[0];
-      return first.target.id + '/' + String(Boolean(first.renumbered)) + '/' +
-        joined.summary.renumberedOrdinals;
+      const nothing = 'deferred - settles later, and nothing waits for it';
+      const waits = 'deferred - settles later, and the carrier waits for it';
+      const sync = 'synchronous - settles before the carrier returns';
+      const read = function (a, b) {
+        const split = reDifferences(at(a), at(b));
+        return split.failures.length + ':' + split.prescribed.length;
+      };
+      return [
+        // Every move, in every direction, is a reported failure and
+        // prescribes nothing. An earlier edition blessed the first two as
+        // rules T-1/T-3, computed from a baseline "nothing waits" the legacy
+        // wrapper contradicts (`routeParser.js:567-570` awaits the deferred
+        // whenever the handler returns undefined) and from a "synchronous"
+        // label an async catch continuation does not satisfy. Neither input
+        // held, so neither blessing may.
+        read(nothing, waits),
+        read(waits, sync),
+        read(waits, nothing),
+        read(sync, nothing),
+        // No move, no difference.
+        read(waits, waits)
+      ].join('/');
     },
-    expected: 'x.del.handler.1/true/1'
+    expected: '1:0/1:0/1:0/1:0/0:0'
   },
   {
-    // An edge inserted at the head of a carrier used to shift every later
-    // pair by one and close them all against the wrong counterpart. Anchors
-    // that ARE trusted stop the shift at themselves.
-    name: 'an inserted leading edge does not shift the pairs behind an anchor',
+    // The settlement model must ask BOTH trees the same question. Three
+    // measured defects sat here, each inventing a difference the code does
+    // not have:
+    //
+    //   1. `reply(err)` in a catch clause read `synchronous` while the
+    //      converted `return err` in the SAME clause read as a continuation,
+    //      because only the pass that surfaced the second computed the flag.
+    //      The asymmetry was the difference.
+    //   2. An unreturned baseline chain read "nothing waits", though the
+    //      shim wrapper awaits the deferred whenever the handler returns
+    //      undefined (`lib/util/routeParser.js:567-570`).
+    //   3. A clause guarded by a non-awaiting `try` inside an async function
+    //      is genuinely synchronous, so the flag must not fire on the frame
+    //      alone.
+    name: 'the settlement model asks both trees the same question',
+    run: function () {
+      const read = function (body, shim) {
+        // The baseline spells the handler `(request, reply)` and the target
+        // `(request, h)`; the signature has to match the spelling or the
+        // `reply(...)` pass finds nothing and the fixture proves nothing.
+        const signature = shim ? '(request, reply)' : '(request, h)';
+        const analysed = analyseFile('lib/controllers/users.js',
+          'module.exports = {\n  savePassword : async function' + signature + ' {\n' +
+          body + '\n  }\n};\n',
+          { byTarget: new Map(), byHelper: new Map(), modulesRead: [] });
+        analysed.edges.forEach(function (edge) { edge.shimPresent = shim; });
+        const row = analysed.edges.find(function (edge) {
+          return edge.disposition === DISPOSITION.REPLY_ERR ||
+            edge.returnedBoom === true;
+        });
+        return row ? timingShape(row) : 'no row';
+      };
+      const awaited = '    try { await save(); } catch (err) { ';
+      const sync = '    try { save(); } catch (err) { ';
+      const short = function (t) {
+        if (/^synchronous/.test(t)) { return 'sync'; }
+        if (/nothing waits/.test(t)) { return 'unwaited'; }
+        if (/carrier waits/.test(t)) { return 'waited'; }
+        return t;
+      };
+      return [
+        // 1. The baseline spelling and the target spelling of the same clause
+        //    must agree. Both are continuations, so both are `waited`.
+        short(read(awaited + 'return reply(err); }', true)),
+        short(read(awaited + 'return err; }', false)),
+        // 3. A non-awaiting try in an async function is genuinely synchronous
+        //    on both sides, so the flag must not fire.
+        short(read(sync + 'return reply(err); }', true)),
+        short(read(sync + 'return err; }', false))
+      ].join('/');
+    },
+    expected: 'waited/waited/sync/sync'
+  },
+  {
+    // Surface is a location, and AAP 0.6.4 mandates extraction, so a branch
+    // moving from a routed handler into an internal callee it calls is
+    // prescribed. It is recorded on the row rather than dropped: a closed row
+    // carrying a prescribed transition says which one.
+    name: 'a surface move is recorded as prescribed, not failed, and never silently',
+    run: function () {
+      const at = function (surface) {
+        return {
+          funnel: FUNNEL.L3, status: 500, producesResponse: true,
+          surface: surface, payload: 'p', effects: 'none', logs: 'none',
+          timing: 'synchronous - settles before the carrier returns'
+        };
+      };
+      const split = reDifferences(at(SURFACE.HANDLER), at(SURFACE.INTERNAL));
+      return split.failures.length + ':' + split.prescribed.length + ':' +
+        String(split.prescribed[0].indexOf('extraction, AAP 0.6.4') !== -1);
+    },
+    expected: '0:1:true'
+  },
+  {
+    // THE INVARIANT THAT REPLACES POSITIONAL PAIRING. 78 pairs in one edition
+    // of this document were filled by source order and 24 of them overrode an
+    // identically-named row elsewhere, so rows were CLOSED on the order two
+    // files happen to list their statements in. Closure is now permitted on
+    // two tiers only - the same guarded subject, or an identical observable
+    // outcome - and the nearest-outcome tier exists solely to REPORT what
+    // differs, so it can never close anything.
+    //
+    // The fixture is the one that broke the old algorithm: an edge inserted
+    // at the head of the carrier, so nothing lines up by position.
+    name: 'no closed row rests on a pairing weaker than subject or identical outcome',
     run: function () {
       const chain = { kind: 'promise-chain', chainReturned: true };
-      const mk = function (ordinal, offset, funnel) {
+      const mk = function (ordinal, offset, funnel, subject) {
         return {
           file: 'f.js', carrierMember: 'c', edgeClass: EDGE_CLASS.RESPONSE,
           offset: offset, identityBase: 'x.c.response', ordinal: ordinal,
           id: 'x.c.response.' + ordinal, disposition: DISPOSITION.BOOM,
           funnel: funnel, surface: SURFACE.HANDLER, line: offset, endLine: offset,
           thrownKind: { kind: 'boom', status: 500 }, returnedBoom: true,
-          routes: [], propagation: chain
+          routes: [], propagation: chain,
+          shape: 'throw ' + subject
         };
       };
-      // Baseline holds response.1 and response.2; the target inserts a new
-      // leading edge, so it holds three and the ids no longer line up by
-      // position. The class population changed, so no anchor is trusted and
-      // the surplus target row is reported added rather than force-matched.
       const joined = joinTrees(
-        [mk(1, 10, FUNNEL.L3), mk(2, 20, FUNNEL.L1)],
-        [mk(1, 5, FUNNEL.L3), mk(2, 11, FUNNEL.L3), mk(3, 21, FUNNEL.L1)]
+        [mk(1, 10, FUNNEL.L3, 'a()'), mk(2, 20, FUNNEL.L1, 'b()')],
+        [mk(1, 5, FUNNEL.L3, 'new()'), mk(2, 11, FUNNEL.L3, 'a()'), mk(3, 21, FUNNEL.L1, 'b()')]
       );
-      return joined.summary.closed + '/' + joined.summary.changed + '/' +
-        joined.summary.added + '/' + joined.summary.missing + '/' +
-        joined.summary.ambiguous;
+      const closedOnWeakTier = joined.rows.filter(function (row) {
+        return (row.closure === CLOSURE.CLOSED || row.closure === CLOSURE.APPROVED) &&
+          row.pairedBy && row.pairedBy.indexOf('nearest outcome') === 0;
+      }).length;
+      // Both baseline rows find their own subject and close; the inserted
+      // edge is reported added rather than absorbed into either pair.
+      return joined.summary.closed + '/' + joined.summary.added + '/' +
+        joined.summary.missing + '/' + closedOnWeakTier;
     },
-    // Nothing closes and nothing is reported changed: an insertion inside the
-    // gap means source order cannot say which target row each baseline row
-    // is, and a guess is what produced the false closure this test exists for.
-    expected: '0/0/1/0/2'
+    expected: '2/1/0/0'
   },
   {
-    // R-e names side effects and timing alongside the status, so a change to
-    // either must open the row even when the status is identical. Comparing
-    // the status alone closed 16 such rows in an earlier edition.
+    // The companion to the test above, and the one that matters after the
+    // settlement prescription was withdrawn. That test guards only the
+    // `nearest outcome` tier; it says nothing about T2 or T3-anchored, and a
+    // reviewer was right to point out that a guard which names one tier
+    // proves nothing about the other two.
+    //
+    // The property that must hold for EVERY tier: a row may close only when
+    // the two outcomes agree on every R-e dimension, with the single
+    // exception of a surface move, which AAP 0.6.4 mandates. No tier, and no
+    // ranking of settlements, may add to that. So this walks all four tiers
+    // and asserts that not one of them closes a row whose outcomes differ on
+    // an R-e dimension.
+    name: 'no tier closes a row whose outcomes differ on an R-e dimension',
+    run: function () {
+      const chain = { kind: 'promise-chain', chainReturned: true };
+      const mk = function (ordinal, offset, opts) {
+        return {
+          file: 'f.js', carrierMember: 'c', edgeClass: EDGE_CLASS.RESPONSE,
+          offset: offset, identityBase: 'x.c.response', ordinal: ordinal,
+          id: 'x.c.response.' + ordinal, disposition: DISPOSITION.BOOM,
+          funnel: opts.funnel, surface: opts.surface || SURFACE.HANDLER,
+          line: offset, endLine: offset,
+          thrownKind: { kind: 'boom', status: opts.status || 500 },
+          returnedBoom: true, routes: [],
+          propagation: opts.propagation || chain,
+          shape: 'throw ' + opts.subject
+        };
+      };
+      const joins = [
+        // T2 shape: same outcome, DIFFERENT subject. Closes - and that is
+        // correct for R-e, because the mapping the carrier serves is
+        // identical and every bijection of the pool gives this same verdict.
+        // Recorded here so the behaviour is deliberate rather than incidental.
+        joinTrees(
+          [mk(1, 10, { funnel: FUNNEL.L3, subject: 'a()' })],
+          [mk(1, 11, { funnel: FUNNEL.L3, subject: 'renamed()' })]
+        ),
+        // T3-anchored shape: singleton pool, different subject, and a STATUS
+        // that moved. Must not close.
+        joinTrees(
+          [mk(1, 10, { funnel: FUNNEL.L3, status: 404, subject: 'a()' })],
+          [mk(1, 11, { funnel: FUNNEL.L3, status: 500, subject: 'other()' })]
+        ),
+        // T3-anchored shape with a SETTLEMENT move only. Must not close.
+        joinTrees(
+          [mk(1, 10, {
+            funnel: FUNNEL.L3, subject: 'a()',
+            propagation: { kind: 'promise-chain', chainReturned: false }
+          })],
+          [mk(1, 11, { funnel: FUNNEL.L3, subject: 'other()' })]
+        ),
+        // T3-nearest shape: two candidates, funnel moved. Must not close.
+        joinTrees(
+          [mk(1, 10, { funnel: FUNNEL.L3, subject: 'a()' }),
+            mk(2, 20, { funnel: FUNNEL.L3, status: 404, subject: 'b()' })],
+          [mk(1, 11, { funnel: FUNNEL.L1, subject: 'p()' }),
+            mk(2, 21, { funnel: FUNNEL.L3, status: 403, subject: 'q()' })]
+        )
+      ];
+      // Across every join above, no closed row may carry a non-empty
+      // `differences` array. `differences` holds R-e failures only; a
+      // prescribed surface move is recorded separately.
+      const offenders = [];
+      joins.forEach(function (joined, index) {
+        joined.rows.forEach(function (row) {
+          const closed = row.closure === CLOSURE.CLOSED ||
+            row.closure === CLOSURE.APPROVED;
+          if (closed && (row.differences || []).length) {
+            offenders.push('join' + index + ':' + row.id + ':' +
+              row.differences.join('+'));
+          }
+        });
+      });
+      return offenders.length
+        ? offenders.join(' ')
+        : joins.map(function (j) { return j.summary.closed; }).join(',');
+    },
+    // Only the first join closes, and it closes on an identical outcome.
+    expected: '1,0,0,0'
+  },
+  {
+    // The same subject on both trees is the identity, and the printed
+    // `<class>.<ordinal>` id is not: here the target's ordinals renumber
+    // because the class population changed, and the pairing must follow the
+    // subject rather than the name. Taking the id match on the measured
+    // `course.deleteCourse` paired line 151 with line 192 and reported two
+    // unchanged rows changed.
+    name: 'the pairing follows the subject, not the printed ordinal',
+    run: function () {
+      const chain = { kind: 'promise-chain', chainReturned: true };
+      const mk = function (cls, ordinal, offset, subject) {
+        return {
+          file: 'f.js', carrierMember: 'del', edgeClass: cls, offset: offset,
+          identityBase: 'x.del.' + cls, ordinal: ordinal,
+          id: 'x.del.' + cls + '.' + ordinal,
+          disposition: DISPOSITION.BOOM, funnel: FUNNEL.L3, surface: SURFACE.HANDLER,
+          line: offset, endLine: offset, thrownKind: { kind: 'boom', status: 500 },
+          returnedBoom: true, routes: [], propagation: chain,
+          shape: 'throw ' + subject
+        };
+      };
+      const joined = joinTrees(
+        [mk(EDGE_CLASS.RESPONSE, 1, 10, 'first()'), mk(EDGE_CLASS.RESPONSE, 2, 20, 'second()')],
+        [mk(EDGE_CLASS.HANDLER, 1, 11, 'first()'), mk(EDGE_CLASS.RESPONSE, 1, 21, 'second()')]
+      );
+      const first = joined.rows[0];
+      const second = joined.rows[1];
+      return first.target.id + '/' + second.target.id + '/' +
+        joined.summary.pairedBySubject + '/' + joined.summary.pairedByNearest;
+    },
+    expected: 'x.del.handler.1/x.del.response.1/2/0'
+  },
+  {
+    // Side effects and timing are compared alongside the status, so a change
+    // to either opens the row even when the status is identical. Comparing the
+    // status alone closes rows whose log or settlement moved.
     name: 'a logging-only or timing-only change cannot close a row',
     run: function () {
       const base = {
@@ -1647,30 +1867,122 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
     expected: 'true/log calls/settlement timing'
   },
   {
-    // Where the trusted anchors appear in a different order on the two trees,
-    // no alignment of that carrier can be established, and neither verdict
-    // may be borrowed.
-    name: 'crossed anchors make a carrier ambiguous rather than closed or changed',
+    // Two rows in one carrier that nothing distinguishes semantically. When
+    // their outcomes are IDENTICAL the pairing cannot be wrong in any way
+    // that matters - whichever pairs with which, both verdicts are the same -
+    // so both close, and the source order they happen to sit in is irrelevant
+    // rather than authoritative. When the outcomes DIFFER, nothing decides
+    // which is which, and the rows are reported open on the difference
+    // instead of closed on a guess: that is the second half of the property,
+    // and the half the old algorithm got wrong.
+    name: 'indistinguishable rows close only where their outcomes are identical',
     run: function () {
       const chain = { kind: 'promise-chain', chainReturned: true };
-      const mk = function (ordinal, offset) {
+      const mk = function (ordinal, offset, funnel) {
         return {
           file: 'f.js', carrierMember: 'c', edgeClass: EDGE_CLASS.RESPONSE,
           offset: offset, identityBase: 'x.c.response', ordinal: ordinal,
           id: 'x.c.response.' + ordinal, disposition: DISPOSITION.BOOM,
-          funnel: FUNNEL.L3, surface: SURFACE.HANDLER, line: offset, endLine: offset,
+          funnel: funnel, surface: SURFACE.HANDLER, line: offset, endLine: offset,
           thrownKind: { kind: 'boom', status: 500 }, returnedBoom: true,
           routes: [], propagation: chain
         };
       };
-      // Same two ids on both trees, in the opposite source order.
-      const joined = joinTrees(
-        [mk(1, 10), mk(2, 20)],
-        [mk(2, 11), mk(1, 21)]
+      // Same two ids on both trees, in the opposite source order, same
+      // outcome: both close.
+      const same = joinTrees(
+        [mk(1, 10, FUNNEL.L3), mk(2, 20, FUNNEL.L3)],
+        [mk(2, 11, FUNNEL.L3), mk(1, 21, FUNNEL.L3)]
       );
-      return joined.summary.ambiguous + '/' + joined.summary.closed;
+      // One target outcome moved to a different funnel: the pair that
+      // matches still closes and the one that does not is reported open.
+      const moved = joinTrees(
+        [mk(1, 10, FUNNEL.L3), mk(2, 20, FUNNEL.L3)],
+        [mk(2, 11, FUNNEL.L3), mk(1, 21, FUNNEL.L1)]
+      );
+      const weak = moved.rows.filter(function (row) {
+        return row.closure === CLOSURE.CLOSED &&
+          row.pairedBy && row.pairedBy.indexOf('nearest outcome') === 0;
+      }).length;
+      return same.summary.closed + '/' + same.summary.open + '/' +
+        moved.summary.closed + '/' + moved.summary.open + '/' + weak;
     },
-    expected: '2/0'
+    // In `moved`, one pair still matches on identical outcome and closes; the
+    // remaining two rows are paired at the nearest-outcome tier, which
+    // reports the funnel difference as ONE open changed row rather than as
+    // two unpaired rows - the difference is what a reviewer needs, and it
+    // still cannot close.
+    expected: '2/0/1/1/0'
+  },
+  {
+    // MEASURED on `helpers.trinketByOwnerAndSlug`, three mutually
+    // indistinguishable `throw Boom.notFound()` edges per tree whose outcome
+    // moved on both sides of the shim's removal, and on four more helpers
+    // whose residual pool is 1-to-1. Every one read as a vanished baseline
+    // edge plus an appeared target edge, when the fact a reader needs is the
+    // dimension that moved.
+    //
+    // The tier pairs by position, and that is sound ONLY under the two
+    // conditions this test pins: both sides uniform, and equal in size. Then
+    // every bijection gives the same verdict on the same rows, so order
+    // cannot change the answer. Both negative halves must decline, or the
+    // tier would be the positional gap-filling this join removed.
+    name: 'a uniform residual pool of equal size pairs order-independently',
+    run: function () {
+      const chain = { kind: 'promise-chain', chainReturned: true };
+      const mk = function (ordinal, offset, funnel) {
+        return {
+          file: 'f.js', carrierMember: 'c', edgeClass: EDGE_CLASS.RESPONSE,
+          offset: offset, identityBase: 'x.c.response', ordinal: ordinal,
+          id: 'x.c.response.' + ordinal, disposition: DISPOSITION.BOOM,
+          funnel: funnel, surface: SURFACE.HANDLER, line: offset, endLine: offset,
+          thrownKind: { kind: 'boom', status: 404 }, returnedBoom: true,
+          routes: [], propagation: chain
+        };
+      };
+      const tierOf = function (joined) {
+        return joined.rows.filter(function (row) {
+          return row.pairedBy && row.pairedBy.indexOf('uniform residual pool') === 0;
+        }).length;
+      };
+      // 3 uniform baseline edges against 3 uniform target edges whose funnel
+      // moved: all three pair, all three report the difference, none closes.
+      const uniform = joinTrees(
+        [mk(1, 10, FUNNEL.NONE), mk(2, 20, FUNNEL.NONE), mk(3, 30, FUNNEL.NONE)],
+        [mk(1, 11, FUNNEL.L3), mk(2, 21, FUNNEL.L3), mk(3, 31, FUNNEL.L3)]
+      );
+      // Unequal size: declines, and the rows stay unpaired.
+      const unequal = joinTrees(
+        [mk(1, 10, FUNNEL.NONE), mk(2, 20, FUNNEL.NONE)],
+        [mk(1, 11, FUNNEL.L3)]
+      );
+      // Equal size but the TARGET side is not uniform, so which baseline row
+      // takes which target row would decide the verdict: declines.
+      const mixed = joinTrees(
+        [mk(1, 10, FUNNEL.NONE), mk(2, 20, FUNNEL.NONE)],
+        [mk(1, 11, FUNNEL.L3), mk(2, 21, FUNNEL.L1)]
+      );
+      // A uniform pool whose only movement is a settlement move. It must
+      // stay OPEN. An earlier edition ranked the settlements and blessed a
+      // forward move, which closed 5 measured rows on exactly this shape;
+      // both inputs to that ranking were then found unsound, so the
+      // settlement prescription was withdrawn and these rows report the
+      // difference instead. The tier chooses WHICH row to compare against;
+      // it never decides the verdict.
+      const forward = function (offset, waits) {
+        const row = mk(1, offset, FUNNEL.L3);
+        row.propagation = { kind: 'promise-chain', chainReturned: waits };
+        return row;
+      };
+      const prescribed = joinTrees([forward(10, false)], [forward(11, true)]);
+      return tierOf(uniform) + ':' + uniform.summary.closed + ':' + uniform.summary.changed +
+        '/' + tierOf(unequal) + '/' + tierOf(mixed) +
+        '/' + prescribed.summary.closed + ':' + prescribed.summary.open;
+    },
+    // Three paired, none closed, three reported changed; then zero and zero;
+    // then the settlement-only pair OPEN and not closed, because no tier and
+    // no rank may authorize a settlement move.
+    expected: '3:0:3/0/0/0:1'
   },
   {
     name: 'an approved deviation approves only its own exact from/to outcome',
@@ -1682,6 +1994,206 @@ const ANALYSIS_SELF_TESTS = Object.freeze([
       ));
     },
     expected: 'null'
+  },
+  {
+    // The partition must be TOTAL and DISJOINT over every closure state, or
+    // a state nobody classified is counted open by default and the
+    // authoritative total stops matching its own buckets. MEASURED: adding
+    // the two mechanism states without classifying them made the total read
+    // 74 while the buckets summed to 53.
+    name: 'every closure state is classified exactly once',
+    run: function () {
+      const states = Object.keys(CLOSURE).map(function (key) {
+        return CLOSURE[key];
+      });
+      const unclassified = [];
+      const doubled = [];
+      states.forEach(function (state) {
+        const homes = [OPEN_CLOSURES, CLOSED_CLOSURES, NOT_COMPARED_CLOSURES]
+          .filter(function (list) {
+            return list.indexOf(state) !== -1;
+          }).length;
+        if (homes === 0) {
+          unclassified.push(state);
+        } else if (homes > 1) {
+          doubled.push(state);
+        }
+      });
+      return states.length + '/' + (unclassified.length
+        ? 'unclassified: ' + unclassified.join(', ')
+        : '0') + '/' + (doubled.length ? 'doubled: ' + doubled.join(', ') : '0');
+    },
+    expected: '10/0/0'
+  },
+  {
+    name: 'one predicate decides open, and the summary partition sums to it',
+    run: function () {
+      const chain = { kind: 'promise-chain', chainReturned: true };
+      const mk = function (carrier, cls, ordinal, offset, funnel, extra) {
+        return Object.assign({
+          file: 'f.js', carrierMember: carrier, edgeClass: cls, offset: offset,
+          identityBase: 'x.' + carrier + '.' + cls, ordinal: ordinal,
+          id: 'x.' + carrier + '.' + cls + '.' + ordinal,
+          disposition: DISPOSITION.BOOM, funnel: funnel, surface: SURFACE.HANDLER,
+          line: offset, endLine: offset, thrownKind: { kind: 'boom', status: 500 },
+          returnedBoom: true, routes: [], propagation: chain
+        }, extra || {});
+      };
+      // One closed pair, one changed pair, one baseline row with no target,
+      // one target row with no baseline, and one pair that compares equal on
+      // an edge whose reachability is unresolved.
+      const joined = joinTrees(
+        [mk('a', EDGE_CLASS.RESPONSE, 1, 10, FUNNEL.L3),
+          mk('b', EDGE_CLASS.RESPONSE, 1, 20, FUNNEL.L3),
+          mk('c', EDGE_CLASS.RESPONSE, 1, 30, FUNNEL.L3),
+          mk('e', EDGE_CLASS.RESPONSE, 1, 50, FUNNEL.L3, { unresolved: true })],
+        [mk('a', EDGE_CLASS.RESPONSE, 1, 11, FUNNEL.L3),
+          mk('b', EDGE_CLASS.RESPONSE, 1, 21, FUNNEL.L1),
+          mk('d', EDGE_CLASS.RESPONSE, 1, 41, FUNNEL.L3),
+          mk('e', EDGE_CLASS.RESPONSE, 1, 51, FUNNEL.L3, { unresolved: true })]
+      );
+      const sum = joined.summary;
+      const partition = Object.keys(sum.openByBucket).reduce(function (total, key) {
+        return total + sum.openByBucket[key];
+      }, 0) + sum.openProvisional;
+      const direct = joined.rows.filter(isOpenRow).length;
+      return sum.open + '/' + partition + '/' + direct;
+    },
+    expected: '4/4/4'
+  },
+  {
+    // A coverage claim is only evidence if a rotted binding is loud. All
+    // three failure modes are asserted, because each of them would otherwise
+    // put a driven-looking row in a generated R-e deliverable that nothing
+    // drives: a binding matching nothing has gone stale against a tree that
+    // moved, one matching two edges marks both driven when one was, and one
+    // naming a scenario the corpus does not hold is a claim about a request
+    // nobody sends.
+    name: 'a binding that does not resolve to exactly one edge is reported',
+    run: function () {
+      // The first declared binding is pages.login / reply-property:redirect,
+      // so these fixtures are built to hit and to miss exactly it.
+      const shape = 'synchronous throw (TypeError: reply.redirect is not a function)';
+      const edge = function (carrier) {
+        return {
+          id: 'f.' + carrier + '.response.1', file: 'lib/controllers/pages.js',
+          carrier: carrier, shape: shape, routes: ['GET /login'],
+          line: 1, endLine: 1
+        };
+      };
+      const corpus = function (pairs) {
+        return {
+          byEdgeId: new Map(), byRoute: new Map(),
+          routeOfScenario: new Map(pairs)
+        };
+      };
+      const known = corpus([['quirk.authed-500.get.login', 'GET /login']]);
+      const none = resolveEdgeBindings([], known, 't').unresolved.length > 0;
+      const two = resolveEdgeBindings(
+        [edge('pages.login'), edge('pages.login')], known, 't'
+      ).unresolved.filter(function (problem) {
+        return problem.indexOf('resolved 2 edges') !== -1;
+      }).length;
+      const one = resolveEdgeBindings([edge('pages.login')], known, 't');
+      const absent = resolveEdgeBindings([edge('pages.login')], corpus([]), 't')
+        .unresolved.filter(function (problem) {
+          return problem.indexOf('which the corpus does not contain') !== -1;
+        }).length;
+      return String(none) + '/' + two + '/' +
+        String(one.byEdgeId.has('f.pages.login.response.1')) + '/' + absent;
+    },
+    expected: 'true/1/true/1'
+  },
+  {
+    // MEASURED as a live regression: a figure added to this section counted
+    // over `model.closure.rows`, which is null whenever no `--baseline` is
+    // given. The two-tree invocation passed and BOTH the single-tree and
+    // baseline-tree invocations died with `TypeError: Cannot read properties
+    // of null (reading 'rows')` - caught only by exercising every invocation
+    // mode, not the one mode the document is normally generated in.
+    //
+    // Coverage is a property of an edge and a corpus, never of a comparison,
+    // so this section must not reach into the closure model at all. Pinned
+    // against the generator's own source, which is the only place the
+    // constraint can be expressed: the renderer is not exported and building
+    // a whole model fixture would test the fixture rather than the rule.
+    name: 'the how-to-read section never reaches into the closure model',
+    run: function () {
+      const own = classifySource(
+        fs.readFileSync(__filename, 'utf8'), 'self-test: own source').codeOnly;
+      const at = own.indexOf('function renderHowToRead(');
+      if (at === -1) {
+        return 'renderHowToRead not found';
+      }
+      const brace = own.indexOf('{', at);
+      const end = matchDelimiter(own, brace);
+      if (end === -1) {
+        return 'renderHowToRead body not delimited';
+      }
+      const body = own.slice(brace, end);
+      const reaches = /model\.closure/.test(body);
+      // And the figure it does compute must come from the same set section 9
+      // counts over, or the two figures could disagree.
+      const fromAllEdges = /model\.allEdges\.filter/.test(body);
+      return String(reaches) + '/' + String(fromAllEdges);
+    },
+    expected: 'false/true'
+  },
+  {
+    // A repeated key in an object literal is collapsed by the parser, so
+    // `outcomeOf` was exported twice with the second binding silently
+    // shadowing the first and nothing anywhere raising. The finished object
+    // cannot reveal it - by the time it exists the duplicate is gone - so
+    // this reads THIS FILE'S OWN SOURCE, with comments and string literals
+    // blanked by the same tokenizer the analysis uses, so a name that appears
+    // in prose cannot be mistaken for a key.
+    name: 'the export table declares every key exactly once',
+    run: function () {
+      const own = classifySource(fs.readFileSync(__filename, 'utf8'), 'self-test: own source').codeOnly;
+      const at = own.lastIndexOf('module.exports = {');
+      if (at === -1) {
+        return 'no export table found';
+      }
+      const open = own.indexOf('{', at);
+      const close = matchDelimiter(own, open);
+      if (close === -1) {
+        return 'unbalanced export table';
+      }
+      const seen = Object.create(null);
+      const duplicates = [];
+      const body = own.slice(open + 1, close);
+      let depth = 0;
+      let field = '';
+      const take = function (text) {
+        const key = text.split(':')[0].trim();
+        if (!key) {
+          return;
+        }
+        if (seen[key]) {
+          duplicates.push(key);
+        }
+        seen[key] = true;
+      };
+      for (let i = 0; i < body.length; i++) {
+        const ch = body[i];
+        if (OPENERS[ch]) {
+          depth++;
+        } else if (CLOSERS[ch]) {
+          depth--;
+        }
+        if (ch === ',' && depth === 0) {
+          take(field);
+          field = '';
+          continue;
+        }
+        field += ch;
+      }
+      take(field);
+      return duplicates.length
+        ? 'duplicated: ' + duplicates.sort().join(', ')
+        : String(Object.keys(seen).length > 40);
+    },
+    expected: 'true'
   }
 ]);
 
@@ -2136,19 +2648,17 @@ function findCarriers(relPath, src, codeOnly, knownFunctions) {
   // A carrier's extent is the extent of the value it declares - not the
   // distance to whatever is declared next.
   //
-  // The distance-to-the-next-declaration reading is wrong whenever one
-  // carrier is declared INSIDE another, and this repository does that. In the
-  // baseline tree `lib/controllers/courses.js` declares
-  // `var returnZip = function(zipFile) {...}` at :265, indented, inside the
-  // routed handler `download` which starts at :132; the `topLevel` pattern
-  // above matches it because it allows leading indentation. Under the old
-  // reading `returnZip` then ran from :265 to the next declaration, which
-  // swallowed :285 and :289 - two sites belonging to `download`'s own body,
-  // one of them the `else` branch that answers the request. Both were
-  // reported under the carrier `courses.returnZip (module-local)` with
-  // "Routes none declared", so a routed edge on
-  // `GET /{userSlug}/courses/{courseSlug}/download.zip` looked unrouted and
-  // undrivable.
+  // The distance-to-the-next-declaration reading breaks whenever one carrier
+  // is declared INSIDE another, and this repository does that:
+  // `lib/controllers/courses.js` declares `var returnZip = function(zipFile)`
+  // indented inside the routed handler `download`, and the `topLevel` pattern
+  // above matches it because it allows leading indentation. Measured to the
+  // next declaration, `returnZip` would then swallow the sites after it in
+  // `download`'s own body - including the `else` branch that answers the
+  // request - and report them under the carrier
+  // `courses.returnZip (module-local)` with no routes, so a routed edge on
+  // `GET /{userSlug}/courses/{courseSlug}/download.zip` would look unrouted
+  // and undrivable.
   //
   // Measuring the declared value instead makes the extents properly nested,
   // and `carrierAt` then attributes each offset to the INNERMOST carrier that
@@ -2351,17 +2861,6 @@ function carrierChainAt(carriers, offset) {
 // ---------------------------------------------------------------------------
 
 /**
- * Map controller methods and named pre-handlers to the routes that bind them,
- * read from the literal `route :` declarations in config/routes.js and
- * config/api_routes.js.
- *
- * These are the literal declarations. config/routes.js expands a subset of
- * them per language at parse time, so the registered surface is larger; the
- * expanded 233-entry manifest belongs to test/parity/manifest.js and the
- * generated document says so. A tree missing either module still yields a
- * complete inventory - carriers name the reachable code path instead.
- */
-/**
  * Whether the route declaration between `from` and `to` declares a
  * `fail.redirect` whose value carries a `{placeholder}`.
  *
@@ -2397,6 +2896,20 @@ function hasTemplatedFailRedirect(src, codeOnly, from, to) {
   return false;
 }
 
+/**
+ * Map controller methods and named pre-handlers to the routes that bind them,
+ * read from the literal `route :` declarations in config/routes.js and
+ * config/api_routes.js.
+ *
+ * These are the literal declarations. config/routes.js expands a subset of them
+ * per language at parse time, so the registered surface is larger; a row
+ * reports the literal declaration and says so, and test/parity/manifest.js
+ * records the expanded surface. A tree missing either module still yields a
+ * complete inventory - carriers name the reachable code path instead.
+ *
+ * @param {string} appRoot the tree being analysed
+ * @returns {Object} { byTarget, byHelper, templatedFailRedirects, modulesRead }
+ */
 function buildRouteBindings(appRoot) {
   const byTarget = new Map();
   const byHelper = new Map();
@@ -2618,14 +3131,13 @@ function surfaceFor(relPath, carrier, bindings, fileFacts) {
 /**
  * How a row is driven, from PROVEN REACHABILITY.
  *
- * Two predecessors of this function were dead in the same way. The first
- * tested `!edge.carrier`, which no edge can satisfy, because `push()`
- * substitutes the literal `'(module scope)'` when carrier resolution finds
- * nothing. The second tested `edge.carrierMember && surface !== MODULE`,
- * which every non-module edge satisfies by construction - so a function that
- * nothing anywhere calls came back `carrier` / drivable, and the guard was
- * dead a second time under a new name. The display metadata being present is
- * not evidence that anything can reach the code.
+ * Two readings that look like this one are dead. `!edge.carrier` is satisfied
+ * by no edge at all, because `push()` substitutes the literal
+ * `'(module scope)'` when carrier resolution finds nothing;
+ * `edge.carrierMember && surface !== MODULE` is satisfied by every non-module
+ * edge by construction, so a function nothing anywhere calls comes back
+ * drivable. Display metadata being present is not evidence that anything can
+ * reach the code.
  *
  * So each answer below names a MECHANISM that reaches this edge, and every
  * one of them is something the analysis resolved rather than assumed:
@@ -2720,25 +3232,22 @@ function isDrivable(edge) {
 // ---------------------------------------------------------------------------
 // Lexical bindings
 //
-// `Boom.notFound()` is a Boom factory only when `Boom` is bound. In the
-// baseline tree it very often is not: five of the ten controllers import
-// @hapi/boom under a different name - `errors` in course.js, courses.js,
-// folders.js, admin.js and users.js - and then write `Boom.` anyway. Measured
-// over the baseline worktree, that is 41 references in course.js, 15 in
-// users.js, 2 in folders.js, 2 in admin.js and 1 in courses.js: 61 sites at
-// which the expression does not construct a Boom at all but throws
-// `ReferenceError: Boom is not defined` when the line is evaluated.
+// `Boom.notFound()` is a Boom factory only when `Boom` is bound, and in the
+// baseline tree it often is not: several of the ten controllers import
+// @hapi/boom under another name - `errors` in `lib/controllers/course.js`,
+// `courses.js`, `folders.js`, `admin.js` and `users.js` - and then write
+// `Boom.` anyway, so the expression constructs nothing and throws
+// `ReferenceError: Boom is not defined` when the line is evaluated. Each such
+// site gets its own row, so the document is where their number is recorded.
 //
-// The distinction is not cosmetic and it is not the same on both trees. On a
-// route handler, `return Boom.forbidden()` with `Boom` bound is answered 403;
-// with `Boom` unbound the evaluation throws before any value exists, the
+// The distinction decides the status, and it is not the same on both trees. On
+// a route handler, `return Boom.forbidden()` with `Boom` bound is answered
+// 403; with `Boom` unbound the evaluation throws before any value exists, the
 // handler catch-all takes the ReferenceError, and the answer is 500 with
-// Boom's generic 5xx body. A row that recorded 403 there would be describing a
-// response no client has ever received, and an implementing agent preserving
-// "the 403" would be preserving a fiction. In the target tree all ten
-// controllers bind `Boom`, so the same text IS a factory - which is exactly
-// why binding resolution, not text matching, is what makes a baseline row and
-// its target row comparable.
+// Boom's generic 5xx body. A row stating 403 there would describe a response
+// no client receives. A tree that binds `Boom` in every controller makes the
+// same text a factory, which is why binding resolution rather than text
+// matching is what makes a baseline row and its target row comparable.
 //
 // The resolver is deliberately conservative: a name counts as bound if it is
 // declared ANYWHERE the expression could see it - a module-level or nested
@@ -2774,12 +3283,12 @@ const KNOWN_GLOBALS = Object.freeze(new Set([
  * while a name bound in a SIBLING function is not visible here at all,
  * because that sibling's extent does not contain this offset.
  *
- * A flat per-file name set was the first implementation and it was wrong in a
- * way that mattered: `var Boom = ...` inside one function made every `Boom.`
- * in a sibling function of the same file read as a bound Boom factory, so a
- * line that throws `ReferenceError` at runtime was recorded with the status
- * its factory name reads as. Scope resolution is therefore not a refinement
- * of this resolver - it is the thing that makes its answer correct.
+ * A flat per-file name set is wrong in a way that matters: `var Boom = ...`
+ * inside one function makes every `Boom.` in a sibling function of the same
+ * file read as a bound Boom factory, so a line that throws `ReferenceError` at
+ * runtime is recorded with the status its factory name reads as. Scope
+ * resolution is therefore not a refinement of this resolver - it is what makes
+ * its answer correct.
  *
  * Where the model is deliberately approximate it approximates towards BOUND,
  * never towards unbound, because reporting a name bound can only ever lose a
@@ -2837,11 +3346,11 @@ function collectBindings(codeOnly) {
   // pattern for `x = ...`, which also matches the `x =` inside
   // `var x = ...` and inside a defaulted parameter. Recording those at module
   // scope would bind every declaration file-wide and defeat scoping
-  // altogether - measured: it made a `var Boom` inside one function bind
-  // `Boom` for the whole file, which is the exact defect the scope model
-  // exists to remove. An implicit global is an assignment to an UNDECLARED
-  // identifier, so the declared offsets are excluded by identity rather than
-  // by a backwards pattern match.
+  // altogether: a `var Boom` inside one function would bind `Boom` for the
+  // whole file, which is the exact defect the scope model exists to remove. An
+  // implicit global is an assignment to an UNDECLARED identifier, so the
+  // declared offsets are excluded by identity rather than by a backwards
+  // pattern match.
   const declaredAt = new Set();
 
   function record(name, scope, kind) {
@@ -2950,10 +3459,10 @@ function collectBindings(codeOnly) {
   // whole of `.catch(function(err) { return reply(Boom.forbidden(err)); })`
   // is read as a parameter list, every identifier inside it is harvested as
   // a declared name, and `Boom` is then reported bound in a file that never
-  // binds it - which silently restored the very misclassification the
-  // resolver exists to remove. Measured on the baseline
-  // `lib/controllers/course.js`, where two such links made 41 unbound
-  // references look bound.
+  // binds it - which silently restores the very misclassification the
+  // resolver exists to remove. `lib/controllers/course.js` carries such links
+  // and never binds `Boom`, so its unbound references are what this exclusion
+  // protects.
   const paramHead = /(?:\bfunction\s*\*?\s*[A-Za-z0-9_$]*\s*|(?<![.\w$])catch\s*)\(/g;
   while ((m = paramHead.exec(codeOnly)) !== null) {
     const isCatch = /catch/.test(m[0]);
@@ -3230,19 +3739,17 @@ function propagationAt(ctx, offset) {
       // `if (...) { ... }` earlier in the same function body masks the `;`
       // that would have bounded the statement - so the walk lands on the
       // function body's own start, sees no `return` in front of it, and
-      // reports the chain as neither returned nor awaited. chainContext was
-      // written for exactly that defect and carries the measurement in its
-      // own comment; this call site had been left on the old reading.
+      // reports the chain as neither returned nor awaited. chainContext walks
+      // the chain instead, which is why this call site uses it.
       //
-      // The consequence was not cosmetic. `courses.download` returns its
-      // chain and its `.catch` returns `errors.badImplementation(...)`, so
-      // the edge answers 500 - but with chainReturned false, funnel
-      // resolution takes a returned Boom in an unawaited chain to reach no
-      // funnel at all. The row then said the request is never answered, and
-      // the comparison against the baseline reported a difference where there
-      // is none: a false R-e failure, which is worse than a missing row
-      // because it sends someone to preserve behaviour that is already
-      // preserved.
+      // The consequence reaches the row's own claim: `courses.download` returns
+      // its chain and its `.catch` returns `errors.badImplementation(...)`, so
+      // the edge answers 500 - but with chainReturned false, funnel resolution
+      // takes a returned Boom in an unawaited chain to reach no funnel at all.
+      // The row would then say the request is never answered and the
+      // comparison would report a difference where there is none, which is
+      // worse than a missing row because it sends someone to preserve
+      // behaviour that is already preserved.
       const context = chainContext(ctx, site.parenStart);
       return {
         kind: 'promise-chain',
@@ -3387,8 +3894,8 @@ function isBoundName(name, bindings, offset) {
  *
  * Both orders reach the same funnel and the same 500, so this does not move a
  * status. What it moves is the exception message, and therefore the text
- * Layer 1 writes to the error log - a side effect R-e requires the inventory
- * to record and the closure comparison to check.
+ * Layer 1 writes to the error log - a side effect the inventory records and
+ * the closure comparison checks.
  *
  * @param {string} callee the called identifier
  * @param {number} offset the call site
@@ -3419,17 +3926,17 @@ function calleeKind(callee, offset, bindings, argKind) {
  * Ownership is innermost, for the same reason terminal ownership is, and
  * with a sharper failure mode: the name is usually `err` on both sides of the
  * nesting, so a nested callback's log of its OWN error reads as the outer
- * callback logging the outer error. The baseline asset-from-URL handler is
- * the measured case -
+ * callback logging the outer error. The asset-from-URL handler in
+ * `lib/controllers/users.js` is that shape -
  *
  *   tmp.tmpName(function(err, tmpPath) {        <- this err: never read
  *     _request.get(...)
  *       .on('error', function(err) {            <- a DIFFERENT err, shadowing
  *         console.log('on error:', err);
  *
- * - where the shadowed log made the outer row `logs and continues` when the
- * outer `err` is discarded without a trace. Two dispositions that a reviewer
- * must be able to tell apart, reported as the same one.
+ * - where counting the shadowed log makes the outer row `logs and continues`
+ * although the outer `err` is discarded without a trace: two dispositions a
+ * reviewer must be able to tell apart, reported as one.
  *
  * A log inside an `if` or `try` block still counts: a block is not a
  * function.
@@ -3504,14 +4011,13 @@ const RESPONSE_CALLS = Object.freeze([
  *   }
  *
  * and its chains end `.catch(function(err) { return errorResponse(h, err); })`.
- * A scanner that knew only the fixed tokens saw that catch handler produce
- * nothing, classified it as absorbing the error, and gave the two
- * `throw Boom.notFound()` sites upstream a funnel of `none` - so two edges
- * that answer 500 were reported as answering nothing, and the comparison
- * against the baseline then reported a difference that does not exist. The
- * conversion changes the NAME of the response builder, not whether a response
- * is built, and this is what keeps the analysis from mistaking the one for the
- * other.
+ * A scanner knowing only the fixed tokens sees that catch handler produce
+ * nothing, classifies it as absorbing the error, and gives the
+ * `throw Boom.notFound()` sites upstream a funnel of `none` - so edges that
+ * answer 500 are reported as answering nothing and the comparison against the
+ * baseline reports a difference that does not exist. The conversion changes
+ * the NAME of the response builder, not whether a response is built, and this
+ * is what keeps the analysis from mistaking the one for the other.
  *
  * A local function counts when its own body returns a response call, a Boom,
  * or a hapi toolkit value.
@@ -3558,6 +4064,73 @@ function declaredFunctionName(codeOnly, fn) {
     }
   }
   return null;
+}
+
+// The shim builder's members that RESOLVE the deferred response, read from
+// the baseline `lib/util/routeParser.js:374-404`: `redirect`, `code`,
+// `header` and `view` each call `responseResolver(response)` and return the
+// real hapi response, while `type` and `bytes` mutate the response and return
+// the builder without resolving anything. That asymmetry is the mechanism
+// behind the reply-chain quirks AAP 0.6.6 catalogues, and it is also what
+// makes the produced KIND readable: the last resolving member is the response
+// the client actually receives.
+const SHIM_RESOLVING_MEMBERS = Object.freeze({
+  redirect: 'a redirect',
+  view: 'a rendered view',
+  // `.code(n)` and `.header(k, v)` resolve a plain response, which is the
+  // same kind the target's `h.response(...)` produces - so naming them the
+  // same thing is what lets the pair compare equal.
+  code: 'a response value',
+  header: 'a response value'
+});
+
+/**
+ * The producing callee's name for a response call, following the shim's
+ * builder chain where there is one.
+ *
+ * `reply` is the shim's ONE universal producer, so its own name reveals
+ * nothing about what the client receives - and this generator says so rather
+ * than guessing, which is right. What it must not do is stop there when the
+ * source DOES say: `return reply().redirect("/home")` produces a redirect,
+ * and reading only the `reply` token recorded it as unknowable.
+ *
+ * MEASURED at baseline `lib/controllers/classes.js:216-219`, whose `.catch`
+ * ends `return reply().redirect("/home")`, and at five further baseline
+ * sites. Against a target that produces `h.redirect(...)` - correctly read as
+ * a redirect - the comparison reported a payload difference on all six,
+ * because an unknown was being compared against a known and the mismatch
+ * counted as a change. Those are the same response by two means, which is
+ * exactly what the mechanism-is-not-compared rule exists for.
+ *
+ * A chain with NO resolving member is still unknowable and still says so:
+ * that is the never-settling `reply(stream).type().bytes()` shape and the
+ * builder-returned `reply(x).type(t)` shape, whose outcomes AAP 0.6.6 settles
+ * by measurement rather than from the text.
+ *
+ * @param {Object} ctx the file analysis context
+ * @param {Object} hit a responseCallsDirectlyIn entry
+ * @returns {string} the producer name, `reply().<member>` where one resolves
+ */
+function producerName(ctx, hit) {
+  const base = hit.token.replace('(', '');
+  if (base !== 'reply') {
+    return base;
+  }
+  const open = ctx.codeOnly.indexOf('(', hit.offset);
+  if (open === -1) {
+    return base;
+  }
+  const close = matchDelimiter(ctx.codeOnly, open);
+  if (close === -1) {
+    return base;
+  }
+  let resolver = null;
+  chainLinksAfter(ctx.codeOnly, close).forEach(function (link) {
+    if (Object.prototype.hasOwnProperty.call(SHIM_RESOLVING_MEMBERS, link.name)) {
+      resolver = link.name;
+    }
+  });
+  return resolver ? 'reply().' + resolver : base;
 }
 
 /** Response-producing calls whose innermost enclosing function is `fn`. */
@@ -3623,21 +4196,22 @@ function sourceLine(ctx, line) {
 /**
  * Whether the value produced at `offset` is RETURNED by its statement.
  *
- * The predecessor of this function read only the token immediately behind the
- * offset, which answers the question for `return reply(x)` and gets it wrong
- * for every expression that reaches the offset through an operator. Two
- * baseline sites are exactly that shape:
+ * Reading only the token immediately behind the offset answers the question
+ * for `return reply(x)` and gets it wrong for every expression that reaches
+ * the offset through an operator. Two sites in the analysed set are exactly
+ * that shape - in `lib/util/helpers.js`:
  *
- *   lib/util/helpers.js:203
  *     return isValid ? reply(lang) : reply(Boom.notFound());
- *   lib/controllers/trinket.js:881
+ *
+ * and in `lib/controllers/trinket.js`:
+ *
  *     return err === "threshold exceeded" ? reply(errors.forbidden()) : reply();
  *
- * The token behind each inner `reply(` is `?` or `:`, so both were reported
- * "with no return" although both are returned. That matters after conversion:
- * "with no return" tells an implementing agent the value is discarded today
- * and must start being returned, and here the value is already returned and
- * the conversion has nothing to change.
+ * The token behind each inner `reply(` is `?` or `:`, and both values are
+ * returned. Getting that wrong matters after conversion: "with no return"
+ * tells an implementing agent the value is discarded today and must start
+ * being returned, while here it is already returned and the conversion has
+ * nothing to change.
  *
  * The walk goes backwards from the offset to the head of the enclosing
  * expression statement, hopping matched groups and member paths and stepping
@@ -3708,11 +4282,11 @@ function isReturned(codeOnly, offset) {
     //
     //   return err === "threshold exceeded" ? reply(errors.forbidden()) : reply();
     //
-    // is `trinket.js:881` in the baseline tree, and the string literal in the
-    // condition is BLANKED by the tokenizer, so walking back from the inner
-    // `reply(` crosses `?`, then a run of spaces where the literal was, and
-    // lands on the `=` of `===`. Reading that as an assignment stopped the
-    // walk one token short of the `return` and reported a returned value as
+    // is a real return in `lib/controllers/trinket.js`, and the string literal
+    // in the condition is BLANKED by the tokenizer, so walking back from the
+    // inner `reply(` crosses `?`, then a run of spaces where the literal was,
+    // and lands on the `=` of `===`. Reading that as an assignment stops the
+    // walk one token short of the `return` and reports a returned value as
     // discarded.
     if (ch === '=') {
       const before = i > 0 ? codeOnly[i - 1] : '';
@@ -3729,10 +4303,10 @@ function isReturned(codeOnly, offset) {
 
     // Every other operator - `?`, `:`, `,`, the logical and comparison and
     // arithmetic operators - can sit between a returned expression and the
-    // `return` at its head, so the walk continues through them. Enumerating
-    // what CONTINUES rather than what STOPS was the earlier reading, and it
-    // stopped at the first operator not on the list, which is how a condition
-    // containing `===` ended the walk.
+    // `return` at its head, so the walk continues through them. What STOPS the
+    // walk is enumerated above rather than what continues it: a list of
+    // continuing operators stops at the first operator missing from it, which
+    // is how a condition containing `===` would end the walk early.
     i = skipSpaceBack(codeOnly, i - 1);
   }
 
@@ -3778,18 +4352,19 @@ function findMatchingOpen(codeOnly, closeIdx) {
  * answer that, because it only looks immediately behind the offset and the
  * `return` sits at the head of the statement, several links earlier.
  */
-function chainContext(ctx, offset) {
+function chainContext(ctx, offset, depth) {
   const code = ctx.codeOnly;
   let head = offset;
   let i = skipSpaceBack(code, offset - 1);
+  const hops = depth || 0;
 
   // Walk back along the chain itself rather than using statementBounds, whose
   // backward walk cannot see past an intervening block: an `if (...) { ... }`
   // earlier in the same handler masks the `;` that would have bounded the
   // statement, and the walk then reports the function body's own start with
-  // no `return` in front of it. Measured on the `home` handler of the pages
-  // controller, whose chain IS returned - so the naive reading got both the
-  // line and the awaited-ness wrong, on the two fields this clause exists to
+  // no `return` in front of it. `lib/controllers/pages.js`'s `home` handler is
+  // that shape and its chain IS returned, so the naive reading gets both the
+  // line and the awaited-ness wrong - the two fields this clause exists to
   // state. This walk hops matched `(...)`/`[...]` groups and member paths
   // backwards until it reaches something that cannot be part of the chain.
   while (i >= 0) {
@@ -3828,6 +4403,52 @@ function chainContext(ctx, offset) {
       i = skipSpaceBack(code, path.start - 1);
       continue;
     }
+    // THE CHAIN IS AN ARGUMENT, AND ONE CALLEE MAKES IT AWAITED ANYWAY.
+    //
+    // The walk stops at an opening `(` because an argument is not part of the
+    // chain - correct in general, and wrong for exactly one callee. The
+    // conversion's own idiom for a carrier that still has a callback boundary
+    // inside it is
+    //
+    //   return await new Promise(function (resolve) {
+    //     Model.find(..., function (err, doc) {
+    //       return resolve(chain.then(...).catch(...));
+    //     });
+    //   });
+    //
+    // and a chain handed to that `resolve` settles the promise the carrier is
+    // awaiting, so the carrier waits for it. Reading the bare `(` instead
+    // reported it as awaited by nothing.
+    //
+    // MEASURED on `admin.grantRole`: the baseline `return user.grant(...)
+    // .then(...).catch(...)` reads awaited, and the target - the shape above,
+    // which awaits strictly MORE - read unawaited. The comparison then
+    // reported a settlement-timing difference in the direction opposite to
+    // the one the code moved, on 10 rows across the tree, every one of them a
+    // carrier converted exactly as rule T-3 prescribes.
+    //
+    // So `resolve(`/`reject(` are transparent here: the question becomes
+    // whether the promise they settle is itself awaited, which is the same
+    // question one level out, answered by the same walk.
+    if (ch === '(' && hops < 4) {
+      const before = skipSpaceBack(code, i - 1);
+      if (before >= 0 && isIdentifierChar(code[before])) {
+        const callee = readMemberPathBack(code, before);
+        const tail = String(callee.text || '').split('.').pop();
+        if (tail === 'resolve' || tail === 'reject') {
+          const promiseAt = enclosingPromiseConstructor(code, i);
+          if (promiseAt !== -1) {
+            const outer = chainContext(ctx, promiseAt, hops + 1);
+            return {
+              line: lineFromIndex(ctx.lineIndex, head),
+              awaited: outer.awaited,
+              boundTo: outer.boundTo || null,
+              viaSettler: tail
+            };
+          }
+        }
+      }
+    }
     break;
   }
 
@@ -3855,6 +4476,35 @@ function chainContext(ctx, offset) {
   };
 }
 
+/**
+ * The offset of the `new Promise(` expression whose executor encloses
+ * `offset`, or -1.
+ *
+ * Nearest first, and verified by containment rather than by proximity: a
+ * sibling `new Promise` earlier in the same function is closer in the text
+ * than the enclosing one is only when the enclosing one is further back, so
+ * the candidate is accepted only when its own argument list actually spans
+ * the offset.
+ *
+ * @param {string} code the blanked source
+ * @param {number} offset an offset inside the executor
+ * @returns {number} offset of the `new` keyword, or -1
+ */
+function enclosingPromiseConstructor(code, offset) {
+  let at = code.lastIndexOf('new Promise', offset);
+  while (at !== -1) {
+    const open = code.indexOf('(', at + 'new Promise'.length);
+    if (open !== -1) {
+      const close = matchDelimiter(code, open);
+      if (close > offset && open < offset) {
+        return at;
+      }
+    }
+    at = at > 0 ? code.lastIndexOf('new Promise', at - 1) : -1;
+  }
+  return -1;
+}
+
 // ---------------------------------------------------------------------------
 // Corpus-wide reachability
 //
@@ -3867,12 +4517,11 @@ function chainContext(ctx, offset) {
 // mentions of the member, and the answer is either a traced driver or a PROOF
 // that nothing mentions it.
 //
-// Measured on the helpers module: `internals.userByLogin` is declared at one
-// offset and mentioned at no other in the entire repository, so it is dead
-// code. Before this search the row for its error edge claimed a funnel it
-// could not have, and was ticked closed. It is now proven unreachable, said
-// to be so, and excluded from the closure gate rather than counted as proof
-// of anything.
+// `lib/util/helpers.js`'s `internals.userByLogin` is the shape this answers:
+// declared at one offset and mentioned nowhere else in the corpus, so it is
+// dead code. Without the search its error edge would claim a funnel it cannot
+// have; with it the row is proven unreachable, says so, and is excluded from
+// the closure gate rather than counted as proof of anything.
 // ---------------------------------------------------------------------------
 
 /**
@@ -3985,7 +4634,7 @@ function analyseFile(relPath, src, bindings) {
   ctx.responseLocals = responseProducingLocals(ctx);
 
   const counts = {
-    // Literal-substring counts, directly comparable to the measured
+    // Literal-substring counts, directly comparable to the
     // `grep -o '<token>' | wc -l` figures in BASELINE_COUNTS.
     replyLiteral: countOccurrences(codeOnly, 'reply('),
     thenLiteral: countOccurrences(codeOnly, '.then('),
@@ -4023,7 +4672,9 @@ function analyseFile(relPath, src, bindings) {
       snippet: sourceLine(ctx, line),
       notes: spec.notes || [],
       unresolved: Boolean(spec.unresolved),
-      precedence: spec.precedence
+      precedence: spec.precedence,
+      // Stamped for every edge, so the two trees are asked the same question.
+      asyncContinuation: inAsyncCatchContinuation(ctx, offset)
     };
     // Tracing runs for an INTERNAL carrier and for an EXPORTED one that NO
     // ROUTE BINDS. The second case is a shared core: exported so a sibling
@@ -4078,14 +4729,13 @@ function analyseFile(relPath, src, bindings) {
     const site = m.index + m[0].length - 1 - 'reply'.length;
 
     // EVALUATION ORDER. JavaScript resolves the CALLEE reference before it
-    // evaluates any argument, so where `reply` is itself unbound the
-    // exception names `reply` and the argument is never evaluated at all -
-    // even when the argument would have thrown too. Measured against the
-    // runtime for `return reply(Boom.forbidden())` with neither name bound:
-    // `ReferenceError: reply is not defined`. Reading the argument first put
-    // the wrong identifier in the message and therefore the wrong text in
-    // Layer 1's log, which R-e requires this inventory to preserve and
-    // compare. The status and the funnel are the same either way; the
+    // evaluates any argument, so where `reply` is itself unbound the exception
+    // names `reply` and the argument is never evaluated at all - even when the
+    // argument would have thrown too. `return reply(Boom.forbidden())` with
+    // neither name bound throws `ReferenceError: reply is not defined`.
+    // Reading the argument first puts the wrong identifier in the message and
+    // therefore the wrong text in Layer 1's log, which this inventory records
+    // and compares. The status and the funnel are the same either way; the
     // message and the log are not.
     const kind = calleeKind('reply', site, facts.bindings, argKind);
     const unbound = kind.kind === 'unbound-reference';
@@ -4183,21 +4833,57 @@ function analyseFile(relPath, src, bindings) {
     });
   }
 
-  // -- Pass E: return Boom / return errors ---------------------------------
-  // Absent from the baseline tree - it has no such site - and present after
-  // conversion, which is exactly why it is detected: the contrast with
-  // `throw` is a 404 against a 500.
-  const returnBoom = /\breturn\s+((?:Boom|errors|Hapi)\.(?:error\.)?[A-Za-z0-9_$]+)/g;
-  while ((m = returnBoom.exec(codeOnly)) !== null) {
-    const exprStart = m.index + m[0].indexOf(m[1]);
+  // -- Pass E: a Boom whose value is RETURNED ------------------------------
+  // Absent from the baseline tree in its `return Boom.x()` form - it has no
+  // such site - and present after conversion, which is exactly why it is
+  // detected: the contrast with `throw` is a 404 against a 500.
+  //
+  // WHY THIS IS NOT `return\s+Boom\.`, WHICH IT WAS. A returned expression is
+  // not always a bare factory call. MEASURED on `trinket.updateSlug`: the
+  // baseline's `reply(errors.conflict())` at `:1283` is an edge that answers
+  // 409, and the target expresses the same mapping as
+  //
+  //   return trinket.updateSlug(...).then(function (result) {
+  //     return result ? request.success() : errors.conflict();
+  //   })
+  //
+  // whose `errors.conflict()` sits in a ternary branch and matched no
+  // `return`-prefixed pattern. It got NO ROW, so status 409 fell from one
+  // occurrence to zero across the whole target tree and the comparison
+  // reported the 409 mapping as lost when it is preserved - the single worst
+  // kind of false statement this document can make, because R-e is about
+  // exactly that status.
+  //
+  // So the pass asks the question it means: is this factory's VALUE returned?
+  // `isReturned` already answers it for the ternary shape - it carries its
+  // own measurement for `trinket.js:881` - and it answers no for
+  // `reply(Boom.x())`, where the value is consumed by an argument list that
+  // Pass A already recorded, and no for `throw Boom.x()`, which Pass D owns.
+  const boomFactory = /\b((?:Boom|errors|Hapi)\.(?:error\.)?[A-Za-z0-9_$]+)/g;
+  while ((m = boomFactory.exec(codeOnly)) !== null) {
+    const exprStart = m.index;
+    if (!isReturned(codeOnly, exprStart)) {
+      continue;
+    }
+    // The locator stays on the `return` keyword where there is one directly
+    // in front, so no existing row's line moves; a value returned from
+    // somewhere else in the expression is located at its own text.
+    let at = exprStart;
+    const backAt = skipSpaceBack(codeOnly, exprStart - 1);
+    if (backAt >= 0 && isIdentifierChar(codeOnly[backAt])) {
+      const preceding = readMemberPathBack(codeOnly, backAt);
+      if (preceding.text === 'return') {
+        at = preceding.start;
+      }
+    }
     // Binding-resolved for the same reason as every other Boom site: an
     // unbound holder throws while evaluating the return expression, so the
     // value is never returned and the contrast this pass exists to record -
     // a returned Boom's 404 against a thrown Boom's 500 - does not apply.
     const kind = valueKind(m[1], facts.bindings, exprStart);
     const unbound = kind.kind === 'unbound-reference';
-    terminalOffsets.push(m.index);
-    push(m.index, {
+    terminalOffsets.push(at);
+    push(at, {
       precedence: 10,
       edgeClass: EDGE_CLASS.RESPONSE,
       disposition: DISPOSITION.BOOM,
@@ -4206,8 +4892,153 @@ function analyseFile(relPath, src, bindings) {
         : 'return ') + summarise(src.slice(exprStart, exprStart + 60).split('\n')[0]),
       thrownKind: kind,
       returnedBoom: !unbound,
-      propagation: propagationAt(ctx, m.index)
+      propagation: propagationAt(ctx, at)
     });
+  }
+
+  // -- Pass I: the error value handed back AS the response -----------------
+  // The baseline says `reply(err)` and Pass A rows it. The conversion says
+  // `return err` - or, where the carrier keeps a callback boundary inside a
+  // `new Promise`, `resolve(err)` - and until now nothing rowed that at all.
+  //
+  // MEASURED on `users.savePassword`, whose baseline has three `reply(err)`
+  // sites and whose target expresses all three as `resolve(err)`: the target
+  // carried no row for any of them, so three preserved Layer 3 / 500
+  // mappings read as three baseline edges that had vanished. Twelve rows
+  // across the tree had that shape. The gap is narrow and specific: Pass H
+  // rows an error parameter NOTHING dispositions, and these are dispositioned
+  // - by being handed back - while Passes A-E row only the OTHER terminal in
+  // the same callback, so the disposition fell between the two.
+  //
+  // The scanner already carries this concept for a `.catch` handler, whose
+  // shape reads "returns the error as the response"; 51 target edges use it.
+  // This is the same fact about a callback body.
+  ctx.functions.forEach(function (fn) {
+    const params = parameterNames(fn);
+    if (!params.length || !isErrorParameter(params[0])) {
+      return;
+    }
+    // A `.catch`/`.then` rejection handler and an `.on('error', ...)`
+    // listener belong to Pass F, which already reads "returns the error as
+    // the response" and says so with the mechanism named. Rowing them here
+    // as well SHADOWED 30 of Pass F's richer rows on the first measurement,
+    // replacing ".catch() handler - returns the error as the response" with
+    // a bare "return err" that loses the mechanism. Pass I is for the CPS
+    // callbacks nothing else covers.
+    const site = callSiteOf(codeOnly, fn);
+    if (site && (PROMISE_CONTINUATIONS.has(site.calleeTail) ||
+        SYNCHRONOUS_ITERATEES.has(site.calleeTail) ||
+        LISTENER_REGISTRARS.indexOf(site.calleeTail) !== -1)) {
+      return;
+    }
+    const name = params[0];
+    const escaped = name.replace(/\$/g, '\\$');
+    // `return err` and `resolve(err)`. NOT `reject(err)`: that hands the
+    // error to the promise's rejection rather than answering with it, which
+    // is the PROPAGATE disposition the existing passes already record.
+    const pattern = new RegExp(
+      '\\breturn\\s+' + escaped + '(?![A-Za-z0-9_$.])' +
+      '|\\bresolve\\s*\\(\\s*' + escaped + '\\s*\\)', 'g'
+    );
+    const body = codeOnly.slice(fn.bodyStart, fn.bodyEnd);
+    let hit;
+    while ((hit = pattern.exec(body)) !== null) {
+      const at = fn.bodyStart + hit.index;
+      const inner = innermostFunction(ctx.functions, at);
+      if (!inner || inner.bodyStart !== fn.bodyStart) {
+        continue;
+      }
+      const identifierAt = at + hit[0].indexOf(name);
+      const kind = valueKind(name, facts.bindings, identifierAt);
+      terminalOffsets.push(at);
+      push(at, {
+        precedence: 10,
+        edgeClass: EDGE_CLASS.RESPONSE,
+        disposition: DISPOSITION.BOOM,
+        shape: hit[0].indexOf('resolve') === 0
+          ? 'resolve(' + name + ') - hands the error back as the response, ' +
+            'settling the promise the carrier awaits'
+          : 'return ' + name + ' - hands the error back as the response',
+        valueKind: kind,
+        returnedBoom: true,
+        returned: true,
+        propagation: propagationAt(ctx, at)
+      });
+    }
+  });
+
+  // -- Pass J: the caught error handed back AS the response ----------------
+  // The same fact as Pass I, in the one syntactic position Pass I cannot
+  // reach. Pass I walks `ctx.functions` and reads the first parameter, so it
+  // sees a CALLBACK whose error argument is handed back. A `catch (err) {}`
+  // clause is not a function and its binding is not a parameter, so nothing
+  // rowed it.
+  //
+  // MEASURED across both trees: six catch clauses per tree carry the shape.
+  // On the baseline they read `reply(err)`, which Pass A rows - `folders.js`
+  // :60, `users.js`:283, :309, :749, `helpers.js`:363, :393, every one of
+  // them a row this join reported as a baseline edge with no counterpart. On
+  // the target the same disposition is written `return err` at
+  // `classes.js`:207, `course.js`:1041, `users.js`:906, :934, :1711 and
+  // `helpers.js`:376, and NO pass rowed any of them. The preserved Layer 3
+  // mapping was therefore invisible on one side of the comparison only,
+  // which is a defect in the scanner and not a change in the application.
+  //
+  // `reply(err)` is deliberately NOT matched here: Pass A owns it, reads the
+  // shim's deferred settlement, and says so. This pass adds the target
+  // spelling, so that both sides of a preserved mapping are measured the
+  // same way.
+  const catchClause = /\bcatch\s*\(\s*([A-Za-z0-9_$]+)\s*\)\s*\{/g;
+  let caught;
+  while ((caught = catchClause.exec(codeOnly)) !== null) {
+    const name = caught[1];
+    if (!isErrorParameter(name)) {
+      continue;
+    }
+    const braceAt = caught.index + caught[0].length - 1;
+    const bodyEnd = matchDelimiter(codeOnly, braceAt);
+    if (bodyEnd === -1) {
+      continue;
+    }
+    // The frame the clause runs on. A `return` nested in a callback DECLARED
+    // inside the clause returns from that callback, not from here, so the
+    // disposition belongs to the callback and Pass I owns it.
+    const clauseFrame = innermostFunction(ctx.functions, braceAt);
+    const escaped = name.replace(/\$/g, '\\$');
+    // `return err` and `resolve(err)`, for the reason Pass I states: NOT
+    // `reject(err)`, which is the PROPAGATE disposition.
+    const pattern = new RegExp(
+      '\\breturn\\s+' + escaped + '(?![A-Za-z0-9_$.])' +
+      '|\\bresolve\\s*\\(\\s*' + escaped + '\\s*\\)', 'g'
+    );
+    const body = codeOnly.slice(braceAt, bodyEnd);
+    let hit;
+    while ((hit = pattern.exec(body)) !== null) {
+      const at = braceAt + hit.index;
+      const frame = innermostFunction(ctx.functions, at);
+      const sameFrame = clauseFrame
+        ? Boolean(frame) && frame.bodyStart === clauseFrame.bodyStart
+        : !frame;
+      if (!sameFrame) {
+        continue;
+      }
+      const identifierAt = at + hit[0].indexOf(name);
+      const kind = valueKind(name, facts.bindings, identifierAt);
+      terminalOffsets.push(at);
+      push(at, {
+        precedence: 10,
+        edgeClass: EDGE_CLASS.RESPONSE,
+        disposition: DISPOSITION.BOOM,
+        shape: (hit[0].indexOf('resolve') === 0
+          ? 'resolve(' + name + ')'
+          : 'return ' + name) +
+          ' in a catch clause - hands the caught error back as the response',
+        valueKind: kind,
+        returnedBoom: true,
+        returned: true,
+        propagation: propagationAt(ctx, at)
+      });
+    }
   }
 
   const terminalSet = terminalOffsets.slice().sort(function (a, b) {
@@ -4217,11 +5048,11 @@ function analyseFile(relPath, src, bindings) {
   /**
    * Whether `fn` dispositions an error ON ITS OWN STACK.
    *
-   * Terminal ownership has to be innermost-aware. The predecessor of this
-   * function asked only whether a terminal offset fell anywhere between
-   * `fn.bodyStart` and `fn.bodyEnd`, which is true for every terminal in
-   * every function nested inside `fn` as well. The baseline asset-from-URL
-   * handler is the case that exposes it:
+   * Terminal ownership has to be innermost-aware. Asking only whether a
+   * terminal offset falls anywhere between `fn.bodyStart` and `fn.bodyEnd` is
+   * true for every terminal in every function nested inside `fn` as well. The
+   * asset-from-URL handler in `lib/controllers/users.js` is the case that
+   * exposes it:
    *
    *   tmp.tmpName(function(err, tmpPath) {          <- err, never inspected
    *     _request.get(...)
@@ -4229,11 +5060,11 @@ function analyseFile(relPath, src, bindings) {
    *         FileUtil.uploadUserAsset(..., function(err, file) {
    *           if (err) return request.fail(err);     <- a terminal, 3 frames in
    *
-   * The `request.fail` four frames down made the outer `tmp.tmpName` callback
-   * look as though it disposed of its own `err`, so Passes F, G and H all
-   * skipped it and the failure of `tmp.tmpName` - which discards `err` and
-   * then uses an undefined path - got no row at all. It is a genuine edge
-   * with a genuine disposition, and it was invisible.
+   * The `request.fail` four frames down makes the outer `tmp.tmpName` callback
+   * look as though it disposed of its own `err`, so Passes F, G and H would
+   * all skip it and the failure of `tmp.tmpName` - which discards `err` and
+   * then uses an undefined path - would get no row at all, although it is a
+   * genuine edge with a genuine disposition.
    *
    * A terminal counts as owned by `fn` only when `fn` is the INNERMOST
    * function containing it. A terminal inside an `if` or a `try` block still
@@ -4271,7 +5102,7 @@ function analyseFile(relPath, src, bindings) {
   /**
    * Whether `fn` hands its error to an outer continuation, and by what.
    *
-   * Three vehicles, all measured in this repository:
+   * Three vehicles, all of them present in this repository:
    *
    *   if (err) reject(err);                 - rejects the enclosing promise
    *   resolve({ err : err, value : value }) - resolves WITH the error as data
@@ -4362,12 +5193,12 @@ function analyseFile(relPath, src, bindings) {
     // Direct call syntax: `name(...)`, `internals.name(...)`, and the
     // same-module export forms `module.exports.name(...)` / `exports.name(...)`.
     // The last two are how a shared core extracted out of a handler is called
-    // by the handler it was extracted from, and recognising only `internals.`
-    // missed it: measured, `module.exports.createCourseCore(...)` at
-    // lib/controllers/course.js:27 traced to no caller at all, so the row for
-    // its save callback resolved `unresolved` and the generator refused to
-    // write the document. A qualifier naming this module's own exports is a
-    // call to a member of this module, which is exactly what is being traced.
+    // by the handler it was extracted from - `lib/controllers/course.js` calls
+    // its own `module.exports.createCourseCore(...)` that way - so a pattern
+    // recognising only `internals.` traces such a core to no caller at all,
+    // its callback's row resolves `unresolved`, and generation stops with no
+    // document written. A qualifier naming this module's own exports is a call
+    // to a member of this module, which is exactly what is being traced.
     const pattern = new RegExp('(^|[^A-Za-z0-9_$.])' +
       '(?:module\\.exports\\.|exports\\.|internals\\.)?' +
       escaped + '\\s*\\(', 'g');
@@ -4570,13 +5401,12 @@ function analyseFile(relPath, src, bindings) {
       })
       : [];
     // `return err;` with no call at all. The bare return is the converted
-    // form of `return reply(err)` and it is the most common one in this
-    // tree, because hapi normalizes a returned Error itself - `Response.wrap`
-    // boomifies it - so a controller that wants the shim's exact selection
-    // returns the value and nothing else. Without this the handler looks like
-    // it absorbs its error and every edge upstream of it inherits a funnel of
-    // `none`, which is how 21 edges that answer 500 came to be reported as
-    // answering nothing.
+    // form of `return reply(err)`, and hapi normalizes a returned Error itself
+    // - `Response.wrap` boomifies it - so a controller wanting the shim's
+    // exact selection returns the value and nothing else. Without this clause
+    // the handler looks as though it absorbs its error and every edge upstream
+    // of it inherits a funnel of `none`, so edges that answer 500 are reported
+    // as answering nothing.
     const bareErrorReturn = paramName
       ? bareReturnOf(ctx, handlerFn, paramName)
       : null;
@@ -4677,7 +5507,7 @@ function analyseFile(relPath, src, bindings) {
       loggingCalls: anyLogs,
       referencesParam: references,
       producedResponses: producedHere.map(function (p) {
-        return p.token.replace('(', '');
+        return producerName(ctx, p);
       }),
       endLine: lineFromIndex(ctx.lineIndex, handlerFn.bodyEnd),
       notes: notes,
@@ -4730,7 +5560,7 @@ function analyseFile(relPath, src, bindings) {
       shape: 'CPS callback boundary (' + site.calleeText + ')',
       callee: site.calleeText,
       producedResponses: produced.map(function (p) {
-        return p.token.replace('(', '');
+        return producerName(ctx, p);
       }),
       paramName: errParam,
       endLine: lineFromIndex(ctx.lineIndex, fn.bodyEnd),
@@ -4885,6 +5715,52 @@ function identityBase(edge) {
   return file + '.' + carrier + '.' + cls;
 }
 
+/**
+ * Whether the offset sits in a `catch` clause that runs as an async
+ * continuation rather than on its carrier's synchronous stack.
+ *
+ * Both halves are required. The enclosing frame must be `async`, and the
+ * guarded region must actually `await` - `try { sync(); } catch (e) {}` inside
+ * an async function still runs its clause synchronously, so the frame alone
+ * does not decide it.
+ *
+ * Applied to EVERY edge rather than to the pass that happened to surface it.
+ * Computing it only for the target's `return err` left the baseline's
+ * `reply(err)` in the very same clause reading `synchronous`, which
+ * manufactured a settlement difference out of which pass found the site - the
+ * asymmetry, not the code, was the difference.
+ */
+function inAsyncCatchContinuation(ctx, offset) {
+  const code = ctx.codeOnly;
+  // The nearest `catch (` whose clause body contains the offset.
+  const clause = /\bcatch\s*\(\s*[A-Za-z0-9_$]+\s*\)\s*\{/g;
+  let m;
+  let enclosing = -1;
+  while ((m = clause.exec(code)) !== null) {
+    if (m.index > offset) {
+      break;
+    }
+    const braceAt = m.index + m[0].length - 1;
+    const end = matchDelimiter(code, braceAt);
+    if (end !== -1 && offset > braceAt && offset < end) {
+      enclosing = m.index;
+    }
+  }
+  if (enclosing === -1) {
+    return false;
+  }
+  const frame = innermostFunction(ctx.functions, enclosing);
+  const frameIsAsync = frame
+    ? /\basync\s*$/.test(
+      code.slice(Math.max(0, frame.keywordAt - 8), frame.keywordAt))
+    : false;
+  if (!frameIsAsync) {
+    return false;
+  }
+  const tryStart = code.lastIndexOf('try', enclosing);
+  return tryStart !== -1 && /\bawait\b/.test(code.slice(tryStart, enclosing));
+}
+
 function isErrorParameter(name) {
   return ERROR_IDENTIFIERS.has(name) || /^err/i.test(name);
 }
@@ -5026,6 +5902,12 @@ function resolveFunnels(edges, funnels) {
   const byOffset = new Map();
   edges.forEach(function (edge) {
     byOffset.set(edge.offset, edge);
+    // Stamped so the settlement model can read it. The legacy wrapper's
+    // `if (result === undefined) { result = await responsePromise; }` means
+    // an unreturned chain in a handler that returns nothing is STILL awaited
+    // on the baseline tree - see timingShape, where reading it otherwise
+    // reported 7 rows as gaining a wait the wrapper already provided.
+    edge.shimPresent = shimPresent;
   });
 
   function inheritFrom(link) {
@@ -5189,11 +6071,11 @@ function resolveFunnels(edges, funnels) {
 // ---------------------------------------------------------------------------
 // Target text
 //
-// Every target states the outcome to PRESERVE. None proposes a fix: R-d
-// prohibits improvements, and a row that recommended repairing a swallowed
-// error or settling an unsettled request would send an implementing agent in
-// the wrong direction. Where the baseline outcome is a defect, the target says
-// so and requires it.
+// Every target states the outcome to PRESERVE and none proposes a fix:
+// behaviour improvements are out of scope for this migration, and a row that
+// recommended repairing a swallowed error or settling an unsettled request
+// would send an implementing agent in the wrong direction. Where the baseline
+// outcome is a defect, the target says so and requires it.
 // ---------------------------------------------------------------------------
 
 const RETURN_DISCIPLINE_SHIM =
@@ -5231,12 +6113,11 @@ function statusPhrase(kind) {
 // ---------------------------------------------------------------------------
 // Side effects and timing
 //
-// R-e's deliverable is one row per changed error edge carrying the target
-// status, payload or redirect, its SIDE EFFECTS and its TIMING. The first
-// group is what the disposition prose states. The last two are the fields a
-// mechanical conversion drops silently - a swallowed error that starts being
-// reported, a fire-and-forget deletion that starts being awaited, a response
-// that starts settling earlier than the callback that used to produce it - so
+// A row carries the target status, payload or redirect, its SIDE EFFECTS and
+// its TIMING. The first is what the disposition prose states. The last two are
+// the fields a mechanical conversion drops silently - a swallowed error that
+// starts being reported, a fire-and-forget deletion that starts being awaited,
+// a response that starts settling earlier than the callback producing it - so
 // they are stated explicitly on EVERY row rather than only where the prose
 // happens to mention them. A row without them is not checkable.
 //
@@ -5334,7 +6215,6 @@ function sideEffectsText(edge) {
       ', and its own row states them where it is in this file.';
   }
 
-  // DISPOSITION.BOOM
   const kind = edge.thrownKind || { kind: 'value' };
   const prop = edge.propagation || {};
   if (kind.kind === 'type-error') {
@@ -5460,7 +6340,7 @@ function timingText(edge) {
       : '') + '.';
 }
 
-/** The two fields R-e requires on every row, appended to every target. */
+/** The side-effect and timing fields, appended to every target. */
 function effectsAndTiming(edge) {
   return ' Side effects: ' + sideEffectsText(edge) +
     ' Timing: ' + timingText(edge);
@@ -5532,8 +6412,8 @@ function funnelsNamedIn(text) {
  * resolution itself was shim-blind.
  *
  * Fatal rather than reported: a document that contradicts itself is not a
- * partial deliverable, and the R-e checklist's whole use is that a reader can
- * act on a row without re-deriving it.
+ * partial deliverable, and a row's whole use is that a reader can act on it
+ * without re-deriving it.
  *
  * @param {Object} edge the edge being rendered
  * @param {string} text its rendered Target and side-effect prose
@@ -5571,21 +6451,21 @@ function assertRowCoherence(edge, text) {
  *
  * `funnels.shimPresent` selects between two genuinely different contracts,
  * and on the pre-handler surface they disagree about the outcome rather than
- * only about the mechanism. Measured against installed @hapi/hapi 21.4.10:
+ * only about the mechanism:
  *
  *   shim      reply(err) with a non-Boom Error RESOLVES the pre-handler with
  *             the Error as its assigned value. The request continues,
  *             `request.pre.<assign>` holds an Error, no error response is
  *             produced, funnel `none`.
- *   native    returning any Error goes through `Response.wrap`, which calls
- *             `Boom.boomify` on it (lib/response.js:81-83); `isBoom` then
- *             routes it to `failAction(request, pre.failAction)`, whose
- *             default `'error'` THROWS (lib/handler.js:59-63). So the request
- *             is answered - the Boom's own status for a Boom, 500 for a plain
- *             Error - and the funnel is Layer 3.
+ *   native    a returned Error goes through `@hapi/hapi`'s `Response.wrap`,
+ *             which boomifies it in the response pipeline; `isBoom` then
+ *             routes it to the pre-handler's `failAction`, whose default
+ *             `'error'` throws. So the request is answered - the Boom's own
+ *             status for a Boom, 500 for a plain Error - and the funnel is
+ *             Layer 3.
  *
- * Describing one while reporting the other is the failure this parameter
- * removes.
+ * Stating one contract while reporting rows measured under the other is what
+ * this parameter prevents.
  */
 function targetCore(edge, funnels) {
   const shimPresent = !funnels || funnels.shimPresent !== false;
@@ -5799,18 +6679,16 @@ function targetCore(edge, funnels) {
       'itself. Status and payload unchanged.';
   }
 
-  // DISPOSITION.BOOM
   const kind = edge.thrownKind || { kind: 'value' };
 
   // AN ERROR HANDLER THAT RETURNS ITS ERROR, checked here because
   // resolveFunnels checks it here: a `.catch` handler that RETURNS the error
-  // RESOLVES its chain rather than rejecting it, so nothing downstream
-  // catches the value and the chain's own later `.catch` never sees it. The
-  // clause was added to resolveFunnels and not to this function, and the two
-  // then disagreed twice over - the funnel field said Layer 3 while the tail
-  // prescribed Layer 1 for 49 rows, and where a later `.catch` existed the
-  // text routed the value to a handler that cannot receive it. Both are
-  // decided by putting the case in the same place in both functions.
+  // RESOLVES its chain rather than rejecting it, so nothing downstream catches
+  // the value and the chain's own later `.catch` never sees it. The case has
+  // to sit in the same place in both functions - a clause in resolveFunnels
+  // with no counterpart here makes the funnel field say Layer 3 while the tail
+  // prescribes Layer 1, and where a later `.catch` exists the text routes the
+  // value to a handler that cannot receive it.
   if (edge.edgeClass === EDGE_CLASS.HANDLER && edge.valueKind &&
       edge.valueKind.kind === 'error-identifier') {
     return 'Layer 3. The handler RETURNS the error value rather than throwing ' +
@@ -5909,15 +6787,14 @@ function targetCore(edge, funnels) {
       'resolves the deferred. Funnel: none. Preserve it - adding a catch or ' +
       'returning the chain would settle a request that today may not settle.';
   }
-  // THE TAIL IS FUNNEL-DRIVEN, and it has to be. It used to return the Layer 1
-  // text unconditionally, which was correct for a throw on a handler's own
-  // stack and wrong for everything else that reached here - most visibly for
-  // an error handler that RETURNS its error as the response, which
-  // resolveFunnels answers through Layer 3. Measured on the analysed tree,
-  // that put a Layer 3 Funnel field and a "Layer 1. The handler catch-all
-  // logs..." Target on 49 rows of one document. One edge cannot truthfully
-  // prescribe both, and a reviewer reading either field alone was being told
-  // something the other field denied.
+  // THE TAIL IS FUNNEL-DRIVEN, and it has to be. Returning the Layer 1 text
+  // unconditionally is correct for a throw on a handler's own stack and wrong
+  // for everything else that reaches here - most visibly for an error handler
+  // that RETURNS its error as the response, which resolveFunnels answers
+  // through Layer 3. That combination puts a Layer 3 Funnel field on a row
+  // whose Target says "Layer 1. The handler catch-all logs...", and one edge
+  // cannot prescribe both: a reviewer reading either field alone would be told
+  // something the other field denies.
   if (edge.funnel === FUNNEL.L3) {
     return 'Layer 3. hapi answers from the value this edge produces rather ' +
       'than from the handler catch-all - there is no throw on the handler\'s ' +
@@ -5953,11 +6830,10 @@ function targetCore(edge, funnels) {
 // Locating the funnels in the analysed tree
 //
 // Line numbers are read from the tree being analysed, never hardcoded: the
-// baseline carries the catch-all at 578-589 and a converted tree carries it
-// somewhere else entirely, and a document that stated the baseline's numbers
-// while describing a converted tree would be worse than one that stated none.
-// A funnel that cannot be located is a hard failure - the document's opening
-// section is not optional.
+// handler catch-all in `lib/util/routeParser.js` sits at different lines on
+// the two trees, and a document stating one tree's numbers while describing
+// the other is worse than one stating none. A funnel that cannot be located is
+// a hard failure - the document's opening section is not optional.
 // ---------------------------------------------------------------------------
 
 function locateFunnels(appRoot) {
@@ -6097,14 +6973,14 @@ function locateFunnels(appRoot) {
         // the semantics every pre-handler row describes - not whether the
         // function exists.
         //
-        // `convertPreHandlers` survives the migration: rule T-2 reshapes it
-        // into a pass-through for native lifecycle methods and keeps the
-        // string-form dispatcher. So detecting the function by name reported
-        // the shim as present in the converted tree too, and every
-        // pre-handler row then narrated `fakeReply` semantics that the tree
-        // no longer has - a stale target model on the one surface where the
-        // shim and the native lifecycle disagree about the OUTCOME rather
-        // than only about the mechanism.
+        // `convertPreHandlers` survives the migration - it is reshaped into a
+        // pass-through for native lifecycle methods and keeps the string-form
+        // dispatcher - so detecting the function by name reports the shim as
+        // present on a converted tree too, and every pre-handler row would
+        // then narrate `fakeReply` semantics the tree does not have. That is a
+        // stale target model on the one surface where the shim and the native
+        // lifecycle disagree about the OUTCOME rather than only about the
+        // mechanism.
         emulationPresent: fakeReplyLines.length > 0 ||
           body.indexOf('_isRedirect') !== -1 ||
           body.indexOf('_takeover') !== -1
@@ -6211,8 +7087,9 @@ function git(args) {
  *
  * The label is what the committed document prints. It identifies the tree by
  * what it is - the repository the generator lives in, or a worktree at the
- * R-f baseline commit - rather than by where it happened to be checked out,
- * so the same two commits analysed on any machine produce the same label.
+ * parity baseline commit - rather than by where it happened to be checked
+ * out, so the same two commits analysed on any machine produce the same
+ * label.
  */
 function treeProvenance(dir, toolRoot) {
   const head = git(['-C', dir, 'rev-parse', 'HEAD']);
@@ -6275,12 +7152,10 @@ function toolProvenance(toolRoot, toolRelPath) {
 // ---------------------------------------------------------------------------
 // Closure: joining a baseline row to its target row
 //
-// A checklist whose every row is permanently unchecked is not a checklist.
-// The previously committed inventory had 341 rows and 341 empty checkboxes,
-// because the renderer emitted the literal string `- [ ] ` and the generator
-// took no target input at all: there was nothing a row COULD be closed
-// against. R-e's deliverable is the target status, payload, side effects and
-// timing of every changed edge, and none of that was established.
+// A checklist whose every row is permanently unchecked is not a checklist: a
+// generator taking no target input has nothing a row COULD be closed against,
+// and the target status, payload, side effects and timing of a changed edge
+// would then be established nowhere.
 //
 // So closure is computed here, from both trees, and a box is ticked only when
 // something was proven. The comparison has two independent dimensions and
@@ -6311,20 +7186,95 @@ const CLOSURE = Object.freeze({
   // Two rows that COULD be the same edge and could equally be two different
   // ones. A pairing that cannot be established is not a closed row and not a
   // changed row: it is a row whose verdict is unknown, and it says so instead
-  // of borrowing either verdict. Introduced because exact-identity pairs were
-  // being overridden by positional ones - 34 of them in one document, 24
-  // reported closed and 8 reported open on the strength of a pairing that put
-  // the wrong two rows together.
+  // of borrowing either verdict. Without this value, a positional pairing
+  // overriding an exact-identity one hands a verdict - closed or open - to a
+  // pair of rows that may not be the same edge at all.
   AMBIGUOUS: 'pairing ambiguous - not compared',
   // Nothing in the analysed corpus can reach this edge, so there is no
   // outcome on either tree to compare. Closing it would be asserting parity
   // of nothing against nothing.
   UNREACHABLE: 'not compared - proven unreachable',
+  // A baseline callback boundary rule T-3 removes by converting the callback
+  // into an `await`. The SITE is gone by design; the responses it produced
+  // are still produced in the same routed carrier, and the row names where.
+  // Closed, because the error-to-response mapping R-e protects survived - it
+  // is the vehicle that did not.
+  MECHANISM: 'closed - callback boundary removed by rule T-3',
+  // A target edge with no baseline counterpart that produces NO response.
+  // It introduces no error-to-response mapping, so there is no R-e
+  // obligation for it to meet: neither closed nor open, and reported with
+  // its disposition so it is visible rather than absorbed.
+  NO_MAPPING: 'no mapping - new mechanism, produces no response',
   NOT_COMPARED: 'not compared'
 });
 
+// EVERY closure state, partitioned exactly once. The summary, the preamble
+// sentence, the verdict table, the open-row listing and the gate all read
+// this partition rather than each deciding for themselves, and a self-test
+// asserts the partition is total and disjoint over `CLOSURE` - so adding a
+// state without classifying it fails loudly instead of silently counting it
+// open, which is precisely what happened when the two mechanism states were
+// introduced: the authoritative total read 74 while its own buckets summed
+// to 53.
+const OPEN_CLOSURES = Object.freeze([
+  CLOSURE.CHANGED, CLOSURE.MISSING, CLOSURE.ADDED, CLOSURE.AMBIGUOUS,
+  CLOSURE.NOT_COMPARED
+]);
+
+// States that are CLOSED: the mapping R-e protects was established as
+// preserved, whether by comparing two outcomes or - for a callback boundary
+// rule T-3 removed - by finding every response it produced still produced in
+// the same routed carrier.
+const CLOSED_CLOSURES = Object.freeze([
+  CLOSURE.CLOSED, CLOSURE.APPROVED, CLOSURE.MECHANISM
+]);
+
+// States that are NEITHER: there is no error-to-response mapping for R-e to
+// hold either tree to, so closing them would assert parity of nothing
+// against nothing and opening them would demand parity of nothing against
+// nothing.
+const NOT_COMPARED_CLOSURES = Object.freeze([
+  CLOSURE.UNREACHABLE, CLOSURE.NO_MAPPING
+]);
+
 /**
- * The observable outcome of an edge, reduced to the fields R-e names.
+ * IS THIS ROW OPEN? The single authoritative answer.
+ *
+ * Four places used to decide this independently and two of them disagreed:
+ * the preamble summed `changed + missing + added` and printed 96, the verdict
+ * table rendered every bucket and totalled 119, the open-row listing filtered
+ * on "not closed, not approved, not unreachable", and `--closure-gate` added
+ * the closed-but-unresolved case that none of the other three carried. A
+ * document whose own two figures for the same quantity differ by 23 rows is
+ * not evidence of anything, whichever figure is right.
+ *
+ * The definition is the gate's, because the gate is the one that has to be
+ * survivable: a row is open unless it is CLOSED or APPROVED, except that a
+ * PROVEN UNREACHABLE row is not open - there is no outcome on either tree to
+ * preserve - and a row that compared equal while its own reachability or
+ * caller could not be resolved IS open, because its facts are provisional.
+ *
+ * @param {Object} row a joinTrees row
+ * @returns {boolean}
+ */
+function isOpenRow(row) {
+  if (NOT_COMPARED_CLOSURES.indexOf(row.closure) !== -1) {
+    return false;
+  }
+  if (CLOSED_CLOSURES.indexOf(row.closure) === -1) {
+    return true;
+  }
+  const edge = row.target || row.baseline;
+  return Boolean(edge && edge.unresolved);
+}
+
+/** Rows that compared equal but rest on an unresolved edge fact. */
+function isProvisionalRow(row) {
+  return CLOSED_CLOSURES.indexOf(row.closure) !== -1 && isOpenRow(row);
+}
+
+/**
+ * The observable outcome of an edge, reduced to the compared fields.
  *
  * Two edges have the same outcome when a client cannot tell them apart:
  * same funnel, same served status, same response-production. The MECHANISM is
@@ -6339,13 +7289,12 @@ function outcomeOf(edge) {
     status: servedStatus(edge),
     producesResponse: producesResponse(edge),
     surface: edge.surface,
-    // R-e names four things an edge must still do after conversion: the
-    // status, the payload, the side effects and the timing. Comparing only
-    // the first - which is what this comparison did - closes a row whose log
-    // moved, whose flash writes changed, or whose settlement moved to a
-    // different tick, and R-e exists precisely to catch those. Each dimension
-    // below is normalised so that a rename or a reordering is not a
-    // difference and a real change is.
+    // Four things an edge must still do after conversion: the status, the
+    // payload, the side effects and the timing. Comparing only the first
+    // closes a row whose log moved, whose flash writes changed, or whose
+    // settlement moved to a different tick, which are exactly the changes a
+    // mechanical conversion makes. Each dimension below is normalised so that
+    // a rename or a reordering is not a difference and a real change is.
     payload: payloadShape(edge),
     effects: effectShape(edge),
     logs: logShape(edge),
@@ -6354,20 +7303,13 @@ function outcomeOf(edge) {
 }
 
 /**
- * The payload or redirect a client receives, normalised.
- *
- * The status alone does not distinguish a Boom body from a rendered view from
- * a redirect from a raw value, and R-e requires the payload SHAPE be
- * preserved, not just the code.
- */
-/**
  * The SEMANTIC kind of a produced response, from the name that produced it.
  *
  * Comparing the callee names directly compares the mechanism: `reply` is
  * exactly what this migration replaces, so a branch answering with
  * `reply(...)` at baseline and `request.fail(...)` in the target differs on
- * every callee name while producing the same response. Measured, that alone
- * opened 11 rows.
+ * every callee name while producing the same response, and the comparison
+ * would open rows that changed only their spelling.
  *
  * `reply` is the shim's ONE universal producer - it served redirects, views,
  * values and failures alike - so its semantic kind is not knowable from the
@@ -6377,6 +7319,16 @@ function outcomeOf(edge) {
  */
 function responseKindOf(callee) {
   const name = String(callee || '');
+  // `reply().<member>` is what producerName emits when the shim's builder
+  // chain resolved through a member that names the response. The mapping is
+  // stated here rather than left to the regex order below, because the whole
+  // point is that these are the SAME kinds the toolkit producers yield.
+  const shim = /^reply\(\)\.([A-Za-z0-9_$]+)$/.exec(name);
+  if (shim) {
+    return Object.prototype.hasOwnProperty.call(SHIM_RESOLVING_MEMBERS, shim[1])
+      ? SHIM_RESOLVING_MEMBERS[shim[1]]
+      : null;
+  }
   if (/request\.fail|(^|\.)fail$/.test(name)) {
     return 'a failure response';
   }
@@ -6419,6 +7371,13 @@ function producedKinds(edge) {
   return kinds.sort().join(', ');
 }
 
+/**
+ * The payload or redirect a client receives, normalised.
+ *
+ * The status alone does not distinguish a Boom body from a rendered view from a
+ * redirect from a raw value, and the comparison is over the payload SHAPE and
+ * not only over the code.
+ */
 function payloadShape(edge) {
   const kind = edge.thrownKind || edge.valueKind || null;
   if (edge.disposition === DISPOSITION.FAIL_LOCAL) {
@@ -6440,7 +7399,7 @@ function payloadShape(edge) {
     // `.catch(reply)` - a BARE reference used as the handler - has no argument
     // expression to classify, but the value reaching the response layer is
     // the rejection itself, which is an error value. Leaving it
-    // "unclassified" made five rows differ on payload against a target that
+    // "unclassified" makes the row differ on payload from a target that
     // returns the same error value by a different means.
     if (edge.disposition === DISPOSITION.REPLY_ERR) {
       return edge.funnel === FUNNEL.NONE
@@ -6513,8 +7472,8 @@ function logShape(edge) {
  * WHEN the edge settles, relative to the carrier body, normalised.
  *
  * Moving an `await` moves the settlement without moving a single status code,
- * which is the change R-e is most likely to miss and the one a mechanical
- * conversion is most likely to make.
+ * which is the change a mechanical conversion is most likely to make and the
+ * one a status-only comparison would miss.
  */
 function timingShape(edge) {
   const prop = edge.propagation || {};
@@ -6522,25 +7481,24 @@ function timingShape(edge) {
   // OBSERVABLE ordering, reduced to the three answers a client can tell
   // apart, and nothing else.
   //
-  // Two coarsenings were forced by measurement, and both were the mechanism
-  // comparison that section 8 exists to avoid, arriving through the timing
-  // field:
+  // Two coarsenings are deliberate, because without them the timing field
+  // becomes the mechanism comparison this comparison exists to avoid:
   //
-  //   Rule T-3 puts the await boundary at the lifecycle method, so a callback
-  //   becomes an awaited promise chain BY DESIGN. Naming the vehicle -
-  //   `cps-callback` against `promise-chain` - made rows differ on timing for
-  //   having been converted exactly as the plan requires.
+  //   The conversion puts the await boundary at the lifecycle method, so a
+  //   callback becomes an awaited promise chain BY DESIGN. Naming the vehicle
+  //   - `cps-callback` against `promise-chain` - makes rows differ on timing
+  //   for having been converted as intended.
   //
   //   A registered callback is created synchronously and INVOKED later, so
   //   `propagationAt` at a `.catch(fn)` handler's own keyword reads
   //   `carrier-body`, which is where the function is WRITTEN and not when it
-  //   RUNS. Reading that as the settlement moved 38 rows from deferred to
+  //   RUNS. Reading that as the settlement moves a row from deferred to
   //   synchronous purely for relocating from a `reply(err)` inside a chain to
   //   the `.catch` handler that replaced it - the same deferred settlement
   //   under a different shape. Distinguishing "settles on a chain the carrier
   //   waits for" from "settles when the registered callback runs, and the
-  //   carrier waits for it" then kept 40 of them differing on the wording of
-  //   a vehicle rather than on an outcome.
+  //   carrier waits for it" only moves the same rows onto the wording of a
+  //   vehicle rather than onto an outcome.
   //
   // So three answers remain, and each is something a client can observe:
   // the edge settles before the carrier returns; it settles later and the
@@ -6553,7 +7511,39 @@ function timingShape(edge) {
   const WAITED = 'deferred - settles later, and the carrier waits for it';
   const UNWAITED = 'deferred - settles later, and nothing waits for it';
 
-  const waited = prop.kind === 'promise-chain' ? prop.chainReturned !== false : true;
+  // MEASURED against the baseline wrapper, `lib/util/routeParser.js:567-570`
+  // at 2f8712a:
+  //
+  //     // If handler didn't return a value, wait for request.success/fail
+  //     if (result === undefined) {
+  //       result = await responsePromise;
+  //     }
+  //
+  // So on a tree that still carries the shim, an UNRETURNED chain whose body
+  // settles the deferred is not unwaited: the handler returns `undefined` and
+  // the wrapper awaits `responsePromise`, which that settlement resolves. The
+  // wait exists, it is just the wrapper's rather than the chain's.
+  //
+  // Reading `chainReturned === false` as "nothing waits" on the baseline
+  // therefore invented a wait for the conversion to add, and 7 rows were
+  // reported moving `nothing waits` -> `carrier waits` when the baseline
+  // already waited. That is the model, not the migration. A tree WITHOUT the
+  // shim has no such wrapper, so there the reading is correct and unchanged.
+  //
+  // "Settles the deferred" is the disposition, not the producer-token list:
+  // `producedResponses` is populated for the swallow/log-and-continue
+  // classification and is empty on a `.catch` handler that answers through
+  // `request.fail`, so testing it credited only 1 of the 12 rows the wrapper
+  // actually awaits. An edge ANSWERS when it calls `reply(err)`, calls
+  // `request.fail`, or names a response producer - each of which resolves
+  // `responseResolver` and so is what the wrapper's `await` is waiting for.
+  const answers = edge.disposition === DISPOSITION.REPLY_ERR ||
+    edge.disposition === DISPOSITION.FAIL_LOCAL ||
+    (edge.producedResponses || []).length > 0;
+  const wrapperAwaits = edge.shimPresent === true && answers;
+  const waited = prop.kind === 'promise-chain'
+    ? (prop.chainReturned !== false || wrapperAwaits)
+    : true;
 
   if (edge.disposition === DISPOSITION.LATE_RESOLVE) {
     return WAITED;
@@ -6562,6 +7552,15 @@ function timingShape(edge) {
       edge.edgeClass === EDGE_CLASS.CPS ||
       edge.edgeClass === EDGE_CLASS.ERR_PARAM) {
     return waited ? WAITED : UNWAITED;
+  }
+  // A `catch` clause reached after an `await` does NOT settle before the
+  // carrier returns: the async function returned its promise at the first
+  // `await`, and the clause runs in a later continuation. Labelling it
+  // `synchronous` overstated how early the settlement happens and made 5
+  // rows differ from a baseline that settles at the same point in the
+  // lifecycle. The carrier does wait for it, which is what WAITED says.
+  if (edge.asyncContinuation === true) {
+    return WAITED;
   }
   switch (prop.kind) {
     case 'cps-callback':
@@ -6628,7 +7627,7 @@ function producesResponse(edge) {
 }
 
 /**
- * The R-e dimensions two outcomes disagree on, named.
+ * The dimensions two outcomes disagree on, named.
  *
  * Returning the NAMES rather than a boolean is what lets a changed row say
  * what changed. A row reported changed without that is a row a reader has to
@@ -6656,6 +7655,94 @@ function outcomeDiff(a, b) {
   });
 }
 
+// How settled a timing is, so that a CHANGE in it can be read as a direction
+// rather than only as an inequality. 2 settles before the carrier returns, 1
+// settles later with the carrier waiting, 0 settles later with nothing
+// waiting for it.
+const TIMING_RANK = Object.freeze({
+  'synchronous - settles before the carrier returns': 2,
+  'deferred - settles later, and the carrier waits for it': 1,
+  'deferred - settles later, and nothing waits for it': 0
+});
+
+/**
+ * Split a pair of outcomes into R-e FAILURES and PRESCRIBED transitions.
+ *
+ * R-e requires that each converted path preserve its error-to-response
+ * mapping - same status codes, same error payload shapes. Two of the eight
+ * dimensions this tool records are not that mapping; they are where the code
+ * lives and how the value gets out, and the AAP prescribes a change to both.
+ * Recording them is required - AAP 0.6.3 names timing among the four things
+ * every row must carry - but reading a prescribed change as an R-e failure
+ * sends a reviewer to preserve something the plan required to change.
+ *
+ * SURFACE is a location. AAP 0.6.4 mandates EXTRACTION - `createCourseCore`,
+ * `listCore`, `startUpload`, `settle` and the rest - so a branch that used to
+ * sit inline in a routed handler now sits in an internal callee it calls. The
+ * client receives the same response either way. MEASURED: 5 rows on this tree
+ * differ in surface alone or in surface plus one other dimension.
+ *
+ * TIMING is NOT prescribed, and an earlier edition of this function had it
+ * wrong in a way worth recording so it is not reintroduced. It ranked the
+ * three settlements and blessed any move up the rank as rules T-1/T-3 doing
+ * what they were told. Both of its inputs turned out to be unsound:
+ *
+ *   - "nothing waits for it" is not what the baseline does. The legacy
+ *     wrapper runs `if (result === undefined) { result = await
+ *     responsePromise; }` at `lib/util/routeParser.js:567-570`, so a handler
+ *     that falls off the end still has its deferred settlement awaited. An
+ *     unreturned chain is not unwaited there; the wait is the wrapper's.
+ *     `timingShape` now models that directly, which is the root-cause fix.
+ *   - "synchronous - settles before the carrier returns" is not what a
+ *     `catch` reached after an `await` does. The async function has already
+ *     returned a promise and the clause runs in a later continuation, so the
+ *     label overstates how early the settlement happens.
+ *
+ * Blessing a transition computed from either of those authorizes a change
+ * that was never established. R-e requires the mapping to survive and AAP
+ * 0.6.3 names timing among the four things every row must carry, so a
+ * settlement difference is now REPORTED in both directions and closes
+ * nothing. That is stricter than the edition it replaces, and deliberately:
+ * the rows it opens each name a real measured difference in a dimension R-e
+ * requires, which is the owning unit's to resolve or the AAP's to authorize
+ * explicitly - not this tool's to wave through.
+ *
+ * @returns {{failures: string[], prescribed: string[]}}
+ */
+function reDifferences(a, b) {
+  const failures = [];
+  const prescribed = [];
+  if (!a || !b) {
+    return { failures: failures, prescribed: prescribed };
+  }
+  OUTCOME_DIMENSIONS.forEach(function (entry) {
+    const key = entry[0];
+    const label = entry[1];
+    if (String(a[key]) === String(b[key])) {
+      return;
+    }
+    if (key === 'surface') {
+      prescribed.push('surface: `' + a[key] + '` -> `' + b[key] +
+        '` (extraction, AAP 0.6.4)');
+      return;
+    }
+    if (key === 'timing') {
+      // Reported in BOTH directions, and named so a reader can act on it.
+      // The direction is still stated because it is what a reviewer needs
+      // first, but neither direction is authorized here.
+      const from = TIMING_RANK[a[key]];
+      const to = TIMING_RANK[b[key]];
+      const direction = from !== undefined && to !== undefined && to < from
+        ? ' - the target waits for LESS than the baseline did'
+        : ' - the settlement moved';
+      failures.push(label + direction);
+      return;
+    }
+    failures.push(label);
+  });
+  return { failures: failures, prescribed: prescribed };
+}
+
 /** Whether two outcomes agree on every R-e dimension. */
 function sameOutcome(a, b) {
   return outcomeDiff(a, b).length === 0;
@@ -6681,283 +7768,304 @@ function outcomeText(outcome) {
  * by position, and MARKS them, because a fallback match is a weaker claim
  * than an exact one and a reviewer needs to know which they are reading.
  *
- * @param {Object[]} baselineEdges rows measured on the R-f baseline tree
+ * @param {Object[]} baselineEdges rows measured on the baseline tree
  * @param {Object[]} targetEdges rows measured on the analysed target tree
  * @returns {Object} { rows, byId, summary }
  */
 function joinTrees(baselineEdges, targetEdges) {
-  // Both sides are aligned CARRIER BY CARRIER, IN SOURCE ORDER.
+  // WHAT AN EDGE'S IDENTITY IS, AND WHY THE OLD ONE COULD NOT CLOSE A ROW.
   //
-  // Source order within one carrier is the strongest signal available, and
-  // the edge class is one of the weakest, because the conversion flips the
-  // class of the same conceptual edge routinely:
+  // The identity a row PRINTS is `<file>.<carrier>.<class>.<ordinal>`, and
+  // two of its four components are not invariants of this migration:
   //
-  //   baseline  .catch(function(err) { return reply(err); })
-  //             the reply site is a terminal, so the edge is that site and
-  //             its class is `response`
-  //   target    .catch(function(err) { return err; })
-  //             there is no terminal, so the edge is the handler itself and
-  //             its class is `handler`
+  //   the CLASS flips. `.catch(function (err) { return reply(err); })` is a
+  //   response-class edge at the reply site; the converted
+  //   `.catch(function (err) { return err; })` has no terminal, so the edge
+  //   is the handler itself and its class is `handler`. The ordinals of both
+  //   classes then renumber and an id match becomes an artefact of the
+  //   renumbering - measured on `course.deleteCourse`, where taking the match
+  //   paired line 151 with line 192 and reported two unchanged rows changed.
   //
-  // Matching on class first therefore crosses the pairs. Measured on
-  // `course.deleteCourse`, whose two edges are `response, response` at
-  // baseline and `handler, response` in the target: a class-first match
-  // paired baseline edge 1 with target edge 2 and baseline edge 2 with target
-  // edge 1, and reported BOTH as changed although both are unchanged - the
-  // catch still answers 500 through Layer 3 and the forbidden branch still
-  // raises a ReferenceError that Layer 1 answers 500. Two false failures out
-  // of one crossing.
+  //   the CARRIER moves. AAP 0.6.4 mandates EXTRACTION - `createCourseCore`,
+  //   `listCore`, `lookupTrinket`, `startUpload`, `abandon`, `settle`,
+  //   `logFailure`, `removeTempFile`, `redactText` and the stream handlers
+  //   are all functions the conversion introduced to hold code that used to
+  //   sit inline in a routed handler. Grouping by the lexical carrier reads
+  //   every one of those edges as deleted from one carrier and created in
+  //   another: measured, 41 rows "missing from the target" and 28 "new in the
+  //   target" on a tree where almost none of either had happened.
   //
-  // Aligning by position inside the carrier pairs them correctly, and the
-  // handler and pre-handler NAMES are invariants of this migration - the
-  // route declarations bind them - so the carrier is a reliable grouping key.
-  // Where the counts differ the surplus is reported as missing or added
-  // rather than force-matched, and every positional pairing says so on its
-  // own row.
-  const groupKey = function (edge) {
-    return edge.file + '\u0000' + (edge.carrierMember || '$module');
-  };
+  // The predecessor of this function papered over both by FILLING GAPS
+  // POSITIONALLY - pairing the k-th unanchored baseline row in a gap with the
+  // k-th unanchored target row - and 78 pairs in one document rested on
+  // source order, 24 of them overriding an identically-named row elsewhere.
+  // Rows were then CLOSED on those pairings, which is a closure claim resting
+  // on the order two files happen to list their statements in.
+  //
+  // So there is no positional pairing here at all. Three tiers, each a
+  // semantic claim, and CLOSURE IS PERMITTED ON THE FIRST TWO ONLY:
+  //
+  //   T1 semantic subject - the same routed carrier guards the same named
+  //      operation with the same error value. Survives the class flip,
+  //      because the subject is the operation and not the mechanism.
+  //   T2 identical outcome - the two edges produce the same observable
+  //      outcome on every compared dimension. The pairing cannot be wrong in
+  //      any way that matters: whichever of two identical outcomes is paired
+  //      with which, the verdict is the same.
+  //   T3 nearest outcome - the fewest differing dimensions. A T3 pair always
+  //      differs somewhere by construction, so it is ALWAYS reported open
+  //      with those dimensions named. It exists to tell a reviewer WHAT
+  //      changed rather than merely that a row is unpaired, and it can never
+  //      close anything. A tie is reported ambiguous rather than guessed.
+  //
+  // A self-test asserts the invariant directly: no closed row carries a tier
+  // other than T1 or T2.
+  const groupOf = routedGroupResolver(baselineEdges.concat(targetEdges));
+
   const bySourceOrder = function (a, b) {
     return a.offset - b.offset;
   };
+  const bucket = function (edges) {
+    const map = new Map();
+    edges.forEach(function (edge) {
+      const key = edge.file + '\u0000' + groupOf(edge);
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+      map.get(key).push(edge);
+    });
+    return map;
+  };
 
-  const baselineGroups = new Map();
-  baselineEdges.forEach(function (edge) {
-    const key = groupKey(edge);
-    if (!baselineGroups.has(key)) {
-      baselineGroups.set(key, []);
-    }
-    baselineGroups.get(key).push(edge);
-  });
-
-  const targetGroups = new Map();
-  targetEdges.forEach(function (edge) {
-    const key = groupKey(edge);
-    if (!targetGroups.has(key)) {
-      targetGroups.set(key, []);
-    }
-    targetGroups.get(key).push(edge);
-  });
+  const baselineGroups = bucket(baselineEdges);
+  const targetGroups = bucket(targetEdges);
 
   const rows = [];
   const claimed = new Set();
+  const groupLabel = function (key) {
+    const parts = key.split('\u0000');
+    return '`' + parts[0] + '` routed carrier `' + parts[1] + '`';
+  };
 
-  // ANCHORED ALIGNMENT.
-  //
-  // Two signals are available and neither is sufficient alone. Exact identity
-  // is the stronger claim, but it is not always present, because the
-  // conversion flips an edge's CLASS routinely and the class is part of the
-  // identity:
-  //
-  //   baseline  .catch(function(err) { return reply(err); })
-  //             the reply site is a terminal, so the edge is that site and
-  //             its class is `response`
-  //   target    .catch(function(err) { return err; })
-  //             there is no terminal, so the edge is the handler itself and
-  //             its class is `handler`
-  //
-  // Source order within one carrier covers those, but using it alone
-  // OVERRIDES exact identity when the two disagree: measured, 34 pairs in one
-  // document were positioned onto a different row than the one carrying their
-  // own id, and 24 of them were reported closed and 8 open on that pairing.
-  //
-  // So identity is authoritative and position fills its gaps. Exact-id pairs
-  // become ANCHORS; the anchors are checked for order-preservation, which is
-  // the property that makes a positional fill between them meaningful; and
-  // the leftovers are aligned positionally only WITHIN a gap between two
-  // consecutive anchors. Where the anchors cross - the target's ids appear in
-  // a different order than the baseline's - no alignment of that group can be
-  // trusted, and every pair in it is reported AMBIGUOUS rather than given a
-  // verdict from a pairing that may be wrong.
-  Array.from(baselineGroups.keys()).sort().forEach(function (key) {
-    const baseGroup = baselineGroups.get(key).slice().sort(bySourceOrder);
+  Array.from(new Set(Array.from(baselineGroups.keys())
+    .concat(Array.from(targetGroups.keys())))).sort().forEach(function (key) {
+    const baseGroup = (baselineGroups.get(key) || []).slice().sort(bySourceOrder);
     const targetGroup = (targetGroups.get(key) || []).slice().sort(bySourceOrder);
+    const label = groupLabel(key);
+    const takenTargets = new Set();
 
-    const targetIndexById = new Map();
-    targetGroup.forEach(function (edge, index) {
-      targetIndexById.set(edge.id, index);
-    });
-
-    // WHEN IS AN EXACT ID MATCH EVIDENCE, AND WHEN IS IT A COINCIDENCE?
-    //
-    // An identity is `<file>.<carrier>.<class>.<ordinal>`, so `response.1`
-    // means "the first response-class edge in this carrier". That denotes the
-    // same edge on both trees only while the carrier's population of that
-    // CLASS is unchanged. Where it changed, the ordinals renumber and the
-    // match is an artefact of the renumbering. Measured on
-    // `course.deleteCourse`, whose baseline is
-    //
-    //   response.1  line 151  reply(err)
-    //   response.2  line 155  throw (ReferenceError: Boom is not defined)
-    //
-    // and whose target is
-    //
-    //   handler.1   line 183  .catch() handler - returns the error as the response
-    //   response.1  line 192  throw (ReferenceError: Boom is not defined)
-    //
-    // the first baseline edge became the handler-class edge and the second
-    // kept its shape - so baseline `response.1` corresponds to target
-    // `handler.1`, and target `response.1` is the SECOND baseline edge under
-    // a renumbered ordinal. Taking the id match would pair line 151 with line
-    // 192 and report both rows changed, which is two false failures from one
-    // crossing.
-    //
-    // So an id match is an anchor only when that (carrier, class) holds the
-    // same number of edges on both trees. Where it does not, the match is
-    // discarded and source order - which the conversion preserves, because
-    // the route declarations bind the carrier names and the statements keep
-    // their order - decides. The discarded match is not hidden: the row
-    // records that a target row of the same id exists elsewhere in the
-    // carrier, so a reviewer can see the pairing this alignment chose and
-    // why.
-    const classCount = function (group, edgeClass) {
-      return group.filter(function (edge) {
-        return edge.edgeClass === edgeClass;
-      }).length;
+    // -- T1: the same guarded operation, named the same way on both trees.
+    // Unique on BOTH sides or it is not an identity: a subject occurring
+    // twice in one carrier cannot say which of the two a single match means.
+    const population = function (group) {
+      const counts = Object.create(null);
+      group.forEach(function (edge) {
+        const subject = edgeSubject(edge);
+        counts[subject] = (counts[subject] || 0) + 1;
+      });
+      return counts;
     };
-    const anchors = [];
-    const discarded = [];
-    baseGroup.forEach(function (base, index) {
-      if (!targetIndexById.has(base.id)) {
+    const basePopulation = population(baseGroup);
+    const targetPopulation = population(targetGroup);
+    const pairs = new Map();
+    baseGroup.forEach(function (base) {
+      const subject = edgeSubject(base);
+      if (basePopulation[subject] !== 1 || targetPopulation[subject] !== 1) {
         return;
       }
-      const stable = classCount(baseGroup, base.edgeClass) ===
-        classCount(targetGroup, base.edgeClass);
-      if (stable) {
-        anchors.push({ base: index, target: targetIndexById.get(base.id) });
-      } else {
-        discarded.push({
-          base: index,
-          target: targetIndexById.get(base.id),
-          edgeClass: base.edgeClass,
-          baselineCount: classCount(baseGroup, base.edgeClass),
-          targetCount: classCount(targetGroup, base.edgeClass)
-        });
+      const match = targetGroup.filter(function (edge) {
+        return edgeSubject(edge) === subject && !takenTargets.has(edge);
+      })[0];
+      if (match) {
+        takenTargets.add(match);
+        pairs.set(base, { target: match, tier: 'semantic subject `' + subject + '`' });
       }
     });
 
-    // Order-preservation. Anchors are already ascending in `base`; if they are
-    // not also ascending in `target`, the same edges appear in a different
-    // order on the two trees and nothing about this group's alignment can be
-    // established from position.
-    let monotonic = true;
-    for (let i = 1; i < anchors.length; i++) {
-      if (anchors[i].target <= anchors[i - 1].target) {
-        monotonic = false;
-        break;
+    // -- T2: identical observable outcome. Pool by outcome so the pairing is
+    // a bijection between equals rather than a search.
+    const pool = new Map();
+    targetGroup.forEach(function (edge) {
+      if (takenTargets.has(edge)) {
+        return;
       }
-    }
+      const outcomeKey = outcomeText(outcomeOf(edge)) + '\u0000' +
+        JSON.stringify(outcomeOf(edge));
+      if (!pool.has(outcomeKey)) {
+        pool.set(outcomeKey, []);
+      }
+      pool.get(outcomeKey).push(edge);
+    });
+    baseGroup.forEach(function (base) {
+      if (pairs.has(base)) {
+        return;
+      }
+      const outcomeKey = outcomeText(outcomeOf(base)) + '\u0000' +
+        JSON.stringify(outcomeOf(base));
+      const candidates = pool.get(outcomeKey);
+      if (candidates && candidates.length) {
+        const match = candidates.shift();
+        takenTargets.add(match);
+        pairs.set(base, { target: match, tier: 'identical outcome within the routed carrier' });
+      }
+    });
 
-    const pairing = new Map();
-    const unequalGapPairs = new Set();
-    let ambiguous = false;
+    // -- Before T3: a baseline callback boundary rule T-3 removed is not a
+    // leftover looking for a partner. Asking that question FIRST matters:
+    // measured on `course.archiveCourse`, T3 paired the baseline CPS
+    // boundary with an unrelated target error parameter and reported the row
+    // changed, when the boundary's own response is still produced in the
+    // carrier and the row closes.
+    const removedMechanism = new Map();
+    baseGroup.forEach(function (base) {
+      if (pairs.has(base)) {
+        return;
+      }
+      const removal = mechanismRemoval(base, targetGroup);
+      if (removal) {
+        removedMechanism.set(base, removal);
+      }
+    });
 
-    if (!monotonic) {
-      ambiguous = true;
-      anchors.forEach(function (anchor) {
-        pairing.set(anchor.base, anchor.target);
+    // -- T3-anchored: the residual pool is UNIFORM on both sides and of
+    // EQUAL SIZE. Pairing it by position looks like the positional
+    // gap-filling this join exists to remove, and is not: every member of a
+    // side is byte-identical in outcome to every other member of that side,
+    // so every possible bijection yields exactly the same verdict on exactly
+    // the same rows. Nothing rests on source order because order cannot
+    // change the answer - which is the property positional gap-filling
+    // lacked, not the fact that it used position.
+    //
+    // MEASURED on `helpers.trinketByOwnerAndSlug`, where three
+    // `throw Boom.notFound()` edges on each side are mutually
+    // indistinguishable, and on four more helpers whose residual pool is
+    // 1-to-1. Left unpaired these read as 7 baseline edges that vanished
+    // plus 7 target edges that appeared, when what a reader needs is 7 rows
+    // naming the dimension that moved. The rows still do not close - the
+    // differences are reported exactly as T3 reports them.
+    const uniformOutcome = function (list) {
+      if (!list.length) {
+        return false;
+      }
+      const keyOf = function (edge) {
+        const outcome = outcomeOf(edge);
+        return outcomeText(outcome) + '\u0000' + JSON.stringify(outcome);
+      };
+      const first = keyOf(list[0]);
+      return list.every(function (edge) {
+        return keyOf(edge) === first;
       });
-    } else {
-      anchors.forEach(function (anchor) {
-        pairing.set(anchor.base, anchor.target);
-      });
-      // Fill each gap between consecutive anchors positionally, pairing the
-      // k-th unanchored baseline row in the gap with the k-th unanchored
-      // target row in the SAME gap. A leftover cannot cross an anchor, which
-      // is what stops an inserted leading edge shifting every later pair -
-      // the failure the verifier reproduced synthetically.
-      let prevBase = -1;
-      let prevTarget = -1;
-      const gaps = anchors.map(function (anchor) {
-        const gap = { baseFrom: prevBase + 1, baseTo: anchor.base, targetFrom: prevTarget + 1, targetTo: anchor.target };
-        prevBase = anchor.base;
-        prevTarget = anchor.target;
-        return gap;
-      });
-      gaps.push({
-        baseFrom: prevBase + 1, baseTo: baseGroup.length,
-        targetFrom: prevTarget + 1, targetTo: targetGroup.length
-      });
-      gaps.forEach(function (gap) {
-        const bases = [];
-        for (let i = gap.baseFrom; i < gap.baseTo; i++) {
-          bases.push(i);
-        }
-        const targets = [];
-        for (let j = gap.targetFrom; j < gap.targetTo; j++) {
-          if (!targetGroup[j] || !anchors.some(function (a) { return a.target === j; })) {
-            targets.push(j);
-          }
-        }
-        // SOURCE ORDER PAIRS A GAP ONLY WHEN THE GAP IS THE SAME SIZE ON BOTH
-        // SIDES. Equal counts make the fill a bijection, and the conversion
-        // preserves statement order within a carrier, so the k-th unanchored
-        // row on one side is the k-th on the other. Unequal counts mean a row
-        // was added or removed INSIDE the gap, and position cannot say which:
-        // pairing from the start silently shifts every row after the
-        // insertion point onto its neighbour. Measured on a synthetic
-        // leading insertion - baseline `response.1, response.2` against a
-        // target holding a new leading edge and then both - the fill paired
-        // the new edge with the first baseline row and closed it, then
-        // reported the genuine first row changed. So an unequal gap is
-        // reported AMBIGUOUS for the rows that could be paired and
-        // missing/added for the surplus, rather than given a verdict from a
-        // pairing that may be off by one.
-        const equalGap = bases.length === targets.length;
-        bases.forEach(function (baseIndex, k) {
-          if (k < targets.length) {
-            pairing.set(baseIndex, targets[k]);
-            if (!equalGap) {
-              unequalGapPairs.add(baseIndex);
-            }
-          }
+    };
+    const residualBase = baseGroup.filter(function (base) {
+      return !pairs.has(base) && !removedMechanism.has(base);
+    });
+    const residualTargets = targetGroup.filter(function (edge) {
+      return !takenTargets.has(edge);
+    });
+    if (residualBase.length &&
+        residualBase.length === residualTargets.length &&
+        uniformOutcome(residualBase) && uniformOutcome(residualTargets)) {
+      residualBase.forEach(function (base, index) {
+        const match = residualTargets[index];
+        takenTargets.add(match);
+        pairs.set(base, {
+          target: match,
+          tier: 'uniform residual pool of equal size in the routed carrier'
         });
       });
     }
 
-    baseGroup.forEach(function (base, index) {
-      const targetIndex = pairing.has(index) ? pairing.get(index) : -1;
-      const target = targetIndex >= 0 ? targetGroup[targetIndex] : null;
+    // -- T3: nearest outcome among what is left, and only to REPORT the
+    // difference. Every T3 pair differs by at least one dimension, so it is
+    // never closed; a tie between two equally-near candidates is reported
+    // ambiguous instead of resolved by any rule at all.
+    //
+    // T3 will not cross the produces-a-response boundary. An edge that
+    // answers and an edge that answers nothing are not the same edge, and
+    // pairing them manufactures a difference on the dimension that matters
+    // most - measured on `courses.returnZip`, where the removed `rimraf`
+    // callback was paired against a `badImplementation` response in a
+    // different function and reported as a funnel-and-status change that
+    // exists nowhere in either tree. Where no candidate answers the same way,
+    // the rows stay unpaired and are reported missing and added, which is the
+    // honest reading: one tree has an edge the other does not.
+    const leftoverTargets = targetGroup.filter(function (edge) {
+      return !takenTargets.has(edge);
+    });
+    baseGroup.forEach(function (base) {
+      if (pairs.has(base) || removedMechanism.has(base) || !leftoverTargets.length) {
+        return;
+      }
+      const baselineOutcome = outcomeOf(base);
+      const scored = leftoverTargets.filter(function (edge) {
+        return !takenTargets.has(edge) &&
+          outcomeOf(edge).producesResponse === baselineOutcome.producesResponse;
+      }).map(function (edge) {
+        return { edge: edge, distance: outcomeDiff(baselineOutcome, outcomeOf(edge)).length };
+      }).sort(function (a, b) {
+        return a.distance - b.distance;
+      });
+      if (!scored.length) {
+        return;
+      }
+      const tied = scored.length > 1 && scored[1].distance === scored[0].distance;
+      takenTargets.add(scored[0].edge);
+      pairs.set(base, {
+        target: scored[0].edge,
+        tier: 'nearest outcome in the routed carrier',
+        tied: tied,
+        alternatives: scored.filter(function (entry) {
+          return entry.distance === scored[0].distance;
+        }).map(function (entry) {
+          return entry.edge.id;
+        })
+      });
+    });
+
+    baseGroup.forEach(function (base) {
+      const pair = pairs.get(base) || null;
       const baselineOutcome = outcomeOf(base);
 
-      if (!target) {
+      if (!pair) {
+        // A baseline edge with no counterpart. One shape of that is not a
+        // lost mapping: a CPS callback boundary or an undispositioned error
+        // parameter is a MECHANISM, and rule T-3 removes it by converting the
+        // callback into an `await`. Where every response that boundary
+        // produced is still produced somewhere in the same routed carrier,
+        // the mapping it carried is carried by the rows that remain, and this
+        // row says which. Where it is not, the row stays open - the
+        // distinction is the whole value of the check.
+        const removal = removedMechanism.get(base) || null;
         rows.push({
           id: base.id,
           baseline: base,
           target: null,
           matchedBy: null,
+          pairedBy: null,
+          groupKey: key,
           baselineOutcome: baselineOutcome,
           targetOutcome: null,
-          closure: CLOSURE.MISSING,
+          closure: removal ? CLOSURE.MECHANISM : CLOSURE.MISSING,
+          mechanismNote: removal,
           differences: [],
           approved: null
         });
         return;
       }
 
-      claimed.add(target.id);
-      const targetOutcome = outcomeOf(target);
-      const byIdentity = target.id === base.id;
-      const matchedBy = byIdentity
-        ? 'identity'
-        : 'position ' + (targetIndex + 1) + ' of ' + targetGroup.length + ' in `' +
-          base.file + '` carrier `' + (base.carrierMember || '(module scope)') +
-          '` (target row `' + target.id + '`)';
-
-      const differences = outcomeDiff(baselineOutcome, targetOutcome);
-      const renumbered = discarded.filter(function (entry) {
-        return entry.base === index;
-      })[0] || null;
+      claimed.add(pair.target.id);
+      const targetOutcome = outcomeOf(pair.target);
+      const split = reDifferences(baselineOutcome, targetOutcome);
+      const differences = split.failures;
+      const byIdentity = pair.target.id === base.id;
+      const nearest = pair.tier.indexOf('nearest outcome') === 0;
       let closure;
       let approved = null;
 
-      if (ambiguous || unequalGapPairs.has(index)) {
-        // A crossed group, or a pairing inside a gap whose two sides are
-        // different sizes. Reporting either verdict would be reporting a
-        // pairing this alignment cannot establish.
-        closure = CLOSURE.AMBIGUOUS;
-      } else if (base.unreachableProven || target.unreachableProven) {
+      if (base.unreachableProven || pair.target.unreachableProven) {
         closure = CLOSURE.UNREACHABLE;
+      } else if (pair.tied) {
+        closure = CLOSURE.AMBIGUOUS;
       } else if (differences.length === 0) {
         closure = CLOSURE.CLOSED;
       } else {
@@ -6971,44 +8079,62 @@ function joinTrees(baselineEdges, targetEdges) {
       rows.push({
         id: base.id,
         baseline: base,
-        target: target,
-        matchedBy: matchedBy,
+        target: pair.target,
+        // `matchedBy` keeps its contract - null when the two ids are the
+        // same, a description otherwise - so the row renderer and the index
+        // read what they always read.
+        matchedBy: byIdentity ? 'identity' : pair.tier + ' (target row `' + pair.target.id + '`)',
+        pairedBy: pair.tier,
+        groupKey: key,
         baselineOutcome: baselineOutcome,
         targetOutcome: targetOutcome,
         closure: closure,
         differences: differences,
-        ambiguousGroup: ambiguous
-          ? key.replace('\u0000', ' carrier ') + ' - its trusted anchors appear in a different order on the two trees'
-          : unequalGapPairs.has(index)
-            ? key.replace('\u0000', ' carrier ') + ' - a row was added or removed between the same two anchors, so source order cannot say which row this one is'
-            : null,
-        renumbered: renumbered && !byIdentity
-          ? 'a target row also carries id `' + base.id + '`, but this ' +
-            'carrier holds ' + renumbered.baselineCount + ' `' +
-            renumbered.edgeClass + '`-class edge(s) at baseline and ' +
-            renumbered.targetCount + ' in the target, so that ordinal has ' +
-            'renumbered and the match is not evidence of correspondence. ' +
-            'Source order decided this pairing.'
+        // The mechanism transitions the AAP prescribes, named per row. A row
+        // that closes with one of these recorded is NOT a row that compared
+        // equal, and the document lists every one of them rather than letting
+        // the tick absorb the difference.
+        prescribed: split.prescribed,
+        unpairedBecause: pair.tied
+          ? 'two target rows in ' + label + ' are equally near this outcome (' +
+            pair.alternatives.map(function (id) {
+              return '`' + id + '`';
+            }).join(', ') + '), so nothing decides which is this edge'
+          : null,
+        nearestOnly: nearest && !pair.tied
+          ? 'paired to the nearest outcome in ' + label +
+            ', which differs, so this row is reported open on that difference ' +
+            'rather than closed on the pairing'
           : null,
         approved: approved
       });
     });
   });
 
-  // Target rows nothing in the baseline claimed. A new edge is not a failure -
-  // conversion legitimately introduces sites - but it is unverified against
-  // any baseline fact, and the document says so rather than omitting it.
+  // Target rows nothing in the baseline claimed. A new edge is not
+  // automatically a failure - the conversion legitimately introduces
+  // mechanism - but the two cases are not the same risk and were counted as
+  // one. An added edge that PRODUCES A RESPONSE the baseline did not produce
+  // is a behaviour change R-d prohibits, and it is open. An added edge that
+  // produces no response introduces no error-to-response mapping at all, so
+  // there is no R-e obligation for it to meet and nothing to verify: it is
+  // reported, with its disposition, as carrying no mapping.
   const added = targetEdges.filter(function (edge) {
     return !claimed.has(edge.id);
   }).map(function (edge) {
+    const outcome = outcomeOf(edge);
     return {
       id: edge.id,
       baseline: null,
       target: edge,
       matchedBy: null,
+      pairedBy: null,
+      groupKey: edge.file + '\u0000' + groupOf(edge),
       baselineOutcome: null,
-      targetOutcome: outcomeOf(edge),
-      closure: edge.unreachableProven ? CLOSURE.UNREACHABLE : CLOSURE.ADDED,
+      targetOutcome: outcome,
+      closure: edge.unreachableProven
+        ? CLOSURE.UNREACHABLE
+        : (outcome.producesResponse ? CLOSURE.ADDED : CLOSURE.NO_MAPPING),
       differences: [],
       approved: null
     };
@@ -7021,12 +8147,12 @@ function joinTrees(baselineEdges, targetEdges) {
   // A baseline id and a target id are drawn from the same namespace and can
   // collide across differently-aligned rows: a baseline row left unmatched
   // keeps its id, and a target row aligned to a DIFFERENT baseline row can
-  // carry that same id. Merging both into one map let the second write win or
-  // lose by insertion order, and the document then printed one row's verdict
-  // against another row's edge - measured as six target rows reported
-  // "missing from the target", which is a verdict that cannot apply to a row
-  // the target contains. Keeping the namespaces apart makes each lookup
-  // answer the question it was asked.
+  // carry that same id. Merging both into one map lets the second write win or
+  // lose by insertion order, and the document then prints one row's verdict
+  // against another row's edge - a target row reported "missing from the
+  // target", which is a verdict that cannot apply to a row the target
+  // contains. Keeping the namespaces apart makes each lookup answer the
+  // question it was asked.
   const byBaselineId = new Map();
   const byTargetId = new Map();
   all.forEach(function (row) {
@@ -7051,6 +8177,12 @@ function joinTrees(baselineEdges, targetEdges) {
     }).length;
   };
 
+  const pairedBy = function (prefix) {
+    return all.filter(function (row) {
+      return row.pairedBy && row.pairedBy.indexOf(prefix) === 0;
+    }).length;
+  };
+
   return {
     rows: all,
     byBaselineId: byBaselineId,
@@ -7065,17 +8197,68 @@ function joinTrees(baselineEdges, targetEdges) {
       added: count(CLOSURE.ADDED),
       ambiguous: count(CLOSURE.AMBIGUOUS),
       unreachable: count(CLOSURE.UNREACHABLE),
+      notCompared: count(CLOSURE.NOT_COMPARED),
+      mechanism: count(CLOSURE.MECHANISM),
+      noMapping: count(CLOSURE.NO_MAPPING),
+      // THE authoritative open figure, and the two derived quantities every
+      // renderer needs from it. Computed here, once, from isOpenRow, so no
+      // consumer can arrive at its own total. `openByBucket` is the same set
+      // partitioned for display, and it sums to `open` by construction - the
+      // self-test named below asserts that it does.
+      open: all.filter(isOpenRow).length,
+      openProvisional: all.filter(isProvisionalRow).length,
+      // The three totals of the partition, so no renderer has to add the
+      // buckets up for itself and get a different answer. `closedTotal`
+      // includes the callback boundaries rule T-3 removed and excludes the
+      // rows that compared equal on a provisional fact, because those are
+      // counted open.
+      closedTotal: all.filter(function (row) {
+        return CLOSED_CLOSURES.indexOf(row.closure) !== -1 && !isOpenRow(row);
+      }).length,
+      notComparedTotal: all.filter(function (row) {
+        return NOT_COMPARED_CLOSURES.indexOf(row.closure) !== -1;
+      }).length,
+      totalRows: all.length,
+      openByBucket: OPEN_CLOSURES.reduce(function (map, state) {
+        map[state] = count(state);
+        return map;
+      }, Object.create(null)),
+      // Open rows carrying each side, so a denominator is never borrowed from
+      // the other one: an ADDED row has no baseline edge, so it cannot be
+      // counted against "the 342 baseline edges", which is what the preamble
+      // used to do.
+      openWithBaseline: all.filter(function (row) {
+        return isOpenRow(row) && Boolean(row.baseline);
+      }).length,
+      openWithTarget: all.filter(function (row) {
+        return isOpenRow(row) && Boolean(row.target);
+      }).length,
+      // The pairing tiers, replacing "paired by source order within the
+      // carrier". Closure is permitted on the first two only.
+      pairedBySubject: pairedBy('semantic subject'),
+      pairedByOutcome: pairedBy('identical outcome'),
+      pairedByNearest: pairedBy('nearest outcome'),
+      pairedByUniformPool: pairedBy('uniform residual pool'),
+      // Rows that compared equal on every R-e dimension while carrying a
+      // mechanism transition the AAP prescribes. Counted and listed, because
+      // a tick that absorbed a difference silently is the defect the whole
+      // closure section exists to avoid.
+      prescribedTransitions: all.filter(function (row) {
+        return (row.prescribed || []).length > 0;
+      }).length,
+      // Split out, because the two are different facts and conflating them
+      // published a closed-row count the detail table contradicted.
+      prescribedClosed: all.filter(function (row) {
+        return (row.prescribed || []).length > 0 &&
+          CLOSED_CLOSURES.indexOf(row.closure) !== -1;
+      }).length,
       fallbackMatches: all.filter(function (row) {
         return row.matchedBy && row.matchedBy !== 'identity';
       }).length,
-      renumberedOrdinals: all.filter(function (row) {
-        return Boolean(row.renumbered);
-      }).length,
       // Arithmetic that RECONCILES, and is asserted rather than presented.
-      // Every baseline row lands in exactly one of closed / changed /
-      // approved / missing / ambiguous / unreachable, and every target row in
-      // exactly one of closed / changed / approved / ambiguous / unreachable
-      // / added. A summary whose buckets do not add up to the row counts is a
+      // Every baseline row lands in exactly one bucket a baseline row may be
+      // in, and every target row in exactly one bucket a target row may be
+      // in. A summary whose buckets do not add up to the row counts is a
       // summary that has lost rows, and losing rows is how a closure claim
       // overstates itself.
       //
@@ -7085,22 +8268,203 @@ function joinTrees(baselineEdges, targetEdges) {
       // unreachable and has no baseline at all, which is why `--edge-index`
       // lists "proven unreachable" among the UNPAIRED categories beside
       // "missing from the target" and "new in the target". Adding those
-      // buckets into the baseline total counted such a row against a side it
-      // does not have: measured on this tree, 345 of 342 baseline rows
-      // "accounted for", an overstatement of exactly the three target-only
-      // unreachable rows. The check keeps all of its force - a row whose
-      // bucket contradicts the sides it carries, or a row in no bucket at
-      // all, still fails to be counted and is still fatal.
+      // buckets into the baseline total counts such a row against a side it
+      // does not have, and the summary then reports more rows accounted for
+      // than the baseline holds. The check keeps all of its force - a row
+      // whose bucket contradicts the sides it carries, or a row in no bucket
+      // at all, still fails to be counted and is still fatal.
       baselineAccounted: accountedOn('baseline', [
         CLOSURE.CLOSED, CLOSURE.CHANGED, CLOSURE.APPROVED, CLOSURE.MISSING,
-        CLOSURE.AMBIGUOUS, CLOSURE.UNREACHABLE
+        CLOSURE.AMBIGUOUS, CLOSURE.UNREACHABLE, CLOSURE.MECHANISM
       ]),
       targetAccounted: accountedOn('target', [
         CLOSURE.CLOSED, CLOSURE.CHANGED, CLOSURE.APPROVED, CLOSURE.AMBIGUOUS,
-        CLOSURE.UNREACHABLE, CLOSURE.ADDED
+        CLOSURE.UNREACHABLE, CLOSURE.ADDED, CLOSURE.NO_MAPPING
       ])
     }
   };
+}
+
+// ---------------------------------------------------------------------------
+// Stable semantic identity
+//
+// Everything below exists because the printed id is not an invariant of this
+// migration and closure may not rest on one that is not. See joinTrees.
+// ---------------------------------------------------------------------------
+
+/** Whether a carrier name is a module-local function rather than an export. */
+function isModuleLocalCarrier(name) {
+  return /\(module-local\)$/.test(String(name || ''));
+}
+
+/**
+ * A resolver from an edge to the ROUTED carrier that reaches it.
+ *
+ * AAP 0.6.4 mandates extraction, so the conversion moves code out of a routed
+ * handler into a module-local function the handler calls. The lexical carrier
+ * then differs between the trees for the same conceptual edge, and grouping
+ * by it reads the move as a deletion and a creation. Grouping by the routed
+ * carrier makes extraction transparent, which is the point: the route is what
+ * a client reaches, and the route is an invariant of this migration - the
+ * 233-entry manifest gate says so.
+ *
+ * The walk is over `edge.callers`, which the reachability search already
+ * populates, and it is conservative in three ways rather than optimistic:
+ * it stops at the first non-module-local caller; where a module-local
+ * function has SEVERAL non-module-local callers it keeps its own group,
+ * because attributing its edges to one of them would be a guess; and a cycle
+ * or an unresolvable caller leaves the carrier as its own group, where its
+ * rows are reported rather than silently merged.
+ *
+ * @param {Object[]} edges every edge from both trees
+ * @returns {function(Object): string} the group name for an edge
+ */
+function routedGroupResolver(edges) {
+  // `carrier` is the display name (`course.createCourse`) and it is what
+  // `callers` entries are spelled as, so the walk keys on it. `carrierMember`
+  // is the fallback for an edge carrying only the member, and `$module` for
+  // module-scope code - a group key of `undefined` would merge every such
+  // edge in a file into one group and cross-pair them.
+  const nameOf = function (edge) {
+    return edge.carrier || edge.carrierMember || '$module';
+  };
+  const callersOf = new Map();
+  edges.forEach(function (edge) {
+    const name = nameOf(edge);
+    if (!callersOf.has(name)) {
+      callersOf.set(name, edge.callers || []);
+    }
+  });
+  const memo = new Map();
+
+  const walk = function (name, seen) {
+    if (memo.has(name)) {
+      return memo.get(name);
+    }
+    if (!isModuleLocalCarrier(name) || seen.size > 6) {
+      return name;
+    }
+    const callers = (callersOf.get(name) || []).filter(function (caller) {
+      return !seen.has(caller);
+    });
+    const routed = callers.filter(function (caller) {
+      return !isModuleLocalCarrier(caller);
+    });
+    let resolved = name;
+    if (routed.length === 1) {
+      resolved = routed[0];
+    } else if (routed.length === 0 && callers.length === 1) {
+      seen.add(callers[0]);
+      resolved = walk(callers[0], seen);
+    }
+    memo.set(name, resolved);
+    return resolved;
+  };
+
+  return function (edge) {
+    const name = nameOf(edge);
+    return walk(name, new Set([name]));
+  };
+}
+
+/**
+ * The operation an edge guards, normalised so that changing the MECHANISM
+ * does not change it.
+ *
+ * This is the T1 identity, and it is derived from what the edge is ABOUT -
+ * the callee whose failure it handles, the value it produces, the identifier
+ * that is unbound - rather than from how it handles it. `Model.find`'s error
+ * callback and the `.catch` of `Model.find`'s promise are the same subject;
+ * `reply(err)` and `request.fail(err)` are both the production of `err`.
+ *
+ * @param {Object} edge
+ * @returns {string} a subject key, never empty
+ */
+function edgeSubject(edge) {
+  const shape = String(edge.shape || '');
+  let m;
+  if (edge.callee) {
+    // Passes G and H record the guarded callee structurally; prefer it over
+    // any reading of the prose.
+    return 'guards:' + edge.callee;
+  }
+  if ((m = /callback to `([^`]+)`/.exec(shape))) {
+    return 'guards:' + m[1];
+  }
+  if ((m = /CPS callback boundary \(([^)]+)\)/.exec(shape))) {
+    return 'guards:' + m[1];
+  }
+  if ((m = /TypeError: reply\.([A-Za-z0-9_$]+) is not a function/.exec(shape))) {
+    return 'reply-property:' + m[1];
+  }
+  if ((m = /ReferenceError: ([A-Za-z0-9_$.]+) is not defined/.exec(shape))) {
+    return 'unbound:' + m[1];
+  }
+  if (edge.argument) {
+    return 'produces:' + edge.argument;
+  }
+  if ((m = /^(?:reply|request\.fail)\((.*?)\)(?: with no return)?$/.exec(shape))) {
+    return 'produces:' + m[1];
+  }
+  if ((m = /^throw\s+(.*)$/.exec(shape))) {
+    return 'throws:' + m[1];
+  }
+  if ((m = /^return\s+(.*)$/.exec(shape))) {
+    return 'returns:' + m[1];
+  }
+  return 'shape:' + shape;
+}
+
+/**
+ * Whether a baseline edge with no target counterpart is a MECHANISM that rule
+ * T-3 removed rather than a mapping that was lost, and the sentence saying so.
+ *
+ * A CPS callback boundary and an undispositioned error parameter are both
+ * artefacts of the callback idiom: T-3 converts the callback into an `await`
+ * at the call site, so the boundary ceases to exist as a distinct site. That
+ * is the migration doing exactly what the AAP prescribes, and reporting it as
+ * a lost error-to-response mapping is a false failure.
+ *
+ * It is NOT unconditional, which is where the check earns its keep. The
+ * boundary is closed only when every response KIND it produced is still
+ * produced somewhere in the same routed carrier on the target tree. A
+ * boundary that produced a redirect no target edge in that carrier produces
+ * any more has taken a real mapping with it, and stays open.
+ *
+ * @param {Object} base a baseline edge with no paired target row
+ * @param {Object[]} targetGroup the target edges of the same routed carrier
+ * @returns {string|null} the closure sentence, or null to leave it open
+ */
+function mechanismRemoval(base, targetGroup) {
+  if (base.edgeClass !== EDGE_CLASS.CPS && base.edgeClass !== EDGE_CLASS.ERR_PARAM) {
+    return null;
+  }
+  const produced = producedKinds(base);
+  if (produced === 'none') {
+    return 'a ' + base.edgeClass + '-class callback boundary that produced no ' +
+      'response of its own. Rule T-3 converts the callback into an `await` at ' +
+      'the call site, so the boundary is not a site in the target tree; it ' +
+      'carried no error-to-response mapping for R-e to preserve.';
+  }
+  const survivors = [];
+  const lost = [];
+  produced.split(', ').forEach(function (kind) {
+    const still = targetGroup.filter(function (edge) {
+      return producedKinds(edge).split(', ').indexOf(kind) !== -1;
+    });
+    if (still.length) {
+      survivors.push(kind + ' (still produced at `' + lineRef(still[0]) + '`)');
+    } else {
+      lost.push(kind);
+    }
+  });
+  if (lost.length) {
+    return null;
+  }
+  return 'a ' + base.edgeClass + '-class callback boundary rule T-3 converts ' +
+    'into an `await` at the call site, so the boundary is not a site in the ' +
+    'target tree. Every response it produced is still produced in the same ' +
+    'routed carrier: ' + survivors.join('; ') + '.';
 }
 
 /**
@@ -7129,7 +8493,7 @@ function approvedDeviationFor(id, baselineOutcome, targetOutcome) {
 // ---------------------------------------------------------------------------
 // Driven coverage: joining rows to corpus scenarios
 //
-// The corpus is owned by test/parity/capture.js and read here, never
+// The corpus is produced by test/parity/capture.js and only read here, never
 // written. Two join keys are accepted, in this order:
 //
 //   1. a `covers` entry naming an edge id from this document, which is the
@@ -7139,9 +8503,10 @@ function approvedDeviationFor(id, baselineOutcome, targetOutcome) {
 //      weaker: it says the route was driven, not that the failure branch was
 //      reached. It is reported as `route-level` so the difference is visible.
 //
-// The corpus in this repository carries route keys only and nine
-// `error-edge.*` scenarios, so most rows come back route-level or uncovered.
-// That is the measurement, and it is printed as one.
+// A scenario carrying only a route key joins at route level, so a row whose
+// failure branch no scenario names comes back route-level or uncovered. The
+// coverage section prints what the supplied corpus reaches rather than
+// assuming a level.
 // ---------------------------------------------------------------------------
 
 /**
@@ -7170,9 +8535,34 @@ function readScenarios(scenariosPath) {
   const byEdgeId = new Map();
   const byRoute = new Map();
   const errorEdgeGroups = new Set();
+  // Scenario id -> the route key it drives, so a declared binding can be
+  // checked against the route the scenario actually sends to rather than
+  // taken on trust.
+  const routeOfScenario = new Map();
+  // Scenario id -> its declared intent. A route swept for its success path
+  // does not reach an error branch on that route, so the two must not be
+  // conflated when reporting what a row still needs: telling an author that
+  // a scenario already covers the route, when that scenario asserts a 200,
+  // sends them to bind false evidence.
+  const intentOfScenario = new Map();
+  // Route key -> the ids of NON-success scenarios driving it, which is the
+  // only set a changed error edge can honestly be bound to.
+  const failureByRoute = new Map();
 
   parsed.scenarios.forEach(function (scenario) {
     const id = String(scenario.id || '');
+    const intent = String(scenario.intent || 'success');
+    intentOfScenario.set(id, intent);
+    if (scenario.route && scenario.route.method && scenario.route.path) {
+      const routeKey = scenario.route.method + ' ' + scenario.route.path;
+      routeOfScenario.set(id, routeKey);
+      if (intent !== 'success') {
+        if (!failureByRoute.has(routeKey)) {
+          failureByRoute.set(routeKey, []);
+        }
+        failureByRoute.get(routeKey).push(id);
+      }
+    }
     if (id.indexOf('error-edge') === 0) {
       errorEdgeGroups.add(String(scenario.group || id));
     }
@@ -7180,10 +8570,9 @@ function readScenarios(scenariosPath) {
     //
     // `test/parity/capture.js` validates every `covers` entry against the
     // route manifest and reports anything else as `unknownRoutes`, which it
-    // treats as a defect in its own tables. So a scenario that named an edge
-    // id in `covers` would fail the producer, and an earlier edition of this
-    // document nonetheless told authors to put them there - a join contract
-    // the producer cannot satisfy.
+    // treats as a defect in its own tables. A scenario naming an edge id in
+    // `covers` therefore fails the producer, so telling authors to put them
+    // there would be a join contract the producer cannot satisfy.
     //
     // `coversEdges` is a field capture.js does not read, so a scenario can
     // carry it without tripping that validation. Edge ids in `covers` are
@@ -7218,6 +8607,9 @@ function readScenarios(scenariosPath) {
     scenarioCount: parsed.scenarios.length,
     byEdgeId: byEdgeId,
     byRoute: byRoute,
+    intentOfScenario: intentOfScenario,
+    failureByRoute: failureByRoute,
+    routeOfScenario: routeOfScenario,
     errorEdgeScenarioCount: parsed.scenarios.filter(function (scenario) {
       return String(scenario.id || '').indexOf('error-edge') === 0;
     }).length,
@@ -7225,14 +8617,225 @@ function readScenarios(scenariosPath) {
   };
 }
 
+// THE EDGE-TO-SCENARIO BINDING, AND WHY IT LIVES HERE.
+//
+// Edge-level coverage means a scenario reached an edge's own branch, not
+// merely its route. Route-level coverage is not coverage of an error edge: one
+// minimal request per route exercises success paths.
+//
+// The join needs a name both sides agree on, and there is no good candidate
+// in the corpus. `covers` cannot carry one - `test/parity/capture.js`
+// validates every entry against the route manifest and reports anything else
+// as an unknown route - and an edge id is this generator's own namespace,
+// whose `<class>.<ordinal>` tail renumbers for exactly the reasons joinTrees
+// documents, so a corpus naming edge ids would rot the same way the pairing
+// did. So the binding is declared HERE, beside the identity it uses, and it
+// uses the same stable semantic identity the pairing does: the file, the
+// carrier, and the guarded subject.
+//
+// Every entry is VALIDATED at generation time and a failure is fatal:
+//   - it must resolve to EXACTLY ONE edge per analysed tree. A binding that
+//     matched two edges would mark both driven when one was, and a binding
+//     that matches none has rotted against a tree that moved.
+//   - every scenario it names must exist in the corpus.
+//   - the scenario's route must be one the edge is reachable from.
+// A claim that survives those three is a claim a reviewer can re-derive.
+//
+// `covers`/`coversEdges` id joins still work, so a corpus that later carries
+// edge ids of its own joins through them as well.
+const EDGE_SCENARIO_BINDINGS = Object.freeze([
+  {
+    file: 'lib/controllers/pages.js',
+    carriers: ['pages.login'],
+    subjects: ['reply-property:redirect'],
+    scenarios: ['quirk.authed-500.get.login'],
+    why: 'driven WHILE LOGGED IN, which is the only way to reach the ' +
+      '`reply.redirect` property access on a bare function; the corpus case ' +
+      'exists for this branch and records the 500 it raises.'
+  },
+  {
+    file: 'lib/controllers/pages.js',
+    carriers: ['pages.signup'],
+    subjects: ['reply-property:redirect'],
+    scenarios: ['quirk.authed-500.get.signup'],
+    why: 'the same branch on the signup page, driven authenticated for the ' +
+      'same reason.'
+  },
+  {
+    file: 'lib/controllers/trinket.js',
+    carriers: ['trinket.getById'],
+    subjects: ['shape:.catch() handler - absorbs'],
+    scenarios: ['error-edge.not-found.missingTrinket'],
+    why: 'driven against the seeder\'s deliberately absent trinket id, so ' +
+      'the lookup rejects and this handler is what receives it.'
+  },
+  {
+    file: 'lib/controllers/users.js',
+    carriers: ['users.getExportStatus'],
+    subjects: ['guards:Export.findById'],
+    scenarios: ['error-edge.not-found.missingExport'],
+    why: 'driven against the seeder\'s deliberately absent export id, so the ' +
+      'request enters this callback boundary with no document.'
+  },
+  {
+    file: 'lib/controllers/users.js',
+    carriers: ['users.assetUploadFromURL'],
+    // Baseline: the transport `error` listener on the streaming fetch, which
+    // only logs. Target: the rejection handler of the fetch chain, which
+    // logs and tears down. The same conceptual edge either side of the
+    // conversion.
+    // Measured, both trees: the baseline spells this edge
+    // `shape:.on('error') handler - logs only` (the transport listener on the
+    // streaming fetch) and the delivered tree spells it `guards:.then` (the
+    // rejection arm, where a refused connection now surfaces). The baseline
+    // spelling ALSO matches the delivered tree's body listener, which the
+    // next binding owns, so a shared list resolves two edges here and the
+    // generator refuses it - correctly.
+    subjects: ['guards:.then'],
+    baselineSubjects: ['shape:.on(\'error\') handler - logs only'],
+    scenarios: ['error-edge.asset-from-url.transport-refused'],
+    why: 'the fixture refuses the connection, so this is the log-and-continue ' +
+      'branch AAP 0.6.3 names by hand - it must keep continuing rather than ' +
+      'become a rejection, and the request is left unsettled.'
+  },
+  {
+    file: 'lib/controllers/users.js',
+    carriers: ['users.assetUploadFromURL'],
+    subjects: ['shape:.on(\'error\') handler - logs only', 'shape:.on(\'error\') handler - absorbs'],
+    scenarios: ['error-edge.asset-from-url.midstream-failure'],
+    why: 'the fixture delivers a response and partial bytes, then errors, and ' +
+      'still reaches `end`, so this body listener runs and the upload starts ' +
+      'with the partial content - the second of the two failure modes, which ' +
+      'is why they are separate cases.'
+  },
+  {
+    file: 'lib/controllers/users.js',
+    // The upload boundary was inline in the handler at baseline and is an
+    // extracted local function in the target.
+    carriers: ['users.assetUploadFromURL', 'users.startUpload (module-local)'],
+    subjects: ['guards:FileUtil.uploadUserAsset'],
+    scenarios: ['error-edge.asset-from-url.query-bearing-url'],
+    why: 'the successful fetch reaches the upload boundary, which is where ' +
+      'the filename is derived from a legacy path field that retains the ' +
+      'query string.'
+  },
+  {
+    file: 'lib/controllers/auth.js',
+    carriers: ['auth.googleCallback'],
+    subjects: ['produces:{ message: \'No authorization code received from Google.\' }'],
+    scenarios: ['quirk.oauth.no-authorization-code'],
+    why: 'no authorization code is presented, so the handler fails at this ' +
+      'branch before any token exchange - the fixture recording nothing is ' +
+      'the proof no path here reaches the network.'
+  },
+  {
+    file: 'lib/controllers/auth.js',
+    carriers: ['auth.googleCallback'],
+    subjects: ['produces:{ message: \'Authentication failed. Please try again.\' }'],
+    scenarios: ['quirk.oauth.new-user-created-then-failed'],
+    why: 'the new-user branch saves the user and mutates session state, then ' +
+      'throws on an undefined variable, and this is the generic failure the ' +
+      'chain answers with afterwards.'
+  },
+  {
+    file: 'lib/controllers/course.js',
+    carriers: ['course.removeInvitation'],
+    subjects: ['produces:err', 'shape:.catch() handler - returns the error as the response via return err'],
+    scenarios: ['route.delete.api-courses-courseId-invitations-invitationId.json'],
+    why: 'no invitation document is seeded, so the case drives a deliberately ' +
+      'absent id and the removal rejects into this handler.'
+  }
+]);
+
+/**
+ * Resolve the declared bindings against one analysed tree.
+ *
+ * @param {Object[]} edges every edge of the tree
+ * @param {Object|null} scenarios a readScenarios result, or null
+ * @param {string} label which tree, for the error message
+ * @returns {{byEdgeId: Map, entries: Object[], unresolved: string[]}}
+ */
+function resolveEdgeBindings(edges, scenarios, label) {
+  const byEdgeId = new Map();
+  const entries = [];
+  const unresolved = [];
+
+  EDGE_SCENARIO_BINDINGS.forEach(function (binding, index) {
+    // A binding names ONE conceptual edge, and the two trees do not always
+    // spell it the same way. Where the conversion moved an edge onto a
+    // different carrier shape, the subject that identifies it is per-tree:
+    // `baselineSubjects` applies to the baseline worktree and `subjects` to
+    // the analysed one. A single shared list cannot express that whenever one
+    // tree's spelling also matches a DIFFERENT edge in the other tree, which
+    // is exactly what `users.assetUploadFromURL` does - the delivered tree
+    // carries both a body `.on('error')` listener (logs only) and the fetch
+    // chain's rejection arm (`guards:.then`), while the baseline carries only
+    // the transport listener. Matching stays exactly-one-per-tree either way;
+    // this widens how the edge is NAMED, never how many may match.
+    const subjects = (label === 'baseline' && binding.baselineSubjects)
+      ? binding.baselineSubjects
+      : binding.subjects;
+    const matches = edges.filter(function (edge) {
+      return edge.file === binding.file &&
+        binding.carriers.indexOf(edge.carrier) !== -1 &&
+        subjects.indexOf(edgeSubject(edge)) !== -1;
+    });
+    if (matches.length !== 1) {
+      unresolved.push('binding ' + (index + 1) + ' (' + binding.file + ' / ' +
+        binding.carriers.join(' or ') + ' / ' + subjects.join(' or ') +
+        ') resolved ' + matches.length + ' edges in the ' + label + ' tree' +
+        (matches.length > 1
+          ? ': ' + matches.map(function (edge) {
+            return edge.id;
+          }).join(', ')
+          : ''));
+      return;
+    }
+    const edge = matches[0];
+    if (scenarios) {
+      binding.scenarios.forEach(function (id) {
+        const route = scenarios.routeOfScenario.get(id);
+        if (!route) {
+          unresolved.push('binding ' + (index + 1) + ' names scenario `' + id +
+            '`, which the corpus does not contain');
+          return;
+        }
+        const reachable = (edge.routes || []).indexOf(route) !== -1;
+        if (!reachable) {
+          unresolved.push('binding ' + (index + 1) + ' names scenario `' + id +
+            '`, which drives `' + route + '`, but ' + edge.id +
+            ' is reachable from ' + ((edge.routes || []).length
+            ? (edge.routes || []).map(function (r) {
+              return '`' + r + '`';
+            }).join(', ')
+            : 'no route this tool resolved'));
+        }
+      });
+    }
+    if (!byEdgeId.has(edge.id)) {
+      byEdgeId.set(edge.id, []);
+    }
+    binding.scenarios.forEach(function (id) {
+      byEdgeId.get(edge.id).push(id);
+    });
+    entries.push({ binding: binding, edge: edge });
+  });
+
+  return { byEdgeId: byEdgeId, entries: entries, unresolved: unresolved };
+}
+
 /**
  * The corpus scenarios that drive an edge, and how directly.
  *
  * @returns {{level: string, scenarios: string[]}}
  */
-function coverageFor(edge, scenarios) {
+function coverageFor(edge, scenarios, bindings) {
   if (!scenarios) {
     return { level: 'not joined', scenarios: [] };
+  }
+  const bound = bindings && bindings.byEdgeId.get(edge.id);
+  if (bound && bound.length) {
+    return { level: 'edge-level', scenarios: dedupe(bound) };
   }
   const direct = scenarios.byEdgeId.get(edge.id);
   if (direct && direct.length) {
@@ -7339,10 +8942,9 @@ function checkCounts(observed, mode, tree) {
  * Make a source fragment safe inside a Markdown inline code span that may sit
  * inside a table cell.
  *
- * Three characters have to be handled and the predecessor of this function
- * handled one:
+ * Three characters have to be handled:
  *
- *   `   ends the code span early - handled before, replaced with an apostrophe;
+ *   `   ends the code span early, and is replaced with an apostrophe;
  *   |   ends the TABLE CELL, wherever it appears, including inside a code
  *       span. A source line containing `err.message || String(err)` or a
  *       regex alternation splits its row into extra columns, and the row
@@ -7384,38 +8986,12 @@ function lineRef(edge) {
 }
 
 /**
- * The provenance block, containing nothing that varies between two machines
- * analysing the same commits.
- *
- * Three values used to make the committed artifact machine-specific, and a
- * generated deliverable that differs across machines cannot be reviewed by
- * diffing it - which is the only way anyone reviews a 300-row generated
- * table:
- *
- *   the analysed tree's ABSOLUTE PATH - `/tmp/blitzy-c8/baseline-2f8712a` in
- *     the previously committed output. It named one agent's scratch directory
- *     on one pod. Nobody else has that path, and its presence made the file's
- *     first table row a fact about the machine rather than about the tree;
- *   the WALL CLOCK, which differs between two runs over one tree by
- *     construction, so every regeneration produced a diff even when nothing
- *     had changed;
- *   the EXACT PHYSICAL COMMAND, which embedded the same absolute path again.
- *
- * All three are replaced here by their reproducible form: a symbolic label
- * for the tree, the commit it is at, and a command anyone can run. The
- * physical values are not lost - `--provenance-out` writes them to a sidecar,
- * which is where a volatile fact belongs. What remains in the committed body
- * is a pure function of the analysed commits, so two runs on two machines
- * over the same commits produce byte-identical output and `diff` reviews the
- * tree.
- */
-/**
  * How the generator's commit is rendered, in three states rather than one.
  *
  * A commit is printed ONLY when a commit has been found whose tree holds the
- * generator blob at the generator path. `uncommitted-source` is the honest
- * answer while this generator is still changing, and it is what stops the
- * document naming a revision that cannot reproduce it.
+ * generator blob at the generator path. `uncommitted-source` is the answer
+ * while the generator itself is uncommitted, and it is what stops the document
+ * naming a revision that cannot reproduce it.
  */
 function renderGeneratorCommit(tool) {
   if (tool.commitState === 'contains-this-exact-source' && tool.verified) {
@@ -7458,6 +9034,17 @@ function bindBodyDigest(block, body) {
   return provenance.assertPortable(block, 'provenance');
 }
 
+/**
+ * The provenance block, containing nothing that varies between two machines
+ * analysing the same commits.
+ *
+ * The analysed tree is named by a symbolic label and the commit it sits at, and
+ * the invocation is recorded in repository-relative terms, so the committed
+ * body is a pure function of the analysed commits and `diff` reviews the tree
+ * rather than the machine. The volatile physical facts - absolute paths, the
+ * wall clock, the command as typed - are written to the `--provenance-out`
+ * sidecar instead, which is where a fact about a run belongs.
+ */
 function renderProvenance(model) {
   const lines = [];
   lines.push('<!-- Generated output. Every value in this block is a function of the analysed commits, not of the machine or the moment: see --provenance-out for the volatile physical detail. -->');
@@ -7569,9 +9156,21 @@ function renderPreamble(model) {
   lines.push('');
   if (model.closure) {
     const sum = model.closure.summary;
-    const open = sum.changed + sum.missing + sum.added;
-    lines.push('**' + (sum.closed + sum.approved) + ' of the ' + sum.baselineRows +
-      ' baseline edges are closed** against this tree, and **' + open + '** are not.');
+    // ONE figure, from joinTrees' own isOpenRow count. This sentence used to
+    // sum three of the five open buckets and print a number 23 lower than the
+    // verdict table's own total, against a denominator - "the N baseline
+    // edges" - that the omitted buckets do not even belong to.
+    lines.push('**' + sum.closedTotal + ' of the ' + sum.totalRows +
+      ' rows are closed** against this tree, **' + sum.open +
+      '** are open and **' + sum.notComparedTotal +
+      '** carry no mapping either tree can be held to.');
+    lines.push('Every figure in this document for that quantity is this one: section ' +
+      model.sections.closure + '\'s verdict table partitions these same ' + sum.open +
+      ' open rows, and `--closure-gate` counts them with the same predicate.');
+    lines.push('Of the open rows ' + sum.openWithBaseline + ' carry a baseline edge (of ' +
+      sum.baselineRows + ') and ' + sum.openWithTarget + ' carry a target edge (of ' +
+      sum.targetRows + '); a row new in the target has no baseline edge, so the two');
+    lines.push('sides have their own denominators rather than sharing one.');
     lines.push('A row is closed when the edge produces the same observable outcome on both');
     lines.push('trees - same funnel, same served status, same answers-or-does-not - so a');
     lines.push('ticked box is a comparison and not an opinion. Section ' +
@@ -7719,15 +9318,15 @@ function renderFunnels(model) {
   lines.push('');
   // The pre-handler contract, read from the analysed tree.
   //
-  // `convertPreHandlers` SURVIVES the migration - rule T-2 reshapes it into a
+  // `convertPreHandlers` SURVIVES the migration - it is reshaped into a
   // pass-through for native lifecycle methods and keeps the string-form
   // dispatcher - so its presence proves nothing about the semantics. What
-  // decides them is whether the RESPONSE EMULATION is still there, and the
-  // two contracts disagree about the outcome and not merely the mechanism:
-  // the shim RESOLVED a non-Boom Error and produced no response at all, while
-  // hapi boomifies the same value and answers 500. Describing the shim while
-  // reporting a converted tree's rows therefore stated the opposite of the
-  // truth on the sharpest case on this surface.
+  // decides them is whether the RESPONSE EMULATION is still there, and the two
+  // contracts disagree about the outcome and not merely the mechanism: the
+  // shim RESOLVES a non-Boom Error and produces no response at all, while hapi
+  // boomifies the same value and answers 500. Describing the shim while
+  // reporting a converted tree's rows would state the opposite of the truth on
+  // the sharpest case on this surface.
   const shim = f.preShim && f.preShim.emulationPresent;
   lines.push('### Not a funnel, but decisive: how a pre-handler error is answered' +
     (f.preShim ? ', `' + f.preShim.file + ':' + f.preShim.startLine + '-' + f.preShim.endLine + '`' : ''));
@@ -7832,6 +9431,24 @@ function renderSilentChanges() {
 
 function renderHowToRead(model) {
   const lines = [];
+  // Measured, not asserted. An earlier edition of this section stated
+  // "edge-level coverage is 0" as static prose, and went on stating it after
+  // the binding table made it false - which is the same defect as a closure
+  // count that disagrees with its own rows.
+  //
+  // Counted over `model.allEdges`, which is the SAME set section 9's coverage
+  // table counts over, so the two figures cannot disagree. An earlier
+  // revision counted over `model.closure.rows`, which is null whenever no
+  // `--baseline` is given - a TypeError that took the single-tree and
+  // baseline-tree invocations down while the two-tree one passed. Coverage is
+  // a property of an edge and a corpus, not of a comparison, so the
+  // comparison is the wrong set to count over in any mode.
+  const edgeLevelCount = model.scenarios
+    ? model.allEdges.filter(function (edge) {
+      return coverageFor(edge, model.scenarios, model.edgeBindings)
+        .level === 'edge-level';
+    }).length
+    : 0;
   lines.push('');
   lines.push('## ' + model.sections.howToRead + '. How to read a row');
   lines.push('');
@@ -7866,7 +9483,7 @@ function renderHowToRead(model) {
   lines.push('|---|---|');
   lines.push('| a reviewer | `grep \'id=<the id>\'` in this file |');
   lines.push('| `test/parity/capture.js` | put the id in a scenario\'s **`coversEdges`** array - NOT in `covers`; this generator then reports that row as **edge-level** driven |');
-  lines.push('| `test/parity/replay.js`, or any tool | read the machine-readable index this generator writes with `--edge-index <path>`: schema `trinket-oss/error-edge-index@2`, holding one record per TARGET row and one per BASELINE row, each with the id, file, carrier, surface, class, disposition, funnel, served status, the dimensions that differ, the closure verdict and the driver - plus an `unpaired` block naming every row missing from the target, new in the target, ambiguous, or proven unreachable |');
+  lines.push('| `test/parity/replay.js`, or any tool | read the machine-readable index this generator writes with `--edge-index <path>`: schema `trinket-oss/error-edge-index@3`, holding one record per TARGET row and one per BASELINE row, each with the id, file, carrier, surface, class, disposition, funnel, served status, the dimensions that differ, the closure verdict, the pairing tier that produced it, any prescribed mechanism transition, and the driver - plus an `unpaired` block naming every row missing from the target, new in the target, unpairable, or proven unreachable. Schema 2 carried a `renumberedOrdinal` field for the ordinal-based pairing this generator no longer performs |');
   lines.push('');
   lines.push('**`coversEdges`, and not `covers`.** `test/parity/capture.js` validates every');
   lines.push('`covers` entry against the route manifest and reports anything that is not a');
@@ -7879,10 +9496,24 @@ function renderHowToRead(model) {
   lines.push('one line per scenario in the `error-edge.*` groups of');
   lines.push('`test/parity/capture.js` - `coversEdges: [\'<edge id>\']` alongside the');
   lines.push('existing route-keyed `covers` - and that file belongs to the');
-  lines.push('capture-scenario unit, not to this generator. Until it lands, edge-level');
-  lines.push('coverage is 0 and section ' + model.sections.coverage + ' reports route-level coverage instead,');
-  lines.push('which is weaker: a scenario that reaches a route does not establish that it');
-  lines.push('reached a particular error branch within it.');
+  lines.push('capture-scenario unit, not to this generator.');
+  lines.push('');
+  lines.push('**Edge-level coverage does not wait for that.** This generator carries its');
+  lines.push('own binding table, resolved and VALIDATED at generation time against the');
+  lines.push('corpus, which is why section ' + model.sections.coverage + ' reports ' + edgeLevelCount + ' row' +
+    (edgeLevelCount === 1 ? '' : 's') + ' driven at edge level');
+  lines.push('today rather than 0. A binding names the edge by the same stable semantic');
+  lines.push('identity the pairing uses - file, routed carrier and guarded subject - and');
+  lines.push('the scenario by its corpus id, and generation FAILS if the pair does not');
+  lines.push('resolve to exactly one edge per tree or if the scenario does not exist or');
+  lines.push('does not drive a route the edge is reachable from. A binding that rots is');
+  lines.push('therefore fatal rather than silently downgraded, which is the property that');
+  lines.push('makes it evidence. `coversEdges` remains the route for the corpus unit to');
+  lines.push('add more without touching this file, and both joins are read.');
+  lines.push('');
+  lines.push('The remaining rows report route-level coverage, which is weaker: a scenario');
+  lines.push('that reaches a route does not establish that it reached a particular error');
+  lines.push('branch within it.');
   lines.push('');
   lines.push('So this document is no longer the only carrier of its own contents, and a');
   lines.push('consumer never has to parse the prose. The previous edition of this file');
@@ -8109,14 +9740,36 @@ function closureLine(model, edge, row) {
       'a defect in the join rather than a fact about the edge. Re-run the ' +
       'comparison and treat this row as unverified until it appears.';
   }
-  const via = row.matchedBy && row.matchedBy !== 'identity'
-    ? ' Matched by ' + row.matchedBy + ' rather than by identity, so confirm the ' +
-      'pairing before relying on it.'
+  // The pairing tier is stated on every row that has one, because closure is
+  // permitted on two of the three and a reviewer needs to know which they are
+  // reading without going back to section 8.
+  const via = row.pairedBy
+    ? ' Paired by ' + row.pairedBy + '.'
+    : '';
+  const transition = (row.prescribed || []).length
+    ? ' The two trees differ in ' + row.prescribed.join(' and ') +
+      ', which the AAP prescribes and this comparison records rather than ' +
+      'reads as an R-e failure.'
     : '';
   if (row.closure === CLOSURE.CLOSED) {
     return 'CLOSED. Baseline and target both produce ' +
       outcomeText(row.targetOutcome) + ', measured at `' +
-      lineRef(row.baseline) + '` and `' + lineRef(row.target) + '`.' + via;
+      lineRef(row.baseline) + '` and `' + lineRef(row.target) + '`.' + via + transition;
+  }
+  if (row.closure === CLOSURE.MECHANISM) {
+    return 'CLOSED - the callback boundary is gone and the mapping is not. ' +
+      row.mechanismNote;
+  }
+  if (row.closure === CLOSURE.NO_MAPPING) {
+    return 'NOT COMPARED - this target site has no baseline counterpart and ' +
+      'produces no response, so it introduces no error-to-response mapping ' +
+      'for R-e to hold either tree to. Its disposition above is what it does; ' +
+      'there is no baseline fact it could contradict.';
+  }
+  if (row.closure === CLOSURE.AMBIGUOUS) {
+    return '**OPEN - pairing not established.** ' +
+      (row.unpairedBecause || 'no semantic pairing could be established') +
+      ', so neither verdict may be borrowed.' + via;
   }
   if (row.closure === CLOSURE.APPROVED) {
     return 'CLOSED by approved deviation. Baseline produced ' +
@@ -8127,8 +9780,10 @@ function closureLine(model, edge, row) {
   if (row.closure === CLOSURE.CHANGED) {
     return '**OPEN - the outcome changed.** Baseline produced ' +
       outcomeText(row.baselineOutcome) + '; the target produces ' +
-      outcomeText(row.targetOutcome) + '. R-e requires these to match, and no ' +
-      'approved deviation names this edge.' + via;
+      outcomeText(row.targetOutcome) + '. What differs: ' +
+      (row.differences || []).join(', ') + '. R-e requires these to match, and no ' +
+      'approved deviation names this edge.' + via + transition +
+      (row.nearestOnly ? ' ' + row.nearestOnly + '.' : '');
   }
   if (row.closure === CLOSURE.MISSING) {
     return '**OPEN - no target row.** Nothing in the target tree matched `' +
@@ -8152,10 +9807,11 @@ function coverageLine(model, edge) {
       'the capture corpus, or `--coverage-gate` to make an undriven changed ' +
       'edge fatal.';
   }
-  const coverage = coverageFor(edge, model.scenarios);
+  const coverage = coverageFor(edge, model.scenarios, model.edgeBindings);
   if (coverage.level === 'edge-level') {
     return 'edge-level, by ' + coverage.scenarios.map(code).join(', ') +
-      ' - a scenario that names this edge id.';
+      ' - a scenario that reaches this branch. Section ' + model.sections.coverage +
+      ' carries the binding and the reason it reaches it.';
   }
   if (coverage.level === 'route-level') {
     return 'route-level only, by ' + coverage.scenarios.slice(0, 4).map(code).join(', ') +
@@ -8195,15 +9851,14 @@ function renderInventory(model) {
       // The box is ticked only when closure was PROVEN, and the Closure line
       // below always states on what. A row with no comparison available is
       // unchecked and says why, rather than being unchecked with no
-      // explanation - which is what 341 rows of `- [ ]` amounted to.
-      // A TICK MEANS PROVED, and it means nothing else. Three things can make
-      // it false, and all three used to be able to coexist with a tick:
-      // the closure comparison did not close the row; the row's reachability
-      // or caller could not be resolved, so its own facts are provisional;
-      // or the edge is proven unreachable, in which case there is no outcome
-      // on either tree and "closed" would be parity of nothing against
-      // nothing. Six rows saying `confirm this row by hand before closing it`
-      // were nonetheless ticked in an earlier edition.
+      // explanation, which is all an unconditional `- [ ]` amounts to.
+      // A TICK MEANS PROVED, and it means nothing else. Three things make it
+      // false, and each of them must be able to clear a tick on its own: the
+      // closure comparison did not close the row; the row's reachability or
+      // caller could not be resolved, so its own facts are provisional; or the
+      // edge is proven unreachable, in which case there is no outcome on
+      // either tree and "closed" would be parity of nothing against nothing.
+      // A row asking a reader to confirm it by hand must not carry a tick.
       const closed = Boolean(row) &&
         (row.closure === CLOSURE.CLOSED || row.closure === CLOSURE.APPROVED) &&
         !edge.unresolved && !edge.unreachableProven;
@@ -8390,13 +10045,13 @@ function renderDrivability(model) {
 
 
 /**
- * The closure register: what this run PROVED about the target, per row.
+ * The closure register: what the run PROVED about the target, per row.
  *
- * This section is the answer to "the artifact is generated from the baseline
- * and has zero closed rows, so no target edge's status, payload, side effects
- * or timing is established". It states, mechanically, how many rows were
- * closed and against what, and it names every row that is not - because a
- * count of closed rows is worth nothing if the open ones are invisible.
+ * A document generated from one tree closes no row, so it establishes no
+ * target edge's status, payload, side effects or timing. This section states
+ * mechanically how many rows were closed and against what, and names every row
+ * that was not - a count of closed rows is worth nothing if the open ones are
+ * invisible.
  */
 function renderClosure(model) {
   const lines = [];
@@ -8435,10 +10090,44 @@ function renderClosure(model) {
       'lost, so this is fatal.'
     );
   }
+  // The open arithmetic, asserted on the REAL rows and not only on a
+  // synthetic fixture. This document printed two different figures for the
+  // same quantity - 96 in its preamble and 119 across its own verdict
+  // buckets - because four call sites each decided what "open" meant. The
+  // predicate is now one function and this is the check that it stays one
+  // number: the authoritative total, the partition published for display,
+  // and a direct count over the rows must agree before anything is written.
+  const partitioned = OPEN_CLOSURES.reduce(function (total, state) {
+    return total + (sum.openByBucket[state] || 0);
+  }, 0) + sum.openProvisional;
+  const counted = model.closure.rows.filter(isOpenRow).length;
+  if (sum.closedTotal + sum.open + sum.notComparedTotal !== sum.totalRows) {
+    throw new AnalysisError(
+      'the three totals do not cover the rows: ' + sum.closedTotal +
+      ' closed + ' + sum.open + ' open + ' + sum.notComparedTotal +
+      ' not comparable does not equal ' + sum.totalRows + ' rows. Every row ' +
+      'must land in exactly one of the three, so this is fatal.'
+    );
+  }
+  if (sum.open !== partitioned || sum.open !== counted) {
+    throw new AnalysisError(
+      'the open-row accounting disagrees with itself: the summary says ' +
+      sum.open + ', its published partition sums to ' + partitioned +
+      ' and a direct count over the rows gives ' + counted + '. Two figures ' +
+      'for one quantity make the closure claim unreadable whichever is ' +
+      'right, so this is fatal. A closure state that is in no bucket is the ' +
+      'usual cause; every state must appear in exactly one of ' +
+      'OPEN_CLOSURES, CLOSED_CLOSURES or NOT_COMPARED_CLOSURES.'
+    );
+  }
   lines.push('Each row above is joined to the row measuring the same edge on the other');
-  lines.push('tree and closed only when the two agree on EVERY dimension R-e names:');
+  lines.push('tree and closed only when the two agree on every dimension R-e names.');
+  lines.push('All eight are recorded on every row; the six below are COMPARED:');
   lines.push('');
   OUTCOME_DIMENSIONS.forEach(function (entry) {
+    if (entry[0] === 'surface' || entry[0] === 'timing') {
+      return;
+    }
     lines.push('- ' + entry[1]);
   });
   lines.push('');
@@ -8465,44 +10154,153 @@ function renderClosure(model) {
   lines.push('  says so rather than claiming a kind.');
   lines.push('- **A bare `.catch(reply)`** carries the rejection value itself, so its');
   lines.push('  payload is an error value and not an unclassifiable one.');
+  lines.push('- **The shim\'s builder chain names the response where the source does.**');
+  lines.push('  `return reply().redirect("/home")` produces a redirect, and reading only');
+  lines.push('  the `reply` token recorded it as unknowable - so against a target that');
+  lines.push('  produces `h.redirect(...)` the comparison reported a payload difference on');
+  lines.push('  6 rows where an unknown was being compared against a known. The baseline');
+  lines.push('  parser\'s own builder resolves on `.redirect`, `.code`, `.header` and');
+  lines.push('  `.view` and NOT on `.type` or `.bytes`, so the last resolving member is');
+  lines.push('  read as the kind and a chain with no resolving member is still recorded as');
+  lines.push('  unknowable - which is the never-settling and builder-returned shapes.');
+  lines.push('');
+  lines.push('Two dimensions are RECORDED ON EVERY ROW AND NOT READ AS R-e FAILURES,');
+  lines.push('because the AAP prescribes a change to both and reading a prescribed change');
+  lines.push('as a failure sends a reviewer to preserve something the plan required to');
+  lines.push('change. Neither is dropped: every row carries both values, and the ' +
+    sum.prescribedTransitions + ' rows');
+  lines.push('that closed while carrying one are listed in full below.');
+  lines.push('');
+  lines.push('- **Surface** is where the code lives. AAP 0.6.4 mandates extraction, so a');
+  lines.push('  branch that sat inline in a routed handler now sits in an internal callee');
+  lines.push('  it calls, and the client receives the same response either way.');
+  lines.push('- **Settlement timing is DIRECTIONAL, and only one direction is');
+  lines.push('  prescribed.** Under the shim a handler signalled its response out of band');
+  lines.push('  and fell off the end, so a chain\'s own value was routinely discarded;');
+  lines.push('  rules T-1 and T-3 exist to make that chain return it. So a baseline that');
+  lines.push('  waited for nothing becoming a target that waits is the migration doing');
+  lines.push('  what it was told. A target that waits for LESS than the baseline did may');
+  lines.push('  drop a response the baseline delivered, and that is still a failure - the');
+  lines.push('  rule is one-sided, and a self-test asserts both of its sides.');
   lines.push('');
   lines.push('| Verdict | Rows | What it means |');
   lines.push('|---|---:|---|');
-  lines.push('| closed | ' + sum.closed + ' | baseline and target agree on every dimension above |');
+  lines.push('| closed | ' + sum.closed + ' | baseline and target agree on every compared dimension |');
   lines.push('| closed by approved deviation | ' + sum.approved + ' | the outcome changed, and this exact edge and this exact change are on the approved list |');
+  lines.push('| closed - callback boundary removed by rule T-3 | ' + sum.mechanism + ' | the baseline site is a callback boundary the conversion turns into an `await`, and every response it produced is still produced in the same routed carrier - the row names where |');
   lines.push('| **open - outcome changed** | ' + sum.changed + ' | R-e requires these to match and they do not; each row names the dimensions |');
   lines.push('| **open - no target row** | ' + sum.missing + ' | the baseline edge could not be located in the target |');
   lines.push('| **open - new in the target** | ' + sum.added + ' | no baseline fact to preserve, so nothing is verified |');
-  lines.push('| **open - pairing ambiguous** | ' + sum.ambiguous + ' | the two trees order the same ids differently, so no pairing in that carrier can be established |');
+  lines.push('| **open - pairing not established** | ' + sum.ambiguous + ' | no semantic pairing could be established in that carrier, so neither verdict may be borrowed |');
+  lines.push('| **open - compared equal on a provisional fact** | ' + sum.openProvisional + ' | the outcomes agree, but the edge\'s own reachability or caller is unresolved, so the agreement is provisional |');
   lines.push('| not compared - proven unreachable | ' + sum.unreachable + ' | nothing in the corpus reaches the edge, so there is no outcome on either tree to compare |');
+  lines.push('| not compared - new mechanism, produces no response | ' + sum.noMapping + ' | a target site with no baseline counterpart that produces no response, so it introduces no error-to-response mapping for R-e to hold either tree to |');
+  lines.push('| **closed, total** | **' + sum.closedTotal + '** | |');
+  lines.push('| **open, total** | **' + sum.open + '** | the authoritative figure. Section ' + model.sections.preamble + ' quotes this number and `--closure-gate` counts it with the same predicate |');
+  lines.push('| **not compared, total** | **' + sum.notComparedTotal + '** | |');
+  lines.push('| **all rows** | **' + sum.totalRows + '** | |');
+  lines.push('');
+  lines.push('One predicate, `isOpenRow`, partitions the rows, and every figure in this');
+  lines.push('document for that quantity is derived from it: the three totals cover the');
+  lines.push('row count exactly and the open buckets sum to the open total, both asserted');
+  lines.push('before anything is written. An earlier edition let four call sites decide');
+  lines.push('independently and two of them disagreed by 23 rows - the preamble said 96');
+  lines.push('and the buckets said 119 - which makes the closure claim unreadable');
+  lines.push('whichever figure was right.');
   lines.push('');
   lines.push('| Reconciliation | Rows |');
   lines.push('|---|---:|');
   lines.push('| baseline rows, all accounted for | ' + sum.baselineAccounted + ' of ' + sum.baselineRows + ' |');
   lines.push('| target rows, all accounted for | ' + sum.targetAccounted + ' of ' + sum.targetRows + ' |');
-  lines.push('| paired by exact identity | ' + (sum.baselineAccounted - sum.missing - sum.fallbackMatches) + ' |');
-  lines.push('| paired by source order within the carrier | ' + sum.fallbackMatches + ' |');
-  lines.push('| of those, where an identically-named target row exists elsewhere | ' + sum.renumberedOrdinals + ' |');
+  lines.push('| **T1** paired by the guarded subject - *may close* | ' + sum.pairedBySubject + ' |');
+  lines.push('| **T2** paired by an identical observable outcome - *may close* | ' + sum.pairedByOutcome + ' |');
+  lines.push('| **T3-anchored** paired by a uniform residual pool of equal size - ' +
+    '*order-independent; every difference reported* | ' +
+    sum.pairedByUniformPool + ' |');
+  lines.push('| **T3** paired by the nearest outcome - *every difference reported* | ' + sum.pairedByNearest + ' |');
+  lines.push('| baseline callback boundaries rule T-3 removed | ' + sum.mechanism + ' |');
+  lines.push('| target rows carrying no mapping | ' + sum.noMapping + ' |');
+  // Labelled for what the metric COUNTS. It counts every row carrying a
+  // prescribed transition whatever its verdict, and an earlier edition
+  // labelled it "closed while carrying" - so the table claimed 17 closed
+  // while its own detail table held 14 closed, 2 changed and 1 ambiguous.
+  // That is the same defect as a closure count disagreeing with its rows,
+  // one section further down. Both figures are now published, and the
+  // renderer asserts the detail table's length against the metric.
+  lines.push('| rows carrying a prescribed mechanism transition, any verdict | ' +
+    sum.prescribedTransitions + ' |');
+  lines.push('| of those, closed | ' + sum.prescribedClosed + ' |');
   lines.push('');
-  lines.push('Identity is authoritative and source order fills its gaps, in that order.');
-  lines.push('An identity is `<file>.<carrier>.<class>.<ordinal>`, so it denotes the same');
-  lines.push('edge on both trees only while that carrier\'s population of that CLASS is');
-  lines.push('unchanged; where it changed, the ordinals renumbered and the id match is an');
-  lines.push('artefact. Measured on `course.deleteCourse`, whose first baseline edge');
-  lines.push('became the handler-class edge and whose second kept its shape, taking the');
-  lines.push('id match would pair line 151 with line 192 and report both rows changed -');
-  lines.push('two false failures from one crossing. So an id match anchors the alignment');
-  lines.push('only where the class population is stable, and the ' + sum.renumberedOrdinals + ' rows where it is');
-  lines.push('not say so on their own row rather than having the choice hidden. Where the');
-  lines.push('anchors that ARE trusted appear in a different order on the two trees,');
-  lines.push('nothing about that carrier can be established from position and every pair');
-  lines.push('in it is reported ambiguous instead of given a verdict.');
+  lines.push('### Why the pairing is not the printed identity, and not source order');
+  lines.push('');
+  lines.push('The identity a row prints is `<file>.<carrier>.<class>.<ordinal>`, and two');
+  lines.push('of its four components are not invariants of this migration. **The class');
+  lines.push('flips**: a `.catch` whose body called `reply(err)` is a response-class edge');
+  lines.push('at the reply site, and the converted `.catch` that returns the error has no');
+  lines.push('terminal, so the edge is the handler itself. Both classes then renumber and');
+  lines.push('an id match becomes an artefact of the renumbering - measured on');
+  lines.push('`course.deleteCourse`, where taking the match paired line 151 with line 192');
+  lines.push('and reported two unchanged rows changed. **The carrier moves**: AAP 0.6.4');
+  lines.push('mandates extraction, so `createCourseCore`, `listCore`, `lookupTrinket`,');
+  lines.push('`startUpload`, `abandon`, `settle`, `logFailure`, `removeTempFile`,');
+  lines.push('`redactText` and the stream handlers all hold code that used to sit inline');
+  lines.push('in a routed handler, and grouping by the lexical carrier read every one of');
+  lines.push('those edges as deleted from one carrier and created in another - measured,');
+  lines.push('41 rows "missing" and 28 "new" on a tree where almost none of either had');
+  lines.push('happened.');
+  lines.push('');
+  lines.push('An earlier edition papered over both by FILLING GAPS POSITIONALLY, pairing');
+  lines.push('the k-th unpaired baseline row in a gap with the k-th unpaired target row.');
+  lines.push('78 pairs rested on source order and 24 of those overrode an');
+  lines.push('identically-named row elsewhere, so rows were closed on the order two files');
+  lines.push('happen to list their statements in. **No row closes on source order here.**');
+  lines.push('Edges are grouped by the ROUTED carrier - resolved through each');
+  lines.push('module-local function\'s traced callers, which makes extraction transparent');
+  lines.push('because the route is what a client reaches and the route surface is an');
+  lines.push('invariant this migration gates - and paired within that group on the tiers');
+  lines.push('above. A tie between two equally near candidates is reported ambiguous');
+  lines.push('rather than resolved by any rule at all.');
+  lines.push('');
+  lines.push('**No tier decides closure.** The tier decides only WHICH target row a');
+  lines.push('baseline row is compared against; the verdict then comes from the same');
+  lines.push('comparison for every tier - every R-e dimension must agree, and the only');
+  lines.push('movement permitted in a closed row is a mechanism transition the AAP');
+  lines.push('prescribes, listed by row above. So a T3 or T3-anchored pair closes exactly');
+  lines.push('when its only difference is a surface move, and is reported open with the');
+  lines.push('differing dimensions named otherwise. In this run ' + sum.pairedByUniformPool +
+    ' rows paired at');
+  lines.push('T3-anchored and ' + sum.pairedByNearest + ' at T3.');
+  lines.push('');
+  lines.push('Two editions of this table got that wrong in opposite directions, and both');
+  lines.push('are recorded because the second is the one a reader would not otherwise');
+  lines.push('suspect. The first labelled these tiers "never closes", which was simply');
+  lines.push('untrue of them. The second made it true of the outcome dimensions but');
+  lines.push('ranked the three settlements and let a move up the rank close a row, so a');
+  lines.push('pairing this tier had not established could still close on a settlement');
+  lines.push('change - two soft steps compounding into a tick. The settlement');
+  lines.push('prescription is withdrawn, so the only movement any tier may close over is');
+  lines.push('a surface move, which AAP 0.6.4 mandates outright. What makes these tiers');
+  lines.push('safe is not the tier: it is that no tier can close a row whose observable');
+  lines.push('outcome moved, which a scanner self-test asserts by driving all four tiers');
+  lines.push('against outcomes that differ on funnel, on status and on settlement.');
+  lines.push('');
+  lines.push('One tier does use position, and the distinction is worth stating plainly');
+  lines.push('rather than eliding. **T3-anchored** pairs a residual pool by position, but');
+  lines.push('only when that pool is uniform on BOTH sides - every member byte-identical');
+  lines.push('in outcome to every other member of its own side - and equal in size. Under');
+  lines.push('those two conditions every possible bijection yields the same verdict on the');
+  lines.push('same rows, so the order the two files list their statements in cannot change');
+  lines.push('the answer. That is the property the old gap-filling lacked; using position');
+  lines.push('was never the defect in itself. Where either condition fails the tier');
+  lines.push('declines and the rows are reported missing and added, which is the honest');
+  lines.push('reading: one tree has an edge the other does not. Both conditions are pinned');
+  lines.push('by a scanner self-test, including the two negative cases.');
   lines.push('');
 
-  const open = model.closure.rows.filter(function (row) {
-    return row.closure !== CLOSURE.CLOSED && row.closure !== CLOSURE.APPROVED &&
-      row.closure !== CLOSURE.UNREACHABLE;
-  });
+  // The same predicate the summary counted and the gate enforces, so the
+  // listing's length IS the figure printed above it rather than a fourth
+  // independent reading of the rows.
+  const open = model.closure.rows.filter(isOpenRow);
 
   if (!open.length) {
     lines.push('**Every row is closed.** No edge in the analysed surface changed its');
@@ -8522,6 +10320,96 @@ function renderClosure(model) {
         (row.targetOutcome ? cell(outcomeText(row.targetOutcome)) : 'n/a - not in the target') + ' | ' +
         cell(row.closure) + ' | ' +
         ((row.differences || []).length ? cell(row.differences.join(', ')) : 'n/a') + ' |');
+    });
+  }
+
+  // The mechanism closures, rendered. They contribute to the published closed
+  // total, and until this table existed NO section showed them: the per-file
+  // inventory is keyed on TARGET edges and a removed baseline boundary has
+  // none, the open-row listing filters them out because they are closed, and
+  // the prescribed table only holds rows with a prescribed transition. Four
+  // rows therefore counted toward closure with nothing a reader could audit,
+  // which makes the closed total exactly as unverifiable as an unticked box.
+  const mechanismRows = model.closure.rows.filter(function (row) {
+    return row.closure === CLOSURE.MECHANISM;
+  });
+  if (mechanismRows.length !== model.closure.summary.mechanism) {
+    throw new AnalysisError(
+      'the mechanism-closure accounting disagrees with itself: the summary ' +
+      'says ' + model.closure.summary.mechanism + ' and the table rendered ' +
+      'below it holds ' + mechanismRows.length + ' row(s). These rows count ' +
+      'toward the closed total, so a figure without its evidence is fatal.'
+    );
+  }
+  lines.push('');
+  lines.push('### Baseline callback boundaries closed by rule T-3');
+  lines.push('');
+  if (!mechanismRows.length) {
+    lines.push('**None.** No baseline callback boundary was closed on the grounds that the');
+    lines.push('conversion removed the boundary itself, so every closed row on this tree');
+    lines.push('is a compared pair.');
+  } else {
+    lines.push('These ' + mechanismRows.length + ' row' +
+      (mechanismRows.length === 1 ? '' : 's') + ' close without a target row to' +
+      ' compare against, so they');
+    lines.push('are stated in full here rather than counted. Rule T-3 puts the promise');
+    lines.push('boundary at the lifecycle method, which means a baseline callback whose');
+    lines.push('own error parameter carried a disposition can disappear as a SITE while');
+    lines.push('every response it produced is still produced by the routed carrier that');
+    lines.push('replaced it. The closure is that claim, and it is only as good as the');
+    lines.push('surviving carrier named in the last column - which is why the column is');
+    lines.push('here.');
+    lines.push('');
+    lines.push('| Row | Baseline edge | Baseline outcome | Why the boundary closes |');
+    lines.push('|---|---|---|---|');
+    mechanismRows.forEach(function (row) {
+      const edge = row.baseline || row.target;
+      lines.push('| `' + row.id + '` | `' + lineRef(edge) + '` | ' +
+        cell(row.baselineOutcome ? outcomeText(row.baselineOutcome) : 'not measured') +
+        ' | ' + cell(row.mechanismNote ||
+          'the boundary produced no response') + ' |');
+    });
+  }
+
+  const prescribed = model.closure.rows.filter(function (row) {
+    return (row.prescribed || []).length > 0;
+  });
+  // The metric published in the reconciliation table above must be the length
+  // of the table rendered below it. An earlier edition published 17 under a
+  // label claiming they were closed while this table held 14 closed, 2
+  // changed and 1 ambiguous - a count contradicting its own evidence, which
+  // is the one defect this whole section exists to prevent.
+  if (prescribed.length !== model.closure.summary.prescribedTransitions) {
+    throw new AnalysisError(
+      'the prescribed-transition accounting disagrees with itself: the ' +
+      'summary says ' + model.closure.summary.prescribedTransitions +
+      ' and the table rendered below it holds ' + prescribed.length +
+      ' row(s). A published figure its own evidence table contradicts is ' +
+      'not evidence, so this is fatal.'
+    );
+  }
+  lines.push('');
+  lines.push('### Rows carrying a prescribed mechanism transition');
+  lines.push('');
+  if (!prescribed.length) {
+    lines.push('**None.** No row on this tree differs from its baseline row in surface or');
+    lines.push('in settlement direction, so the two recorded-not-failed dimensions changed');
+    lines.push('nothing anywhere and the closure verdicts rest on the compared dimensions');
+    lines.push('alone.');
+  } else {
+    lines.push('Every row whose two trees differ in a dimension the AAP prescribed a');
+    lines.push('change to. They are listed because a tick that absorbed a difference');
+    lines.push('silently is the defect this whole section exists to avoid: a reviewer who');
+    lines.push('disagrees with a transition can find it here rather than by re-deriving');
+    lines.push('it. A row that ALSO differs on a compared dimension is open, and appears');
+    lines.push('above as well.');
+    lines.push('');
+    lines.push('| Row | Edge | Verdict | Prescribed transition |');
+    lines.push('|---|---|---|---|');
+    prescribed.forEach(function (row) {
+      const edge = row.baseline || row.target;
+      lines.push('| `' + row.id + '` | `' + lineRef(edge) + '` | ' + cell(row.closure) +
+        ' | ' + cell(row.prescribed.join('; ')) + ' |');
     });
   }
 
@@ -8576,7 +10464,7 @@ function renderCoverage(model) {
 
   const levels = { 'edge-level': [], 'route-level': [], uncovered: [] };
   model.allEdges.forEach(function (edge) {
-    const coverage = coverageFor(edge, model.scenarios);
+    const coverage = coverageFor(edge, model.scenarios, model.edgeBindings);
     (levels[coverage.level] || levels.uncovered).push(edge);
   });
 
@@ -8589,7 +10477,7 @@ function renderCoverage(model) {
   lines.push('');
   lines.push('| Coverage | Rows | What it proves |');
   lines.push('|---|---:|---|');
-  lines.push('| edge-level | ' + levels['edge-level'].length + ' | a scenario names this row\'s id, so the branch itself was reached |');
+  lines.push('| edge-level | ' + levels['edge-level'].length + ' | a scenario reaches this row\'s own branch, by a declared binding or by a scenario naming the id |');
   lines.push('| route-level only | ' + levels['route-level'].length + ' | a scenario drives the row\'s route, which is not the same as reaching its failure branch |');
   lines.push('| **not driven** | ' + levels.uncovered.length + ' | no scenario names the row or its routes |');
   lines.push('');
@@ -8599,36 +10487,111 @@ function renderCoverage(model) {
   lines.push('rather than two, and the reason a route-level row is reported as');
   lines.push('unverified above.');
   lines.push('');
+  lines.push('### How an edge is joined to the scenario that drives it');
+  lines.push('');
+  lines.push('Neither side of this join can hold the other\'s names. A scenario cannot');
+  lines.push('carry an edge id in `covers` - `test/parity/capture.js` validates every');
+  lines.push('entry there against the route manifest and reports anything else as an');
+  lines.push('unknown route - and an edge id is this generator\'s own namespace, whose');
+  lines.push('`<class>.<ordinal>` tail renumbers for the reasons section ' +
+    model.sections.closure + ' gives, so a');
+  lines.push('corpus naming edge ids would rot exactly as the pairing did. So the');
+  lines.push('binding is declared in the generator, beside the identity it uses, and it');
+  lines.push('uses the same stable semantic identity the pairing does: the file, the');
+  lines.push('carrier, and the guarded subject. A scenario that carries a `coversEdges`');
+  lines.push('array still joins through it, so a corpus that later adopts the field');
+  lines.push('needs no change here.');
+  lines.push('');
+  lines.push('**Every binding is verified before this document is written, and a failure');
+  lines.push('is fatal.** It must resolve to exactly one edge per analysed tree - two');
+  lines.push('would mark both driven when one was, none means it has rotted against a');
+  lines.push('tree that moved - every scenario it names must exist in the corpus, and');
+  lines.push('that scenario\'s route must be one the edge is reachable from.');
+  lines.push('');
+  if (!model.edgeBindings || !model.edgeBindings.entries.length) {
+    lines.push('**No binding is declared.** Every edge-level row above comes from a');
+    lines.push('scenario naming the id itself.');
+  } else {
+    lines.push('| Edge | Route it is reached from | Scenario | Why this scenario reaches this branch |');
+    lines.push('|---|---|---|---|');
+    model.edgeBindings.entries.forEach(function (entry) {
+      lines.push('| `' + entry.edge.id + '` `' + lineRef(entry.edge) + '` | ' +
+        ((entry.edge.routes || []).map(code).join(', ') || 'n/a') + ' | ' +
+        entry.binding.scenarios.map(code).join(', ') + ' | ' +
+        cell(entry.binding.why) + ' |');
+    });
+  }
+  lines.push('');
 
+  // The SAME predicate the summary, the closure table and both gates use, so
+  // this count is a subset of the open total rather than a fifth reading of
+  // the rows: an earlier edition filtered on "not closed and not approved"
+  // here and reported 81 undriven rows against an open total of 53.
   const changedUndriven = model.closure
     ? model.closure.rows.filter(function (row) {
-      if (row.closure === CLOSURE.CLOSED || row.closure === CLOSURE.APPROVED) {
+      if (!isOpenRow(row)) {
         return false;
       }
       const edge = row.target || row.baseline;
-      return coverageFor(edge, model.scenarios).level !== 'edge-level';
+      return coverageFor(edge, model.scenarios, model.edgeBindings).level !== 'edge-level';
     })
     : [];
 
   if (model.closure) {
-    lines.push('### Changed edges with no scenario of their own');
+    lines.push('### Open rows with no scenario of their own');
     lines.push('');
     if (!changedUndriven.length) {
-      lines.push('None: every edge whose outcome is not closed has a scenario naming it.');
+      lines.push('None: every open row has a scenario reaching its own branch.');
     } else {
-      lines.push('**' + changedUndriven.length + '** of the open rows in section ' +
-        model.sections.closure + ' have no `error-edge.*` scenario naming their id, so');
+      lines.push('**' + changedUndriven.length + '** of the ' +
+        model.closure.summary.open + ' open rows in section ' +
+        model.sections.closure + ' have no scenario reaching their own branch, so');
       lines.push('their target outcome is a reading of the code rather than a measured');
-      lines.push('response. Each one needs a scenario in `test/parity/capture.js` whose');
-      lines.push('`coversEdges` array carries the id - `covers` is route-keys only and');
-      lines.push('capture.js rejects anything else there:');
+      lines.push('response. Each one needs either a binding in this generator or a');
+      lines.push('scenario in `test/parity/capture.js` whose `coversEdges` array carries');
+      lines.push('the id - `covers` is route-keys only and capture.js rejects anything');
+      lines.push('else there.');
       lines.push('');
-      changedUndriven.slice(0, 60).forEach(function (row) {
+      lines.push('The last column is the part an author needs and the part prose cannot');
+      lines.push('keep current, so it is computed. A row is only bindable to a scenario');
+      lines.push('that reaches its BRANCH, and a scenario sweeping the route for its');
+      lines.push('success path does not: it asserts the response the route gives when');
+      lines.push('nothing fails. So the column names the non-success scenarios already');
+      lines.push('driving the row\'s routes, which are the only existing candidates, and');
+      lines.push('says plainly when there are none - which means a NEW scenario is');
+      lines.push('required and no binding can be written from what the corpus holds');
+      lines.push('today. A row with no routes at all cannot be driven by any HTTP');
+      lines.push('scenario in any corpus, and says so.');
+      lines.push('');
+      lines.push('| Row | Edge | Verdict | Existing candidate scenarios |');
+      lines.push('|---|---|---|---|');
+      changedUndriven.slice(0, 80).forEach(function (row) {
         const edge = row.target || row.baseline;
-        lines.push('- `' + row.id + '` - `' + lineRef(edge) + '` - ' + cell(row.closure));
+        const routes = (edge && edge.routes) || [];
+        let candidates;
+        if (!routes.length) {
+          candidates = '**none possible** - the edge sits on no route, so no ' +
+            'HTTP scenario reaches it';
+        } else {
+          const found = [];
+          routes.forEach(function (route) {
+            (model.scenarios.failureByRoute.get(route) || []).forEach(function (id) {
+              if (found.indexOf(id) === -1) {
+                found.push(id);
+              }
+            });
+          });
+          candidates = found.length
+            ? found.map(code).join(', ')
+            : '**none in the corpus** - a new non-success scenario is required ' +
+              'on ' + (routes.length === 1 ? 'this route' : 'one of these routes');
+        }
+        lines.push('| `' + row.id + '` | `' + lineRef(edge) + '` | ' +
+          cell(row.closure) + ' | ' + candidates + ' |');
       });
-      if (changedUndriven.length > 60) {
-        lines.push('- ... and ' + (changedUndriven.length - 60) +
+      if (changedUndriven.length > 80) {
+        lines.push('');
+        lines.push('... and ' + (changedUndriven.length - 80) +
           ' more, all present in the `--edge-index` output.');
       }
     }
@@ -8676,12 +10639,14 @@ function composeDocument(model) {
 // ---------------------------------------------------------------------------
 // Locator reconciliation
 //
-// The plan cites some locations that do not match the tree - the
-// `.catch(request.fail)` chain in the pages controller is cited at :52 and
-// measured at :54, because the chain statement begins two lines above the
-// `.catch` link - and a reviewer following either must land on the same edge.
-// A cited locator with nothing measured against it is equally informative on a
-// converted tree: it means the row has closed.
+// CITED_LOCATORS below carries the locations the migration specification cites
+// for the funnels, the shim and the quirk sites. Some do not match the tree:
+// the `.catch(request.fail)` chain in `lib/controllers/pages.js` is cited at
+// the `.catch` link while the chain statement it belongs to begins two lines
+// above it, so the citation and the measured row differ. A reviewer following
+// either must land on the same edge, which is what this section reconciles. A
+// cited locator with nothing measured against it is informative too: on a
+// converted tree it means the row has closed.
 // ---------------------------------------------------------------------------
 
 const CITED_LOCATORS = Object.freeze([
@@ -8843,21 +10808,14 @@ function relativeToToolRepository(target) {
 }
 
 /**
- * Analyse a tree and write the inventory. Returns a summary for callers that
- * want to assert on the run without parsing the document.
- *
- * @param {{appRoot: string, outPath: string, countsCheck: string}} options
- */
-/**
  * Write the machine-readable edge index.
  *
- * The document is prose with tables in it. A consumer that wanted to know
- * which edge a scenario reached, or whether a changed edge had been driven,
- * had to parse that prose - so in practice nothing did, and the checklist and
- * the corpus were two unrelated artifacts describing the same edges. This
- * index is the join surface: one record per row, keyed by the same stable id
- * the document prints, carrying everything a consumer needs and no prose at
- * all.
+ * The document is prose with tables in it, so a consumer asking which edge a
+ * scenario reached, or whether a changed edge was driven, would have to parse
+ * that prose - and a checklist and a corpus that cannot be joined are two
+ * unrelated artifacts describing the same edges. This index is the join
+ * surface: one record per row, keyed by the same stable id the document prints,
+ * carrying everything a consumer needs and no prose at all.
  *
  * Deterministic by construction - sorted, no timestamp - so it can be
  * committed and diffed like the document.
@@ -8865,7 +10823,7 @@ function relativeToToolRepository(target) {
 function writeEdgeIndex(indexPath, model) {
   const records = model.allEdges.map(function (edge) {
     const row = model.closure ? model.closure.byTargetId.get(edge.id) : null;
-    const coverage = model.scenarios ? coverageFor(edge, model.scenarios) : null;
+    const coverage = model.scenarios ? coverageFor(edge, model.scenarios, model.edgeBindings) : null;
     return {
       id: edge.id,
       file: edge.file,
@@ -8885,8 +10843,11 @@ function writeEdgeIndex(indexPath, model) {
       closure: row ? row.closure : CLOSURE.NOT_COMPARED,
       differences: row && row.differences ? row.differences : [],
       matchedBy: row ? row.matchedBy : null,
-      renumberedOrdinal: row && row.renumbered ? row.renumbered : null,
-      ambiguousBecause: row && row.ambiguousGroup ? row.ambiguousGroup : null,
+      pairedBy: row ? (row.pairedBy || null) : null,
+      groupKey: row ? (row.groupKey || null) : null,
+      nearestOnly: row && row.nearestOnly ? row.nearestOnly : null,
+      unpairedBecause: row && row.unpairedBecause ? row.unpairedBecause : null,
+      prescribed: row && row.prescribed ? row.prescribed : [],
       baselineOutcome: row && row.baselineOutcome ? row.baselineOutcome : null,
       baselineLine: row && row.baseline ? row.baseline.line : null,
       coverage: coverage ? coverage.level : 'not joined',
@@ -8949,7 +10910,7 @@ function writeEdgeIndex(indexPath, model) {
         return {
           id: row.id,
           pairedWith: row.target ? row.target.id : null,
-          reason: row.ambiguousGroup || 'the pairing could not be established'
+          reason: row.unpairedBecause || 'no semantic pairing could be established'
         };
       }),
       provenUnreachable: model.closure.rows.filter(function (row) {
@@ -8964,7 +10925,7 @@ function writeEdgeIndex(indexPath, model) {
   const payload = {
     // @2 adds `baselineRows`, `unpaired` and per-row `differences`. A
     // consumer written against @1 reads `rows` unchanged.
-    schema: 'trinket-oss/error-edge-index@2',
+    schema: 'trinket-oss/error-edge-index@3',
     document: relativeToToolRepository(model.outPathForIndex || ''),
     generator: model.tool,
     analysedTree: {
@@ -8999,11 +10960,10 @@ function writeEdgeIndex(indexPath, model) {
  * Write the volatile physical provenance.
  *
  * Absolute paths, the wall clock and the exact command as typed are facts
- * about a RUN, not about the analysed commits, and putting them in the
- * committed body made the deliverable differ between two machines analysing
- * the same code. They are still worth recording - a reader asking "where was
- * this run and when" deserves an answer - so they are recorded here, in a
- * sidecar that is not the reviewed artifact.
+ * about a RUN, not about the analysed commits, and in the committed body they
+ * would make the deliverable differ between two machines analysing the same
+ * code. They are still worth recording - where a run happened and when - so
+ * they are recorded here, in a sidecar that is not the reviewed artifact.
  */
 function writeProvenanceSidecar(sidecarPath, model, options, document) {
   const resolved = path.resolve(sidecarPath);
@@ -9092,6 +11052,17 @@ function resolveTreeArgument(value, flag) {
   return root;
 }
 
+/**
+ * Analyse a tree, evaluate every check and gate, and write the artifacts.
+ * Returns a summary so a caller can assert on the run without parsing the
+ * document.
+ *
+ * @param {Object} options `appRoot` and `outPath`, the `countsCheck` mode, and
+ *   optionally `baselineRoot`, `scenariosPath`, `edgeIndexPath`,
+ *   `provenanceOutPath`, `closureGate` and `coverageGate`
+ * @returns {Object} { outPath, appRoot, rows, counts, check, selfTests,
+ *   funnels, files, bytes }
+ */
 function generate(options) {
   const selfTests = runSelfTests();
 
@@ -9136,13 +11107,13 @@ function generate(options) {
 
   // Driveability is asserted on the FIELD, not on the carrier string.
   //
-  // The predecessor of this check tested `!edge.carrier`, which no edge can
-  // satisfy: `push()` substitutes `'(module scope)'` when carrier resolution
-  // finds nothing, so the filter was always empty and the throw was
-  // unreachable. An edge that genuinely could not be driven would have been
-  // written into the document with no indication of it, which is worse than
-  // the check being absent, because the document's own driveability section
-  // asserted that every row was drivable on the strength of it.
+  // Testing `!edge.carrier` instead is satisfied by no edge at all: `push()`
+  // substitutes `'(module scope)'` when carrier resolution finds nothing, so
+  // the filter would always be empty and the throw unreachable. An edge that
+  // genuinely cannot be driven would then be written into the document with no
+  // indication of it, which is worse than the check being absent, because the
+  // document's driveability section asserts that every row is drivable on the
+  // strength of this filter.
   const undrivable = allEdges.filter(function (edge) {
     return edge.driveVia === 'unresolved';
   });
@@ -9161,6 +11132,11 @@ function generate(options) {
   // ---- Closure, when a baseline tree was named -----------------------------
   let closure = null;
   let baselineTree = null;
+  // Kept in scope beyond the closure block so the edge-to-scenario bindings
+  // can be resolved against the baseline tree as well: a binding that
+  // matches the target and not the baseline is still a binding that cannot
+  // be verified on both sides of the comparison it feeds.
+  let baselineAnalysis = null;
   if (options.baselineRoot) {
     const baselineRoot = resolveTreeArgument(options.baselineRoot, '--baseline');
     if (path.resolve(baselineRoot) === path.resolve(appRoot)) {
@@ -9181,7 +11157,7 @@ function generate(options) {
         BASELINE_COMMIT.slice(0, 7) + '`.'
       );
     }
-    const baselineAnalysis = analyseTree(baselineRoot, 'baseline');
+    baselineAnalysis = analyseTree(baselineRoot, 'baseline');
     closure = joinTrees(baselineAnalysis.allEdges, allEdges);
     closure.baselineFiles = baselineAnalysis.files;
   }
@@ -9189,7 +11165,39 @@ function generate(options) {
   // ---- Driven coverage, when a corpus was named ---------------------------
   const scenarios = options.scenariosPath ? readScenarios(options.scenariosPath) : null;
 
+  // The declared edge-to-scenario bindings, resolved against this tree and
+  // against the baseline where one was supplied. An entry that resolves to
+  // anything other than exactly one edge, names a scenario the corpus does
+  // not contain, or names a scenario driving a route the edge is not
+  // reachable from, is fatal: an unverifiable coverage claim reads as a
+  // measurement, which is worse than an absent one.
+  const edgeBindings = resolveEdgeBindings(allEdges, scenarios, 'analysed');
+  const unresolvedBindings = edgeBindings.unresolved.slice();
+  if (baselineAnalysis) {
+    resolveEdgeBindings(baselineAnalysis.allEdges, scenarios, 'baseline')
+      .unresolved.forEach(function (problem) {
+        unresolvedBindings.push(problem);
+      });
+  }
+  if (unresolvedBindings.length) {
+    throw new AnalysisError(
+      'the edge-to-scenario bindings do not resolve against the trees being ' +
+      'analysed, so the edge-level coverage they claim cannot be verified:\n' +
+      unresolvedBindings.map(function (problem) {
+        return '  ' + problem;
+      }).join('\n') +
+      '\nEach binding names a file, a carrier and a guarded subject and must ' +
+      'match exactly one edge per tree. Update EDGE_SCENARIO_BINDINGS to ' +
+      'match the tree, or remove the binding: a coverage claim nobody can ' +
+      're-derive is not evidence.'
+    );
+  }
+
   const sections = {
+    // The preamble is section 1 and its heading is fixed rather than
+    // numbered from here; it is named so the closure table can point back at
+    // the one sentence that quotes the same open figure.
+    preamble: 1,
     howToRead: 4,
     counts: 5,
     summary: 6,
@@ -9222,6 +11230,7 @@ function generate(options) {
     files: files,
     allEdges: allEdges,
     bindings: bindings,
+    edgeBindings: edgeBindings,
     selfTests: selfTests,
     sections: sections,
     closure: closure,
@@ -9286,21 +11295,14 @@ function generate(options) {
         'comparison ran is not a gate.'
       );
     }
-    // AMBIGUOUS counts as open - a pairing that could not be established is
-    // not a preserved mapping - while a PROVEN UNREACHABLE row does not,
-    // because there is no outcome on either tree to preserve. A row whose own
-    // reachability or caller is unresolved is open too, whatever its
-    // comparison said, because its facts are provisional.
-    const open = closure.rows.filter(function (row) {
-      const edge = row.target || row.baseline;
-      if (row.closure === CLOSURE.UNREACHABLE) {
-        return false;
-      }
-      if (row.closure !== CLOSURE.CLOSED && row.closure !== CLOSURE.APPROVED) {
-        return true;
-      }
-      return Boolean(edge && edge.unresolved);
-    });
+    // `isOpenRow` is the authoritative predicate and this gate is the reason
+    // it is defined the way it is: an unestablished pairing is not a
+    // preserved mapping, a PROVEN UNREACHABLE row has no outcome on either
+    // tree to preserve, and a row that compared equal on an unresolved
+    // reachability fact is provisional rather than closed. The summary, the
+    // preamble and the verdict table all count with this same function, so a
+    // gate failure and the document's own figure can never disagree.
+    const open = closure.rows.filter(isOpenRow);
     if (open.length) {
       throw new AnalysisError(
         '--closure-gate: ' + open.length + ' of ' + closure.rows.length +
@@ -9309,7 +11311,19 @@ function generate(options) {
         'each of these is an unpreserved or unverified mapping:\n' +
         open.slice(0, 20).map(function (row) {
           const edge = row.baseline || row.target;
+          // Naming the DIMENSIONS is what makes the line actionable. The
+          // one-line outcome summary carries the funnel, the status, whether
+          // a response is produced and the surface, and NOT the payload,
+          // side effects, log calls or timing - so a row that differs only
+          // in one of those four printed as "changed - baseline X vs target
+          // X", two identical strings and no stated difference, on 4 of the
+          // measured rows. A reader has no way to act on that, and a reviewer
+          // is right to read it as the gate contradicting itself.
+          const differs = (row.differences || []).length
+            ? ' - differs in ' + row.differences.join(', ')
+            : '';
           return '  ' + row.id + ' (' + lineRef(edge) + '): ' + row.closure +
+            differs +
             (row.baselineOutcome && row.targetOutcome
               ? ' - baseline ' + outcomeText(row.baselineOutcome) +
                 ' vs target ' + outcomeText(row.targetOutcome)
@@ -9334,12 +11348,15 @@ function generate(options) {
         'establishes.'
       );
     }
+    // The gate applies to rows that are OPEN, on the same predicate every
+    // other figure uses: a closed row's outcome was established by comparing
+    // two trees, and a row carrying no mapping has nothing to drive.
     const undriven = closure.rows.filter(function (row) {
-      if (row.closure === CLOSURE.CLOSED || row.closure === CLOSURE.APPROVED) {
+      if (!isOpenRow(row)) {
         return false;
       }
       const edge = row.target || row.baseline;
-      return coverageFor(edge, scenarios).level !== 'edge-level';
+      return coverageFor(edge, scenarios, edgeBindings).level !== 'edge-level';
     });
     if (undriven.length) {
       throw new AnalysisError(
@@ -9419,7 +11436,7 @@ const USAGE = [
   '                            that against the route manifest and reports',
   '                            anything else as an unknown route.',
   '  --edge-index <path>       write the machine-readable index, schema',
-  '                            trinket-oss/error-edge-index@2: one record per',
+  '                            trinket-oss/error-edge-index@3: one record per',
   '                            target row AND one per baseline row, keyed by',
   '                            the same stable ids the document prints, with',
   '                            an `unpaired` block naming every row missing',
@@ -9464,10 +11481,10 @@ const COUNTS_CHECK_MODES = ['auto', 'strict', 'off'];
  * Two further rules, for the same reason: NO OPTION IS REPEATABLE, so a second
  * `--out` is a usage error rather than a last-one-wins - this tool writes one
  * document and a caller who named two paths must be told which one it would
- * have used - and A VALUE BEGINNING WITH A DASH IS A MISSING VALUE. The second
- * check previously tested for a `--` prefix only, so `--out -o` recorded an
- * output path of "-o"; any leading dash is now rejected, with `--flag=value`
- * as the escape hatch for a value that genuinely begins with one.
+ * have used - and A VALUE BEGINNING WITH A DASH IS A MISSING VALUE. Any
+ * leading dash is rejected, not just `--`, because testing for `--` alone
+ * accepts `--out -o` and records an output path of "-o"; `--flag=value` is the
+ * escape hatch for a value that genuinely begins with a dash.
  */
 function parseArgs(argv) {
   const options = {
@@ -9604,10 +11621,16 @@ module.exports = {
   assertRowCoherence: assertRowCoherence,
   outcomeDiff: outcomeDiff,
   outcomeOf: outcomeOf,
+  reDifferences: reDifferences,
+  EDGE_SCENARIO_BINDINGS: EDGE_SCENARIO_BINDINGS,
+  OPEN_CLOSURES: OPEN_CLOSURES,
+  CLOSED_CLOSURES: CLOSED_CLOSURES,
+  NOT_COMPARED_CLOSURES: NOT_COMPARED_CLOSURES,
   buildCorpus: buildCorpus,
   funnelsNamedIn: funnelsNamedIn,
   calleeKind: calleeKind,
   driveVia: driveVia,
+  edgeSubject: edgeSubject,
   isDrivable: isDrivable,
   memberMentions: memberMentions,
   collectBindings: collectBindings,
@@ -9615,9 +11638,10 @@ module.exports = {
   collectFileFacts: collectFileFacts,
   coverageFor: coverageFor,
   escapeInline: escapeInline,
+  isOpenRow: isOpenRow,
+  isProvisionalRow: isProvisionalRow,
   isReturned: isReturned,
   joinTrees: joinTrees,
-  outcomeOf: outcomeOf,
   readScenarios: readScenarios,
   surfaceFor: surfaceFor,
   valueKind: valueKind,
@@ -9630,7 +11654,9 @@ module.exports = {
   main: main,
   parseArgs: parseArgs,
   renderDocument: renderDocument,
+  resolveEdgeBindings: resolveEdgeBindings,
   resolveFunnels: resolveFunnels,
+  routedGroupResolver: routedGroupResolver,
   runSelfTests: runSelfTests,
   targetText: targetText
 };

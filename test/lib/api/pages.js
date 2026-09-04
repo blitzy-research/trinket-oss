@@ -1,24 +1,15 @@
-// Route-level parity evidence for the page and error-page surface.
+// Route-level coverage for the page and error-page surface, driven over real
+// HTTP through the same Supertest agent the rest of the suite uses.
 //
-// Every expectation below is a MEASURED value, captured over real HTTP through
-// the same Supertest agent the rest of the suite uses, and adopted verbatim.
-// Four of the six deliberately assert outcomes that read like defects. They are
-// not mistakes, and they must not be "corrected":
-//
-//   * an authenticated visit to /login or /signup answers 500, not a redirect;
-//   * /api and /library answer 404, because neither path has a registered route.
-//     test/smoke-test.sh once claimed 200 for both; this measurement is what
-//     corrected it, and that script now asserts 404 too.
-//
-// Preserving those outcomes is the whole point of the file. Behaviour
-// improvements are prohibited, so a change that made either pair answer more
-// agreeably would be a regression against the contract pinned here - and would
-// be caught here, which is why the statuses are asserted exactly rather than as
-// ranges or negations.
+// Four of the six cases assert outcomes that read like defects and are what the
+// application does: an authenticated visit to /login or /signup answers 500
+// rather than redirecting, and /api and /library answer 404 because neither
+// path has a registered route. Each case explains its cause where it sits. The
+// statuses are asserted exactly, rather than as ranges or negations, so that
+// making either pair answer more agreeably fails here.
 
 // `should` is bound for its side effect, which every assertion below depends
 // on: calling chai's should() installs the getter that `.should` reads through.
-// It is deliberately the only require here besides the flow helper.
 var should = require('chai').should(),
     flow   = require('../../helpers/flow');
 
@@ -44,9 +35,9 @@ module.exports = function() {
     });
 
     after(function() {
-      // Restoring through switchUser with NO callback is the established
-      // anonymous form: with no `done` argument it only reassigns activeUser,
-      // so no credential lookup happens for a key that may have no defaults.
+      // Restoring through switchUser with no callback is the anonymous form:
+      // without a `done` argument it only reassigns activeUser, so no
+      // credential lookup happens for a key that may have no defaults.
       flow.switchUser(enteredAs);
     });
 
@@ -57,23 +48,23 @@ module.exports = function() {
         }));
       });
 
-      // PRESERVED BEHAVIOUR - do not relax this to a redirect or to "not 500".
       // The authenticated branch of pages.login evaluates
       // `reply.redirect('/home')`, and `reply` is not a binding in that scope,
       // so the expression throws. The handler catch-all in lib/util/routeParser
       // turns the throw into a badImplementation Boom, and app.js's
-      // onPreResponse renders that as 50x.html for a browser request. Measured:
-      // 500, text/html. The exact status is what stops the throw being quietly
-      // repaired into the 302 the surrounding code appears to intend.
+      // onPreResponse renders that as 50x.html for a browser request. The exact
+      // status is asserted so the throw is not quietly turned into the 302 the
+      // surrounding code looks like it intends; a redirect here, or a relaxed
+      // "not 500", would hide it.
       it('should answer 500 rather than redirecting me to the home page', function() {
         flow.wasOk.should.be.true;
         flow.lastResponse.statusCode.should.eql(500);
         flow.lastContentType.should.contain('text/html');
         // The rendered error page, not just its status. lib/views/50x.html is
         // what app.js's error extension renders for a >= 500 Boom on a browser
-        // request, and these two markers are its title and heading, measured
-        // over real HTTP. Without them a 500 carrying an empty body, a
-        // stack-trace page, or the login form itself would still pass.
+        // request, and these two markers are its title and heading. Without
+        // them a 500 carrying an empty body, a stack-trace page, or the login
+        // form itself would still pass.
         flow.lastResponse.text.should.contain('<title>Something went wrong</title>');
         flow.lastResponse.text.should.contain('<h1>Something went wrong <span>:(</span></h1>');
       });
@@ -86,10 +77,9 @@ module.exports = function() {
         }));
       });
 
-      // PRESERVED BEHAVIOUR, by the identical mechanism as the login page
-      // above: the authenticated branch of pages.signup evaluates
-      // `reply.redirect('/welcome')` against the same unbound `reply`, throws,
-      // and answers through the same funnel. Measured: 500, text/html.
+      // The same mechanism as the login page above: the authenticated branch of
+      // pages.signup evaluates `reply.redirect('/welcome')` against the same
+      // unbound `reply`, throws, and answers through the same funnel.
       //
       // Neither of these two pages sets the 'next' session value on this path.
       // That assignment lives in each handler's `else` branch and so belongs to
@@ -125,7 +115,7 @@ module.exports = function() {
         // 200 carrying the wrong page or an empty body cannot pass: the title
         // and body id come from the `title` and `body_id` blocks
         // lib/views/static/about.html overrides in base.html, and the heading
-        // comes from its own content block. Measured over real HTTP.
+        // comes from its own content block.
         flow.lastResponse.text.should.contain('<title>About Trinket</title>');
         flow.lastResponse.text.should.contain('id="about"');
         flow.lastResponse.text.should.contain('<h2>About Trinket</h2>');
@@ -149,30 +139,18 @@ module.exports = function() {
       });
     });
 
-    // The two cases below are an R-f resolution: where an expectation is
-    // ambiguous, the observed behaviour of the application decides it.
-    //
-    // test/smoke-test.sh USED to assert 200 for both of these paths. It no
-    // longer does: the measurement below is what settled the question, and that
-    // script now asserts 404 for both, with the reasoning recorded at its own
-    // site. The two pieces of evidence this checkpoint ships therefore agree.
-    //
-    // MEASURED HERE: both answer 404 with content-type text/html, whether the
-    // visitor is authenticated or not, and both before and after the asset
-    // build and the component fetch. 404 is therefore the value adopted.
-    //
-    // The cause is that neither path has a route: no literal declaration for
-    // either exists in config/, and the only /library-prefixed routes are
-    // deeper paths that bare /library does not match. Both fall through to the
-    // Inert catch-all, which serves ./public as a directory, and ./public
-    // contains no `api` or `library` entry - so Inert resolves neither a file
-    // nor a directory index and produces a 404 Boom, which app.js's
-    // onPreResponse renders as 404.html. The component fetch populates only
-    // public/components, so it cannot change this outcome; that was confirmed
-    // rather than assumed.
+    // Both of the paths below answer 404 with content-type text/html, whether
+    // the visitor is authenticated or not, because neither has a route: no
+    // literal declaration for either exists in config/, and the only
+    // /library-prefixed routes are deeper paths that bare /library does not
+    // match. Both fall through to the Inert catch-all, which serves ./public as
+    // a directory, and ./public holds no `api` or `library` entry - so Inert
+    // resolves neither a file nor a directory index and produces a 404 Boom,
+    // which app.js's onPreResponse renders as 404.html. The component fetch
+    // populates only public/components and so cannot change this.
     //
     // Adding a route, or creating a public/api or public/library directory to
-    // manufacture a 200, would be a prohibited change to the route surface.
+    // manufacture a 200, would change the route surface.
     describe('When I visit /api', function() {
       before(function(done) {
         flow.get('/api').end(flow.setLastResponse(function(err, res) {
@@ -187,7 +165,7 @@ module.exports = function() {
         // lib/views/404.html, which app.js's error extension renders for a 404
         // Boom on a browser request. Asserting the rendered page distinguishes
         // "no route, error page served" from a 404 with an empty body or one
-        // produced by Inert's own directory listing. Measured over real HTTP.
+        // produced by Inert's own directory listing.
         flow.lastResponse.text.should.contain('<title>Page not found</title>');
         flow.lastResponse.text.should.contain('<h1>Page not found</h1>');
       });

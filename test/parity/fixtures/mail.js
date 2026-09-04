@@ -1,320 +1,74 @@
-// Captured mail for the parity harness.
+// Captured mail for the parity harness - no transport, no socket, no DNS.
 //
-// One of the three external-effect interceptors in test/parity/fixtures/. It is
-// loaded as a preload - `node --require <abs path>/test/parity/fixtures/mail.js
-// app.js` - by test/parity/server.js, before the application, and it is also
-// required directly by test/parity/worker.js. It installs itself on first
-// require. Node core only, CommonJS, no CLI arguments.
+// One of the three external-effect interceptors under test/parity/fixtures/.
+// It installs itself on first require, is preloaded by test/parity/server.js
+// before the application, and is required directly by test/parity/worker.js,
+// the only observer of the export worker's notification mail. Node core only,
+// CommonJS, no CLI arguments, no console output.
 //
-// ===========================================================================
-// WHY THIS FILE EXISTS
-// ===========================================================================
-// Configuration alone is not sufficient isolation, and that is the whole
-// reason this file exists. test/parity/server-overlay.json sets app.mail.from
-// and app.mail.host, and lib/util/mailer.js decides whether mail is configured
-// from exactly those two values, so `isConfigured()` is TRUE inside the parity
-// run. Without a substitute, the eight `mailer.send` call sites would each
-// reach nodemailer's `createTransport(...).sendMail(...)` and a real SMTP
-// connection would be dialled from inside the harness.
+// INVOCATION
+//   node --require <worktree>/test/parity/fixtures/mail.js app.js  (server.js)
+//   require('<worktree>/test/parity/fixtures/mail.js')             (worker.js)
+//   PARITY_APP_ROOT  the worktree under test, for resolving its mailer and
+//                    its `config`; falls back to process.cwd(). `__dirname`
+//                    would resolve the TARGET tree on a baseline run.
+//   PARITY_MAIL_LOG  the evidence file; unset, calls are kept in memory only
+//                    and nothing is written. These two are every variable
+//                    read, and no unset or malformed value throws.
 //
-// Substitution happens at the MODULE BOUNDARY, not over the network: the
-// `send` property of the application's own mailer instance is replaced with a
-// capturing function. There is no transport, no socket and no DNS, so the
-// corpus is reproducible on any host, and every value this file produces is a
-// fixed literal so test/parity/replay.js can compare exactly instead of
-// normalizing (AAP 0.9.3).
-//
-// It is also the only way test/parity/worker.js can observe the export
-// worker's notification mail on the success and the failure path, which AAP
-// 0.9.3 makes part of the worker gate.
-//
-// ===========================================================================
-// USER-SPECIFIED RULES
-// ===========================================================================
-// `review_rules` reports that NO user-specified rules were provided for this
-// project - it returns exactly "No user rules provided." - which AAP 0.7 and
-// 0.10.1 independently record. None are invented here, and their absence is
-// not read as licence to lower the bar: enterprise-standard practice governs,
-// and the binding constraints are the request's own RULES block as interpreted
-// in AAP 0.7, cited by name below and never reproduced.
-//
-//   R-a  Single purpose. This file replaces `mailer.send`, captures the calls
-//        and writes the evidence file. It renders no template, emulates no
-//        SMTP conversation, provides no assertion helper beyond exposing the
-//        captured calls, and re-implements nothing else from
-//        lib/util/mailer.js.
-//   R-b  Runs on Node 22, with no module excluded. "No module excluded" is
-//        what puts lib/workers/exports.js in scope, and its two notification
-//        mails are asserted by the worker gate, which has nothing to observe
-//        without this file.
-//   R-c  Node core only. `fs`, `path` and `crypto` are the only requires,
-//        plus two DYNAMIC requires resolved against the tree under test: the
-//        application's own lib/util/mailer, so that its `send` can be swapped
-//        and its original retained, and the application's own `config`
-//        instance, read - never written - to evaluate the mail-feature
-//        invariant below. `crypto` is what makes the persisted evidence
-//        redacted rather than laundered: a sha256 digest is the verification
-//        channel described under EVIDENCE FILE FORMAT. Deliberately NOT
-//        required, even though test/helpers/mail.js uses both: `sinon` and
-//        `q`. This module is also preloaded inside the BASELINE worktree's
-//        process, where sinon is 1.7.3 and the target's devDependency graph
-//        does not exist, so the swap is plain property replacement against a
-//        saved original.
-//   R-d  Behaviour "improvements" are prohibited; a quirk is preserved and
-//        documented, not fixed. Two rulings are implemented literally:
-//          (1) Only what the application ACTUALLY reached is captured. No send
-//              is ever synthesized. In particular
-//              lib/workers/exports.js:127-129 configures nunjucks only when
-//              NOT config.isTest, so under NODE_ENV=test sendCompletionEmail
-//              throws inside nunjucks.render (:419) BEFORE mailer.send (:421)
-//              is reached. That throw is baseline behaviour on that path; a
-//              missing 'export-ready' capture is therefore a true observation
-//              and is neither pre-empted nor papered over here.
-//          (2) `isConfigured` is left UNPATCHED. Its result is what seven
-//              gates branch on, and configuration - not this fixture - is what
-//              makes those branches reachable.
-//   R-e  Error-to-response mappings survive unchanged, so the stub NEVER
-//        rejects and never throws. Two measured consequences make this
-//        load-bearing rather than defensive:
-//          lib/controllers/trinket.js:853 does `return mailer.send(...)` and
-//            its `.catch` returns a deliberately unsettled promise for any
-//            rejection that is not the string "threshold exceeded", so a
-//            rejecting stub would hang that route.
-//          lib/controllers/users.js:313, :1327, :1339 and
-//            lib/controllers/admin.js:109 do not await the promise at all, so
-//            on Node 22 a rejection there is an unhandled rejection, which by
-//            default terminates the process.
-//        A benign deterministic value is resolved instead, on every path.
-//   R-f  Baseline observed behaviour is the tie-breaker. ONE implementation is
-//        loaded into BOTH worktrees and contains no branch on which tree is
-//        running, so any difference the corpus reports belongs to the
-//        application and never to the harness. lib/util/mailer.js is
-//        byte-identical at base commit 2f8712a and on the target tree
-//        (measured: an empty `git diff` for that path), so the patch target's
-//        shape is the same on both sides.
-//   BOUNDARIES & PRESERVATION, client-visible page behaviour. This file must
-//        not add or alter mail configuration in ANY way, and it does not: the
-//        `config` instance is READ and never written, and no key under `mail`
-//        is created, defaulted or deleted anywhere in this file.
-//        lib/util/routeParser.js:616-619 computes, inside addUserContext:
-//            hasAWS     = config.aws && config.aws.mail && config.aws.mail.keyId && config.aws.mail.key
-//            hasMailgun = config.app.mail && config.app.mail.key && config.app.mail.domain
-//            hasFrom    = config.app.mail && config.app.mail.from
-//            json.emailEnabled = hasFrom && (hasAWS || hasMailgun)
-//        addUserContext runs for EVERY rendered page that carries user
-//        context, so `emailEnabled` is a client-visible value and its state is
-//        a precondition of the whole corpus, not a detail of this fixture.
-//        THE INVARIANT IS EXECUTABLE HERE, not merely described:
-//        evaluateMailFeature() re-computes those three predicates against the
-//        application's own `config` instance at install time, coerces each to
-//        a boolean - the raw values ARE the credentials, `config.aws.mail.key`
-//        and `config.app.mail.key`, and measured, `emailEnabled` evaluates to
-//        the Mailgun DOMAIN string when credentials are present, so storing a
-//        raw predicate would recreate the leak INT-F21 and SCR-F22 are about -
-//        and compares `emailEnabled` against the required state, which is
-//        FALSY (REQUIRED_EMAIL_ENABLED).
-//        HOW A GATE READS IT: `status().mailFeature.ok === true`, or
-//        featureState(), rather than trusting this comment; the same booleans
-//        are written to the evidence file once, as the `mail-feature` record,
-//        so a retained artifact carries the invariant for the run it belongs
-//        to, and a violating run additionally carries a loud
-//        `mail-feature-unexpected` note. Measured at the current overlay
-//        (app.mail.from + app.mail.host only, with config/default.yaml's
-//        aws.mail.keyId and .key both ''): hasFrom true, hasAWS false,
-//        hasMailgun false, `emailEnabled` undefined - falsy - so ok is true.
-//        With no NODE_CONFIG at all app.mail.from is '' and it is falsy again.
-//        A failure means mail credentials appeared in configuration, every
-//        rendered page's user context changed, and replay.js would diff on
-//        every one of them.
-//        `installed` deliberately stays TRUE and `diagnostic` deliberately
-//        stays null on a violation: uninstalling would hand the genuine `send`
-//        back and dial real SMTP, which is far worse than a changed page, and
-//        `diagnostic` means "the install is inactive", which
-//        test/parity/worker.js:2651 asserts is null on a healthy run.
-//        REQUIRED STATE, OWED ELSEWHERE: setting `app.mail` and `aws.mail`
-//        EXPLICITLY to the required state - rather than inheriting it from
-//        config/default.yaml - belongs to test/parity/server-overlay.json,
-//        which the replay-gate-semantics unit owns. This file asserts the
-//        state; it does not and must not set it.
-//   AAP 0.8  Zero-warning bar. test/parity/server.js runs the whole exercise
-//        under --pending-deprecation --trace-deprecation with stderr captured,
-//        so there is no `url.parse` (DEP0169), no `new Buffer` (DEP0005), no
-//        deprecated fs or stream form, and NO console output of any kind:
-//        evidence goes to PARITY_MAIL_LOG and nowhere else. Note that
-//        lib/util/mailer.js:31 logs "Email not configured, skipping send to:"
-//        on its unconfigured path - that is application output on the very
-//        path this fixture replaces, and this stub deliberately emits nothing
-//        comparable.
-//
-// Folder prohibitions, all absolute and all honoured: no network access on any
-// code path (the genuine `send` is retained solely so restore() can put it
-// back, and is never invoked from this file); nothing from test/helpers/** or
-// test/lib/** is required - test/helpers/mail.js informed the restore
-// discipline only, and its Mocha before/after hooks are impossible in a
-// preload because Mocha 3 loads --require modules before installing the BDD
-// globals, so `typeof before === 'undefined'` there (AAP 0.6.5); no
-// `url.parse` anywhere; no nondeterministic value in anything this file
-// produces; no application file, no config/*.yaml and nothing in the baseline
-// worktree is edited; and no CLI argument is read.
-//
-// Load-order safety (AAP 0.6.5 defect 2): `mongoose-schema-extend` replaces
-// the global Object.getPrototypeOf and makes @hapi/hapi unloadable for the
-// rest of the process if it loads first. lib/util/mailer.js requires only
-// `nodemailer`, `config` and `underscore`, so requiring it from a preload is
-// safe - measured, it emits nothing on stdout or stderr under
-// --pending-deprecation --trace-deprecation. Nothing under config/db,
-// config/app.config or lib/models/** is required here, and `config` is never
-// required with a bare specifier, which would load the TARGET worktree's own
-// instance rather than the instance the application under test holds: the
-// mail-feature evaluation resolves it as
-// require(require.resolve('config', {paths: [appRoot()]})), the same appRoot
-// discipline the mailer resolution uses, and only AFTER lib/util/mailer has
-// been loaded - which requires `config` itself, so the entry is already in
-// require.cache and the evaluation adds no load-order risk of its own.
-//
-// ===========================================================================
-// ENVIRONMENT CONTRACT - the authoritative list. These TWO variables are every
-// variable this file reads, so test/parity/server.js can match it exactly. No
-// unset, empty or malformed value causes a throw, and nothing is read from the
-// command line.
-// ===========================================================================
-//   PARITY_APP_ROOT  Absolute path of the worktree under test, used to resolve
-//                    the application's own lib/util/mailer.
-//                    FALLBACK: process.cwd(). The fallback is correct because
-//                    test/parity/server.js spawns the application with the
-//                    worktree under test as its working directory, while this
-//                    file lives in the TARGET worktree. `__dirname` is
-//                    therefore deliberately NOT used for resolution: on a
-//                    baseline run it would resolve the target tree's mailer,
-//                    patch a module instance no controller holds, and let
-//                    every send through to a real transport while reporting a
-//                    successful install.
-//   PARITY_MAIL_LOG  Absolute path of the evidence file. When unset, calls are
-//                    captured in memory only and NOTHING is written. When set,
-//                    one REDACTED record per captured call is appended the
-//                    moment the call happens - never the recipient, the
-//                    subject or the body, see EVIDENCE FILE FORMAT - and
-//                    flush() rewrites the file with the complete set of the
-//                    same redacted lines.
-//                    THIS FILE HOLDS SENDS AND NOTHING ELSE. The fixture's own
-//                    diagnostics - a mailer that could not be resolved, a
-//                    failed patch, the mail-feature evaluation - go to the
-//                    sidecar '<PARITY_MAIL_LOG>.notes.jsonl', which is derived
-//                    from this variable rather than configured by one of its
-//                    own. That split is load-bearing:
-//                    test/parity/capture.js:4269-4278 and
-//                    test/parity/replay.js:5027-5033 report the line count of
-//                    this file as the number of mails a run captured, so a
-//                    diagnostic sharing it would be counted as a mail the
-//                    application never sent - unconditionally, since the
-//                    mail-feature record is written on every install. Both
-//                    files are created with mode 0600
-//                    and, once, tightened to 0600 if it already existed, so a
-//                    retained artifact is not left readable to every account
-//                    on the host. A write, mode or flush fault is recorded in
-//                    memory, never thrown and never printed - not even at load
-//                    time, because a preload that throws kills the server
-//                    before app.js loads.
-//                    OWNERSHIP (SCR-F56). This path is the CALLER's: the
-//                    harness chooses it, usually inside its own run directory,
-//                    and test/parity/worker.js and test/parity/replay.js read
-//                    the file after the run. So this file tightens the mode and
-//                    creates nothing else - no directory is created here, on
-//                    any path, and nothing is removed at exit. Removing a
-//                    caller-owned artifact would delete the evidence this
-//                    fixture exists to produce; the run directory that holds
-//                    it, and its mode, belong to the tool that created it.
-//
-// ===========================================================================
-// BASELINE RECORD (R-f) - measured against the tree, not assumed.
-// ===========================================================================
-// PATCH TARGET. lib/util/mailer.js exports a plain object literal:
-//   module.exports = { isConfigured: isConfigured, send: async function(to, subject, options) }
-// with `send` at :29. Every one of the seven consumers binds the OBJECT -
-// `var mailer = require('../util/mailer')` - and calls `mailer.send(...)`,
-// resolving the property at call time; none destructures `send` and none
-// caches it. app.js:36, lib/controllers/{pages,admin,trinket,users,course}.js,
-// lib/models/courseInvitation.js and lib/workers/exports.js:25 all reach the
-// same instance through require.cache. Replacing the property on that one
-// object is therefore visible to all of them, whether they required the module
-// before or after this preload ran.
-//
-// THE EIGHT `mailer.send` CALL SITES, none of them behind an isConfigured()
-// gate, so the stub must tolerate being called on a path where no gate ran.
-// Line numbers are the current tree's, with the AAP's baseline numbers in
-// parentheses where they have moved:
-//   lib/workers/exports.js:421 (397)   {html, type:'export-ready'}   RETURNED into the export chain
-//   lib/workers/exports.js:434 (410)   {html, type:'export-failed'}  RETURNED into the export chain
-//   lib/controllers/users.js:313 (257) {html, type:'password-reset'} un-awaited, after the response is settled
-//   lib/controllers/users.js:1327 (1115) {html, type:'confirm-email-change'} un-awaited
-//   lib/controllers/users.js:1339 (1127) {html, type:'verify-email'} un-awaited
-//   lib/models/courseInvitation.js:82  {html, replyTo, type:'course-invitation'} returned into a chain
-//   lib/controllers/admin.js:109 (104) {text}  un-awaited, and the ONLY site with NO `type` field
-//   lib/controllers/trinket.js:853 (873) {html, subject, optional replyTo/address} returned into a chain
-// So `options` legitimately carries html, text, type, replyTo or address, and
-// `type` is legitimately ABSENT. The record keeps whatever arrived.
-//
-// THE SEVEN isConfigured() GATES, grep-verified as exactly seven and left
-// untouched: lib/controllers/trinket.js:787, lib/controllers/users.js:268,
-// :846, :889, :960, lib/controllers/course.js:823, :877.
-//
-// WHAT THIS FIXTURE DOES NOT REPRODUCE, stated so a reviewer is not surprised:
-// `send` is replaced WHOLESALE, so neither the unconfigured short-circuit at
-// lib/util/mailer.js:30-33 - which logs and returns {skipped, reason} - nor
-// the `_.extend({from, to, subject}, options)` defaulting at :35-39 runs. The
-// captured record therefore holds exactly what the CALLER passed: `from` is
-// not defaulted into it, and `to`/`subject` appear as the arguments they were
-// rather than folded into the options object. That is the point - a reviewer
-// reads the call, not the library's normalization of it.
-//
-// EVIDENCE FILE FORMAT. One JSON object per line (JSONL), encoded at capture
-// time and never re-encoded, with keys in a fixed order:
+// ARTIFACT
+//   One JSONL record per captured call, appended as the call happens; flush()
+//   rewrites the file with the same set. Keys in fixed order:
 //   {"event":"send","sequence":0,"type":"password-reset","redacted":true,
-//    "to":{"kind":"string","length":26,"digest":"sha256:<64 hex>"},
-//    "subject":{...same shape...},
-//    "options":{"keys":["html","type"],
-//               "values":{"html":{"kind":"string","length":1841,
-//                                 "digest":"sha256:<64 hex>",
-//                                 "urls":["http://127.0.0.1:3010/reset-pass?key=REDACTED"]},
-//                         "type":{"kind":"marker","value":"password-reset"}}}}
+//    "to"/"subject":{kind,length,digest}, "options":{keys,values}}
+//   <PARITY_MAIL_LOG>.notes.jsonl carries the fixture's OWN records -
+//   unresolved mailer, failed patch, mail-feature evaluation - because
+//   capture.js and replay.js report the send file's line count as the number
+//   of mails a run captured. Both files are created 0600, and the path is the
+//   CALLER's: no directory is created and nothing is removed at exit. A write,
+//   mode or flush fault is recorded in memory, never thrown or printed, since
+//   a preload that throws kills the server before app.js loads.
 //
-// TWO WINDOWS, AND ONLY ONE OF THEM LEAVES THE PROCESS. What the application
-// passed is kept verbatim IN MEMORY, in the assertion window calls() returns,
-// and that window is the parity oracle: test/parity/worker.js asserts the
-// recipient, the subject and the rendered body off it. Nothing verbatim is
-// ever written. The file carries a STRUCTURAL projection of the same calls,
-// built by redact() before the encoder is ever handed a record, because the
-// bodies are password-reset, e-mail-verification, course-invitation and admin
-// session-alert mail: a retained artifact holding them would persist live
-// recovery URLs, invitation tokens, recipient addresses and session detail in
-// plaintext (CWE-532). An earlier revision of this file recorded those values
-// verbatim on the argument that normalizing them would hide what the
-// application sent. That argument is answered by the in-memory window, which
-// preserves exactly what was sent for assertions; it does not license writing
-// the same bytes to a file that outlives the run, so the persisted artifact is
-// redacted and this paragraph supersedes that reasoning.
+// SUBSTITUTION IS AT THE MODULE BOUNDARY
+// lib/util/mailer.js's `isConfigured` reads only app.mail.from and
+// app.mail.host, which the overlay sets, so mail IS configured and every
+// `mailer.send` would otherwise dial SMTP through nodemailer. The mailer
+// exports a plain object whose `send` each call site resolves at call time, so
+// replacing that property reaches consumers on either side of this preload;
+// the genuine one is kept only for restore(), and `isConfigured` stays
+// UNPATCHED, its result being what seven configuration gates branch on.
+// Nothing under config/db, config/app.config or lib/models/** is required
+// here, since that would let `mongoose-schema-extend` make @hapi/hapi
+// unloadable for the process; and neither `sinon` nor `q` is required, the
+// baseline worktree being preloaded with this same file.
 //
-// WHAT SURVIVES VERBATIM, and why each one is safe and load-bearing:
-//   event     the record kind.
-//   sequence  sends in process order, NOT reset by reset(), so a reviewer can
-//             align the file with an assertion window.
-//   type      the `options.type` discriminator. It is a fixed template name
-//             chosen by the call site - 'password-reset', 'export-failed' and
-//             the six others listed above - never user or generated content,
-//             and test/parity/replay.js:5032 and test/parity/capture.js:4274
-//             report the artifact as countBy(records, 'type'), so it stays at
-//             the TOP LEVEL and unaltered. Both tools also read
-//             records.length, so every record stays one line of valid JSON.
-//   redacted  the marker that tells a reviewer which schema they are reading.
+// THE STUB NEVER REJECTS, AND SYNTHESIZES NOTHING
+// It resolves one benign frozen value on every path:
+// lib/controllers/trinket.js's share-threshold handler returns the promise and
+// its `.catch` leaves any other rejection unsettled, hanging that route, while
+// the un-awaited sites turn a rejection into an unhandled rejection that
+// terminates the process. No call site sits behind an isConfigured() gate, so
+// `options` legitimately carries html, text, type, replyTo or address, `type`
+// is legitimately ABSENT at the admin site, and the record keeps whatever
+// arrived. lib/workers/exports.js configures nunjucks only when NOT
+// config.isTest, so under NODE_ENV=test its completion path throws before
+// `mailer.send` and a missing 'export-ready' capture is a true observation.
+// Replacing `send` wholesale also bypasses the mailer's unconfigured
+// short-circuit and its `_.extend({from, to, subject}, options)` defaulting,
+// so a record holds exactly what the CALLER passed.
 //
-// THE DIGEST IS THE VERIFICATION CHANNEL. `to` and `subject` become
-// {kind, length, digest} - a full, untruncated sha256 hex of the exact string
-// the application passed. That is what keeps the artifact useful as evidence
-// while holding no PII: a reviewer who expects the seeded recipient hashes it
-// themselves and compares, so a claim about who was mailed is checkable, while
-// the file itself yields no address to anyone who did not already know it.
-// Length is kept alongside because it discriminates a changed body from a
-// changed template without revealing either.
+// TWO WINDOWS, AND ONLY THE REDACTED ONE LEAVES THE PROCESS
+// What the application passed is kept VERBATIM in memory, in the window
+// calls() returns, and the worker gate asserts recipient, subject and rendered
+// body off it. reset() clears that window only - `sequence` keeps counting, so
+// the file stays alignable with it. Nothing verbatim is written: these bodies
+// carry live recovery URLs, invitation tokens and recipient addresses, which a
+// retained artifact would persist in plaintext (CWE-532). A persisted string
+// becomes {kind, length, digest} with a full sha256 a reviewer can recompute,
+// plus URL SKELETONS - origin and path, parameter names without values - so no
+// rendered HTML and no secret reaches the file, and nothing generated or
+// timestamped is recorded. evidence() exports that projection for a consumer
+// building an artifact of its own.
 //
 // OPTIONS BECOME A DESCRIPTION, NEVER A VALUE. `keys` is the sorted key list -
 // so replyTo, address, text or html appearing or disappearing is visible - and
@@ -362,14 +116,26 @@
 // that miscount unconditional. Those details carry fixture-internal literals,
 // filesystem paths, booleans and digests only; see note() and notePath().
 //
-// ONE CONSUMER-SIDE OBLIGATION THIS FIXTURE CANNOT DISCHARGE. calls() is raw by
-// contract, and a consumer that copies it into a retained artifact of its own
-// re-creates the leak this file closes. test/parity/worker.js:3047-3055 does
-// exactly that today - `to: call.to, subject: call.subject` into the projection
-// it serializes at :3709-3712 - so a harness building an artifact must
-// serialize evidence() - the redacted projection, exported for this purpose -
-// and keep calls() for in-memory assertions only. That change belongs to the
-// unit that owns test/parity/worker.js and is reported rather than made here.
+// ONE CONSUMER-SIDE OBLIGATION THIS FIXTURE CANNOT DISCHARGE, and it is why
+// evidence() is exported. calls() is raw by contract, so a consumer that copies
+// it into a retained artifact of its own re-creates the leak this file closes:
+// a harness building an artifact must serialize evidence() - the redacted
+// projection, exported for exactly this purpose - and keep calls() for
+// in-memory assertions only. test/parity/worker.js did copy the raw window,
+// writing `to` and `subject` verbatim into the per-job projection it
+// serializes; it now keeps calls() for its assertions and persists a slice of
+// evidence() instead, taken per job by offset because reset() clears only the
+// assertion window. The obligation itself is still the consumer's - this file
+// cannot stop one reading calls() - so it stays stated here.
+//
+// THE MAIL FEATURE IS CLIENT-VISIBLE, SO ITS STATE IS ASSERTED HERE
+// lib/util/routeParser.js's addUserContext puts json.emailEnabled on every
+// page carrying user context, so mail configuration is a corpus-wide
+// precondition. evaluateMailFeature() re-computes it against the application's
+// own `config` at install time and compares it with REQUIRED_EMAIL_ENABLED,
+// which is falsy; a gate reads status().mailFeature.ok or featureState().
+// config is READ and never written, and a violation keeps `installed` true
+// rather than handing the genuine `send` back.
 
 'use strict';
 
@@ -381,8 +147,8 @@ var crypto = require('crypto');
 // Constants.
 // ---------------------------------------------------------------------------
 
-// Resolved against PARITY_APP_ROOT, never against __dirname. See the
-// environment contract above for why that distinction decides correctness.
+// Resolved against PARITY_APP_ROOT, never against __dirname, which on a
+// baseline run resolves the TARGET tree's mailer instead.
 var MAILER_MODULE = 'lib/util/mailer';
 
 // The value every captured send resolves with. Baseline resolves nodemailer's
@@ -399,11 +165,11 @@ var SEND_RESULT = Object.freeze({ parityFixture: 'mail', captured: true });
 // grep one word to find everything the projection withheld.
 var REDACTED = 'REDACTED';
 
-// The persisted line's upper bound on URL skeletons. Eight is far above every
-// measured body: of the eight templates under lib/views/emails, six carry
-// exactly ONE action URL - passwordReset, verifyEmail, confirmEmailChange,
-// course-invitation, export-ready and shareTrinket, one `href` each - and
-// export-failed and footer.html carry none. A body that produced more is
+// The persisted line's upper bound on URL skeletons. Eight is far above what
+// the templates under lib/views/emails produce: six carry exactly ONE action
+// URL - passwordReset, verifyEmail, confirmEmailChange, course-invitation,
+// export-ready and shareTrinket, one `href` each - and export-failed and
+// footer.html carry none. A body that produced more is
 // truncated with the marker below rather than growing the line without limit.
 var MAX_URL_SKELETONS = 8;
 var URL_TRUNCATION_MARKER = 'urls-truncated';
@@ -436,13 +202,13 @@ var DIGEST_ALGORITHM = 'sha256';
 // Mode for the evidence file. The artifact is redacted, but it is also
 // RETAINED - test/parity/server.js and test/parity/worker.js keep the run
 // directory for a reviewer - so it is created owner-only rather than at the
-// process umask's ambient 0644 (SCR-F22). The run DIRECTORY's mode belongs to
-// the tools that create it and is not touched from here.
+// process umask's ambient 0644. The run DIRECTORY's mode is set by the tool
+// that creates it and is not touched from here.
 var LOG_FILE_MODE = 0o600;
 
 // The mail-feature invariant this fixture asserts: `emailEnabled` must be
-// falsy in the parity run, because every rendered page carries it. See the
-// BOUNDARIES & PRESERVATION rule in the header for the derivation.
+// falsy in the parity run, because lib/util/routeParser.js's addUserContext
+// puts it on every rendered page that carries user context.
 var REQUIRED_EMAIL_ENABLED = false;
 
 // The sidecar the fixture's own diagnostics are written to, appended to
@@ -474,11 +240,9 @@ var NOTE_LOG_SUFFIX = '.notes.jsonl';
 //             diagnostic sharing that file is counted as a mail that was never
 //             sent - and the mail-feature record below is written on EVERY
 //             install, which would make the miscount unconditional. The two
-//             streams therefore go to two paths; see PARITY_MAIL_LOG in the
-//             header.
+//             streams therefore go to two paths.
 // Nothing from `calls` is ever written; nothing in `evidence`, `log` or
-// `noteLog` carries a recipient, a subject or a body. See EVIDENCE FILE FORMAT
-// in the header.
+// `noteLog` carries a recipient, a subject or a body.
 // ---------------------------------------------------------------------------
 var state = {
   installed        : false,
@@ -491,8 +255,8 @@ var state = {
   // Which paths this process has already tightened to LOG_FILE_MODE, keyed by
   // the path itself rather than by a single boolean: PARITY_MAIL_LOG is read on
   // every write, so a harness that re-points it mid-process has a second file
-  // to tighten, and one flag would leave it at the ambient 0644 SCR-F22
-  // reports. Recorded only on SUCCESS, so a chmod that failed is retried on the
+  // to tighten, and one flag would leave the second file at the ambient 0644.
+  // Recorded only on SUCCESS, so a chmod that failed is retried on the
   // next write instead of being abandoned, while `modeFaults` keeps the report
   // of a failing path to one note.
   tightened        : {},
@@ -510,7 +274,7 @@ var state = {
 // ---------------------------------------------------------------------------
 // Evidence log. Nothing in this section may throw into the application and
 // nothing may emit to stdout or stderr: the zero-warning gate captures both
-// streams for the whole run (AAP 0.8), and three of the eight call sites do
+// streams for the whole run, and three of the eight call sites do
 // not await the promise, so a throw here would surface as an unhandled
 // rejection rather than as a handled error.
 // ---------------------------------------------------------------------------
@@ -566,13 +330,13 @@ function reasonOf(err) {
 // window and the encoder, and it is the only thing the encoder is ever handed
 // for a send: the raw record never reaches encode(), which is what makes the
 // artifact structurally unable to carry a recipient, a subject or a body
-// rather than merely unlikely to. See EVIDENCE FILE FORMAT in the header for
-// the schema and for why each field survives in the shape it does.
+// rather than merely unlikely to. The file header's ARTIFACT block carries the
+// persisted schema.
 //
 // Every function here is total: it accepts the caller's own objects, including
 // a throwing getter or a Proxy, and returns a plain describable value without
 // throwing, because three of the eight call sites do not await the promise and
-// a throw would become an unhandled rejection (R-e).
+// a throw would become an unhandled rejection.
 // ---------------------------------------------------------------------------
 
 // Full, untruncated sha256 hex of a string, labelled with its algorithm. This
@@ -591,21 +355,21 @@ function digestOf(text) {
 }
 
 // True when a URL path segment is a credential rather than a route name. Each
-// disjunct is here because a measured call site needs it:
+// disjunct covers a call site:
 //   HEX_SEGMENT_PATTERN starts at EIGHT characters because
-//     lib/models/courseInvitation.js:37 builds its token as
+//     lib/models/courseInvitation.js builds its invitation token as
 //     crypto.createHash('md5').update(email + course.id).digest('hex')
-//     .substring(0, 8) and :70 puts it in a path segment - the ONE measured
-//     mail URL whose secret is in the path - so a rule that only redacted long
-//     segments would leak a live invitation token. Eight also covers the
-//     24-character ObjectId at lib/workers/exports.js:416, whose skeleton
-//     becomes /api/exports/REDACTED/download and still shows the route.
+//     .substring(0, 8) and puts it in a path segment - the one mail URL whose
+//     secret is in the path - so a rule that only redacted long segments would
+//     leak a live token. Eight also covers the 24-character ObjectId in
+//     lib/workers/exports.js's download URL, whose skeleton becomes
+//     /api/exports/REDACTED/download and still shows the route.
 //   JWT_SEGMENT_PATTERN covers a dot-separated signed token in a path. No
 //     template links with one today - the trinket share token is a
-//     `jsonwebtoken` value kept in the yar session
-//     (lib/controllers/trinket.js:306-308), not in a URL - so this disjunct is
-//     here so that a template that later does cannot leak it silently.
-//   The length rules cover an opaque key of an unmeasured shape: digit-bearing
+//     `jsonwebtoken` value lib/controllers/trinket.js keeps in the yar
+//     session, not in a URL - so this disjunct is here so that a template
+//     that later does cannot leak it silently.
+//   The length rules cover an opaque key of an unknown shape: digit-bearing
 //     from sixteen characters, and unconditional from twenty-four, which is
 //     past any route name this application uses.
 function isCredentialSegment(segment) {
@@ -632,7 +396,7 @@ function urlSkeleton(candidate) {
 
   try {
     // `new URL`, never url.parse: url.parse emits DEP0169 and this file runs
-    // inside the --pending-deprecation gate (AAP 0.8).
+    // inside the --pending-deprecation gate.
     parsed = new URL(candidate);
   }
   catch (e) {
@@ -727,8 +491,8 @@ function identityOf(value) {
   if (text === null) {
     // The value could not be coerced at all - a throwing toString() or
     // valueOf(), or a revoked Proxy. Its presence is recorded and nothing
-    // else can be. Measured: a Symbol is NOT this case, because String() on a
-    // Symbol succeeds; it is recorded below as kind 'symbol' with the digest
+    // else can be. A Symbol is NOT this case, because String() on a Symbol
+    // succeeds; it is recorded below as kind 'symbol' with the digest
     // of its description, which reveals nothing.
     return { kind: 'uncoercible' };
   }
@@ -840,8 +604,8 @@ function describeOptions(options) {
 
 // The ONLY projection of a captured send that is ever persisted. `event`,
 // `sequence` and `type` stay at the top level and unaltered because
-// test/parity/replay.js:5030-5032 and test/parity/capture.js:4272-4274 read
-// the artifact as records.length and countBy(records, 'type'); `redacted`
+// test/parity/replay.js and test/parity/capture.js read the artifact as
+// records.length and countBy(records, 'type'); `redacted`
 // marks the schema; everything else is a digest or a shape.
 //
 // `type` is carried through only when it is a STRING, which is what all eight
@@ -876,8 +640,8 @@ function redact(record) {
 //
 // Both kinds of record this is handed are built entirely from primitives - a
 // redacted send projection, or a note whose detail is a literal, a path, a
-// boolean or a digest - so there is no measured input that defeats the
-// encoder. The reduction below is the same last layer the inner catch is: it
+// boolean or a digest - so no input reaching it defeats the encoder. The
+// reduction below is the same last layer the inner catch is: it
 // exists so that this function has no throwing path whatever a future record
 // shape contains, and it carries the DIGESTS rather than the recipient or the
 // subject, because a fallback that re-emitted raw text would reopen exactly
@@ -915,7 +679,7 @@ function encode(record) {
 // option on a write applies only when the file is CREATED, and it is further
 // masked by the process umask, so a file the harness happened to create first
 // - or a run under a permissive umask - would otherwise stay at the ambient
-// 0644 that SCR-F22 reports. One chmod after the first successful write covers
+// 0644. One chmod after the first successful write covers
 // both cases. A failure is recorded in memory only, exactly as a write fault
 // is, and never through note(), because note() writes to the file this
 // function is repairing and would recurse.
@@ -957,15 +721,15 @@ function logPath() {
 // derived from PARITY_MAIL_LOG rather than from a variable of its own, so the
 // authoritative environment contract stays at two entries.
 //
-// The separation is not tidiness. test/parity/capture.js:4269-4278 and
-// test/parity/replay.js:5027-5033 report `mailLog.records.length` as the number
-// of mails a run captured and bucket every line by `type`; a diagnostic in that
-// file is therefore counted as a mail the application never sent. With the
-// mail-feature record written on EVERY install (BE-38) that miscount would be
+// The separation is not tidiness. test/parity/capture.js and
+// test/parity/replay.js report `mailLog.records.length` as the number of mails
+// a run captured and bucket every line by `type`; a diagnostic in that file is
+// therefore counted as a mail the application never sent. With the
+// mail-feature record written on EVERY install that miscount would be
 // unconditional - a run with no mail at all would report one - and false
-// external-effect evidence is exactly what R-f forbids. So PARITY_MAIL_LOG
-// holds sends and nothing else, and the reasons a capture is missing sit next
-// to it under the same owner-only mode.
+// external-effect evidence is worse than none. So PARITY_MAIL_LOG holds sends
+// and nothing else, and the reasons a capture is missing sit next to it under
+// the same owner-only mode.
 function notePath() {
   var target = logPath();
   return target ? target + NOTE_LOG_SUFFIX : null;
@@ -1009,7 +773,7 @@ function appendTo(target, line) {
 //   state.log    the redacted projection, encoded at capture time and never
 //                re-encoded, so the evidence cannot drift if a caller later
 //                mutates the object it passed - and cannot carry the
-//                recipient, the subject or the body at all (INT-F21, SCR-F22).
+//                recipient, the subject or the body at all.
 // The encoder is handed redact(record) and never `record`, which is what makes
 // the separation structural: there is no path from a caller's string to the
 // filesystem.
@@ -1146,11 +910,11 @@ function rewrite(target, lines) {
 
 
 // ---------------------------------------------------------------------------
-// The replacement. Same shape as lib/util/mailer.js:29 - an async function of
-// arity three - so nothing about the call site changes: `await`, `.then()` and
-// fire-and-forget all behave as they did.
+// The replacement. Same shape as lib/util/mailer.js's `send` - an async
+// function of arity three - so nothing about the call site changes: `await`,
+// `.then()` and fire-and-forget all behave as they did.
 //
-// It NEVER rejects and NEVER throws (R-e). Every step that touches caller data
+// It NEVER rejects and NEVER throws. Every step that touches caller data
 // or the filesystem is guarded, and the guard's own failure is swallowed
 // rather than printed, because a capture failure must not become an
 // application failure and must not breach the zero-output bar.
@@ -1189,20 +953,21 @@ capturingSend.parityFixture = 'mail';
 // Install and restore.
 // ---------------------------------------------------------------------------
 
-// The worktree under test. See the environment contract: __dirname would
-// resolve the wrong tree on a baseline run.
+// The worktree under test, from PARITY_APP_ROOT. `__dirname` would resolve the
+// TARGET tree's mailer on a baseline run and patch an instance no controller
+// holds.
 function appRoot() {
   return process.env.PARITY_APP_ROOT || process.cwd();
 }
 
 // ---------------------------------------------------------------------------
-// The mail-feature invariant. See BOUNDARIES & PRESERVATION in the header for
-// the derivation, the precedence and what a violation means; this section is
-// what makes it executable instead of documented (BE-38).
+// The mail-feature invariant, executable rather than described: `emailEnabled`
+// must be falsy in the parity run, because addUserContext puts it on every
+// rendered page that carries user context.
 //
 // Nothing here writes to `config`, and nothing here stores a raw predicate:
 // every value that leaves this section is a boolean, because the raw values
-// are `config.aws.mail.key` and `config.app.mail.key` and, measured, the raw
+// are `config.aws.mail.key` and `config.app.mail.key`, and the raw
 // `emailEnabled` is the Mailgun DOMAIN string when credentials are present.
 // ---------------------------------------------------------------------------
 
@@ -1216,9 +981,10 @@ function readAppConfig() {
   return require(require.resolve('config', { paths: [appRoot()] }));
 }
 
-// Re-computes lib/util/routeParser.js:616-619 against that instance and
-// compares the result with the state the parity run requires. The three
-// predicates are transcribed from those four lines rather than simplified -
+// Re-computes what lib/util/routeParser.js's addUserContext computes for
+// json.emailEnabled, against that instance, and compares the result with the
+// state the parity run requires. The three predicates are transcribed rather
+// than simplified -
 // including their `&&` chains, so an absent `aws` or `app.mail` block behaves
 // exactly as it does there - and each is then coerced with `!!`, which
 // preserves the truthiness the application acts on while storing none of the
@@ -1312,9 +1078,9 @@ function featureBooleans(feature) {
 // record on every install, so a retained artifact asserts the state the run
 // actually had, and a second, loud `mail-feature-unexpected` record when the
 // state is wrong. A violation does NOT set state.diagnostic and does NOT stop
-// the install - see BOUNDARIES & PRESERVATION for why both would be worse than
-// the violation - so a gate reads status().mailFeature.ok, which is exactly
-// what makes the invariant checkable rather than narrated.
+// the install: uninstalling would hand the genuine `send` back and dial real
+// SMTP, and `diagnostic` means the install is inactive. A gate reads
+// status().mailFeature.ok, which is what makes the invariant checkable.
 function recordMailFeature() {
   var feature;
 
@@ -1489,7 +1255,7 @@ function install() {
 // else: no code path in this file ever calls it, which is what makes the "no
 // network access" prohibition structural rather than incidental. Idempotent -
 // a second call is a no-op - and `isConfigured` is never touched, on either
-// side of the swap (R-d).
+// side of the swap.
 function restore() {
   if (state.mailer && typeof state.originalSend === 'function') {
     if (!replaceProperty(state.mailer, 'send', state.originalSend)) {
@@ -1516,8 +1282,7 @@ function restore() {
 // install has resolved the mailer. It is a COPY, so a gate that reads
 // status().mailFeature.ok cannot alter the recorded evaluation. `diagnostic`
 // is deliberately NOT overloaded to carry a violation: it means "the install
-// is inactive", and test/parity/worker.js:2651 asserts it is null on a healthy
-// run.
+// is inactive", and the worker gate asserts it is null on a healthy run.
 function status() {
   return {
     installed  : state.installed,
@@ -1533,20 +1298,20 @@ function status() {
 }
 
 // The evaluated emailEnabled invariant on its own, as a copy, or null when no
-// install has reached the evaluation. A gate asserts featureState().ok - or
-// status().mailFeature.ok - rather than trusting the header's prose.
+// install has reached the evaluation. A gate asserts featureState().ok, or
+// status().mailFeature.ok.
 function featureState() {
   return state.mailFeature ? Object.assign({}, state.mailFeature) : null;
 }
 
 // ---------------------------------------------------------------------------
 // Selection. `type` is the discriminator every call site sets and every gate
-// keys on, so one selector is provided and nothing beyond it (R-a).
+// keys on, so one selector is provided and nothing beyond it.
 // ---------------------------------------------------------------------------
 
 // Captured sends carrying the given `options.type`, in call order. Called with
 // no argument, or with null, it selects the UN-TYPED calls - which is the admin
-// session alert at lib/controllers/admin.js:109, the one site that sets no
+// session alert in lib/controllers/admin.js, the one site that sets no
 // type.
 function findByType(type) {
   var wanted = type === undefined ? null : type;

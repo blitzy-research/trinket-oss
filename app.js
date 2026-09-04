@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
-// Add Q-compatible methods to native Promise for Mongoose 6 compatibility
+// Mongoose 6 resolves native promises, while models and controllers call
+// `.spread()` and `.fail()` on the values they get back. Both are defined here,
+// at the head of the entry point, so they exist before any of that code loads.
 if (!Promise.prototype.spread) {
   Promise.prototype.spread = function(fn) {
     return this.then(function(result) {
@@ -25,8 +27,10 @@ const Vision         = require('@hapi/vision');
 const Yar            = require('@hapi/yar');
 const config         = require('./config/app.config');
 const Helpers        = require('./lib/util/helpers');
-// gleak is not compatible with Node 16+ (uses GLOBAL which was removed)
-// Use a no-op fallback for now
+// `gleak` is not a declared dependency and it reads the removed `GLOBAL`, so
+// this require throws and the no-op fallback is what the process actually runs:
+// `detectLeaks` below reports nothing and `gleak.ignore` does nothing. The
+// interval that calls it still holds the event loop open.
 let gleak;
 try {
   gleak = require('gleak')();
@@ -43,14 +47,16 @@ config.viewEngine = viewEngine;
 
 const cache_control = 'private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate';
 
-// Main async initialization
+// Builds, configures and (under `app.start`) starts the server.
 const init = async () => {
-  // Validate required configuration
+  // The session cookie password must be at least 32 characters. It is checked
+  // here, ahead of the Yar registration below, so a misconfigured process
+  // reports the setting to fix instead of failing inside plugin registration.
   const sessionPassword = config.app.plugins.session.cookieOptions.password;
   const sessionPasswordMissing = !sessionPassword || sessionPassword.length < 32;
 
-  // Production still fails fast, and this guard is evaluated before the
-  // non-production fallback below so that no production process can reach it.
+  // Production fails fast. This guard runs before the non-production fallback
+  // below, so no production process can reach the generated secret.
   if (sessionPasswordMissing && config.isProd) {
     console.error('\n' + '='.repeat(70));
     console.error('ERROR: Session cookie password not configured!');
@@ -68,17 +74,17 @@ const init = async () => {
     process.exit(1);
   }
 
-  // Outside production, derive an ephemeral secret so that a clean checkout
-  // boots: config/local.yaml is gitignored, so `git clean -xfd` removes the
-  // only source of a real value and config/default.yaml ships an empty one.
-  // Installed with a data descriptor rather than a plain assignment because the
-  // `config` package watches every property through an accessor and persists any
-  // assignment to config/runtime.json. Writing this secret there would put it on
-  // disk, make it outlive the process, and -- since runtime.json is layered over
-  // every other source -- let a later NODE_ENV=production run boot on a
-  // development secret instead of failing fast above. Replacing the accessor
-  // keeps the value visible to the server.register read below and persists
-  // nothing.
+  // Outside production an ephemeral secret is derived so that a checkout with no
+  // config/local.yaml boots: that file is gitignored and config/default.yaml
+  // ships an empty password, so there is otherwise no value to register with.
+  //
+  // A data descriptor, not a plain assignment: the `config` package exposes every
+  // property through an accessor that persists what is assigned to
+  // config/runtime.json, which is layered over every other source. Persisting
+  // this secret would put it on disk, let it outlive the process, and let a
+  // later production run boot on a development secret instead of exiting above.
+  // Replacing the accessor keeps the value visible to the read in
+  // server.register below and writes nothing.
   if (sessionPasswordMissing) {
     Object.defineProperty(config.app.plugins.session.cookieOptions, 'password', {
       value: require('crypto').randomBytes(32).toString('hex'),
@@ -89,7 +95,6 @@ const init = async () => {
     log.info('Session cookie password is not configured; generated an ephemeral one for this non-production process. Set app.plugins.session.cookieOptions.password in config/local.yaml to keep sessions valid across restarts.');
   }
 
-  // Create server with Hapi 20+ configuration
   const server = Hapi.server({
     host: config.app.hostname || 'localhost',
     port: config.app.port || 3000,
@@ -111,7 +116,13 @@ const init = async () => {
     }]
   });
 
-  // Register plugins
+  // Sessions are held server-side: `maxCookieSize: 0` keeps the session data in
+  // the MongoDB-backed cache declared above and leaves only the session id on
+  // the wire, so raising it changes the cookie's format. The cookie is secure by
+  // default - `isSecure !== false` means only an explicit `false` in
+  // configuration turns the flag off, where a truthiness test would let an unset
+  // value serve it insecurely - and it is scoped by the configured session name,
+  // which the cookie-expiry extension below matches on.
   await server.register([
     Inert,  // Static file serving
     Vision, // Template rendering
@@ -135,33 +146,39 @@ const init = async () => {
     }
   ]);
 
-  // Add _logIn method to yar for session-based login
-  // Also ensure request.user is set from auth credentials (for inject() calls)
-  // Touch session on each request to implement sliding expiration
   server.ext('onPreHandler', (request, h) => {
     if (request.yar) {
+      // `_logIn` is what every login path calls to establish a session: the
+      // stored `userId` is the only thing the auth scheme below reads, and the
+      // attached user serves the rest of this request without a second lookup.
+      // Callers pass a callback, which is invoked with a null error once the
+      // session has been written; it never reports a failure.
       request.yar._logIn = function(user, cb) {
-        // Store user id in session
         request.yar.set('userId', user._id ? user._id.toString() : user.id);
-        // Also attach user to request for immediate use
         request.user = user;
         if (cb) cb(null);
       };
 
-      // Sliding expiration: touch session to reset TTL on each authenticated request
+      // Touching the session on every request that has one resets its cache
+      // TTL, so a session expires after 24 hours of inactivity rather than 24
+      // hours after login.
       if (request.yar.get('userId')) {
         request.yar.touch();
       }
     }
-    // Set request.user from auth credentials if not already set
-    // This handles inject() calls that pass credentials directly
+    // A request carrying credentials directly - a server.inject with
+    // `credentials` set - skips the auth scheme, so nothing has attached
+    // `request.user` yet and the credentials themselves are the user.
     if (!request.user && request.auth.credentials && request.auth.credentials._id) {
       request.user = request.auth.credentials;
     }
     return h.continue;
   });
 
-  // Configure view engine (Vision) - use nunjucks compile function
+  // Vision renders through the compile function in lib/util/nunjucks, which
+  // owns the environment carrying the application's filters and globals;
+  // rendering any other way would lose them. Caching is on in production only,
+  // so a template edit is visible without a restart elsewhere.
   server.views({
     engines: {
       html: {
@@ -173,27 +190,42 @@ const init = async () => {
     isCached: config.isProd
   });
 
-  // Add onPreResponse extension for cache headers and error pages
+  // Turns an error into the response its client can use, and stamps the
+  // no-store cache headers on everything else.
+  //
+  // The four branches below return immediately, BEFORE the header assignments
+  // that follow them. So a rendered HTML error page carries no Cache-Control,
+  // Pragma, Expires or X-Frame-Options, while an API or JSON error, a Boom
+  // status outside those four (a 400, for instance) and every non-error
+  // response do. Moving the assignments above the branches would change what
+  // is sent on the error pages.
   server.ext('onPreResponse', (request, h) => {
     const response = request.response;
+    // Framing is denied only on the exact paths config.app.xframeDeny lists,
+    // which by default are the landing, login, signup, contact and educators
+    // pages - the embed routes other sites load in an iframe are deliberately
+    // absent. The match is on the path alone, so a query string cannot defeat
+    // it, and a path not listed to the byte is not protected.
     const addXFrame = config.app.xframeDeny && config.app.xframeDeny.indexOf(request.url.pathname) >= 0;
 
     if (response.isBoom) {
       const statusCode = response.output.statusCode;
 
-      // Check if this is an HTML request (not API/JSON)
+      // An /api/ or /partials/ path, or an Accept naming JSON, is answered with
+      // the Boom payload; anything else that will accept HTML gets a page.
       const acceptHeader = request.headers.accept || '';
       const isApiRequest = request.path.startsWith('/api/') ||
                            acceptHeader.includes('application/json') ||
                            request.path.startsWith('/partials/');
 
-      // Render HTML error pages for browser requests
       const wantsHtml = acceptHeader.includes('text/html') ||
                         (!acceptHeader.includes('application/json') && !isApiRequest);
 
       if (!isApiRequest && wantsHtml) {
         if (statusCode === 401) {
-          // Redirect to login for unauthorized page requests
+          // A browser reaching a route it is not authenticated for is sent to
+          // the login form; `takeover` stops the remaining extensions so the
+          // 401 payload is not what gets written.
           return h.redirect('/login').takeover();
         } else if (statusCode === 404) {
           return h.view('404.html').code(404);
@@ -212,6 +244,8 @@ const init = async () => {
         response.output.headers['X-Frame-Options'] = 'deny';
       }
     }
+    // A Boom exposes its headers on `output`, any other response sets them
+    // through `header()` - the same three values by two different routes.
     else if (response.header) {
       response.header('Cache-Control', cache_control);
       response.header('Pragma', 'no-cache');
@@ -225,17 +259,24 @@ const init = async () => {
     return h.continue;
   });
 
-  // Add onPreResponse extension for cookie expiration
+  // Gives the session cookie a one-year Expires, so a browser keeps it across
+  // restarts instead of dropping it at the end of the session.
+  //
+  // This works by wrapping `_header`, a private field on the response, and it
+  // is guarded on that field being a function: `request.cookie` is set by the
+  // route wrapper in lib/util/routeParser for a request that establishes a
+  // session, but if the framework stops populating `_header` the guard simply
+  // fails and the whole extension becomes a silent no-op: the cookie is still
+  // sent, just without the Expires this adds, and nothing reports it.
   const cookieIsSecure = config.app.plugins.session.cookieOptions.isSecure !== false;
   server.ext('onPreResponse', (request, h) => {
-    // if this is a cookie-setting request and we have a _header method
     if (request.cookie && request.response && typeof request.response._header === "function") {
       const header = request.response._header;
       const sessionName = config.app.plugins.session.name || 'session';
 
       request.response._header = function(key, value) {
-        // find the 'set-cookie' header
         if (key.match(/^set\-cookie$/i)) {
+          // A single Set-Cookie arrives as a string, several as an array.
           if (!Array.isArray(value)) {
             value = [value];
           }
@@ -243,20 +284,23 @@ const init = async () => {
           nextYear.setFullYear(nextYear.getFullYear() + 1);
 
           for (let i = 0; i < value.length; i++) {
-            // find the session portion of the cookie
+            // Only the session cookie is rewritten, and only when it does not
+            // already carry an Expires of its own - matching by prefix, since
+            // the value follows the name.
             if (value[i].indexOf(sessionName) === 0) {
-              // add a custom expires if an expires is not already present
               if (!value[i].match(/;\s*Expires=/i)) {
                 value[i] += "; Expires=" + nextYear.toUTCString();
               }
-              // Only add Secure flag if isSecure is true in config
+              // SameSite=None requires Secure, so the pair is added together
+              // and only when the cookie is being served securely.
               if (cookieIsSecure) {
                 value[i] += "; SameSite=None; Secure";
               }
             }
           }
         }
-        // call the original _header method
+        // Every other header, and the rewritten value, still go through the
+        // framework's own implementation.
         header.call(request.response, key, value);
       }
     }
@@ -264,22 +308,27 @@ const init = async () => {
     return h.continue;
   });
 
-  // Simple session-based auth scheme for Hapi 20+
+  // Resolves the session's `userId` into the request's credentials.
+  //
+  // Every outcome other than a valid, enabled user answers through
+  // `h.unauthenticated`, which under the 'try' default below leaves the request
+  // to continue as a guest rather than rejecting it - so a route that does not
+  // require auth still serves, and one that does gets the 401 the error mapper
+  // above turns into a redirect to /login. A session naming a user who has been
+  // removed or disabled is cleared here, so the next request arrives clean.
   server.auth.scheme('session', (server, options) => {
     return {
       authenticate: async (request, h) => {
-        // Get user from session via yar
         const userId = request.yar.get('userId');
 
         if (!userId) {
-          // Not authenticated - continue as guest (for 'try' mode)
           return h.unauthenticated(Boom.unauthorized('Not logged in'), { credentials: {} });
         }
 
         try {
-          // lib/models/model.js returns the same thenable it feeds the optional
-          // callback, so awaiting it directly yields the identical document,
-          // null, or rejection the hand-rolled Promise wrapper used to relay.
+          // The model layer in lib/models/model.js returns the query itself and
+          // only feeds an optional callback from it, so awaiting it here yields
+          // the document, null, or a rejection this catch handles.
           const user = await User.findById(userId);
 
           if (!user) {
@@ -292,7 +341,7 @@ const init = async () => {
             return h.unauthenticated(Boom.unauthorized('Account disabled'), { credentials: {} });
           }
 
-          // Attach user to request
+          // Handlers read `request.user`; the credentials are the same document.
           request.user = user;
           return h.authenticated({ credentials: user });
         } catch (err) {
@@ -303,13 +352,18 @@ const init = async () => {
     };
   });
 
-  // Register the session auth strategy
   server.auth.strategy('session', 'session');
 
-  // Make session auth the default but don't require it
+  // 'try' rather than 'required': the scheme runs on every route, but a failed
+  // authentication continues as a guest instead of answering 401, which is what
+  // lets a route serve both signed-in and anonymous visitors. A route that must
+  // be protected declares `auth: 'session'` for itself.
   server.auth.default({ strategy: 'session', mode: 'try' });
 
-  // Load models (global for backwards compatibility)
+  // Models are assigned to bare globals because controllers, models and views
+  // reference them by name (`User`, `Course`, ...) instead of requiring them.
+  // The assignments happen before the routes are registered, so a handler
+  // always finds them; `gleak.ignore` below lists the same names.
   User     = require('./lib/models/user');
   Course   = require('./lib/models/course');
   Lesson   = require('./lib/models/lesson');
@@ -320,213 +374,24 @@ const init = async () => {
   Folder   = require('./lib/models/folder');
   CourseInvitation = require('./lib/models/courseInvitation');
 
-  // Register helpers
+  // Installs the server methods that a route's string-form pre-handler is
+  // resolved through (`server.methods[name]`). Registering the routes before
+  // this would leave those names unresolvable.
   Helpers.register(server);
 
-  // Register routes
+  // `config.routes` is the parsed route table that config/app.config produces by
+  // handing lib/util/routeParser the declarations in config/routes.js and
+  // config/api_routes.js; every registered route comes from that one call.
   server.route(config.routes);
 
-  // Start the server
   if (config.app.start) {
     await server.start();
     log.info('Server started on port: ' + server.info.port);
 
     detectLeaks();
-
-    // This process now owns a listening socket, a MongoDB connection, the queue
-    // singletons and the leak-detect interval, so it also owns ending them. The
-    // handlers are installed HERE, under the same flag that started the
-    // listener, rather than at module scope: with `app.start: false` this module
-    // is a library the test harness requires (test/lib/00-ready.js awaits the
-    // exported promise and closes the server in its own root `after`), and
-    // test/parity/mongo.js installs its own signal handling for the in-memory
-    // database. Claiming the host process's signals in that mode would pre-empt
-    // a teardown that is not ours.
-    installShutdownHandlers(server);
   }
 
   return server;
-};
-
-// ---------------------------------------------------------------------------
-// Graceful shutdown
-// ---------------------------------------------------------------------------
-// Nothing on the request path reaches any of this: the handlers below run only
-// on SIGINT or SIGTERM, so no route, response, cookie or error mapping changes.
-//
-// Two properties are load-bearing rather than stylistic.
-//
-//   It is BOUNDED. test/parity/server.js gives the child STOP_GRACE_MS = 5000ms
-//   after SIGTERM before escalating to SIGKILL, and `pm2` (Dockerfile) applies
-//   its own kill timeout, so a shutdown that could block would be worse than no
-//   shutdown at all - it would turn today's prompt exit into a forced kill on
-//   every run. Each stage therefore carries its own timeout and the whole
-//   sequence carries a hard watchdog, both well inside that window. A database
-//   or Redis endpoint that has gone away cannot hold the process open.
-//
-//   It PRESERVES THE EXIT DISPOSITION. Measured before this was added: SIGTERM
-//   to the running application ended it in 108ms through the signal's default
-//   disposition, so the wait status a supervisor sees is "terminated by signal",
-//   not an exit code. After the ordered close the handler removes itself and
-//   re-raises the same signal, which reproduces that status exactly instead of
-//   substituting an exit code a launcher or an orchestrator would read
-//   differently.
-//
-// Ordering is deliberate: stop accepting requests first, then close what an
-// in-flight request could still be using. Draining the connections before the
-// queues and the database means no handler is left reaching for a closed
-// connection, which would surface as a spurious 500 during shutdown.
-
-// The leak-detect interval's handle. `setInterval` below holds the event loop
-// open for the life of the process, which is exactly why a polite wait cannot
-// end it and why clearing it is the first thing shutdown does. It is NOT
-// unref'd: that would let the process exit on its own and change when it lives,
-// which is observable behaviour rather than cleanup.
-let leakInterval = null;
-
-// One shutdown, however many signals arrive. A second SIGTERM while the first
-// is in flight must not start a second teardown - hapi's `stop` is not
-// re-entrant and a doubled `queues.closeAll` would reject on an already-closed
-// queue - so the sequence runs once and later signals are noted and ignored.
-let shuttingDown = false;
-
-/**
- * Runs one stage of the shutdown, bounded, and swallows its failure.
- *
- * A stage that rejects or hangs must not prevent the stages after it: the point
- * of the sequence is that the process ends having released what it could, and a
- * queue that never reached its Redis server is a normal state here rather than
- * an error. Both outcomes are logged, so a stage that stopped working is
- * visible rather than silent.
- *
- * @param {string} label What the stage is called in the log.
- * @param {number} budgetMs How long it is given before it is abandoned.
- * @param {function(): (Promise|undefined)} run The stage itself.
- * @returns {Promise<void>} Always resolves.
- */
-const shutdownStage = async function(label, budgetMs, run) {
-  let timer = null;
-
-  try {
-    await Promise.race([
-      Promise.resolve().then(run),
-      new Promise((resolve, reject) => {
-        timer = setTimeout(function() {
-          reject(new Error('did not finish within ' + budgetMs + 'ms'));
-        }, budgetMs);
-      })
-    ]);
-    log.info('Shutdown: ' + label + ' closed.');
-  }
-  catch (err) {
-    log.error('Shutdown: ' + label + ' did not close cleanly: ' +
-      ((err && err.message) || err));
-  }
-  finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-};
-
-/**
- * Closes the listener, the queues and the database connection, in that order.
- *
- * `lib/util/queues` and `config/db` are required HERE rather than at the top of
- * this file, and that is not laziness. AAP §0.6.5 establishes that
- * `mongoose-schema-extend` replaces the global `Object.getPrototypeOf` and makes
- * `@hapi/hapi` unloadable if it loads first; the require order this file already
- * has is therefore load-bearing, and adding a module to the top of it risks the
- * ordering rather than the shutdown. By the time a signal arrives both modules
- * are long since in the require cache - `config/app.config` pulled in
- * `config/db`, and the controllers pulled in `lib/util/queues` - so these
- * requires return the very singletons the application has been using, which is
- * the only thing that makes closing them meaningful.
- *
- * @param {Object} server The started hapi server.
- * @returns {Promise<void>} Always resolves.
- */
-const shutdownResources = async function(server) {
-  if (leakInterval) {
-    clearInterval(leakInterval);
-    leakInterval = null;
-  }
-
-  // Stop accepting connections and let in-flight requests finish. The explicit
-  // timeout matters: hapi's own default would let a keep-alive connection hold
-  // the close for longer than the launcher's grace window.
-  await shutdownStage('the HTTP listener', 1500, function() {
-    return server.stop({ timeout: 1000 });
-  });
-
-  await shutdownStage('the job queues', 1000, function() {
-    return require('./lib/util/queues').closeAll();
-  });
-
-  await shutdownStage('the MongoDB connection', 1000, function() {
-    return require('./config/db').disconnect();
-  });
-};
-
-/**
- * Installs the SIGINT and SIGTERM handlers.
- *
- * @param {Object} server The started hapi server.
- * @returns {undefined}
- */
-const installShutdownHandlers = function(server) {
-  // Kept so that EVERY handler this function installed can be removed before
-  // the signal is re-raised. Removing only the one that fired would leave the
-  // other registered, and a signal with any listener attached does not reach
-  // its default disposition - so re-raising it would be absorbed by our own
-  // listener and the process would never end.
-  const installed = [];
-
-  const shutdown = function(signal) {
-    if (shuttingDown) {
-      log.info('Shutdown: ' + signal + ' received while already shutting ' +
-        'down; ignoring it.');
-      return;
-    }
-
-    shuttingDown = true;
-    log.info('Shutdown: ' + signal + ' received; closing the listener, the ' +
-      'job queues and the MongoDB connection.');
-
-    // The watchdog is the last guarantee. Every stage is bounded already, so
-    // reaching this means something outside the stages is wedged - and a
-    // supervisor waiting on us would escalate to SIGKILL anyway, which releases
-    // nothing. Ending here at least means the stages that could close, did. It
-    // is deliberately NOT unref'd: an unref'd watchdog would let the process
-    // slip out with exit code 0 in exactly the case it exists to report.
-    const watchdog = setTimeout(function() {
-      log.error('Shutdown: did not complete within 4000ms; exiting now.');
-      process.exit(128 + (signal === 'SIGINT' ? 2 : 15));
-    }, 4000);
-
-    shutdownResources(server).then(function() {
-      clearTimeout(watchdog);
-      log.info('Shutdown: complete.');
-
-      // Re-raise the signal with our own handlers removed, so the process ends
-      // through the signal's default disposition and a supervisor sees the
-      // same wait status it saw before this handler existed.
-      installed.forEach(function(entry) {
-        process.removeListener(entry.signal, entry.handler);
-      });
-
-      process.kill(process.pid, signal);
-    });
-  };
-
-  ['SIGINT', 'SIGTERM'].forEach(function(signal) {
-    const handler = function() {
-      shutdown(signal);
-    };
-
-    installed.push({ signal: signal, handler: handler });
-    process.on(signal, handler);
-  });
 };
 
 const detectLeaks = function() {
@@ -559,13 +424,12 @@ gleak.ignore("Folder", "CourseInvitation");
 gleak.ignore("log", "NODE_CONFIG", "tokenizer", "$V", "$M", "$L", "$P");
 gleak.ignore("DEFAULT_FILE_PATH", "Promise");
 
-// Poll for new leaks every 60 seconds. The handle is retained so that an
-// ordered shutdown can clear it; the timer itself is unchanged, still installed
-// unconditionally at module scope, and still holds the event loop open exactly
-// as it did before.
-leakInterval = setInterval(detectLeaks, 60*1000);
+// Poll for new leaks every 60 seconds
+setInterval(detectLeaks, 60*1000);
 
-// Initialize and export
+// The export is the promise of the configured server, which the test harness
+// awaits. A failure to start is terminal for the process rather than a rejected
+// promise handed to whoever required this module.
 const serverPromise = init().catch(err => {
   log.error('Failed to start server:', err);
   process.exit(1);

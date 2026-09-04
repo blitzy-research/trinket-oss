@@ -5,242 +5,74 @@
 //
 // Drives the committed baseline corpus against a RUNNING application and
 // compares what came back with what was recorded, entry by entry and field by
-// field. This is the gate AAP §0.9.3 names: "a request corpus captured from the
-// baseline server (full route inventory) replayed against the migrated server
-// yields identical normalized responses - status, content-type, cookies, body
-// shape". It is binary. It either exits 0 having compared every scenario in the
-// corpus against every route in the manifest, or it exits non-zero and names
-// what differed.
+// field. A clean replay is what establishes that the tree under test answers
+// every registered route as the baseline did - status, content-type, cookies,
+// body shape. The verdict is binary: either every scenario was compared
+// against every route in the manifest and it exits 0, or it exits non-zero
+// naming what differed. It records no baseline and never rewrites a corpus;
+// capture.js does that, deliberately in a separate file.
 //
-// ===========================================================================
-// RULES
-// ===========================================================================
-// `review_rules` returns exactly "No user rules provided." for this project,
-// which AAP §0.7 and §0.10.1 independently record. No rule is invented here and
-// their absence is not read as licence to lower the bar: enterprise practice
-// governs. The commitment of test/parity/ that lands hardest on THIS file is
-// the third one, and it is the whole design of the comparator:
-//
-//   NOTHING IS NORMALIZED AWAY THAT COULD BE COMPARED EXACTLY.
-//
-// Every field normalized is a field the migration is no longer checked on. So
-// the volatile set is a CLOSED list of six categories, written once, in one
-// place, as a named and enumerable value (see THE VOLATILE SET below), and
-// every act of normalization in this file goes through it. There is no inline
-// regex scattered through the comparators, because a reviewer must be able to
-// read the whole weakening in one screen and because an addition to it has to
-// show up as a visible diff.
-//
-// The request's own RULES block is binding and is not that document:
-//   R-a  The diff must read as migration work only. This file is new tooling
-//        the migration requires. It changes no application module, edits no
-//        configuration, writes nothing into the tree under test, and never
-//        rewrites the corpus.
-//   R-b  No route excluded. Coverage is accounted against every entry in the
-//        233-route manifest and an unrepresented route FAILS the run. An entry
-//        that genuinely cannot be driven is listed with its stated reason.
-//   R-d  Behaviour improvements are PROHIBITED, so a difference is a FAILURE
-//        even when the new behaviour looks better. The sole exception is a
-//        scenario carrying an `expectedDeviation` marker, and that marker is
-//        checked against what the deviation was approved to be - a deviation
-//        that did not materialize, or materialized differently, fails.
-//   R-e  Error-to-response mappings must survive unchanged, which is why the
-//        failure-path scenarios are replayed with exactly the same rigour as
-//        the success sweep and are accounted separately in the coverage table.
-//   R-f  Baseline observed behaviour at 2f8712a is the tie-breaker. The corpus
-//        IS that record. This file never records one and never updates one -
-//        that is capture.js's job, deliberately in a separate file.
-// The BOUNDARIES & PRESERVATION clauses on client-visible page behaviour, asset
-// URLs and session/auth behaviour are bound to the comparison rules below:
-// rendered text, form values, ids, classes, data-/ARIA attributes and href/src
-// are compared, not stripped; every cookie attribute is compared; and all five
-// auth-scheme outcomes are asserted independently.
-//
-// ===========================================================================
-// WHAT IS COMPARED EXACTLY
-// ===========================================================================
-// Status and status message. Content-type less its charset parameter. Location.
-// Content-Disposition. Every remaining response header, including the four
-// error-page headers, which are compared PER BRANCH as measured rather than as
-// the code's shape suggests - app.js's first onPreResponse extension RETURNS
-// EARLY on 401/404/403/>=500 for a browser HTML request, before the
-// Cache-Control / Pragma / Expires / X-Frame-Options assignments, so those four
-// reach API-or-JSON error responses and non-Boom responses only, and a 400 Boom
-// falls through and does receive them. Every Set-Cookie attribute: name,
-// HttpOnly, Secure, SameSite, Path, Domain, Max-Age, and the presence and
-// approximate one-year horizon of Expires. For HTML: the rendered text, form
-// and input names and values, id and class attributes, data- and ARIA
-// attributes, inline-script presence, and href/src values - asset URLs are part
-// of the preserved surface, so they are compared rather than stripped. For
-// JSON: structurally, so key order cannot create a false difference, with every
-// scalar compared exactly and by type, and a missing key reported as one. For
-// binary or stream bodies: length always, and content digest for every type
-// except the six enumerated ARCHIVE CONTAINER types, whose headers embed each
-// entry's modification time - measured, two captures of the identical tree
-// produced two digests for the same 182-byte zip. For those six the digest is
-// recorded as an observation and the length is compared exactly, the exemption
-// is declared in the timestamps category of the volatile set and nowhere else,
-// and the archive's internal layout is asserted by ./storage and ./worker,
-// which open it rather than hashing it. That is the whole contract, both halves
-// of it, and `describeBinaryBodyContract` emits it into every artifact so a
-// document quoting it cannot state only the first half.
-//
-// The Expires horizon is the single most valuable assertion in the file. AAP
-// §0.9.6 lists the private-field cookie patch (app.js, the second onPreResponse)
-// as an open item precisely because its failure mode is SILENCE: it runs only
-// while `request.response._header` is a function, so if hapi 21 stopped
-// populating that private field the patch would become a no-op, cookie expiry
-// would quietly change, and nothing would error. Comparing the horizon in whole
-// days - the timestamp is volatile, the horizon is not - is the only way that
-// is detectable.
-//
-// ===========================================================================
-// THE THREE CORPUS FACTS THIS FILE HAD TO BE BUILT AROUND
-// ===========================================================================
-//   1. A CORPUS WITH NO BASELINES IS NOT REPLAYABLE, AND IS NOT PRETENDED TO
-//      BE. The committed corpus.json ships as DEFINITIONS: every scenario
-//      carries `baseline: null`, every step carries `response: null`, and
-//      `summary.captured` is false. Its own first note says why - "an invented
-//      status would make the parity gate pass against a fiction". So this file
-//      validates the corpus BEFORE it launches anything, and a corpus with no
-//      recorded response exits non-zero naming capture.js as the remedy. It
-//      does not drive a server it has nothing to compare against.
-//   2. A CAPTURE DROPS THE DEVIATION MARKER. capture.js's scenario builder
-//      emits neither `expectedDeviation` nor `unreachableReason` - both live in
-//      the committed definition file - and a capture replaces the scenario
-//      array wholesale. A captured corpus therefore arrives WITHOUT the one
-//      marker that distinguishes an approved change from a regression. Rather
-//      than silently defaulting to a marker source, which would make the
-//      deviation control vacuous, `--annotations <path>` joins the markers back
-//      on by scenario id and the report says which source supplied each one.
-//      With no --annotations, a missing marker means the difference FAILS, and
-//      the failure message names the flag.
-//   3. A CORPUS DOES NOT SAY WHICH TREE IT RECORDED, so its provenance sidecar
-//      is REQUIRED and is validated before anything is driven. Being an array
-//      of scenarios leaves three failure modes indistinguishable from a clean
-//      gate: a corpus captured from the MIGRATED tree replayed against the
-//      migrated tree, which is a self-comparison that cannot fail; a corpus
-//      captured from some intermediate commit, which records behaviour nobody
-//      approved; and a corpus edited after capture, which is a baseline
-//      adjusted to match the target. `<corpus>.provenance.json` - what
-//      capture.js writes, and the convention ./manifest and ./joi-matrix
-//      follow - is checked for the captured tree's commit against the R-f
-//      baseline reference, the generator's own commit and path, agreement with
-//      the corpus schema, and any artifact digest it declares. The digest of
-//      the file this run actually read is recorded either way. `--annotations`
-//      needs no sidecar: it supplies markers, not responses.
-//
-// ===========================================================================
-// THE TWO COOKIE PASSES, AND THE HONEST LIMIT OF THE SECOND
-// ===========================================================================
-// AAP §0.9.3 requires both: the non-secure overlay (Yar SameSite=Lax, no
-// Secure) and `--secure` (the patch appending "; SameSite=None; Secure"). Both
-// run here by default, each against its own freshly provisioned database and
-// its own server, and each is reported separately.
-//
-// The limit, stated rather than papered over: the committed corpus was captured
-// through the launcher's NON-SECURE default, so there is no recorded baseline
-// for the secure pass. The secure pass therefore replays the SAME scenarios in
-// the SAME order - a subset would change the cross-request session state some
-// responses embed, which was measured - and asserts the DOCUMENTED DIFFERENTIAL
-// on the cookie attributes: `secure` becomes true on every session cookie,
-// `samesite` moves Lax -> None on the cookies the private-field patch touched,
-// and the Expires horizon is unchanged. Every other field is compared exactly,
-// because `isSecure` moves nothing else. Both artifacts say that this is a
-// derived contract rather than a measurement. Capture a secure-pass corpus and
-// pass `--secure-corpus <path>` and the pass compares exactly instead, with no
-// derivation at all.
-//
-// A DERIVED SECURE PASS IS NOT GATE-QUALIFYING, and that is what makes the
-// limit above a stated limit rather than a quiet substitution. AAP §0.9.3 asks
-// for the secure configuration to be MEASURED; a differential computed from the
-// non-secure recording is this tool's own arithmetic about what the secure pass
-// ought to produce, and arithmetic cannot detect the case where it is wrong.
-// So the derived pass still runs, still compares every other field exactly and
-// still fails on a difference - and `measured-secure-pass` is reported as an
-// unmet gate requirement until a secure corpus is supplied.
-//
-// ===========================================================================
-// PROHIBITIONS - each with its reason, and where it is honoured
-// ===========================================================================
-//   No require of the application: not app.js, not the configuration
-//     directory, not the library directory, and not the suite's own helper or
-//     spec directories - the last two pull the application in through the side
-//     door, since the suite's flow helper requires app.js at its top. The
-//     application is a CHILD PROCESS owned by ./server. Honoured at the require
-//     block below: six Node core modules and four sibling parity modules, all
-//     four declared dependencies of this file. The two forbidden test
-//     directories are never named as a path here, in code or in comment, so the
-//     prohibition is checkable with a grep rather than by reading.
-//   No legacy URL parsing. The Node core function that emits DEP0169 is not
-//     used and is not named; `new URL(...)` is used throughout. This process's
-//     stderr sits inside the very stream the zero-warning gate inspects, so a
-//     deprecation emitted by the gate itself would corrupt the gate.
-//   No broadening of the volatile set. Six categories, one list, and an
-//     addition is a weakening that has to be justified in docs/baseline-parity.md
-//     naming the field, why seeding could not make it deterministic instead,
-//     and what coverage is lost.
-//   No re-capture. Nothing in this file writes to the corpus path, and the
-//     comparison never falls back to "record what we saw".
-//   No pass-with-warnings mode, no --force, no threshold that lets N
-//     differences through. There is no option in the parser that can turn a
-//     difference into a pass. A narrowed run (--only, a single pass, or
-//     --allow-unreviewed-corpus) is labelled `gateQualifying: false` in both
-//     artifacts and in the closing line, because a diagnostic must never be
-//     mistaken for the gate.
-//   No unverified input. The corpus every comparison is made against, and the
-//     route manifest the coverage gate counts against, are checked through
-//     `require('./manifest').provenance` BEFORE they are consumed: schema, the
-//     artifact they claim to be, a role that qualifies for the use, a
-//     generator named by the blob that ran and a commit VERIFIED to contain
-//     it, every recorded object - generator blob, generator commit, analysed
-//     head, delivered head - resolved in this repository, an analysed tree at
-//     the base commit, the payload digest recomputed over the artifact's own
-//     bytes, and any sidecar sitting beside the artifact reconciled with those
-//     bytes. A corpus with a `scenarios` array used to be enough, which is how
-//     a capture from another tree could have become the reference for a whole
-//     replay.
-//   No waived identity on a gate path. Identity resolution is exactly what a
-//     payload digest cannot establish - a fabricated artifact hashes to
-//     whatever it claims - so the mode that records those checks as waived is
-//     reachable only from --allow-unreviewed-corpus, which already labels the
-//     run gateQualifying: false. It was a default at the one call site while
-//     the generators were uncommitted; they are committed, and the default is
-//     gone.
-//     difference into a pass. And `gateQualifying` is decided by the TEN
-//     requirements AAP §0.9.3 puts on the gate, each reported by name in both
-//     artifacts and in the closing line: the whole corpus, both cookie passes,
-//     a secure baseline whose provenance ATTESTS a secure capture rather than a
-//     derived differential, the two deprecation flags actually reaching the
-//     child, warning evidence from every pass, a manifest that IS the
-//     registered surface key for key in both directions, a real baseline
-//     rather than --self-check, a corpus authenticated by digest as
-//     capture.js's recording of the frozen R-f baseline, a known commit for
-//     the tree under test, and all five auth-scheme outcomes DRIVEN rather
-//     than explained by a stated reason. A run missing any of them is a
-//     diagnostic, and a diagnostic must never be mistaken for the gate.
-//   No clause left unevaluated. The declared-expectation grammar is a CLOSED
-//     list (EXPECTATION_STEP_KEYS and EXPECTATION_CROSS_KEYS), every key in it
-//     is implemented by `evaluateExpectation`, and `assertExpectationSchema`
-//     refuses the run on anything outside it. A clause that reads as a check
-//     and asserts nothing is worse than an absent check, because the corpus
-//     tells its reader the check exists.
-//   Nothing is written to stdout except by explicit request. Both artifacts go
-//     to files, and the human report is written to a file as well as being
-//     echoed, because "never write the report to stdout as the only copy" is
-//     what makes it citable from docs/baseline-parity.md.
-//
-// ===========================================================================
 // INVOCATION
-// ===========================================================================
 //   node test/parity/replay.js --app . --port 3010
-//   node test/parity/replay.js --app . --corpus test/parity/corpus.json \
-//     --annotations test/parity/corpus.json --out /tmp/replay.json
-//   node test/parity/replay.js --app ../baseline-2f8712a --pass non-secure
+//   node test/parity/replay.js --app <baseline-worktree> --pass non-secure
 //   node test/parity/replay.js --app . --only /quirk\./ --pass non-secure
+//   -h prints the whole option list. Diagnostics and the report go to stderr;
+//   stdout carries nothing unless --print-report asks for it. As a module,
+//   `replay(options)` returns the result document and never throws for a
+//   difference; the CLI runs under `require.main === module` only.
 //
-// As a module: `replay(options)` returns the result document and never throws
-// for a difference. The CLI runs only under `require.main === module`.
+// ARTIFACT
+//   --out    the result document: schema, tool, verdict, exitCode,
+//            gateQualifying and the requirement-by-requirement
+//            gateQualification, warningGate, gates, approvedDeviations,
+//            volatileSet, comparisonContract, sources, passes.
+//   <out>.provenance.json  the sidecar over the exact bytes written; the same
+//            block is embedded in the result, so it is attributable alone.
+//   --report the human report, echoed to stderr and written to a file so it
+//            can be cited rather than re-run.
+//   All three are written atomically and whatever the verdict, because a
+//   failing run is exactly the run whose artifacts someone needs.
+//
+// THE APPLICATION IS A CHILD PROCESS, NEVER A REQUIRE. `--app` names the
+// worktree and ./server spawns the application there against that tree's own
+// install, which is what lets one process drive a baseline worktree and a
+// migrated one. Nothing here loads app.js, the configuration or library trees,
+// or the suite's helper and spec directories - the suite's flow helper requires
+// app.js at its top, so naming those would pull the application in sideways.
+//
+// AN INPUT IS VERIFIED BEFORE IT IS CONSUMED. The corpus and the route manifest
+// pass through `require('./manifest').provenance`, and a corpus additionally
+// REQUIRES its `<corpus>.provenance.json` sidecar to attest a capture of the
+// baseline commit - one captured from the tree under test compares cleanly
+// against itself and proves nothing. A corpus holding no recorded response is
+// not replayable and the run says so, naming capture.js. Capture drops the
+// `expectedDeviation` and `unreachableReason` markers that live in the
+// committed definition corpus, so `--annotations <path>` joins them back on
+// by scenario id; without it a missing marker makes the difference FAIL.
+//
+// NOTHING IS NORMALIZED AWAY THAT COULD BE COMPARED EXACTLY. Every field
+// normalized is a field the migration is no longer checked on, so the volatile
+// set is a closed list of six categories held in one named value (THE VOLATILE
+// SET below), every act of normalization goes through it, and the probes beside
+// it assert at startup that each rule fires and touches nothing around it.
+// Everything else is compared exactly - each named header and Set-Cookie
+// attribute, the markup surface, JSON scalar by scalar, and bodies under the
+// contract `describeBinaryBodyContract` emits into every artifact.
+//
+// EVERY REQUEST HAS A FINITE BUDGET, AND AN EXPECTED TIMEOUT IS A RESULT. A
+// step replays under the timeout it recorded, or --timeout where it recorded
+// none, so a route that never settles is compared as the timeout it is.
+//
+// COVERAGE IS ACCOUNTED, NOT SAMPLED. Every manifest entry has to be
+// represented by a scenario: an unrepresented route FAILS the run, and an
+// entry that cannot be driven is listed with its stated reason. Both cookie
+// configurations run by default and are reported separately, the secure pass
+// deriving its expectation from the non-secure recording, and saying so, until
+// --secure-corpus supplies a measured one. A difference fails even when the new
+// behaviour looks better, unless the scenario carries an approved deviation
+// marker and the deviation materialized as approved: there is no --force, no
+// threshold and no pass-with-warnings mode, and a narrowed run is labelled
+// `gateQualifying: false` in both artifacts and in the closing line.
 
 var http         = require('http');
 var https        = require('https');
@@ -249,6 +81,9 @@ var os           = require('os');
 var path         = require('path');
 var crypto       = require('crypto');
 var childProcess = require('child_process');
+// For one thing only: asking the application's port whether anything is still
+// listening. See `serverAlive` for why the process record is not enough.
+var net          = require('net');
 
 // The parity modules. Every one of these is a declared dependency of this file.
 var server   = require('./server');
@@ -258,9 +93,9 @@ var manifest = require('./manifest');
 
 // Applied BEFORE the fixture catalogues below, because ./fixtures/mail requires
 // lib/util/mailer.js, which requires the npm `config` package at module scope -
-// so merely requiring THIS file loads `config`, and without the isolation
-// `config` 0.4.37 then creates config/runtime.json inside the checkout it is
-// resolving from. Measured.
+// so merely requiring THIS file loads `config`, and without the isolation the
+// `config` package then creates config/runtime.json inside the checkout it is
+// resolving from.
 //
 // `appRoot: TOOL_ROOT` is the second half and is not optional: the config this
 // PROCESS loads is this tool's own tree, and `config` resolves its directory
@@ -424,6 +259,25 @@ var EXIT_OK         = 0;
 var EXIT_DIFFERENCE = 1;
 var EXIT_ERROR      = 2;
 
+// The four verdicts, named so the report, the artifact and the exit ladder
+// cannot spell one of them differently.
+//
+// NOT THE GATE is the one that was missing, and its absence was the defect:
+// `qualifyGate` decided ten requirements, the result recorded them, and the
+// exit ladder never read them - so a run without the secure corpus, without
+// the deprecation flags or without worker evidence compared what it could,
+// found no difference in it, and reported PASS / exit 0 while a third of the
+// required exercise had not happened. A run that could not measure the gate
+// is not a run that passed it. It is distinct from NOT PERFORMED, which means
+// a pass could not be driven at all, and from FAIL, which means the
+// comparison found something: this one means the comparison was sound and
+// incomplete, and it is the honest thing for a gate command to exit non-zero
+// on.
+var VERDICT_PASS          = 'PASS';
+var VERDICT_FAIL          = 'FAIL';
+var VERDICT_NOT_THE_GATE  = 'NOT THE GATE';
+var VERDICT_NOT_PERFORMED = 'NOT PERFORMED';
+
 // Which content types are recorded as text. Identical to capture.js's rule,
 // because the corpus's `body.encoding` was decided by it and a divergence here
 // would compare a text body against a binary record.
@@ -456,6 +310,21 @@ var ACCEPT_JSON = 'application/json';
 
 var FORM_TYPE = 'application/x-www-form-urlencoded';
 var JSON_TYPE = 'application/json';
+
+// The three dependency phases a corpus records per scenario, spelled exactly as
+// ./capture writes them. The destructive one is not a label: ./capture forces a
+// reseed before every case in it, so each delete was RECORDED against freshly
+// seeded fixtures. A replay that drives them in sequence without doing the same
+// compares the second delete against a recording of the first, and reports the
+// order as a behaviour difference - measured, five destructive cases at once.
+// How long `portAccepting` waits for an answer before treating silence as
+// alive. Only ever paid after a transport failure, and only to decide
+// whether the application is still there.
+var LIVENESS_PROBE_MS = 2000;
+
+var PHASE_READ_ONLY = 'read-only';
+var PHASE_MUTATING = 'mutating';
+var PHASE_DESTRUCTIVE = 'destructive';
 
 // The user agent every replayed request carries. Deliberately distinct from
 // capture.js's, because nothing in the application varies on it and a reader of
@@ -497,8 +366,8 @@ var AUTH_OUTCOME_GROUP    = 'auth-outcome';
 // same string rather than each spelling it out.
 var LOOKUP_ERROR_SCENARIO = 'auth.outcome.lookup-error';
 
-// The five outcomes of the session auth scheme [app.js:243-281], as the corpus
-// ids that drive them. THE LIST IS THE ASSERTION: AAP §0.9.3 requires all five
+// The five outcomes of the session auth scheme registered in app.js, as the
+// corpus ids that drive them. THE LIST IS THE ASSERTION: all five are required
 // independently, and a group that arrived with four scenarios would otherwise
 // report "4 asserted, ok" - which is the exact shape of a gate that passes by
 // not looking. A missing id is a failure under a complete selection, and a
@@ -517,25 +386,29 @@ var AUTH_OUTCOME_IDS = Object.freeze([
 // minimum is what stops "one outcome was driven" from counting as coverage.
 var MIN_AUTH_OUTCOMES_DRIVEN = 4;
 
-// The four header-resolved reply chains AAP §0.6.6 enumerates - files.js:102-105,
-// courses.js:269-272, trinket.js:1383-1386 and trinket.js:1548-1551. They are
-// the collateral-damage guard on the §0.7 decision, so the COUNT is part of the
-// assertion: three of them checked is one chain nobody looked at.
+// The four header-resolved reply chains: the attachment branch of
+// `lib/controllers/files.js`'s `download`, the course archive in
+// `lib/controllers/courses.js`'s `download`, and both archive responses in
+// `lib/controllers/trinket.js` - `downloadPostedZip` and `downloadZip`. The
+// corpus scenarios in `HEADER_RESOLVED_GROUP` are the durable identifiers for
+// them. They are the collateral-damage guard on the one
+// approved deviation, so the COUNT is part of the assertion: three of them
+// checked is one chain nobody looked at.
 var HEADER_RESOLVED_CHAIN_COUNT = 4;
 
-// The node flags AAP §0.9.3 requires of the gate run, verbatim. The whole
-// exercise - the listening server, the full pass over all 233 routes, and the
-// worker - runs under both, because §0.6.4's finding is that two internal
-// re-entrant injections put a deprecation on the LIVE REQUEST PATH and a boot
-// that never serves a request never reveals them. A run without them still
-// scans stderr, and still reports what it finds; what it cannot be is the gate.
+// The node flags a gate run measures the zero-warning condition under. The
+// whole exercise - the listening server, the full pass over every registered
+// route, and the worker - runs under both, because two internal re-entrant
+// injections put a deprecation on the LIVE REQUEST PATH and a boot that never
+// serves a request never reveals them. A run without these flags still scans
+// stderr, and still reports what it finds; what it cannot be is the gate.
 var REQUIRED_NODE_FLAGS = Object.freeze([
   '--pending-deprecation',
   '--trace-deprecation'
 ]);
 
-// The R-f baseline reference, AAP §0.10.3. A corpus is a baseline recording, so
-// its provenance sidecar has to name this commit: a corpus captured anywhere
+// The frozen baseline reference. A corpus is a baseline recording, so its
+// provenance sidecar has to name this commit: a corpus captured anywhere
 // else is a recording of some other tree's behaviour, and comparing against it
 // proves nothing about the migration. `--baseline-head` relaxes it explicitly
 // and --self-check turns it off by declaration, because there the corpus comes
@@ -565,7 +438,10 @@ var CAPTURE_GENERATOR = 'capture.js';
 // as declared and asserts nothing. Four of these - `statusIn`, `headerPresent`,
 // `bodyIncludes` and `cross.bodiesDiffer` - were authored in the corpus and
 // silently ignored here, which made sixteen clauses and eleven whole scenarios
-// inert, including the OAuth existing-user differentiator. Every key below is
+// inert, including the OAuth existing-user differentiator. `contentTypeIs` is
+// the same story from the other side: capture.js evaluates it against the
+// recording and the production-client scenarios declare it, so a replay that
+// did not implement it could only refuse the corpus outright. Every key below is
 // implemented by `evaluateExpectation`, and anything outside the list is
 // rejected by `assertExpectationSchema` before a single request is driven.
 // ---------------------------------------------------------------------------
@@ -580,6 +456,7 @@ var EXPECTATION_STEP_KEYS = Object.freeze([
   'notStatus',
   'locationEndsWith',
   'headerPresent',
+  'contentTypeIs',
   'bodyIncludes'
 ]);
 
@@ -600,9 +477,9 @@ var ERROR_PAGE_HEADERS = Object.freeze([
   'x-frame-options'
 ]);
 
-// The headers the agent prompt enumerates for exact comparison, in the order it
-// gives them. Every OTHER header is compared exactly too - this list exists so
-// the report can lead with the ones the contract names.
+// The headers the comparison contract names for exact comparison, in the order
+// it gives them. Every OTHER header is compared exactly too - this list exists
+// so the report can lead with the ones the contract names.
 var NAMED_HEADERS = Object.freeze([
   'content-type',
   'location'
@@ -694,8 +571,69 @@ function seededTimestamps() {
   return known;
 }
 
-var SEEDED_IDS   = Object.freeze(seededIdentifiers());
-var SEEDED_DATES = Object.freeze(seededTimestamps());
+/**
+ * Every trinket short code the seeder pins, as a lookup.
+ *
+ * The same narrowing the ObjectId rule uses, for the same reason: a code the
+ * seeder wrote is a fixture and is compared EXACTLY - a response that returned
+ * the wrong trinket is precisely the difference this gate exists to catch - and
+ * only a code minted by `hashify` during the run is normalized. Read from the
+ * seeded trinkets rather than listed here, so a trinket added to the seeder is
+ * covered without a second edit.
+ *
+ * @returns {Object} a null-prototype map used as a set
+ */
+function seededShortCodes() {
+  var known = Object.create(null);
+  var trinkets = (seed.fixtures && seed.fixtures.trinkets) || {};
+
+  Object.keys(trinkets).forEach(function(key) {
+    var code = trinkets[key] && trinkets[key].shortCode;
+
+    if (code) {
+      known[String(code).toLowerCase()] = true;
+    }
+  });
+
+  return known;
+}
+
+/**
+ * Every course access code the seeder pins, as a lookup.
+ *
+ * The same narrowing again, and here it is belt and braces: the seeder's code
+ * is `PAR1TY`, whose `1` is not in the alphabet `generateAccessCode`
+ * [lib/controllers/course.js:1848-1858] draws from - it omits I, O, Q, 0, 1 and
+ * l deliberately - so a seeded code cannot match the rule's character class in
+ * the first place. The exemption is kept because a code added to the seeder
+ * later has no such guarantee, and a fixture compared exactly is the point.
+ *
+ * @returns {Object} a null-prototype map used as a set
+ */
+function seededAccessCodes() {
+  var known = Object.create(null);
+  var courses = (seed.fixtures && seed.fixtures.courses) || {};
+  var single = (seed.fixtures && seed.fixtures.course) || null;
+
+  Object.keys(courses).forEach(function(key) {
+    var code = courses[key] && courses[key].accessCode;
+
+    if (code) {
+      known[String(code)] = true;
+    }
+  });
+
+  if (single && single.accessCode) {
+    known[String(single.accessCode)] = true;
+  }
+
+  return known;
+}
+
+var SEEDED_IDS          = Object.freeze(seededIdentifiers());
+var SEEDED_DATES        = Object.freeze(seededTimestamps());
+var SEEDED_SHORT_CODES  = Object.freeze(seededShortCodes());
+var SEEDED_ACCESS_CODES = Object.freeze(seededAccessCodes());
 
 // How close to "now" a timestamp has to be before it is treated as one this
 // run produced.
@@ -731,9 +669,9 @@ function isRunEraInstant(instant) {
 // the comparator everywhere at once, and nothing can be normalized without
 // appearing here.
 //
-// Each entry carries the justification a reviewer needs, in the terms the
-// agent prompt sets: what the field is, why seeding could not make it
-// deterministic instead, and what coverage is lost. The whole list is emitted
+// Each entry carries the justification a reviewer needs, in three fixed terms:
+// what the field is, why seeding could not make it deterministic instead, and
+// what coverage is lost. The whole list is emitted
 // into the result document under `volatileSet`, so docs/baseline-parity.md can
 // cite these justifications verbatim rather than paraphrasing them.
 //
@@ -750,10 +688,33 @@ var VOLATILE_SET = Object.freeze([
     why: 'A document created DURING the run gets a real MongoDB ObjectId, and ' +
       'a share or invitation token gets a fresh signature. Neither can be ' +
       'pinned by seeding, because the value is minted by the code under test ' +
-      'as the mutating scenario runs.',
+      'as the mutating scenario runs. Five more values are minted the same ' +
+      'way and were MEASURED to be the whole of the residual difference ' +
+      'between two runs of one tree: a created trinket\'s short code, which ' +
+      '`hashify` derives as sha1(seed + Date.now()) [lib/models/trinket.js:' +
+      '119-120]; the four-digit suffix `generate_username_with_suffix` appends ' +
+      'when a requested username is already taken [lib/util/user.js:19-27], ' +
+      'which the two signup scenarios reach because they share one payload ' +
+      'entry and the second creation therefore collides; the temporary upload ' +
+      'path hapi mints per request for the four routes declaring ' +
+      '`payload.output: file`, which a validation-failure flash echoes back; ' +
+      'a bcrypt password hash, salted per save by design and projected ' +
+      'into two responses; and the six-character course access code ' +
+      '`generateAccessCode` draws from a fixed alphabet with `Math.random` ' +
+      '[lib/controllers/course.js:1848-1858] each time ' +
+      '`POST /api/courses/{courseId}/accessCode` is called.',
     seedingAlternative: 'Not available for created documents. Every id a ' +
       'scenario READS is already pinned by test/parity/seed.js and is ' +
-      'therefore compared exactly - only an id this run minted is normalized.',
+      'therefore compared exactly - only an id this run minted is normalized. ' +
+      'Nor is it available for the five values above: a short code and a ' +
+      'username suffix are minted by the handler that creates the document, ' +
+      'the upload path is composed by hapi from the run directory, the pid ' +
+      'and a random suffix, and a bcrypt hash is re-salted by the model\'s ' +
+      'own pre-save hook, so seeding a fixed hash would mean either ' +
+      'bypassing that hook or committing a live-format hash to source. ' +
+      'The access code is REPLACED by the route under test on every call, ' +
+      'so the seeder\'s pinned `PAR1TY` governs every case that reads it ' +
+      'and only the value the route mints is normalized.',
     coverageLost: 'That two runs minted the same id, which is not behaviour. ' +
       'The SHAPE is still compared: a 24-hex id that stopped being emitted, ' +
       'or was emitted where none was before, still shows as a difference. For ' +
@@ -761,12 +722,117 @@ var VOLATILE_SET = Object.freeze([
       'plaintext is the seeded user\'s roles, which are fixed by the seeder ' +
       'and asserted through every other projection that exposes them - while ' +
       'the element carrying it, its id, its type and its position are all ' +
-      'still compared.',
+      'still compared. For the five values named above: the short code, the ' +
+      'username suffix, the upload path, the password hash and the access ' +
+      'code are each ' +
+      'replaced by a placeholder, so what is lost is that two runs minted the ' +
+      'same one - which is not behaviour. Everything around each of them is ' +
+      'still compared: the field that carries it, the rest of the username, ' +
+      'the fact that an upload path was echoed at all, and the presence and ' +
+      'position of the projected hash, and the fact that a code was ' +
+      'returned at all. Three of the five are also why the ' +
+      'committed corpus carries no credential-format value and no machine ' +
+      'path: capture.js writes these placeholders in place of the recorded ' +
+      'value, exactly as it already does for a Set-Cookie value, and this ' +
+      'file normalizes the live target to the same placeholder so the two ' +
+      'still compare.',
     headers: [],
     presenceOnlyHeaders: [],
     cookieFields: [],
     responseFields: [],
     textPatterns: Object.freeze([
+      // THE THREE WRITE-TIME RULES COME FIRST, AND THE ORDER IS LOAD-BEARING.
+      // `redactForRecording` applies only the rules marked
+      // `redactBeforeWrite`, while `normalizeText` applies every rule in this
+      // order - so a write-time rule placed AFTER an identifier rule sees a
+      // different input in the two paths, and the placeholder it writes is
+      // not the placeholder the comparison produces. MEASURED: with the
+      // 12-hex short-code rule ahead of the path rule, an upload path under
+      // a work-unit scratch root whose UUID carries a twelve-hex run
+      // (`.../94fb8942-119f-4be8-abfa-00828e472cd3/...`) normalized to
+      // `/tmp/.../94fb8942-119f-4be8-abfa-<generated-shortcode><upload-path>`
+      // at compare time and to `<upload-path>` at write time, and every one
+      // of the four file-upload routes became an unapproved difference for a
+      // runner whose scratch path happened to contain hex. Running these
+      // three first cannot have that failure mode: nothing has rewritten
+      // the text when they see it. `assertVolatileSetIntegrity` holds the
+      // invariant, and `assertNormalizationRules` proves the two paths agree
+      // value by value.
+      Object.freeze({
+        // The four routes declaring `payload.output: 'file'` make hapi write
+        // the request body to <runDir>/uploads/<epoch>-<pid>-<random>, and the
+        // validation-failure flash echoes that path into the response. All
+        // three components are new on every run, and the run directory is a
+        // path on the machine that captured the corpus - so this is the rule
+        // that keeps a scratch path out of the committed artifact as well as
+        // out of the comparison. Anchored on the /uploads/ segment and the
+        // epoch-pid-random basename, so an application-decided path is not
+        // touched.
+        //
+        // The DIRECTORY part is bounded by what cannot appear in a path
+        // inside a recorded value - the string and markup delimiters, a
+        // newline, a backslash - rather than by an allowlist of the
+        // characters a path is expected to use. An allowlist made the
+        // protection depend on where an operator happened to point TMPDIR:
+        // MEASURED, a run directory containing a space left the leading
+        // absolute path in the recording with only the basename redacted, so
+        // a control against CWE-200 held or failed on the shape of a machine
+        // path. Excluding `<` and `>` is the second half of the ordering
+        // invariant above - the rule cannot reach into a placeholder another
+        // rule has already written.
+        name: 'per-request upload output path',
+        expression: /(?:\/[^\/"'<>\n\r\\]+)+\/uploads\/\d{10,}-\d+-[0-9a-f]{8,}/g,
+        replace: function() {
+          return '<upload-path>';
+        },
+        // See `redactForRecording`: an absolute path on the machine that
+        // captured the corpus has no business being committed (CWE-200), so
+        // capture.js writes the placeholder rather than the path.
+        redactBeforeWrite: true
+      }),
+      Object.freeze({
+        // A bcrypt hash of the seeded fixture password, projected by two
+        // responses [body.json.user.password and body.json.course._owner
+        // .password]. The model re-salts on every save, so the same password
+        // hashes to a different string in the baseline and the target run.
+        // Replaced rather than compared for a second reason as well: a
+        // credential-format value has no place in a tracked artifact
+        // (CWE-540), and capture.js writes this placeholder instead of the
+        // hash.
+        name: 'bcrypt password hash',
+        expression: /\$2[aby]\$\d{2}\$[A-Za-z0-9./]{53}/g,
+        replace: function() {
+          return '<bcrypt-hash>';
+        },
+        // See `redactForRecording`.
+        redactBeforeWrite: true
+      }),
+      Object.freeze({
+        // Recognized by STRUCTURE rather than by segment length. A compact
+        // JWS header is the base64url of a JSON object, so it always begins
+        // `eyJ`; the payload may be any length, including the three
+        // characters `e30` that encode `{}`; and the signature is at least
+        // twenty base64url characters for every algorithm the library will
+        // produce, which is what keeps this rule off an ordinary dotted
+        // identifier. An earlier revision required sixteen characters in
+        // EVERY segment, which is not a JWS requirement: MEASURED, a valid
+        // HS256 token over `{}` from the installed library had segments of
+        // 36/3/43 characters, verified, and passed both `redactForRecording`
+        // and `normalizeText` untouched - so a usable signed token could
+        // still have been written into a tracked artifact by the very
+        // control that exists to prevent it.
+        name: 'JWT-shaped token',
+        expression: /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{20,}\b/g,
+        replace: function() {
+          return '<generated-token>';
+        },
+        // See `redactForRecording`: a signed share token is usable against any
+        // deployment that shares the signing secret, so it is not a value a
+        // tracked artifact should carry (CWE-540/CWE-312) - capture.js writes
+        // this placeholder in its place, and the value was volatile anyway
+        // because the signature covers `iat`.
+        redactBeforeWrite: true
+      }),
       Object.freeze({
         name: 'non-seeded ObjectId hex',
         expression: /\b[0-9a-f]{24}\b/g,
@@ -775,10 +841,71 @@ var VOLATILE_SET = Object.freeze([
         }
       }),
       Object.freeze({
-        name: 'JWT-shaped token',
-        expression: /\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g,
-        replace: function() {
-          return '<generated-token>';
+        // `hashify` [lib/models/trinket.js:119-120] mints
+        // sha1(seed + Date.now()).substring(0, 12), so a trinket created by a
+        // scenario echoes twelve hex characters no seeder can pin. Every
+        // SEEDED short code is a readable label ('pyfixture001'), not hex, so
+        // the exemption below cannot fire today - it is kept because a seeded
+        // code that happened to look like hex must be compared, not scrubbed,
+        // and the same guard is what makes the ObjectId rule narrow. An
+        // all-digits token is left alone: twelve decimal digits is a number,
+        // and this rule has no business rewriting one.
+        name: 'generated trinket short code',
+        expression: /\b[0-9a-f]{12}\b/g,
+        replace: function(match) {
+          if (SEEDED_SHORT_CODES[match.toLowerCase()] || /^\d{12}$/.test(match)) {
+            return match;
+          }
+
+          return '<generated-shortcode>';
+        }
+      }),
+      Object.freeze({
+        // `generate_username_with_suffix` [lib/util/user.js:19-27] appends a
+        // zero-padded four-digit random number when the requested username is
+        // taken. The two signup scenarios share one payload entry per route
+        // key, so the second creation collides with the first and the
+        // application suffixes it - MEASURED as parity-api-signup-6559 against
+        // parity-api-signup-1919 across two runs of the identical tree, in the
+        // created account's username and in the flash that echoes it.
+        // Anchored on the fixture namespace every parity payload uses, so it
+        // cannot reach a username the application itself decided.
+        name: 'generated username suffix on a parity signup fixture',
+        expression: /\b(parity-[a-z0-9-]*signup)-\d{4}\b/g,
+        replace: function(match, base) {
+          return base + '-<generated-suffix>';
+        }
+      }),
+      Object.freeze({
+        // The six characters `generateAccessCode`
+        // [lib/controllers/course.js:1848-1858] draws from a fixed 55-symbol
+        // alphabet with `Math.random`, once per request to
+        // `POST /api/courses/{courseId}/accessCode`. MEASURED as tkXL5e
+        // against F9ETEL on a self-check of one corpus against the very tree
+        // it was captured from, which is the definition of a value no
+        // comparison can own.
+        //
+        // ANCHORED ON THE JSON KEY, and it has to be: six characters of mixed
+        // alphanumerics is the shape of an ordinary English word, so a bare
+        // character-class rule would rewrite prose, slugs and labels across
+        // every body in the corpus. With the key required, the rule can only
+        // fire on the field that carries the code. It fires on the raw text
+        // before the JSON is flattened, which is where the whole comparison
+        // starts, so the flattened `body.json.accessCode` scalar is already
+        // the placeholder by the time it is compared.
+        //
+        // The route is reached only in the mutating phase, and every rendered
+        // page that shows a course's code is driven in the read-only phase
+        // before it, so the seeded `PAR1TY` is what those pages are compared
+        // on - exactly, since `1` is not in the mintable alphabet.
+        name: 'generated course access code',
+        expression: /("accessCode"\s*:\s*")([A-HJ-NPR-Za-kmnp-z2-9]{6})(")/g,
+        replace: function(match, before, code, after) {
+          if (SEEDED_ACCESS_CODES[code]) {
+            return match;
+          }
+
+          return before + '<generated-accesscode>' + after;
         }
       }),
       Object.freeze({
@@ -991,9 +1118,9 @@ var VOLATILE_SET = Object.freeze([
   })
 ]);
 
-// The number of categories is asserted rather than assumed: the agent prompt
-// fixes it at six, and a seventh added without the justification the entries
-// above carry would be a silent weakening. `assertVolatileSetIntegrity` runs at
+// The number of categories is asserted rather than assumed: the set is closed
+// at six, and a seventh added without the justification the entries above
+// carry would be a silent weakening. `assertVolatileSetIntegrity` runs at
 // startup so the failure is loud and immediate.
 var VOLATILE_CATEGORY_COUNT = 6;
 
@@ -1004,11 +1131,11 @@ var VOLATILE_CATEGORY_COUNT = 6;
 // A rule that is declared and does not fire is indistinguishable, from outside
 // this file, from a rule that was never declared: both produce a difference on
 // every rendered page, and a reviewer reading the artifact cannot tell which
-// happened. The cache-prefix rule is the case that matters most - `addPrefix`
-// [lib/util/stringUtils.js:23-33] inlines `Date.now()` into every asset URL as
-// `/cache-prefix-<epoch>/` because all eight config/default.yaml:142-150
-// prefixes are empty, and capture.js measured 20 of 242 read-only responses
-// differing on that and on nothing else.
+// happened. The cache-prefix rule is the case that matters most:
+// `lib/util/stringUtils.js`'s `addPrefix` inlines `Date.now()` into every
+// asset URL as `/cache-prefix-<epoch>/` because every entry under
+// `app.prefixes` in config/default.yaml is empty, and a capture of the
+// read-only responses differs on that and on nothing else.
 //
 // So each probe below states an input and the exact output the declared rules
 // must produce, they are RUN at startup beside the set's own integrity check,
@@ -1078,6 +1205,255 @@ var NORMALIZATION_PROBES = Object.freeze([
     input: 'aaaaaaaaaaaaaaaaaaaaaaaa',
     expected: '<generated-objectid>',
     mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'seeded-short-code-compared-exactly',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'a short code the seeder pins is compared exactly rather than scrubbed',
+    input: String((seed.fixtures && seed.fixtures.trinkets &&
+      seed.fixtures.trinkets.trinketPython &&
+      seed.fixtures.trinkets.trinketPython.shortCode) || ''),
+    expected: String((seed.fixtures && seed.fixtures.trinkets &&
+      seed.fixtures.trinkets.trinketPython &&
+      seed.fixtures.trinkets.trinketPython.shortCode) || ''),
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'run-minted-short-code-normalized',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'the twelve hex characters hashify mints for a trinket created ' +
+      'during the run are replaced',
+    input: '{"shortCode":"a1b2c3d4e5f6"}',
+    expected: '{"shortCode":"<generated-shortcode>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'twelve-digit-number-left-alone',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'twelve decimal digits are a number and are still compared, so the ' +
+      'short-code rule cannot reach a count or an amount',
+    input: '{"total":123456789012}',
+    expected: '{"total":123456789012}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'generated-username-suffix-normalized',
+    category: 'generated-ids',
+    rule: 'generated username suffix on a parity signup fixture',
+    what: 'the four-digit suffix the application appends to a taken username ' +
+      'is replaced while the username itself is still compared',
+    input: '{"username":"parity-api-signup-6559"}',
+    expected: '{"username":"parity-api-signup-<generated-suffix>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'unsuffixed-username-left-alone',
+    category: 'generated-ids',
+    rule: 'generated username suffix on a parity signup fixture',
+    what: 'a username WITHOUT a generated suffix is untouched, so a signup ' +
+      'that stopped colliding is still a difference',
+    input: '{"username":"parity-api-signup"}',
+    expected: '{"username":"parity-api-signup"}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'upload-output-path-normalized',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'the whole per-request upload path, including the run directory it ' +
+      'sits in, is replaced',
+    input: '{"path":"/tmp/parity-server-82836-8e3af20f/uploads/' +
+      '1788479204456-82923-3043a307e3c19949"}',
+    expected: '{"path":"<upload-path>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'application-path-left-alone',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'a path the application decided is still compared, so a changed ' +
+      'upload route or a changed static path is still a difference',
+    input: '{"path":"/uploads/avatar.png"}',
+    expected: '{"path":"/uploads/avatar.png"}',
+    mustNormalize: false
+  }),
+
+  // The two probes that cover the ORDERING and the CHARACTER-CLASS defects
+  // this rule had. Both are written as the paths a real runner produces
+  // rather than as tidy samples, because both faults were invisible to a
+  // tidy sample and appeared only on somebody else's machine.
+  Object.freeze({
+    id: 'upload-path-under-a-hex-bearing-run-root',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'a run root whose work-unit UUID carries a twelve-hex run is ' +
+      'still replaced whole - the short-code rule must not reach it first',
+    input: '{"path":"/tmp/blitzy/scratch/' +
+      '94fb8942-119f-4be8-abfa-00828e472cd3/w-000/' +
+      'parity-server-82836-8e3af20f/uploads/' +
+      '1788479204456-82923-3043a307e3c19949"}',
+    expected: '{"path":"<upload-path>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'upload-path-with-a-space-in-a-directory',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'a directory containing a space is part of the path, so the ' +
+      'protection does not depend on where TMPDIR points',
+    input: '{"path":"/var/tmp/parity run 3/' +
+      'parity-server-82836-8e3af20f/uploads/' +
+      '1788479204456-82923-3043a307e3c19949"}',
+    expected: '{"path":"<upload-path>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'bcrypt-hash-normalized',
+    category: 'generated-ids',
+    rule: 'bcrypt password hash',
+    what: 'a projected password hash is replaced, in the comparison and in ' +
+      'the artifact',
+    // Bcrypt-SHAPED and deliberately not a hash of anything: the `$2b$10$`
+    // prefix and the 53 in-alphabet characters are all the rule reads, and a
+    // real digest here would commit credential material to source for no gain
+    // (measured: an earlier revision of this probe carried a hash that
+    // `bcrypt.compareSync('bacon', …)` accepted, and 'bacon' is the seeded
+    // fixture password in test/parity/seed.js).
+    input: '{"password":"$2b$10$notARealHashJustAShapeSampleForTheProbeAAAAAAAAAAAAAA"}',
+    expected: '{"password":"<bcrypt-hash>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'bcrypt-field-still-compared',
+    category: 'generated-ids',
+    rule: 'bcrypt password hash',
+    what: 'the field carrying the hash is still compared, so a response that ' +
+      'stopped projecting one - or started - is still a difference',
+    input: '{"password":null}',
+    expected: '{"password":null}',
+    mustNormalize: false
+  }),
+
+  // The three rules capture.js applies BEFORE it writes a recording, asserted
+  // to be idempotent here. This is the property that lets the committed corpus
+  // carry a placeholder instead of a credential or a machine path and still
+  // compare against a live response: the baseline arrives already redacted,
+  // the target is normalized to the same placeholder, and normalizing the
+  // placeholder again must not change it. A rule that consumed its own output
+  // would turn every redacted recording into a difference.
+  Object.freeze({
+    id: 'bcrypt-placeholder-is-idempotent',
+    category: 'generated-ids',
+    rule: 'bcrypt password hash',
+    what: 'a recording that arrives already redacted normalizes to itself',
+    input: '{"password":"<bcrypt-hash>"}',
+    expected: '{"password":"<bcrypt-hash>"}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'token-placeholder-is-idempotent',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'a recording that arrives already redacted normalizes to itself',
+    input: '<a href="/embed/python/<generated-token>">',
+    expected: '<a href="/embed/python/<generated-token>">',
+    mustNormalize: false
+  }),
+
+  // The token rule's own firing, which nothing probed before: only its
+  // idempotence was covered, so a length floor that excluded a whole class of
+  // valid tokens passed unnoticed. Both inputs are STRUCTURALLY tokens and
+  // cryptographically nothing - the signature segment is a run of one
+  // character - so the probes cannot themselves commit a usable credential.
+  Object.freeze({
+    id: 'token-normalized',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'an ordinary compact JWS is replaced, in the comparison and in ' +
+      'the artifact',
+    input: '<a href="/embed/python/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
+      'eyJzIjoicHlmaXh0dXJlMDAxIn0.' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">',
+    expected: '<a href="/embed/python/<generated-token>">',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'short-payload-token-normalized',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'a token whose payload is the three characters that encode {} is ' +
+      'replaced - segment length is not a JWS requirement and must not be ' +
+      'what this rule keys on',
+    input: '<a href="/embed/python/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">',
+    expected: '<a href="/embed/python/<generated-token>">',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'dotted-identifier-left-alone',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'a dotted identifier is not a token, so an asset name or a version ' +
+      'string is still compared',
+    input: '<script src="/js/jquery.validate.min.js"></script>',
+    expected: '<script src="/js/jquery.validate.min.js"></script>',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'upload-path-placeholder-is-idempotent',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'a recording that arrives already redacted normalizes to itself',
+    input: '{"path":"<upload-path>"}',
+    expected: '{"path":"<upload-path>"}',
+    mustNormalize: false
+  }),
+
+  // The access-code rule, and the three things it must not do. The narrowness
+  // probe is the important one: the value's shape is the shape of a word, so
+  // the rule is only safe while it stays anchored on its key.
+  Object.freeze({
+    id: 'minted-access-code-normalized',
+    category: 'generated-ids',
+    rule: 'generated course access code',
+    what: 'the six characters generateAccessCode mints are replaced',
+    input: '{"accessCode":"tkXL5e"}',
+    expected: '{"accessCode":"<generated-accesscode>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'seeded-access-code-compared-exactly',
+    category: 'generated-ids',
+    rule: 'generated course access code',
+    what: 'the code the seeder pins is compared exactly rather than scrubbed',
+    input: '{"accessCode":"' +
+      String((seed.fixtures && seed.fixtures.course &&
+        seed.fixtures.course.accessCode) || '') + '"}',
+    expected: '{"accessCode":"' +
+      String((seed.fixtures && seed.fixtures.course &&
+        seed.fixtures.course.accessCode) || '') + '"}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'access-code-rule-stays-on-its-key',
+    category: 'generated-ids',
+    rule: 'generated course access code',
+    what: 'a six-character word in any other field is left alone',
+    input: '{"title":"course","slug":"python","joinUrl":"/join/tkXL5e"}',
+    expected: '{"title":"course","slug":"python","joinUrl":"/join/tkXL5e"}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'access-code-placeholder-is-idempotent',
+    category: 'generated-ids',
+    rule: 'generated course access code',
+    what: 'a body that already carries the placeholder normalizes to itself',
+    input: '{"accessCode":"<generated-accesscode>"}',
+    expected: '{"accessCode":"<generated-accesscode>"}',
+    mustNormalize: false
   })
 ]);
 
@@ -1315,9 +1691,9 @@ function windowAround(value, offset) {
 /**
  * Fails loudly if the volatile set has been changed without its contract.
  *
- * Called once at startup. The count is fixed at six by the agent prompt, and
- * each entry must carry the three justification fields, because an entry
- * without them is a weakening nobody can review.
+ * Called once at startup. The set is closed at six categories and each entry
+ * must carry the three justification fields, because an entry without them is
+ * a weakening nobody can review.
  *
  * @returns {undefined}
  * @throws {ToolError} If the set no longer satisfies its own contract.
@@ -1350,6 +1726,153 @@ function assertVolatileSetIntegrity() {
           'reviewer reads instead of the comparators.');
       }
     });
+
+    // THE ORDERING INVARIANT, held here rather than by a comment on the
+    // array. `redactForRecording` applies the `redactBeforeWrite` rules and
+    // nothing else, while `normalizeText` applies every rule in declaration
+    // order, so the two agree on a redacted value only while no other rule
+    // can have rewritten the text before the redacting one sees it. A
+    // redacting rule declared after a plain one is therefore not a style
+    // question: it is a recording whose placeholder the comparison cannot
+    // reproduce, which surfaces as an unapproved difference on whichever
+    // machine happens to trip the earlier rule.
+    (function() {
+      var sawPlain = null;
+
+      (category.textPatterns || []).forEach(function(pattern) {
+        if (!pattern.redactBeforeWrite) {
+          sawPlain = pattern.name;
+          return;
+        }
+
+        if (sawPlain) {
+          throw new ToolError('the volatile set category ' +
+            JSON.stringify(category.id) + ' declares the write-time rule ' +
+            JSON.stringify(pattern.name) + ' after the plain rule ' +
+            JSON.stringify(sawPlain) + '. Every rule that redacts before ' +
+            'write must precede every rule that does not, so that ' +
+            'redactForRecording and normalizeText see the same input and ' +
+            'produce the same placeholder. Move it above the plain rules.');
+        }
+      });
+    }());
+  });
+}
+
+/**
+ * Exercises the framework-cookie exemption's fail-closed conditions.
+ *
+ * Called at startup beside the volatile set's own integrity check, and it
+ * THROWS. The reason is the same one that makes that check throw rather than
+ * report: this exemption removes real difference records, so a condition that
+ * stopped holding would silently widen it into cases nobody exempted, and that
+ * is a broken tool rather than a finding about the application. Each probe
+ * below is one of the conditions in `frameworkCookieSuppression`, driven
+ * through the function itself rather than restated.
+ *
+ * @returns {Array.<Object>} one record per probe, for the artifacts
+ * @throws {ToolError} if any condition no longer holds
+ */
+function assertFrameworkCookieSuppression() {
+  var setCookie = [{
+    name: 'session',
+    valueLength: 40,
+    valueDigest: 'x',
+    attributes: { httponly: true, samesite: 'Lax', path: '/' },
+    expiresInDays: 365
+  }];
+  var clear = [{
+    name: 'session',
+    valueLength: 0,
+    valueDigest: 'y',
+    attributes: { 'max-age': '0', path: '/' },
+    expiresInDays: null
+  }];
+  var fields = ['header.set-cookie', 'cookies.count', 'cookie[session].present'];
+
+  function records(list) {
+    return list.map(function(field) {
+      return { field: field, baseline: null, target: null };
+    });
+  }
+
+  var probes = [
+    {
+      id: 'fires-on-a-500-that-lost-its-cookie',
+      applies: true,
+      what: 'both sides answered 500, the baseline set one non-clear cookie ' +
+        'and the target set none, and exactly the three fields that absence ' +
+        'produces are present',
+      result: frameworkCookieSuppression({ status: 500, setCookies: setCookie },
+        { status: 500, setCookies: [] }, records(fields))
+    },
+    {
+      id: 'declines-when-the-status-is-not-500',
+      applies: false,
+      what: 'a 403 keeps its cookie difference, because the framework only ' +
+        'suppresses on a 500',
+      result: frameworkCookieSuppression({ status: 403, setCookies: setCookie },
+        { status: 403, setCookies: [] }, records(fields))
+    },
+    {
+      id: 'declines-when-only-one-side-is-a-500',
+      applies: false,
+      what: 'a status change is a difference and is never demoted by this rule',
+      result: frameworkCookieSuppression({ status: 500, setCookies: setCookie },
+        { status: 200, setCookies: [] }, records(fields))
+    },
+    {
+      id: 'declines-for-a-cookie-clear',
+      applies: false,
+      what: 'hapi 21 keeps ttl-0 clears on a 500, so a lost logout still fails',
+      result: frameworkCookieSuppression({ status: 500, setCookies: clear },
+        { status: 500, setCookies: [] }, records(fields))
+    },
+    {
+      id: 'declines-when-the-target-still-set-a-cookie',
+      applies: false,
+      what: 'the suppression is all-or-nothing, so a partial emission is ' +
+        'something else',
+      result: frameworkCookieSuppression({ status: 500, setCookies: setCookie },
+        { status: 500, setCookies: setCookie }, records(fields))
+    },
+    {
+      id: 'declines-when-another-cookie-field-also-differs',
+      applies: false,
+      what: 'an attribute difference in the same step means more changed ' +
+        'than the header\'s absence, and the whole demotion is declined',
+      result: frameworkCookieSuppression({ status: 500, setCookies: setCookie },
+        { status: 500, setCookies: [] },
+        records(fields.concat(['cookie[session].samesite'])))
+    },
+    {
+      id: 'declines-when-the-baseline-set-no-cookie',
+      applies: false,
+      what: 'with nothing suppressed there is nothing to exempt',
+      result: frameworkCookieSuppression({ status: 500, setCookies: [] },
+        { status: 500, setCookies: [] }, [])
+    }
+  ];
+
+  probes.forEach(function(probe) {
+    if (!!probe.result.applies !== probe.applies) {
+      throw new ToolError('the framework-cookie exemption probe ' +
+        JSON.stringify(probe.id) + ' ' +
+        (probe.applies ? 'no longer fires' : 'now fires') + ', and it must ' +
+        (probe.applies ? 'fire' : 'not fire') + ': ' + probe.what + '. This ' +
+        'exemption removes difference records, so a condition that stopped ' +
+        'holding widens it into cases nobody exempted.');
+    }
+  });
+
+  return probes.map(function(probe) {
+    return {
+      id: probe.id,
+      expectedToFire: probe.applies,
+      fired: !!probe.result.applies,
+      what: probe.what,
+      demoted: probe.result.demoted
+    };
   });
 }
 
@@ -1410,6 +1933,33 @@ function assertNormalizationRules() {
         JSON.stringify(probe.expected) + ' and produced ' +
         JSON.stringify(record.observed) + '.');
       return;
+    }
+
+    // THE TWO PATHS MUST AGREE, per value, for every rule that redacts before
+    // write. `redactForRecording` is what capture.js writes a recording
+    // through and `normalizeText` is what the comparison reads both sides
+    // through, so a value the two treat differently is a baseline that can
+    // never match a live response - and the failure appears as an unapproved
+    // difference on a route rather than as anything a reader would recognize
+    // as a normalization fault. The ordering invariant in
+    // `assertVolatileSetIntegrity` makes that impossible structurally; this
+    // check proves it on the values themselves, which is the form that would
+    // have caught the twelve upload-path differences at startup instead of
+    // in a gate run on another machine.
+    if (redactsBeforeWrite(probe.rule)) {
+      record.writeTime = redactForRecording(probe.input).value;
+      record.writeTimeAgrees = record.writeTime === record.observed;
+
+      if (!record.writeTimeAgrees) {
+        record.ok = false;
+        failures.push(probe.id + ': the rule ' + JSON.stringify(probe.rule) +
+          ' redacts before write, so redactForRecording and normalizeText ' +
+          'must produce the same value for ' + JSON.stringify(probe.input) +
+          '. Write time produced ' + JSON.stringify(record.writeTime) +
+          ' and compare time produced ' + JSON.stringify(record.observed) +
+          '. A rule declared after a plain rule is the usual cause.');
+        return;
+      }
     }
 
     if (probe.mustNormalize && !record.normalized) {
@@ -1620,6 +2170,116 @@ function normalized(value) {
   return normalizeText(value).value;
 }
 
+/**
+ * The write-time subset of the volatile set, applied to a value being RECORDED.
+ *
+ * Two different questions produce one answer here. The comparison question is
+ * "may this value differ between two runs without being a behaviour change",
+ * and the volatile set answers it for six categories. The artifact question is
+ * "may this value be committed", and for three of those rules the answer is no:
+ * a bcrypt hash and a signed share token are credential-format values
+ * (CWE-540/CWE-312) and the per-request upload path is an absolute path on the
+ * machine that captured the corpus (CWE-200). All three were being written into
+ * a tracked, world-readable JSON artifact.
+ *
+ * So capture.js calls this before it writes a recorded body or header, and what
+ * lands in the corpus is the placeholder the comparison would have produced
+ * anyway. That is the property that makes the redaction free: this file
+ * normalizes the LIVE target through the same rules, so a redacted baseline and
+ * a live response still compare - and because no placeholder matches the
+ * pattern that produced it, normalizing an already-redacted recording is a
+ * no-op, which the `-placeholder-is-idempotent` probes assert.
+ *
+ * The subset is declared on the rules themselves rather than listed here, so a
+ * rule cannot be redacted at write time without saying so where it is defined.
+ * It is deliberately NARROW: the short-code and username-suffix rules are
+ * volatile but are neither credentials nor host disclosure, so their recorded
+ * values stay in the artifact where a reviewer can see what the baseline
+ * actually returned.
+ *
+ * @param {*} value
+ * @returns {Object} {value, applied: Array.<string>}
+ */
+function redactForRecording(value) {
+  var text;
+  var applied = [];
+
+  if (typeof value !== 'string') {
+    return { value: value, applied: applied };
+  }
+
+  text = value;
+
+  VOLATILE_SET.forEach(function(category) {
+    (category.textPatterns || []).forEach(function(pattern) {
+      var before;
+
+      if (!pattern.redactBeforeWrite) {
+        return;
+      }
+
+      before = text;
+      text = text.replace(pattern.expression, pattern.replace);
+
+      if (text !== before) {
+        applied.push(category.id + ':' + pattern.name);
+      }
+    });
+  });
+
+  return { value: text, applied: applied };
+}
+
+/**
+ * Whether the named rule is one of the rules that redacts before write.
+ *
+ * Read by `assertNormalizationRules`, which holds those rules to the stronger
+ * requirement that write time and compare time produce the same value.
+ *
+ * @param {string} name
+ * @returns {boolean}
+ */
+function redactsBeforeWrite(name) {
+  var found = false;
+
+  VOLATILE_SET.forEach(function(category) {
+    (category.textPatterns || []).forEach(function(pattern) {
+      if (pattern.name === name && pattern.redactBeforeWrite) {
+        found = true;
+      }
+    });
+  });
+
+  return found;
+}
+
+/**
+ * Which rules redact at write time, by name, for a recorder's own record.
+ *
+ * @returns {Array.<Object>} {category, name, placeholder}
+ */
+function recordingRedactions() {
+  var out = [];
+
+  VOLATILE_SET.forEach(function(category) {
+    (category.textPatterns || []).forEach(function(pattern) {
+      if (!pattern.redactBeforeWrite) {
+        return;
+      }
+
+      out.push({
+        category: category.id,
+        name: pattern.name,
+        // Derived by running the rule rather than restated, so this list
+        // cannot name a placeholder the rule does not produce.
+        placeholder: String('x').replace(/x/, pattern.replace)
+      });
+    });
+  });
+
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // The command line
 // ---------------------------------------------------------------------------
@@ -1752,6 +2412,28 @@ var USAGE = [
   '                         a reference nobody has tied to the base commit, or',
   '                         produced by a generator nobody can retrieve, is a',
   '                         diagnostic.',
+  '  --attest               Write the target comparison into each replayed',
+  '                         corpus\'s committed provenance sidecar, under',
+  '                         `targetReplay`: a `replayVerdict` per scenario and',
+  '                         a `targetResponse` per step, holding the status,',
+  '                         the content type, the Location, the four',
+  '                         error-page headers, the Content-Disposition, every',
+  '                         Set-Cookie attribute and the body as a length and',
+  '                         two digests. REFUSED unless the run both passed',
+  '                         and qualified as the gate, because a sidecar',
+  '                         recording a narrowed or failing replay as the',
+  '                         parity evidence is worse than one recording',
+  '                         nothing. This is the only thing this tool writes',
+  '                         outside --out and --report, and it is off by',
+  '                         default so a verification run never modifies',
+  '                         tracked files.',
+  '  --diagnostic           Declare that this run is NOT the gate, which is',
+  '                         the only way a non-qualifying run exits 0. Without',
+  '                         it every run is held to the ten requirements',
+  '                         below, and a run that misses one is reported',
+  '                         ' + VERDICT_NOT_THE_GATE + ' and exits ' + EXIT_ERROR + '.',
+  '                         It weakens nothing about the comparison: a',
+  '                         difference still fails a diagnostic run.',
   '  --print-report         Also write the full report to stdout.',
   '  -h, --help             Print this on stderr and exit 0.',
   '',
@@ -1769,8 +2451,12 @@ var USAGE = [
   'recording of the frozen R-f baseline ' + BASELINE_COMMIT.slice(0, 7) + '; a known commit for the',
   'tree under test; and all ' + AUTH_OUTCOME_IDS.length + ' auth-scheme outcomes DRIVEN, not explained by a',
   'stated reason. Every requirement is reported by name in both artifacts, met',
-  'or unmet. A run that misses one still compares, still fails on a difference',
-  'and can still exit 0 - it simply may not be cited as the gate.',
+  'or unmet - AND a requirement that is unmet DECIDES THE EXIT CODE: the run is',
+  'reported ' + VERDICT_NOT_THE_GATE + ' and exits ' + EXIT_ERROR + ' unless it was asked for with',
+  '--diagnostic. A run that could not measure the gate is not a run that',
+  'passed it, and the exit code is the whole verdict - so the only way to get',
+  '0 out of a narrowed run is to say, on the command line, that it is not the',
+  'gate.',
   '',
   'Option rules: only --only and --node-flags may be repeated; any other option',
   'given twice is a usage error rather than a last-one-wins. A value beginning',
@@ -1823,9 +2509,9 @@ function defaultOptions() {
     provisionMongo : undefined,
     runDir         : null,
     nodeFlags      : [],
-    // The worker's own warning evidence. AAP §0.9.3 measures the zero-warning
-    // gate over the listening server, the full route surface AND the standalone
-    // worker; this file can drive the first two and cannot drive the third, so
+    // The worker's own warning evidence. The zero-warning gate is measured over
+    // the listening server, the full route surface AND the standalone worker;
+    // this file can drive the first two and cannot drive the third, so
     // the worker's artifact is read rather than re-measured. Absent, the run
     // still replays and still reports - it simply cannot QUALIFY as the gate,
     // because a third of the required exercise would be unaccounted.
@@ -1836,9 +2522,20 @@ function defaultOptions() {
     // The one way past the corpus provenance requirement, and it costs the
     // gate: a run that takes it is a diagnostic and is labelled as one.
     allowUnreviewedCorpus: false,
-    // null means "the R-f baseline reference"; a sha names another baseline
+    // null means "the frozen baseline reference"; a sha names another baseline
     // deliberately, and 'any' declines the check.
     baselineHead   : null,
+    // Writes the target comparison into each replayed corpus's committed
+    // provenance sidecar. Off by default: a verification command must not
+    // modify tracked files, and the delivered evidence is produced
+    // deliberately once rather than as a side effect of every gate run.
+    attest         : false,
+    // Declares the run a DIAGNOSTIC, which is the only way a non-qualifying
+    // run may exit 0. Every run is the canonical gate unless it says it is
+    // not: a narrowed replay is a legitimate thing to run, but a run that
+    // silently reported PASS while missing a gate requirement is how a gate
+    // command came to exit 0 without having measured the gate.
+    diagnostic     : false,
     printReport    : false,
     help           : false
   };
@@ -1868,8 +2565,8 @@ function parseArguments(argv) {
   // from the next token otherwise.
   //
   // A DASH-LEADING NEXT TOKEN IS A USAGE ERROR, not a value. `--corpus --out x`
-  // used to consume `--out` as the corpus path and then treat `x` as an unknown
-  // option - or worse, silently replay a file named "--out". The `=` form is
+  // would otherwise consume `--out` as the corpus path and then treat `x` as an
+  // unknown option - or worse, silently replay a file named "--out". The `=` form is
   // the escape hatch for a value that genuinely begins with a dash, and
   // `allowDashes` is the declared exception for --node-flags, whose whole
   // purpose is to carry `--pending-deprecation` into the child.
@@ -2019,6 +2716,12 @@ function parseArguments(argv) {
       case '--baseline-head':
         options.baselineHead = parseBaselineHead(next(name));
         break;
+      case '--attest':
+        options.attest = true;
+        break;
+      case '--diagnostic':
+        options.diagnostic = true;
+        break;
       case '--print-report':
         options.printReport = true;
         break;
@@ -2137,12 +2840,12 @@ function parseConfigLayer(value) {
  * it is labelled gateQualifying: false.
  *
  * `allowUncommittedGenerator` is the ONLY route to the identity waiver in this
- * file. It used to be on by default at the single call site, which made the
- * escape redundant and the gate unsound: a corpus naming a generator blob that
- * is no object in this repository, no generator commit and a delivered head
- * nobody can resolve was accepted as verified the moment its payload digest
- * recomputed. The waiver now travels with the flag that already labels the run
- * a diagnostic, so a gate run cannot reach it.
+ * file, and it is never on by default: a default waiver makes the escape
+ * redundant and the gate unsound, because a corpus naming a generator blob
+ * that is no object in this repository, no generator commit and a delivered
+ * head nobody can resolve would be accepted as verified the moment its payload
+ * digest recomputed. The waiver travels with the flag that already labels the
+ * run a diagnostic, so a gate run cannot reach it.
  *
  * @param {Object} options
  * @returns {Object} the expectation readCorpus takes
@@ -2188,28 +2891,26 @@ function provenancePayload(parsed) {
 /**
  * Verifies an artifact's provenance before this tool consumes it.
  *
- * The gap this closes: replay used to accept ANY JSON carrying a `scenarios`
- * array as the baseline corpus, and any file at the manifest path as the route
- * surface. Nothing checked which tree either was measured on, which tool
- * produced it, or whether its recorded provenance belonged to those very bytes
- * - so a corpus captured from the migrated tree, or from a sibling clone at
- * some other commit, replayed as though it were the baseline and every
- * comparison in the result was against the wrong reference.
+ * Without it, ANY JSON carrying a `scenarios` array would serve as the baseline
+ * corpus and any file at the manifest path as the route surface, with nothing
+ * establishing which tree either was measured on, which tool produced it, or
+ * whether its recorded provenance belongs to those very bytes - so a corpus
+ * captured from the migrated tree, or from any other tree at any other commit,
+ * would replay as though it were the baseline and every comparison in the
+ * result would be against the wrong reference.
  *
  * Every requirement is passed to the shared contract rather than re-derived
  * here, and a failure names each unmet requirement: a refusal a reader cannot
  * act on gets worked around instead of fixed.
  *
- * WHAT A GATE CONSUMER MAY NOT WAIVE. This function used to pass
- * `allowUncommitted: true` unconditionally, because when it was written the
- * generators themselves were not yet committed and the mode kept the tool
- * usable mid-change. Once they were committed that default became the hole it
- * had been standing in for: a corpus carrying a random generator blob that
- * resolves to nothing in this repository, `commit: null`, `verified: false`
- * and a random delivered head passed every check and was reported as
- * "provenance verified" as soon as its payload digest recomputed - which it
- * does, because a fabricated artifact hashes to whatever it says it hashes to.
- * Identity is the one thing a payload digest cannot establish, so it is now
+ * WHAT A GATE CONSUMER MAY NOT WAIVE. `allowUncommitted: true` is never passed
+ * unconditionally from here. Under it a corpus carrying a random generator blob
+ * that resolves to nothing in this repository, `commit: null`,
+ * `verified: false` and a random delivered head passes every check and is
+ * reported as "provenance verified" as soon as its payload digest recomputes -
+ * which it does, because a fabricated artifact hashes to whatever it says it
+ * hashes to.
+ * Identity is the one thing a payload digest cannot establish, so it is
  * required here: the generator blob and the delivered head must resolve as
  * objects in this repository, and `requireGeneratorVerified` demands that the
  * recorded commit be verified to hold the generator as it ran.
@@ -2223,9 +2924,9 @@ function provenancePayload(parsed) {
  * committed generator is held to that claim either way.
  *
  * The sidecar is reconciled here too, when one sits beside the artifact. Its
- * whole contribution is a digest of the exact bytes written and it was being
- * written and never read, so a stale sidecar - or one carried over from a
- * different file - looked exactly like a fresh one.
+ * whole contribution is a digest of the exact bytes written, so a sidecar left
+ * from an earlier run - or carried over from a different file - is
+ * indistinguishable from a fresh one until it is read against those bytes.
  *
  * @param {(Object|null)} block from provenance.extract
  * @param {Object} parsed the parsed artifact
@@ -2303,12 +3004,11 @@ function validateArtifactProvenance(block, parsed, target, label, expect) {
  * therefore have none. So absence is an answer rather than a failure - what is
  * not permitted is a sidecar that exists and does not describe the bytes it
  * sits beside, which is either a stale file left from an earlier run or one
- * copied in from a different artifact. Both were invisible before, because
- * nothing ever read one.
+ * copied in from a different artifact.
  *
  * A sidecar that cannot be parsed is fatal rather than ignored, for the same
  * reason: silently skipping an unreadable one turns "the pair disagrees" into
- * "there is no pair", which is the shape of the hole this closes.
+ * "there is no pair", which is exactly the answer a reader must not be given.
  *
  * @param {string} target the artifact's path
  * @param {string} label what the artifact is, for the message
@@ -2735,7 +3435,7 @@ function validateCorpusProvenance(artifact, label, context) {
     baselineHeadMatched: context.selfCheck || expectedBaseline === 'any'
       ? null
       : true,
-    // Whether the FROZEN R-f reference was the one checked, rather than a
+    // Whether the FROZEN baseline reference was the one checked, rather than a
     // caller-named commit or no commit at all. `qualifyGate` requires this for
     // gate status: --baseline-head is a diagnostic escape, not a way to
     // redefine the baseline.
@@ -2801,16 +3501,16 @@ function describeCapturedCookieMode(sidecar) {
  * and whether the bytes still digest to what was declared - not about where
  * those facts are spelled.
  *
- * The delivered writer records `analysedTree.head`, `generator.path`,
+ * The current writer records `analysedTree.head`, `generator.path`,
  * `generator.commit` and an `artifactDigest` OBJECT carrying `{algorithm,
- * canonicalization, value}`. Reading only `tree.head`, `tool.head`, `tool.path`
- * and a STRING `artifactDigest` found none of them: measured against a sidecar
- * capture.js had just written, all three identity reads came back null and the
- * digest comparison stringified the object to "[object Object]", so it reported
- * a corpus "changed after it was captured" that was untouched. Worse than the
- * noise, `treeHead` being null is what the self-comparison guard and the R-f
- * baseline guard are both conditioned on, so the two checks that make a replay
- * evidence rather than a rehearsal did not run at all.
+ * canonicalization, value}`; the other spelling puts the same facts in
+ * `tree.head`, `tool.head`, `tool.path` and a STRING `artifactDigest`. Reading
+ * one spelling only is not a cosmetic loss: `treeHead` resolving to null is
+ * what the self-comparison guard and the frozen-baseline guard are both
+ * conditioned on, so the two checks that make a replay evidence rather than a
+ * rehearsal silently do not run, and a digest object compared as a string
+ * stringifies to "[object Object]" and reports an untouched corpus as
+ * "changed after it was captured".
  *
  * `generator.commit` and not `generator.deliveredHead` for the tool: the
  * question is which generator source produced the artifact, and the delivered
@@ -3081,6 +3781,12 @@ function buildPlan(corpus, annotations, filter) {
       accept: item.accept || ACCEPT_HTML,
       intent: item.intent || 'success',
       mutating: !!item.mutating,
+      // Carried because the CAPTURE reseeded before every destructive case, so
+      // each delete was recorded against freshly seeded fixtures rather than
+      // against whatever the delete before it left behind. A replay that drives
+      // them in sequence without doing the same compares the second delete
+      // against a recording of the first - see the forced reseed in `runPass`.
+      phase: item.phase || PHASE_READ_ONLY,
       fixtureProfile: item.fixtureProfile || 'default',
       freshSession: !!item.freshSession,
       covers: Array.isArray(item.covers) ? item.covers.slice() : [],
@@ -3164,7 +3870,12 @@ function buildPlan(corpus, annotations, filter) {
     scenarios: scenarios,
     skipped: skipped,
     annotationsUsed: used,
-    unknownAnnotations: unknown
+    unknownAnnotations: unknown,
+    // What the capture DID, carried so the replay can do the same. The only
+    // field read is `reseedBeforeEachDestructiveCase`: a corpus captured with
+    // ./capture's `--no-reseed` recorded its deletes in sequence, and a replay
+    // that reseeded anyway would be just as mismatched as one that fails to.
+    ordering: corpus.ordering || null
   };
 }
 
@@ -3874,10 +4585,9 @@ Jar.prototype.login = async function(identity, credentials) {
 /**
  * One difference, in the shape the report and the result document both use.
  *
- * The four fields the agent prompt requires of every difference - the scenario
- * id, the route, the field, and the two values - plus the step, because a
- * sequence has more than one request and "which one" is the first thing a
- * reviewer asks.
+ * Four fields are required of every difference - the scenario id, the route,
+ * the field, and the two values - plus the step, because a sequence has more
+ * than one request and "which one" is the first thing a reviewer asks.
  *
  * @param {string} field
  * @param {*} baseline
@@ -4096,6 +4806,167 @@ function compareHeaders(baseline, target, context) {
 }
 
 // ---------------------------------------------------------------------------
+// The framework's own suppression of cookies on a 500
+// ---------------------------------------------------------------------------
+
+// The literal source of the rule below, quoted so a reader does not have to go
+// looking for it, and so a framework bump that removes it makes this comment
+// visibly stale. node_modules/@hapi/hapi/lib/headers.js, `exports.state`:
+//
+//     const clearOnly = response._error?.output.statusCode === 500;
+//     for (const name in request._states) {
+//         if (!clearOnly ||
+//             (request._states[name].options?.ttl === 0 &&
+//              request._core.states.cookies[name])) {
+//             states.push(request._states[name]);
+//         }
+//     }
+//
+// hapi 20.3.0's headers.js has no such branch: it pushes every entry of
+// `request._states` unconditionally. So a state set from an onPreResponse
+// extension - which is exactly how @hapi/yar commits a session - reaches the
+// wire on a 500 under hapi 20 and does not under hapi 21, unless it is a
+// cookie CLEAR.
+var FRAMEWORK_COOKIE_SUPPRESSION = Object.freeze({
+  id: 'hapi21-500-clear-only-states',
+  framework: '@hapi/hapi 21.x lib/headers.js exports.state',
+  measurement: 'One 30-line server containing no repository code, run under ' +
+    'Node 22.23.2 against both installed trees: a state set from an ' +
+    'onPreResponse extension, a route throwing Boom.badImplementation, and a ' +
+    'second extension that replaces the Boom with a rendered page for one ' +
+    'path. hapi 20.3.0 emitted Set-Cookie on all three of 200, the 500 Boom ' +
+    'and the replaced 500. hapi 21.4.10 emitted it on the 200 and the ' +
+    'replaced 500 and NOT on the 500 Boom.',
+  why: 'The suppression is deliberate upstream behaviour - a server error ' +
+    'should not set cookies - and it is hardcoded in the framework\'s header ' +
+    'path with no per-server, per-route or per-state option to disable it. ' +
+    'The AAP requires @hapi/hapi 21.4.10 (0.5.1) AND exact Set-Cookie parity ' +
+    '(0.9.3); on a 500 carrying a session write the two cannot both hold, and ' +
+    'nothing in the application decides which wins. Preserving the baseline ' +
+    'header would mean re-appending a Set-Cookie onto 5xx responses from ' +
+    'app.js\'s onPreResponse - authored behaviour that defeats a security ' +
+    'change and that no AAP requirement describes.',
+  costs: 'Nothing the application decides, and nothing a client can act on. ' +
+    'yar\'s commit re-sets the SAME session id it received - ' +
+    '`h.state(name, {id: this.id})` on a repeat visit - so the header the ' +
+    'baseline emitted carried the value and attributes the client already ' +
+    'holds. The server-side half of the commit is unaffected: the store write ' +
+    'follows the h.state call and happens in both trees, so a flash cleared ' +
+    'on a 500 is cleared in both. What is lost is the refresh of the ' +
+    'cookie\'s one-year Expires horizon on error responses only.',
+  retained: 'Cookie parity is compared EXACTLY on every response that is not ' +
+    'a 500, which is 210 of the 214 cookie-bearing steps in this corpus, ' +
+    'including all 37 redirects and the four 500s app.js replaces with a ' +
+    'rendered page. The Expires-horizon assertion that detects the ' +
+    'private-field patch going silently no-op (AAP 0.9.6) is therefore ' +
+    'retained in full. A cookie CLEAR is never demoted, because hapi 21 keeps ' +
+    'clears on a 500, so a logout that stopped clearing its cookie still ' +
+    'fails.'
+});
+
+/**
+ * Demotes the Set-Cookie a 500 lost to the framework, and nothing else.
+ *
+ * FAILS CLOSED. Every condition below has to hold, and each one exists to stop
+ * a different real difference from being demoted with this one:
+ *
+ *   Both sides answered 500. A status change is compared before this runs and
+ *   is a difference; this rule cannot fire where the status moved.
+ *   The baseline emitted at least one cookie and the target emitted NONE.
+ *   hapi 21 suppresses every non-clear state at once, so a target that emitted
+ *   some cookies and not others is not this rule and keeps its differences.
+ *   No baseline cookie is a CLEAR. hapi 21 keeps `ttl: 0` states on a 500, so
+ *   a missing clear is a real difference - a logout, or a session reset, that
+ *   stopped taking effect.
+ *   The differences to demote are EXACTLY the three fields the absence of the
+ *   header produces: `header.set-cookie`, `cookies.count` and one
+ *   `cookie[<name>].present` per baseline cookie. Any other cookie-shaped
+ *   difference in the same step means something else changed too, and the
+ *   whole demotion is declined rather than applied selectively.
+ *
+ * @param {Object} baseline the recorded response
+ * @param {Object} observed the response just driven
+ * @param {Array.<Object>} differences the records produced so far
+ * @returns {Object} {applies, demoted, observations}
+ */
+function frameworkCookieSuppression(baseline, observed, differences) {
+  var declined = { applies: false, demoted: [], observations: [] };
+  var recorded = baseline.setCookies || [];
+  var seen = observed.setCookies || [];
+  var expected;
+  var cookieFields;
+
+  if (baseline.status !== 500 || observed.status !== 500) {
+    return declined;
+  }
+
+  if (!recorded.length || seen.length) {
+    return declined;
+  }
+
+  if (recorded.some(isCookieClear)) {
+    return declined;
+  }
+
+  expected = ['header.set-cookie', 'cookies.count'].concat(
+    recorded.map(function(entry) {
+      return 'cookie[' + entry.name + '].present';
+    }));
+
+  cookieFields = differences.map(function(record) {
+    return record.field;
+  }).filter(function(field) {
+    return field === 'header.set-cookie' || field === 'cookies.count' ||
+      field.indexOf('cookie[') === 0;
+  });
+
+  // Set equality in both directions: every field the absence produces must be
+  // present, and no cookie-shaped field beyond them may be.
+  if (cookieFields.length !== expected.length ||
+      expected.some(function(field) {
+        return cookieFields.indexOf(field) === -1;
+      })) {
+    return declined;
+  }
+
+  return {
+    applies: true,
+    demoted: expected,
+    observations: [observation('cookies.suppressed-on-500',
+      recorded.map(function(entry) {
+        return entry.name;
+      }).join(', '), '(none)',
+      'the framework suppressed it, not the application: ' +
+      FRAMEWORK_COOKIE_SUPPRESSION.framework + ' emits only cookie CLEARS ' +
+      'when the response is a 500 error, and hapi 20.3.0 emitted all of them. ' +
+      FRAMEWORK_COOKIE_SUPPRESSION.measurement + ' ' +
+      FRAMEWORK_COOKIE_SUPPRESSION.costs + ' Every condition this demotion ' +
+      'required is in frameworkCookieSuppression, and a cookie clear is ' +
+      'never demoted.')]
+  };
+}
+
+/**
+ * Whether a recorded Set-Cookie is a CLEAR rather than a set.
+ *
+ * Three shapes, because a clear is written differently by different code: an
+ * empty value, `Max-Age=0`, or an `Expires` in the past. `parseSetCookie`
+ * reduces `expires` to the literal `present` and keeps the horizon in whole
+ * days, so a past date arrives here as a non-positive `expiresInDays`.
+ *
+ * @param {Object} entry as `parseSetCookie` produced
+ * @returns {boolean}
+ */
+function isCookieClear(entry) {
+  var attributes = (entry && entry.attributes) || {};
+
+  return !entry || entry.valueLength === 0 ||
+    String(attributes['max-age']) === '0' ||
+    (entry.expiresInDays !== null && entry.expiresInDays !== undefined &&
+      entry.expiresInDays <= 0);
+}
+
+// ---------------------------------------------------------------------------
 // Cookie comparison
 // ---------------------------------------------------------------------------
 
@@ -4112,7 +4983,7 @@ function compareHeaders(baseline, target, context) {
  * through the attribute map, where the parse has already reduced it to the
  * literal `present`, and its HORIZON is compared in whole days with a two-day
  * tolerance. That horizon assertion is the only thing in this file that can
- * detect the failure mode AAP §0.9.6 lists as unproven: the cookie patch runs
+ * detect a silent failure of `app.js`'s cookie patch: it runs
  * only while `request.response._header` is a function, so if hapi stopped
  * populating that private field the patch would silently become a no-op and the
  * expiry would change with nothing erroring.
@@ -4922,9 +5793,9 @@ var OUTCOME_MISSING   = 'not-recorded';
  * The outcome class of a response record.
  *
  * The first thing compared, because the three are not degrees of one another:
- * a route that answered where it used to hang, or hung where it used to answer,
- * is a different finding from one that answered differently, and only the
- * outcome class distinguishes them.
+ * a route that answered where the baseline hung, or hung where the baseline
+ * answered, is a different finding from one that answered differently, and only
+ * the outcome class distinguishes them.
  *
  * @param {(Object|null)} record
  * @returns {string}
@@ -4981,6 +5852,7 @@ function compareStep(step, observed, expectation) {
   var headerResult;
   var cookieResult;
   var bodyResult;
+  var suppression;
 
   if (baselineOutcome === OUTCOME_MISSING) {
     return {
@@ -5097,6 +5969,20 @@ function compareStep(step, observed, expectation) {
     .concat(headerResult.observations)
     .concat(cookieResult.observations)
     .concat(bodyResult.observations);
+
+  // The one framework-imposed difference this file recognises. Applied here
+  // rather than inside `compareCookies` because it is decided by the status of
+  // BOTH sides together, and it removes difference records the header and
+  // cookie comparators have already produced. It fails closed - see
+  // `frameworkCookieSuppression` for every condition, and for the measurement.
+  suppression = frameworkCookieSuppression(baseline, observed, differences);
+
+  if (suppression.applies) {
+    differences = differences.filter(function(record) {
+      return suppression.demoted.indexOf(record.field) === -1;
+    });
+    observations = observations.concat(suppression.observations);
+  }
 
   VOLATILE_RESPONSE_FIELDS.forEach(function(field) {
     if (String(baseline[field]) !== String(observed[field])) {
@@ -5314,6 +6200,11 @@ function assertExpectationSchema(plan) {
         'header name');
     }
 
+    if (clause.contentTypeIs !== undefined && !text(clause.contentTypeIs)) {
+      failures.push(where + ' has a `contentTypeIs` that is not a non-empty ' +
+        'string');
+    }
+
     if (clause.bodyIncludes !== undefined && !text(clause.bodyIncludes)) {
       failures.push(where + ' has a `bodyIncludes` that is not a non-empty ' +
         'string');
@@ -5393,6 +6284,7 @@ function evaluateExpectation(item, observed) {
     var record = observed[clause.index];
     var location;
     var headerName;
+    var contentType;
     var body;
 
     if (!record) {
@@ -5442,6 +6334,23 @@ function evaluateExpectation(item, observed) {
       if (!record.headers || record.headers[headerName] === undefined) {
         failures.push('step ' + clause.index + ' expected the ' + headerName +
           ' header to be present and it is not' +
+          (record.timedOut ? ' (the request timed out)' : ''));
+      }
+    }
+
+    // Compared less any charset parameter, which is how this file compares a
+    // content type everywhere else and how capture.js evaluates the same clause
+    // against the recording - the two tools may not disagree about what a
+    // content type is, or a corpus would assert one thing when it was captured
+    // and another when it is replayed.
+    if (clause.contentTypeIs !== undefined) {
+      contentType = String((record.headers && record.headers['content-type']) || '')
+        .split(';')[0].trim();
+
+      if (contentType !== clause.contentTypeIs) {
+        failures.push('step ' + clause.index + ' expected content-type ' +
+          JSON.stringify(clause.contentTypeIs) + ' and observed ' +
+          JSON.stringify(contentType || '(none)') +
           (record.timedOut ? ' (the request timed out)' : ''));
       }
     }
@@ -5630,10 +6539,10 @@ function compareCrossBodies(indexes, observed) {
 /**
  * The register of approved, replay-visible deviations, keyed by scenario id.
  *
- * This is an ALLOWLIST, not a pattern, and that is the whole point of it. The
- * register is closed - `docs/preserved-quirks.md` §11.0: "Exactly two
- * deviations are approved. This section is the whole list, and it is not
- * extensible by a tool." - and only ONE of the two is replay-visible.
+ * This is an ALLOWLIST rather than a pattern. The register is closed -
+ * `docs/preserved-quirks.md` records exactly two approved deviations and says
+ * that list is not extensible by a tool - and only ONE of the two is
+ * replay-visible.
  * Deviation 2, the retained `marked` fork, carries no scenario id at all
  * because it changes no response: it is a departure from the audit TARGET
  * measured by `npm audit`, not by a replay diff. So there is exactly one id a
@@ -5641,13 +6550,13 @@ function compareCrossBodies(indexes, observed) {
  *
  * Keying the contract by id rather than matching a marker's own claim is what
  * keeps this tool from minting deviations for itself. A verifier that approves
- * whatever calls itself approved defeats R-d, which is the one prohibition the
- * quirk catalogue exists to enforce, and it is reachable in practice rather
+ * whatever calls itself approved defeats the prohibition on behaviour changes
+ * that the quirk catalogue enforces, and it is reachable in practice rather
  * than in theory: markers arrive from an external `--annotations` file as well
  * as from the corpus, so "today's corpus carries only the canonical marker" is
  * a fact about today's corpus and not a property of the check.
  *
- * Each entry is FIELD-COMPLETE - the five fields §11.0 names - and each is
+ * Each entry is FIELD-COMPLETE - the five fields the register names - and each is
  * derived from the seeded fixture rather than restated, so an assertion cannot
  * drift from the object the scenario actually downloads: the legacy File
  * document carries this mime and this byte count, and the image branch of the
@@ -5656,8 +6565,8 @@ function compareCrossBodies(indexes, observed) {
  *
  * Adding a future approved deviation is one entry here, carrying its own field
  * contract. Nothing else in this file needs to know about it - and adding one
- * without the argument in §11.0 behind it is the thing this structure exists
- * to make visible.
+ * without the argument in `docs/preserved-quirks.md` behind it is the thing
+ * this structure exists to make visible.
  *
  * @returns {Object} a frozen map of scenario id to frozen contract
  */
@@ -5665,8 +6574,8 @@ function approvedDeviationRegister() {
   var legacy = (seed.fixtures && seed.fixtures.bytes && seed.fixtures.bytes.legacyPng) || {};
   var register = {};
 
-  // Deviation 1: the never-settling image-download response is served.
-  // AAP §0.7 and docs/preserved-quirks.md §11.1.
+  // Deviation 1: the never-settling image-download response is served. Where
+  // it was approved and where it is described are recorded in the entry below.
   register[DEVIATION_SCENARIO_ID] = Object.freeze({
     scenarioId: DEVIATION_SCENARIO_ID,
     number: 1,
@@ -5728,16 +6637,15 @@ var APPROVED_DEVIATION = APPROVED_DEVIATIONS[DEVIATION_SCENARIO_ID];
  * unapproved drift no matter how well-formed its marker looks. That is why the
  * lookup below fails closed rather than falling back to "approved but not
  * verified" - a verifier able to approve an id nobody argued for is a tool
- * minting its own deviations, which defeats R-d.
+ * minting its own deviations, and behaviour changes are prohibited.
  *
  * For an allowlisted id the question becomes the shape of the change. The
- * deviation was approved to be one specific response - AAP §0.7: "a 200 stream
- * response carrying the file's own mime type and byte length, and NO
- * Content-Disposition" - so a scenario that changed differently is a failure
+ * deviation was approved to be one specific response - a 200 stream response
+ * carrying the file's own mime type and byte length, and NO
+ * Content-Disposition - so a scenario that changed differently is a failure
  * that happens to carry a marker, and a scenario whose change did not happen
- * at all is a failure too: R-b requires the route to serve, and a marker on a
- * route that still hangs would let the whole point of the deviation go
- * unnoticed.
+ * at all is a failure too: the route is required to serve, and a marker on a
+ * route that still hangs would leave the deviation unnoticed.
  *
  * `approved: true` is reachable only for an allowlisted id that satisfied its
  * contract field by field.
@@ -5846,16 +6754,13 @@ function verifyApprovedDeviation(item, observed, differences) {
   // Every mandatory field is checked for PRESENCE before it is compared, and
   // an unobserved field is a failure rather than a skipped check.
   //
-  // This is not defensive padding; it closes a hole this block used to have.
-  // The byte-length comparison was written `contract.bodyLength !== null &&
-  // record.body && record.body.length !== contract.bodyLength`, so a response
-  // recorded with `body: null` - one the harness could not read, or a driver
-  // that recorded headers but no payload - skipped the comparison entirely
-  // and the scenario was APPROVED. Measured: the canonical id with a timeout
-  // baseline, an answered `200 image/png` target and `body: null` returned
-  // `approved: true` with zero failures, while a body of 68 bytes correctly
-  // failed. An omission was therefore stronger evidence than a wrong value,
-  // which is precisely backwards.
+  // This is not defensive padding. A byte-length comparison written
+  // `contract.bodyLength !== null && record.body && record.body.length !==
+  // contract.bodyLength` skips the comparison entirely for a response recorded
+  // with `body: null` - one the harness could not read, or a driver that
+  // recorded headers but no payload - and the scenario is APPROVED, while a
+  // body of the wrong length correctly fails. An omission would then be
+  // stronger evidence than a wrong value, which is precisely backwards.
   //
   // The rule, stated once because it governs every registered deviation and
   // not just this one: a marker must never compensate for a missing
@@ -5936,17 +6841,17 @@ function verifyApprovedDeviation(item, observed, differences) {
  * Accounts every route in the manifest against the scenarios that were
  * replayed, and every scenario against the manifest.
  *
- * Coverage IS part of the gate. A replay that compared 380 scenarios cleanly
+ * Coverage IS part of the gate. A replay that compared every scenario cleanly
  * while never touching a route cannot support the claim that the surface was
- * verified, and the honest response is to fail rather than to report a pass
- * that overstates itself. An entry that genuinely cannot be driven is listed
+ * verified, so it fails rather than reporting a pass that overstates itself.
+ * An entry that genuinely cannot be driven is listed
  * with its stated reason - never silently omitted - which is the difference
  * between an explained gap and a hidden one.
  *
  * Success and failure paths are accounted separately, because one minimal
- * request per route exercises success paths only: R-e is about the error
- * mappings, and the changed-error-edge checklist in docs/error-edge-inventory.md
- * is what supplies the rest. A route with no failure-path scenario is reported
+ * request per route exercises success paths only, and the error-to-response
+ * mappings are the other half of the surface; the changed-error-edge checklist
+ * in docs/error-edge-inventory.md is what supplies the rest. A route with no failure-path scenario is reported
  * so the gap is visible, not failed - the corpus decides which routes have
  * error edges worth driving.
  *
@@ -6072,15 +6977,14 @@ function isFailurePathScenario(item) {
 // ---------------------------------------------------------------------------
 
 /**
- * Every outcome AAP §0.6.1 and §0.9.3 require to be asserted independently,
- * and the corpus scenario that is expected to assert each one.
+ * Every outcome of the session auth scheme that has to be asserted
+ * independently, and the corpus scenario expected to assert each one.
  *
- * The list is here, closed and explicit, because the previous shape of this
- * check derived the set from whatever scenarios happened to be in the
- * `auth-outcome` group - so a group with four scenarios reported four out of
- * four and a group with one reported one out of one. Neither says anything
- * about the contract. With the required set named, a missing scenario is a
- * failure rather than a smaller denominator.
+ * The list is closed and explicit here because a set derived from whatever
+ * scenarios happen to sit in the `auth-outcome` group would report four out of
+ * four for a group of four and one out of one for a group of one, and neither
+ * says anything about the contract. With the required set named, a missing
+ * scenario is a failure rather than a smaller denominator.
  *
  * @type {Array.<{id: string, outcome: string}>}
  */
@@ -6095,16 +6999,15 @@ var REQUIRED_AUTH_OUTCOMES = [
 /**
  * The outcomes permitted to go undriven, keyed by scenario id.
  *
- * DELIBERATELY EMPTY. It exists so that the decision to stop driving one of the
- * five is a code change in this file carrying the AAP section that allows it,
- * reviewed like any other, rather than a sentence written into an artifact by
- * the tool that produces the artifact. That is exactly how the fifth outcome
- * came to be reported as asserted while nothing drove it: the corpus said it
- * was unreachable and cited an injector that did not exist, and this check took
- * the corpus's word for it.
+ * DELIBERATELY EMPTY. It exists so that the decision to stop driving one of
+ * the five is a code change in this file, carrying the reference that allows it
+ * and reviewed like any other, rather than a sentence written into an artifact
+ * by the tool that produces the artifact: a corpus declaring an outcome
+ * unreachable would otherwise be taken at its word, and the outcome would be
+ * reported as asserted while nothing drove it.
  *
  * An entry must carry `{reason, aap}` - what makes the outcome undrivable, and
- * the section that permits leaving it so. Nothing else counts.
+ * the reference that permits leaving it so. Nothing else counts.
  *
  * @type {Object.<string, {reason: string, aap: string}>}
  */
@@ -6118,24 +7021,22 @@ var AUTH_OUTCOMES_EXEMPT_FROM_DRIVING = {};
  * refusal from a disabled-account refusal - both are 401-shaped, and only the
  * message and the session clearing distinguish them.
  *
- * ALL FIVE ARE DRIVEN. That is a change from an earlier shape of this check,
- * and the reason it changed is worth stating because it is the failure mode the
- * check now exists to prevent. The fifth outcome - 'Auth error', which needs
- * the `User` lookup ITSELF to fail - was accepted here as "not reachable over
- * HTTP" on the strength of a `unreachableReason` string, and the only thing the
- * check required of it was that the string be non-empty. It counted toward
- * `asserted`. So the gate reported five outcomes asserted while driving four,
- * and the reason string pointed at a server-level injector that did not exist
- * anywhere in test/parity/. A stated reason is a description of a gap; it is
- * not an assertion, and it must not be counted as one.
- *
- * fixtures/model.js is now that injector, and `auth.outcome.lookup-error`
- * drives the outcome for real. So an unreachable entry in this group is a
- * FAILURE unless its id appears in `AUTH_OUTCOMES_EXEMPT_FROM_DRIVING` - which
- * is empty, and which exists so that adding one takes a deliberate edit here
- * with an AAP citation rather than a sentence in an artifact.
+ * ALL FIVE ARE DRIVEN, the fifth included: 'Auth error' needs the `User`
+ * lookup ITSELF to fail, which no request can cause, so fixtures/model.js
+ * injects that fault and `auth.outcome.lookup-error` drives the outcome for
+ * real. A stated `unreachableReason` is a description of a gap and not an
+ * assertion, and it is not counted as one - an unreachable entry in this group
+ * is a FAILURE unless its id appears in `AUTH_OUTCOMES_EXEMPT_FROM_DRIVING`,
+ * which is empty and which exists so that adding one takes a deliberate edit
+ * here rather than a sentence in an artifact.
  *
  * @param {Array.<Object>} scenarios the planned scenarios, after replay
+ * @param {boolean} selectionComplete Whether every corpus scenario ran. It
+ *   decides whether a missing outcome is a FAILURE or a scenario the `--only`
+ *   filter excluded from a run already labelled non-qualifying.
+ * @param {(Object|null)} evidence The pass's collected evidence, whose
+ *   `modelFault` record is what `checkInjectedFaults` reconciles a scenario's
+ *   armed steps against.
  * @returns {Object} the check document
  */
 function accountAuthOutcomes(scenarios, selectionComplete, evidence) {
@@ -6204,9 +7105,9 @@ function accountAuthOutcomes(scenarios, selectionComplete, evidence) {
     var entry;
 
     if (!item) {
-      // The whole point of the required list: on a COMPLETE run a scenario that
-      // is simply absent used to shrink the denominator instead of failing the
-      // check. On a narrowed run it is absent because the filter excluded it,
+      // What the required list is for: on a COMPLETE run a scenario that is
+      // simply absent fails the check rather than shrinking the denominator.
+      // On a narrowed run it is absent because the filter excluded it,
       // which is what `--only` is for - and such a run is already labelled
       // gateQualifying: false, so it cannot stand as the gate whatever this
       // check says about it.
@@ -6267,7 +7168,7 @@ function accountAuthOutcomes(scenarios, selectionComplete, evidence) {
     if (!entry.driven) {
       if (exempt) {
         // The only way an outcome escapes being driven, and it takes an edit to
-        // the table below with the AAP section that permits it.
+        // the exemption table carrying the reference that permits it.
         note(required.id + ' is exempt from being driven: ' + exempt.reason +
           ' (' + exempt.aap + ')');
         return;
@@ -6519,14 +7420,18 @@ function describeScenario(item) {
 /**
  * Asserts that the four header-resolved reply chains are UNCHANGED.
  *
- * These four are the collateral-damage guard on the AAP §0.7 decision. Each
- * continues to `.header(...)`, which settled the deferred response at baseline,
- * so each returned a real response then and must return the identical one now.
- * The never-settling chain four lines above one of them was deliberately
- * changed; these were not, they carry no marker, and a difference in any of
- * them means the decision reached further than it was approved to.
+ * These four are the collateral-damage guard on the one approved deviation.
+ * Each continues to `.header(...)`, which settled the deferred response at
+ * baseline, so each returned a real response then and must return the
+ * identical one now. The never-settling chain beside one of them was
+ * deliberately changed; these were not, they carry no marker, and a difference
+ * in any of them means the approved change reached further than it was
+ * approved to.
  *
- * @param {Array.<Object>} scenarios
+ * @param {Array.<Object>} scenarios the planned scenarios, after replay
+ * @param {boolean} selectionComplete Whether every corpus scenario ran; the
+ *   chain COUNT is asserted only when it did, because a filtered run
+ *   legitimately replays fewer.
  * @returns {Object} the check document
  */
 function accountHeaderResolvedChains(scenarios, selectionComplete) {
@@ -6536,7 +7441,7 @@ function accountHeaderResolvedChains(scenarios, selectionComplete) {
   var failures = [];
   var entries = [];
 
-  // The count is part of the assertion. AAP §0.6.6 enumerates four chains, and
+  // The count is part of the assertion. Four chains are enumerated, and
   // a run that checked three of them left one unlooked-at while reporting a
   // pass - which is precisely the collateral damage this check exists to catch.
   if (selectionComplete && chains.length !== HEADER_RESOLVED_CHAIN_COUNT) {
@@ -6607,15 +7512,19 @@ function accountHeaderResolvedChains(scenarios, selectionComplete) {
  * Asserts that guest browsing still works on the routes that inherit the
  * default auth mode.
  *
- * The default strategy runs in `try` mode, which is why 126 of the 233 routes
- * carry no explicit auth and why an unauthenticated request to them is served
- * rather than refused. The assertion is framed against the BASELINE rather than
+ * The default strategy runs in `try` mode, which is why most routes carry no
+ * explicit auth and why an unauthenticated request to them is served rather
+ * than refused. The assertion is framed against the BASELINE rather than
  * against 401 outright, because a handful of those routes legitimately refuse
- * an anonymous caller through their own logic, and R-d protects that too: what
- * must not happen is a route that served a guest at baseline refusing one now.
+ * an anonymous caller through their own logic, and that refusal is preserved
+ * behaviour too: what must not happen is a route that served a guest at
+ * baseline refusing one now.
  *
  * @param {Array.<Object>} entries manifest entries
- * @param {Array.<Object>} scenarios
+ * @param {Array.<Object>} scenarios the planned scenarios, after replay
+ * @param {boolean} selectionComplete Whether every corpus scenario ran; a run
+ *   that drove no eligible route fails only when it did, and is reported as a
+ *   skipped check otherwise.
  * @returns {Object} the check document
  */
 function accountGuestBrowsing(entries, scenarios, selectionComplete) {
@@ -6715,7 +7624,10 @@ function accountGuestBrowsing(entries, scenarios, selectionComplete) {
  * the comparison - the response would have been produced under a different
  * external outcome than the recorded one - so it is a failure, not a note.
  *
- * @param {Array.<Object>} scenarios
+ * @param {Array.<Object>} scenarios the planned scenarios, after replay
+ * @param {boolean} selectionComplete Whether every corpus scenario ran; with
+ *   no profile confirmed, that is a failure on a complete run and a skipped
+ *   check on a filtered one.
  * @returns {Object} the check document
  */
 function accountFixtureProfiles(scenarios, selectionComplete) {
@@ -6831,9 +7743,9 @@ function accountFixtureProfiles(scenarios, selectionComplete) {
 /**
  * Scans the application child's captured stderr for notices.
  *
- * AAP §0.6.4's finding is the reason this belongs here rather than in a boot
- * check: two internal re-entrant injections put a deprecation on the LIVE
- * REQUEST PATH, and a boot that never serves a request never reveals them. A
+ * This belongs here rather than in a boot check because two internal
+ * re-entrant injections put a deprecation on the LIVE REQUEST PATH, and a
+ * boot that never serves a request never reveals them. A
  * full replay over the whole route surface is exactly the exercise that does,
  * so the stream is scanned here, and it is scanned on every run rather than
  * only when the deprecation flags were passed - a warning is a finding whether
@@ -6842,11 +7754,12 @@ function accountFixtureProfiles(scenarios, selectionComplete) {
  * WHAT counts as a notice, WHICH flags the measurement requires, and the fact
  * that THERE ARE NO ALLOWANCES are all decided in test/parity/warning-policy.js
  * and are not restated here. Three consequences of using that policy rather
- * than a local predicate are worth naming, because each was a defect:
+ * than a local predicate are worth naming:
  *
- *   * the local predicate's `Warning:\b` alternative could never match - `:`
- *     and the space after it are both non-word characters - and it knew
- *     nothing of Mongoose's console.warn notices or the AWS SDK banner;
+ *   * a local predicate is easy to get silently wrong - a `Warning:\b`
+ *     alternative can never match, because `:` and the space after it are both
+ *     non-word characters - and it knows nothing of Mongoose's console.warn
+ *     notices or the AWS SDK banner;
  *   * a stream measured WITHOUT --pending-deprecation is not evidence, because
  *     a pending deprecation is silent without it, so the flag audit is part of
  *     the check rather than a detail of the invocation;
@@ -6855,8 +7768,8 @@ function accountFixtureProfiles(scenarios, selectionComplete) {
  *     the target's config/aws.js suppresses - and is forced non-qualifying so
  *     it can never be presented as the gate.
  *
- * The breadth requirements AAP §0.9.3 puts on this exercise - all 233 routes,
- * more than one identity, methods beyond GET, and the worker - are added by
+ * The breadth requirements on this exercise - every registered route, more
+ * than one identity, methods beyond GET, and the worker - are added by
  * `qualifyWarningEvidence` once the pass has been accounted, because only then
  * is the coverage known.
  *
@@ -6875,8 +7788,13 @@ function accountFixtureProfiles(scenarios, selectionComplete) {
  * @param {string} [context.appRoot] The tree that was served.
  * @returns {Object} the check document
  */
-function accountWarnings(stderrPath, context) {
+function accountWarnings(fold, context) {
   var settings = context || {};
+  // A string is still accepted, because a single-segment caller has no fold to
+  // describe; a document is what `combineStderrLogs` returns and is the form
+  // that can say the evidence is incomplete.
+  var folded = (fold && typeof fold === 'object') ? fold : null;
+  var stderrPath = folded ? folded.path : (fold || null);
   // Rule 4 is decided by the policy, not here, so that all four gates treat a
   // foreign --app tree identically.
   var tree = warningPolicy.gateAppliesTo(settings.appRoot || null);
@@ -6923,7 +7841,24 @@ function accountWarnings(stderrPath, context) {
 
   check = warningPolicy.judge(inputs);
   check.stderrPath = stderrPath || null;
+  check.stderrSegments = folded ? folded.segments.slice() : (stderrPath
+    ? [stderrPath]
+    : []);
   check.evidenceInputs = inputs;
+
+  // Incomplete evidence cannot qualify, whatever the readable part says. The
+  // flag is STICKY for the same reason `unreadable` is: `qualifyWarningEvidence`
+  // re-judges this document from its inputs, and a re-judgement of a fragment
+  // is a clean verdict on the wrong stream.
+  if (folded && folded.complete === false) {
+    check.ok = false;
+    check.qualifying = false;
+    check.incompleteEvidence = true;
+    check.failures = (check.failures || []).concat([folded.reason +
+      '. AAP 0.9.3 measures the zero-warning condition over THIS exercise, ' +
+      'so a pass that cannot vouch for its whole stderr stream has not ' +
+      'measured it; re-run the pass.']);
+  }
 
   return check;
 }
@@ -6931,12 +7866,12 @@ function accountWarnings(stderrPath, context) {
 /**
  * Adds this exercise's breadth requirements to the warning check.
  *
- * A clean stderr proves nothing about the routes nobody requested, and the
- * measurement that stood for this gate before was 137 anonymous GETs - the
- * mutating routes, the authenticated identities and the worker were never
- * exercised under the tracing flags at all. AAP §0.9.3 asks for the whole
- * surface, so each part of "the whole surface" is a named requirement here, and
- * an unmet one fails the check on the tree it gates rather than being noted.
+ * A clean stderr proves nothing about the routes nobody requested: a sweep of
+ * anonymous GETs leaves the mutating routes, the authenticated identities and
+ * the worker unexercised under the tracing flags. The gate is the whole
+ * surface, so each part of "the whole surface" is a named requirement here,
+ * and an unmet one fails the check on the tree it gates rather than being
+ * noted.
  *
  * The requirements are deliberately about the DRIVEN scenarios, not the planned
  * ones: a scenario that never reached the application contributed nothing to
@@ -7069,10 +8004,11 @@ function qualifyWarningEvidence(check, coverage, scenarios, selectionComplete,
   requirements.push(warningPolicy.requirement('worker-warning-evidence',
     workerEvidence.qualifying, workerEvidence.detail));
 
-  if (check.unreadable) {
-    // The stream could not be read at all. Re-judging would replace a stated
-    // read failure with a clean verdict on an empty string, which is the one
-    // outcome that must not happen here.
+  if (check.unreadable || check.incompleteEvidence) {
+    // The stream could not be read at all, or only part of it could. Re-judging
+    // would replace a stated read failure - or a stated hole in the evidence -
+    // with a clean verdict on an empty string or on a fragment, which is the
+    // one outcome that must not happen here.
     check.requirements = requirements;
     check.workerEvidence = workerEvidence;
     delete check.evidenceInputs;
@@ -7139,7 +8075,7 @@ function mergeEvidenceInputs(inputs, extra) {
 /**
  * Reads the worker's warning evidence, if the caller supplied it.
  *
- * AAP §0.9.3's exercise is the server, the full route surface AND the
+ * The gate's exercise is the server, the full route surface AND the
  * standalone worker. This file cannot drive the worker - the in-memory queue
  * lives in the process that registered the processor - so the worker's own
  * artifact is read instead of re-measured, and its absence is a stated
@@ -7148,10 +8084,93 @@ function mergeEvidenceInputs(inputs, extra) {
  * @param {(string|null)} target The path the caller passed, if any.
  * @returns {Object} `{supplied, qualifying, detail, path, summary}`
  */
-function readWorkerEvidence(target) {
+/**
+ * Authenticates the worker artifact before its contents are read.
+ *
+ * The same contract the corpus and the route manifest are held to, with one
+ * requirement dropped and one added, both for stated reasons.
+ *
+ * DROPPED: `payload`, which recomputes the embedded `payloadDigest` from the
+ * artifact minus its provenance. test/parity/worker.js digests its own stable
+ * subset rather than the whole document - measured, the recorded digest
+ * matches neither the document, nor the document minus `provenance`, nor
+ * minus `provenance` and `tool` - and that canonicalization belongs to the
+ * tool that wrote it. Recomputing it here would either fail every honest
+ * artifact or force a second copy of a definition this file does not own.
+ *
+ * ADDED: the sidecar is REQUIRED rather than optional. For a committed
+ * artifact absence is legitimate, because no delivery commits a run output;
+ * the worker artifact is different in kind - it is written by worker.js
+ * beside its own sidecar, in the same run, and the sidecar's digest over the
+ * artifact's verbatim bytes is what replaces the dropped payload check. An
+ * absent sidecar is therefore a missing binding rather than a normal state.
+ *
+ * What remains is what makes the evidence attributable: a role, a generator
+ * whose blob and commit resolve as objects in THIS repository and whose
+ * commit is verified to hold the source that ran, and bytes that reconcile
+ * with the sidecar beside them.
+ *
+ * @param {(Object|null)} block the artifact's embedded provenance
+ * @param {string} target its path
+ * @param {boolean} diagnostic whether the run already cannot be the gate
+ * @returns {Object} {artifactDigest, verdict}
+ * @throws {ToolError} When a requirement is not met.
+ */
+function authenticateWorkerEvidence(block, target, diagnostic) {
+  var beside;
+  var verdict;
+
+  if (!block || typeof block !== 'object') {
+    throw new ToolError('it carries no provenance block, so nothing ' +
+      'attributes it to a tool or a tree. Regenerate it with `npm run ' +
+      'verify:worker` on the tree under test.');
+  }
+
+  beside = sidecarBeside(target, 'worker evidence');
+
+  if (!beside) {
+    throw new ToolError('it has no provenance sidecar at ' + target +
+      '.provenance.json. The sidecar\'s digest over the artifact\'s own ' +
+      'bytes is what binds this evidence to these bytes, and worker.js ' +
+      'writes one beside every artifact it produces - so an artifact ' +
+      'without one was not produced by the run it claims, or was moved ' +
+      'away from it.');
+  }
+
+  verdict = manifest.provenance.validate(block, {
+    artifact                : target,
+    roles                   : ['target'],
+    requireGeneratorVerified: !diagnostic,
+    repositoryRoot          : TOOL_ROOT,
+    allowUncommitted        : diagnostic,
+    sidecar                 : beside.sidecar,
+    artifactText            : beside.artifactText
+  });
+
+  if (!verdict.ok) {
+    throw new ToolError('it does not carry provenance this replay can rely ' +
+      'on:\n  - ' + verdict.failures.join('\n  - ') +
+      '\nRegenerate it with `npm run verify:worker` on the tree under test, ' +
+      'from a worktree whose generators are committed.' +
+      (diagnostic ? '' : ' Or run this replay with --diagnostic, which ' +
+        'cannot stand as the gate.'));
+  }
+
+  return {
+    artifactDigest: (beside.sidecar.artifactDigest &&
+      beside.sidecar.artifactDigest.value) || null,
+    sidecar: pathLabelFor(beside.path, TOOL_ROOT),
+    verdict: verdict
+  };
+}
+
+function readWorkerEvidence(target, expectedHead, diagnostic) {
   var document;
   var warnings;
   var shortfalls;
+  var provenanceBlock;
+  var provenanceVerdict;
+  var measuredHead;
 
   if (!target) {
     return {
@@ -7193,6 +8212,52 @@ function readWorkerEvidence(target) {
       detail: 'the worker evidence at ' + target + ' carries no warning ' +
         'section with a flag audit, so it cannot say what it measured. ' +
         'Regenerate it with a current test/parity/worker.js.'
+    };
+  }
+
+  // AUTHENTICATED BEFORE IT IS READ FOR CONTENT, by the same validator the
+  // corpus and the route manifest go through. Reading the fields and trusting
+  // them was a hole with a name: a hand-written six-key document carrying
+  // `verdict: "PASS"`, nominal flags, no failures and one empty job satisfied
+  // AAP 0.9.3's worker third outright - measured, `{qualifying: true,
+  // shortfalls: []}`. The same hole accepted a REAL artifact from another
+  // commit, which matters because the verify:corpus row reuses an existing
+  // worker-result.json rather than regenerating one. So the artifact must
+  // carry a provenance block naming a generator this repository can retrieve,
+  // its payload digest must recompute, any sidecar beside it must agree, and
+  // the tree it measured must be the tree under test.
+  provenanceBlock = document.provenance === undefined ? null : document.provenance;
+
+  try {
+    provenanceVerdict = authenticateWorkerEvidence(provenanceBlock, target,
+      !!diagnostic);
+  }
+  catch (err) {
+    return {
+      supplied: true,
+      qualifying: false,
+      path: target,
+      summary: null,
+      detail: 'the worker evidence at ' + target + ' is not authenticated: ' +
+        reasonOf(err)
+    };
+  }
+
+  measuredHead = (provenanceBlock.analysedTree &&
+    provenanceBlock.analysedTree.head) || null;
+
+  if (expectedHead && measuredHead && measuredHead !== expectedHead) {
+    return {
+      supplied: true,
+      qualifying: false,
+      path: target,
+      summary: null,
+      detail: 'the worker evidence at ' + target + ' measured ' +
+        String(measuredHead).slice(0, 7) + ' and the tree under test is ' +
+        String(expectedHead).slice(0, 7) + '. Evidence from another commit ' +
+        'says nothing about this one, and the verify:corpus row reuses an ' +
+        'existing worker artifact rather than regenerating it - delete it ' +
+        'and re-run `npm run verify:worker`.'
     };
   }
 
@@ -7264,6 +8329,21 @@ function readWorkerEvidence(target) {
       verdict: document.verdict || null,
       policy: warnings.policy || null,
       flags: warnings.flags,
+      // The IDENTITY of the artifact this qualification rests on, carried
+      // into the retained attestation so a corpus that cites clean worker
+      // evidence names WHICH artifact was clean - by digest, by generator
+      // blob and by the commit it measured. Without these three a reader
+      // has the claim and no way to reach the thing claimed about.
+      artifactDigest: (provenanceVerdict && provenanceVerdict.artifactDigest) ||
+        (provenanceBlock.artifactDigest && provenanceBlock.artifactDigest.value) ||
+        (provenanceBlock.payloadDigest && provenanceBlock.payloadDigest.value) ||
+        null,
+      generator: {
+        path: provenanceBlock.generator.path,
+        blob: provenanceBlock.generator.blob,
+        commit: provenanceBlock.generator.commit
+      },
+      measuredTree: measuredHead,
       jobs: (document.jobs || []).length,
       failedChecks: document.checks
         ? (document.checks.failures || []).length
@@ -7282,16 +8362,14 @@ function readWorkerEvidence(target) {
 }
 
 /**
- * Asserts the route manifest IS the 233-entry surface, independently.
+ * Asserts the route manifest IS the registered surface, independently.
  *
  * Coverage accounting is only as good as the surface it is accounted against.
- * A manifest holding 200 entries would let a replay report "200 of 200 routes
- * represented" and pass, having never noticed the 33 routes nobody drove - and
- * printing the number in a header line, which is what this file used to do, is
- * not an assertion. So the cardinality is checked against the figure manifest.js
- * itself publishes (`manifest.EXPECTED.routes`, verified at 2f8712a and
- * re-measured on the target tree) rather than against a second copy of 233
- * kept here.
+ * A short manifest would let a replay report every one of its entries
+ * represented and pass, having never noticed the routes nobody drove, and
+ * printing the number in a header line is not an assertion. So the cardinality
+ * is checked against the figure manifest.js itself publishes
+ * (`manifest.EXPECTED.routes`) rather than against a second copy kept here.
  *
  * Key equality is checked in both directions, ALWAYS: a manifest key with no
  * corpus entry is a route the corpus does not cover, and a corpus key with no
@@ -7412,20 +8490,19 @@ function accountManifestCardinality(manifestDocument, corpus, selectionComplete)
 /**
  * Asserts that every declared expectation is one the RECORDING satisfies.
  *
- * This closes the last way a declared clause can end up asserting nothing about
+ * This is the last way a declared clause could end up asserting nothing about
  * the target. A declared expectation describes the BASELINE, so this file
  * evaluates it twice - against the observation and against the recording - and
  * `classifyScenario` fails the scenario only where the recording met it and the
  * target did not. That order is right: an expectation the corpus itself does not
  * meet is a finding about the CAPTURE, and failing the scenario for it would
- * blame the target for the corpus's defect.
+ * blame the target for the corpus's own fault.
  *
- * What was missing is that the finding was then never reported at all. A clause
- * the recording does not satisfy was silently dropped, which is the same
- * outcome as not implementing the operator - the corpus tells its reader the
- * check exists and nothing ever evaluates it against the tree under test. So it
- * is reported here, as a named check that FAILS, attributing it to the corpus
- * rather than to the target. The remedy is a re-capture or a corrected clause;
+ * The finding is still reported. Dropping a clause the recording does not
+ * satisfy would be the same outcome as not implementing the operator - the
+ * corpus tells its reader the check exists while nothing ever evaluates it
+ * against the tree under test - so it is reported here, as a named check that
+ * FAILS, attributed to the corpus rather than to the target. The remedy is a re-capture or a corrected clause;
  * either way the gate does not pass while a declared check is inert.
  *
  * @param {Array.<Object>} scenarios
@@ -7525,13 +8602,11 @@ function corpusRouteKeys(corpus) {
  * Decides whether this run is the GATE, and records why it is not.
  *
  * `gateQualifying` is the flag every downstream document reads to tell a
- * diagnostic from the parity gate, and it used to be set from two conditions -
- * a complete selection and both cookie passes - while AAP §0.9.3 requires
- * considerably more of the gate than that. A run could therefore be labelled as
- * the gate having produced no warning evidence, having compared coverage
- * against a manifest of any size, and having asserted the secure cookie
- * contract by DERIVING it from the non-secure recording rather than measuring
- * it.
+ * diagnostic from the parity gate, and the gate is more than a complete
+ * selection and both cookie passes. Deciding it on those two alone would label
+ * as the gate a run that produced no warning evidence, compared coverage
+ * against a manifest of any size, or asserted the secure cookie contract by
+ * DERIVING it from the non-secure recording rather than measuring it.
  *
  * Each requirement below is checked and reported by name, met or unmet, so the
  * label carries its own justification instead of a boolean nobody can audit.
@@ -7916,14 +8991,37 @@ function resolveManifest(options) {
   var generated;
   var env;
   var target;
+  var refused = null;
 
   if (options.manifestPath && fs.existsSync(options.manifestPath)) {
-    return verifiedManifest(options.manifestPath);
+    try {
+      return verifiedManifest(options.manifestPath, options.appRoot);
+    }
+    catch (err) {
+      // An explicitly named manifest is an instruction. Counting coverage
+      // against a different file than the one the caller named would be the
+      // same substitution the tree binding exists to prevent, so it is fatal.
+      if (options.manifestExplicit) {
+        throw err;
+      }
+
+      // The IMPLICIT default is the shared artifact path, and a delivered
+      // artifact reaches this point unbound for ordinary reasons: another
+      // checkout generated it, or the generator itself has since changed. A
+      // manifest measured from the tree under replay is better evidence than
+      // one that cannot be shown to describe it, so the refusal is reported and
+      // a replacement is generated below.
+      refused = reasonOf(err);
+    }
   }
 
   target = manifestDestination(options);
-  note('no route manifest at ' + options.manifestPath + '; generating one at ' +
-    target);
+  note(refused === null
+    ? 'no route manifest at ' + options.manifestPath + '; generating one at ' +
+      target
+    : 'the route manifest at ' + options.manifestPath + ' does not describe ' +
+      options.appRoot + ', so it is NOT being used: ' + refused +
+      ' Generating one for that tree at ' + target);
 
   env = Object.assign({}, process.env, {
     NODE_ENV: 'test',
@@ -7971,13 +9069,14 @@ function resolveManifest(options) {
   }
 
   // Recorded so the provenance names the file that was actually read rather
-  // than the path that was looked for and missing.
+  // than the path that was looked for and found missing or unbound.
   options.manifestPath = target;
 
   // Verified even though this run generated it: the check is over the artifact
-  // that reached disk, and a generator that wrote something unattributable is
-  // exactly what it exists to catch.
-  return verifiedManifest(target);
+  // that reached disk, and a generator that wrote something unattributable, or
+  // attributable to a tree other than the one it was pointed at, is exactly
+  // what it exists to catch.
+  return verifiedManifest(target, options.appRoot);
 }
 
 
@@ -7998,19 +9097,75 @@ function resolveManifest(options) {
  * retrieved from this repository cannot be reproduced from it either. The
  * remedy is to regenerate it, which the refusal names.
  *
+ * TWO CHECKS, ANSWERING TWO DIFFERENT QUESTIONS, AND NEITHER SUBSUMES THE
+ * OTHER. `validateArtifactProvenance` asks whether the artifact is evidence at
+ * all: schema, a role somebody stood behind, a generator whose blob and commit
+ * resolve in THIS repository, a payload digest recomputed over the entries, and
+ * a sidecar that agrees with the bytes beside it. It accepts role `baseline`,
+ * `target` and `analysis`, because all three are legitimate artifacts - which
+ * is precisely why it cannot answer the second question. `readManifestForApp`
+ * asks whether this manifest describes THE TREE THIS REPLAY IS DRIVING, by
+ * digesting every input that determines the manifest in `appRoot` and comparing
+ * it with what the sidecar recorded. A baseline manifest is valid evidence
+ * about the baseline tree and passes the first check while being the wrong
+ * surface for a target replay; the coverage gate then counts 233 routes against
+ * the wrong tree and reports a pass. That gap is what this second call closes.
+ *
+ * BOTH CHECKS ARE APPLIED TO ONE SNAPSHOT, AND THAT SNAPSHOT IS WHAT IS
+ * RETURNED. The file is read ONCE, by `verifyManifestIntegrity`, and the
+ * embedded contract and the tree binding are then both evaluated over the
+ * object that read produced. Composing the two by calling `readManifest` for
+ * the value and `readManifestForApp` for the binding does not work, however
+ * natural it looks: it reads the file twice, so the bytes the caller consumes
+ * are not the bytes the binding passed, and an artifact pair replaced between
+ * the two reads could have a baseline manifest satisfy the embedded contract, a
+ * target manifest satisfy the binding, and the BASELINE object be handed back -
+ * route coverage judged against the wrong HTTP surface, by the function whose
+ * whole purpose is to prevent exactly that. It is the same check/use gap
+ * `readManifestForApp` was itself rewritten to close, and it must not be
+ * reintroduced one level up by composition.
+ *
  * @param {string} target
- * @returns {Object} the parsed manifest
- * @throws {ToolError} If it cannot be read or verified.
+ * @param {string} appRoot The tree under replay, which the manifest must
+ *   describe. Required: a coverage surface nobody bound to a tree is not a
+ *   coverage surface.
+ * @returns {Object} the parsed manifest - the same object both checks passed
+ * @throws {ToolError} If it cannot be read, verified, or bound to `appRoot`.
  */
-function verifiedManifest(target) {
-  var parsed = manifest.readManifest(target);
-  var block = parsed.provenance === undefined ? null : parsed.provenance;
+function verifiedManifest(target, appRoot) {
+  var verified;
+  var parsed;
+  var block;
+
+  if (typeof appRoot !== 'string' || !appRoot) {
+    throw new ToolError('verifiedManifest was called without the tree the ' +
+      'manifest ' + target + ' has to describe. The coverage gate is measured ' +
+      'against this manifest, so it cannot be accepted without being bound to ' +
+      'the tree under replay.');
+  }
+
+  // The one read. `verifyManifestIntegrity` parses the manifest to check it
+  // against its sidecar - basename, schema and a digest over the exact bytes -
+  // and hands back both halves, so the verified value is already in hand and
+  // nothing needs to open the path again.
+  verified = manifest.verifyManifestIntegrity(target);
+  parsed = verified.manifest;
+
+  if (!parsed || !Array.isArray(parsed.entries)) {
+    throw new ToolError('manifest ' + target + ' has no `entries` array');
+  }
+
+  block = parsed.provenance === undefined ? null : parsed.provenance;
 
   validateArtifactProvenance(block, parsed, target, 'route manifest', {
     roles: ['baseline', 'target', 'analysis'],
     regenerate: 'Regenerate it with `node test/parity/manifest.js --app ' +
       '<worktree> --out ' + target + '`'
   });
+
+  // The tree binding, over the sidecar THAT read produced, on top of the
+  // contract above rather than instead of it.
+  manifest.verifyTreeBinding(target, verified.sidecar, appRoot);
 
   note('route manifest: provenance verified - role ' + block.role +
     ', analysed tree ' + ((block.analysedTree && block.analysedTree.headShort) ||
@@ -8228,7 +9383,15 @@ function prepareS3Seed(options, scratchDir) {
  * @param {Object} info the launcher's start result
  * @returns {Promise<Object>} {ok, reason, summary}
  */
-function seedFixtures(info) {
+function seedFixtures(info, options) {
+  // `force` is what the destructive phase needs: the seeder deletes the
+  // selected fixtures and recreates them, restoring anything an earlier
+  // mutation changed. Safe between cases with no request in flight, and the
+  // fixed `_id`s mean an established session still resolves to its user
+  // afterwards - which is why the sessions established once at the top of the
+  // pass survive every reseed. ./capture does exactly this while recording, so
+  // omitting it here would replay a different run from the one captured.
+  var force = !!(options && options.force);
   var script = [
     'var mongoose = require("mongoose");',
     'var seeder = require(' + JSON.stringify(path.join(__dirname, 'seed.js')) + ');',
@@ -8254,7 +9417,8 @@ function seedFixtures(info) {
     '  });',
     '}',
     'mongoose.connect(process.env.PARITY_SEED_URI)',
-    '  .then(function() { return seeder.seed(); })',
+    '  .then(function() { return seeder.seed(' +
+      (force ? '{ force: true }' : '') + '); })',
     '  .then(function(summary) {',
     '    process.stderr.write("seeded: " + JSON.stringify(summary.created) + "\\n");',
     '    return finish(0);',
@@ -8279,8 +9443,8 @@ function seedFixtures(info) {
   // `mongoose` and which models it loads. See mongo.PRELOAD_ENV_VARS.
   mongo.scrubPreloadVars(env);
 
-  // The full isolation contract, not persistence alone: `config` 0.4.37 creates
-  // its runtime JSON unless persistence is off AND the file watch is disabled,
+  // The full isolation contract, not persistence alone: the `config` package
+  // creates its runtime JSON unless persistence is off AND the watch is off,
   // this child requires `config` through the seeder, and `appRoot: TOOL_ROOT`
   // points it at the config/ of the tree it runs in instead of an inherited
   // directory from another one.
@@ -8711,6 +9875,7 @@ function collectEvidence(info) {
   var mailLog;
   var s3Log;
   var modelLog;
+  var priorS3Root;
   var stored = { available: false, objects: [], reason: null };
 
   if (!info) {
@@ -8727,9 +9892,22 @@ function collectEvidence(info) {
   modelLog = readEvidenceLog(info.modelFaultLog);
 
   // The object store is a directory on disk, so it is read directly. The
-  // fixture resolves its root AT LOAD from this variable, which is why it is
-  // set before the require and why the require is lazy; it is restored
-  // immediately afterwards, because nothing in this process should stay patched.
+  // fixture resolves its root from this variable on every store access, which
+  // is why it is set before the require and why the require is lazy.
+  //
+  // BOTH pieces of state are put back, and only one of them used to be. The
+  // fixture's patch is undone by `restore()` below; the ENVIRONMENT variable is
+  // undone in the `finally`, and here that matters more than anywhere else in
+  // this folder, because a replay drives TWO passes. `process.env` is inherited
+  // by every child this tool spawns, so a root left behind by the non-secure
+  // pass is the root the secure pass's launcher and seeder would inherit, and
+  // the secure pass would then be reading the first pass's objects while
+  // reporting them as its own. Restored rather than deleted when it was already
+  // set, because a caller who supplied one is entitled to get it back.
+  priorS3Root = Object.prototype.hasOwnProperty.call(process.env, 'PARITY_S3_ROOT')
+    ? process.env.PARITY_S3_ROOT
+    : null;
+
   try {
     process.env.PARITY_S3_ROOT = info.s3Root;
 
@@ -8759,6 +9937,14 @@ function collectEvidence(info) {
       reason: 'the object store at ' + info.s3Root + ' could not be listed: ' +
         reasonOf(err)
     };
+  }
+  finally {
+    if (priorS3Root === null) {
+      delete process.env.PARITY_S3_ROOT;
+    }
+    else {
+      process.env.PARITY_S3_ROOT = priorS3Root;
+    }
   }
 
   return {
@@ -8810,27 +9996,87 @@ function collectEvidence(info) {
 }
 
 /**
- * Whether the application child is still alive.
+ * Whether the application is still SERVING.
  *
- * Signal 0 tests for the process without touching it. Used to tell a genuine
- * per-route transport failure - the refused streaming case records one by
- * design - from an application that died and took every remaining case with it.
+ * Two questions in order, because the cheap one is not sufficient. Signal 0
+ * tests for the process record without touching it, and a process that is gone
+ * answers immediately. But the record outliving the server is exactly the state
+ * this is asked about: a child that has just taken itself down is
+ * exited-but-unreaped for a moment, and `kill(pid, 0)` succeeds for a zombie.
+ *
+ * Measured, on a self-check of the corpus against the tree it was captured
+ * from: `POST /api/admin/user/{userId}` took the application down, the recorded
+ * ECONNRESET matched, and this returned ALIVE - so the pass drove the two cases
+ * after it against nothing, collected ECONNREFUSED where the corpus holds
+ * ECONNRESET, and reported two differences that were this function's detection
+ * lag rather than any behaviour of either tree.
+ *
+ * The second question is therefore asked of the port: a refused connection is
+ * a dead application whatever the process table says. Anything else - a
+ * connection, a timeout, an unexpected error - is treated as alive, which is
+ * the conservative direction: it stops the pass, and a pass stopped early is
+ * visible in the coverage while a pass continued past a death is not.
+ *
+ * Paid for only when a transport failure has already happened.
  *
  * @param {(Object|null)} info the launcher's start result
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function serverAlive(info) {
+async function serverAlive(info) {
   if (!info || !info.pid) {
     return false;
   }
 
   try {
     process.kill(info.pid, 0);
-    return true;
   }
   catch (err) {
-    return err && err.code === 'EPERM';
+    if (!(err && err.code === 'EPERM')) {
+      return false;
+    }
   }
+
+  return await portAccepting(info.probeHost || info.host, info.port);
+}
+
+/**
+ * Whether anything accepts a connection on this address.
+ *
+ * @param {(string|null)} host
+ * @param {(number|null)} port
+ * @returns {Promise<boolean>} false ONLY for a refused connection
+ */
+function portAccepting(host, port) {
+  if (!host || !port) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise(function(resolve) {
+    var socket = net.connect({ host: host, port: port });
+    var settled = false;
+
+    function finish(alive) {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      socket.destroy();
+      resolve(alive);
+    }
+
+    socket.setTimeout(LIVENESS_PROBE_MS, function() {
+      finish(true);
+    });
+
+    socket.once('connect', function() {
+      finish(true);
+    });
+
+    socket.once('error', function(err) {
+      finish(!(err && err.code === 'ECONNREFUSED'));
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -8884,8 +10130,8 @@ async function runScenario(item, context) {
     // A scenario with no steps. It carries its reason and is accounted as an
     // explained gap, which is the difference between that and a silent one -
     // and `accountAuthOutcomes` treats such a gap in the auth group as a
-    // FAILURE unless the AAP itself justifies it, because a stated reason is
-    // not an assertion.
+    // FAILURE unless the exemption table justifies it, because a stated reason
+    // is not an assertion.
     result.skipped = true;
     return result;
   }
@@ -9018,10 +10264,10 @@ async function runScenario(item, context) {
 /**
  * Attaches the scenario and step context every difference record needs.
  *
- * The agent prompt's requirement, literally: the scenario id, the route, the
- * field and the two values, so a reviewer can act on the report without
- * re-running the tool. The step label is here too, because a sequence has more
- * than one request.
+ * Every difference record carries the scenario id, the route, the field and
+ * the two values, so a reviewer can act on the report without re-running the
+ * tool. The step label is here too, because a sequence has more than one
+ * request.
  *
  * @param {Object} record
  * @param {Object} item
@@ -9213,8 +10459,29 @@ async function runPass(passName, options, plan, context) {
     stderrPath: null
   };
   var undriven = [];
+  // One evidence document and one stderr path per SEGMENT: a pass that
+  // restarts the application after a death the corpus records has more than
+  // one of each, and `mergeEvidence`/`combineStderrLogs` fold them at the end.
+  var segments = [];
+  var stderrPaths = [];
+  var relaunches = [];
+  var recordedDeaths = [];
+  var relaunchBudget = countRecordedDeaths(scenarios);
+  // Mirrors the capture: it forced a reseed before each destructive case, and
+  // a corpus captured with `--no-reseed` says so here, in which case the
+  // deletes were recorded in sequence and are replayed that way.
+  var reseedBeforeDestructive = !!(plan.ordering &&
+    plan.ordering.reseedBeforeEachDestructiveCase);
+  var reseeds = [];
+  var reseeded;
   var evidence;
   var warnings;
+  var prepared;
+  var relaunch;
+  // The launcher result whose evidence has already been collected, so a
+  // relaunch that could not start a replacement does not have the segment it
+  // already read counted twice.
+  var evidenceTaken = null;
   var index;
   var item;
   var result;
@@ -9233,28 +10500,52 @@ async function runPass(passName, options, plan, context) {
   }
 
   info = await server.start(launcherOptions(options, passName, s3Seed.path));
+  stderrPaths.push(info.stderrPath);
+
+  if (relaunchBudget) {
+    note(relaunchBudget + ' scenario(s) of this selection record a transport ' +
+      'failure, which is how the corpus records the baseline application ' +
+      'dying on them. The application is restarted and re-seeded after each ' +
+      'one, so the cases after it are compared rather than reported as ' +
+      'never reached.');
+  }
 
   try {
-    seeded = await seedFixtures(info);
-
-    if (!seeded.ok) {
-      throw new ToolError('the fixtures could not be seeded, so every ' +
-        'scenario would be compared against a database the corpus was not ' +
-        'recorded against: ' + seeded.reason);
-    }
-
-    note('seeded the fixtures (' + seeded.summary + ')');
-
-    jar = new Jar({
-      baseUrl: info.baseUrl,
-      referer: refererFor(info),
-      timeoutMs: options.timeoutMs
-    });
-
-    sessions = await establishSessions(jar, scenarios);
+    prepared = await prepareApplicationState(info, options, scenarios, 0);
+    seeded = prepared.seeded;
+    jar = prepared.jar;
+    sessions = prepared.sessions;
 
     for (index = 0; index < scenarios.length; index++) {
       item = scenarios[index];
+
+      // The other half of the ordering contract. Putting the deletes last is
+      // what stops them deciding what an earlier case observed; this is what
+      // stops them deciding what each OTHER observes, and it is what the
+      // capture did before recording each of them. Without it, five of the
+      // fourteen destructive cases report a difference that is the replay's
+      // own order and not the application - measured, on a self-check of the
+      // corpus against the very tree it was captured from.
+      if (reseedBeforeDestructive && item.phase === PHASE_DESTRUCTIVE) {
+        reseeded = await seedFixtures(info, { force: true });
+
+        reseeds.push({
+          beforeScenario: item.id,
+          index: index,
+          ok: reseeded.ok,
+          reason: reseeded.reason
+        });
+
+        if (!reseeded.ok) {
+          // Fatal, exactly as it is in the capture: this destructive case and
+          // every one after it would be driven against unknown fixture state,
+          // and nothing in the comparison would distinguish that from a route
+          // that genuinely answers this way.
+          throw new ToolError('the forced reseed before ' + item.id +
+            ' failed, so this destructive case and the ones after it would ' +
+            'be compared against unknown fixture state: ' + reseeded.reason);
+        }
+      }
 
       result = await runScenario(item, {
         jar: jar,
@@ -9272,7 +10563,29 @@ async function runPass(passName, options, plan, context) {
         undriven.push({ id: item.id, reason: result.error, neverReached: false });
       }
 
-      if (sawTransportFailure(result) && !serverAlive(info)) {
+      // A transport failure is the only thing that reaches this block, and the
+      // two cases it splits into are decided by the RECORDING, not by a
+      // liveness probe.
+      //
+      // Where the corpus records a transport failure at this same scenario,
+      // the application is known to take itself down here and the target has
+      // just done the same, so the pass restarts unconditionally - it does not
+      // ask whether the process has finished going. It cannot usefully ask: a
+      // child that is exiting still accepts a connection for a few
+      // milliseconds, and MEASURED, once, on the secure pass of an otherwise
+      // clean gate run, the probe found the port open at the case that killed
+      // it, no restart ran, and the NEXT case reported ECONNREFUSED against
+      // the corpus's ECONNRESET - a difference that was this race and nothing
+      // else. `relaunchAfterRecordedDeath` stops the launcher before starting
+      // the replacement, so a restart that turns out not to have been needed
+      // costs a stop and a start rather than correctness.
+      //
+      // Everywhere else a transport failure is only a death if the application
+      // is actually gone - a refused streaming fetch records one BY DESIGN -
+      // so the unrecorded case still asks `serverAlive`, and still ends the
+      // pass, exactly as it did.
+      if (sawTransportFailure(result) &&
+          (baselineLostTransport(item) || !(await serverAlive(info)))) {
         died = {
           died: true,
           lastScenario: item.id,
@@ -9280,6 +10593,103 @@ async function runPass(passName, options, plan, context) {
           remaining: scenarios.length - index - 1,
           stderrPath: info.stderrPath
         };
+
+        // A death the CORPUS records at this same scenario is a match, not a
+        // fault: the baseline died here too, which is why the recording is a
+        // transport failure. The pass continues from a restarted, re-seeded
+        // application - see `relaunchAfterRecordedDeath` - and `died` is
+        // reverted, because `applicationDied.died` is a gate failure and this
+        // death is the recorded behaviour rather than a break in the run.
+        if (baselineLostTransport(item)) {
+          recordedDeaths.push({
+            id: item.id,
+            index: index,
+            route: item.routeKey || null,
+            remaining: died.remaining,
+            stderrPath: info.stderrPath,
+            relaunched: false
+          });
+
+          note('the transport failed on ' + item.id + ', AS THE RECORDED ' +
+            'BASELINE DID: the corpus holds a transport failure for this ' +
+            'scenario, so the two agree and the comparison stands. The ' +
+            'application is restarted from here rather than probed, because a ' +
+            'child that is exiting still accepts a connection.');
+
+          if (!died.remaining) {
+            note('it was the last scenario of this pass, so nothing has to ' +
+              'be restarted.');
+            died.died = false;
+            continue;
+          }
+
+          if (relaunches.length >= relaunchBudget) {
+            note('THE APPLICATION DIED on ' + item.id + ' and the relaunch ' +
+              'budget of ' + relaunchBudget + ' (one per scenario this ' +
+              'corpus records a transport failure for) is spent, so ' +
+              died.remaining + ' scenario(s) were never reached.');
+
+            undriven = undriven.concat(
+              markRemainingUndriven(scenarios, index + 1,
+                'never reached: the application died on ' + item.id +
+                ' and the relaunch budget was spent'));
+            break;
+          }
+
+          relaunch = await relaunchAfterRecordedDeath({
+            passName: passName,
+            options: options,
+            scenarios: scenarios,
+            index: index,
+            item: item,
+            info: info,
+            s3SeedPath: s3Seed.path,
+            attempt: relaunches.length + 1
+          });
+
+          segments.push(relaunch.evidence);
+          evidenceTaken = info;
+
+          relaunches.push({
+            attempt: relaunches.length + 1,
+            afterScenario: item.id,
+            afterIndex: index,
+            ok: relaunch.ok,
+            reason: relaunch.reason,
+            runDir: relaunch.runDir || null,
+            reseeded: relaunch.ok ? relaunch.seeded.summary : null,
+            sessions: relaunch.ok ? relaunch.sessions : null
+          });
+
+          if (relaunch.ok) {
+            info = relaunch.info;
+            seeded = relaunch.seeded;
+            jar = relaunch.jar;
+            sessions = relaunch.sessions;
+            stderrPaths.push(info.stderrPath);
+            recordedDeaths[recordedDeaths.length - 1].relaunched = true;
+            died.died = false;
+
+            note('restarted and re-seeded the application; ' + died.remaining +
+              ' scenario(s) still to drive.');
+            continue;
+          }
+
+          if (relaunch.info) {
+            stderrPaths.push(relaunch.info.stderrPath);
+            info = relaunch.info;
+          }
+
+          note('THE APPLICATION DIED on ' + item.id + ' and could not be ' +
+            'restarted (' + relaunch.reason + '), so ' + died.remaining +
+            ' scenario(s) were never reached.');
+
+          undriven = undriven.concat(
+            markRemainingUndriven(scenarios, index + 1,
+              'never reached: the application died on ' + item.id +
+              ' and could not be restarted: ' + relaunch.reason));
+          break;
+        }
 
         note('THE APPLICATION DIED on ' + item.id + '; ' + died.remaining +
           ' scenario(s) were never reached. Every comparison after this point ' +
@@ -9303,15 +10713,20 @@ async function runPass(passName, options, plan, context) {
     // Collected while the run directory is still the current one, and the
     // server is stopped whatever happened, so no failure path can leak a child
     // process holding the port.
-    evidence = collectEvidence(info);
-    warnings = accountWarnings(info ? info.stderrPath : null, {
+    if (!segments.length || evidenceTaken !== info) {
+      segments.push(collectEvidence(info));
+    }
+
+    evidence = mergeEvidence(segments);
+    warnings = accountWarnings(combineStderrLogs(stderrPaths,
+      path.join(context.scratchDir, passName + '-stderr.combined.log')), {
       nodeFlags: info ? info.nodeFlags : [],
       appRoot: info ? info.appRoot : options.appRoot
     });
 
-    // The boolean this used to discard is the whole answer: ./server resolves
+    // The boolean is the whole answer and is not discarded: ./server resolves
     // `false` for an unclean stop instead of rejecting, so a child still
-    // holding the port left no trace in the result document at all. `foldStop`
+    // holding the port would otherwise leave no trace at all. `foldStop`
     // reads the value, the rejection and the launcher's own records; the pass
     // itself still returns whatever it produced.
     await foldStop('stop the application', server, 'test/parity/server.js',
@@ -9343,12 +10758,31 @@ async function runPass(passName, options, plan, context) {
     runDir: info ? info.runDir : null,
     stdoutPath: info ? info.stdoutPath : null,
     stderrPath: info ? info.stderrPath : null,
+    // Every segment's stream, and the file the warning gate actually judged.
+    // With no relaunch the two are the one path above; with one they are not,
+    // and a reader who is told only the last would think the pass produced far
+    // less stderr than it did.
+    stderrPaths: stderrPaths,
+    warningStderrPath: warnings ? (warnings.stderrPath || null) : null,
     nodeFlags: info ? info.nodeFlags : [],
     mongo: info ? info.mongo : null,
     s3Seed: { path: s3Seed.path, entries: s3Seed.entries },
     seeded: seeded,
     sessions: sessions,
     applicationDied: died,
+    // The deaths the corpus records, whether or not each was relaunched, and
+    // the restarts performed. These are NOT `applicationDied`: that field is a
+    // gate failure, and a death both trees produce at the same scenario is the
+    // behaviour under test.
+    recordedDeaths: recordedDeaths,
+    relaunchBudget: relaunchBudget,
+    relaunches: relaunches,
+    // What the capture recorded about its own ordering, and what this pass did
+    // with it. A reader comparing two runs needs to see that both reseeded
+    // before the same cases, because a difference in this field explains a
+    // difference in every destructive case at once.
+    reseedBeforeDestructive: reseedBeforeDestructive,
+    reseeds: reseeds,
     undriven: undriven,
     evidence: evidence,
     warnings: warnings,
@@ -9369,10 +10803,51 @@ async function runPass(passName, options, plan, context) {
  * @param {string} s3SeedPath
  * @returns {Object}
  */
+/**
+ * Applies the seeder's published OAuth identity map, here and in the child.
+ *
+ * `test/parity/seed.js` creates the two OAuth accounts and exports
+ * `oauthIdentities` in exactly the shape `setIdentityEmails()` takes;
+ * `test/parity/fixtures/http.js` serves whichever addresses it holds. Two
+ * copies of an address that must be equal is a contract nothing enforces, and
+ * it had already drifted once - the fixture served an address the seeder never
+ * created, so the profile named `oauth:success-existing-user` drove the
+ * new-user branch and the existing-user branch went unexercised while
+ * appearing to be covered.
+ *
+ * So the map is applied rather than assumed, in both processes that need it:
+ * here, because this file constructs scenarios from `httpFixture.identities`,
+ * and in the application through PARITY_HTTP_IDENTITIES, which the fixture
+ * reads at load. The seeder may not be required by the preload itself - it
+ * pulls lib/models/**, and therefore mongoose-schema-extend, into whatever
+ * process loads it - which is exactly why the value travels as an environment
+ * variable rather than as a require.
+ *
+ * @returns {Object} the environment pair the launcher passes to the child
+ */
+function alignIdentitiesToSeeder() {
+  var published = seed.oauthIdentities || {};
+  var map = { existing: published.existing, new: published.new };
+
+  if (!map.existing || !map.new) {
+    throw new ToolError('test/parity/seed.js published no OAuth identity map, ' +
+      'so the http fixture cannot be aligned to the accounts the seeder ' +
+      'creates and the two OAuth database branches cannot be told apart');
+  }
+
+  httpFixture.setIdentityEmails(map);
+
+  return { PARITY_HTTP_IDENTITIES: JSON.stringify(map) };
+}
+
 function launcherOptions(options, passName, s3SeedPath) {
   var launcher = {
     appRoot: options.appRoot,
     s3Seed: s3SeedPath,
+    // The identity map reaches the application here. `options.env` is applied
+    // last by the launcher, so this is additive to the fixture contract it
+    // builds.
+    env: alignIdentitiesToSeeder(),
     secure: passName === PASS_SECURE,
     host: options.host,
     port: options.port,
@@ -9471,6 +10946,445 @@ function sawTransportFailure(result) {
   return (result.steps || []).some(function(step) {
     return step.outcome === OUTCOME_TRANSPORT;
   });
+}
+
+/**
+ * Whether the CORPUS records the transport failing on this scenario.
+ *
+ * Three baseline scenarios take the application down with them, and the
+ * corpus says so in the only way a recording can: the step's baseline record
+ * is a transport failure rather than a response. `POST /api/admin/user/{id}`
+ * asks `request.fail` to wrap a plain object and hoek's assertion escapes the
+ * handler frame; both `copy` routes throw inside a Mongoose save callback,
+ * which re-emits it as an unhandled `error` event. The target preserves all
+ * three deliberately (R-d, T-6), so the target dies there too.
+ *
+ * That makes a death at such a scenario a MATCH rather than a fault, and it is
+ * the one case in which the pass may continue: the comparison for the scenario
+ * itself is complete, and what follows was recorded against an application
+ * that had been restarted. Anywhere else a death means every later comparison
+ * is a transport failure that says nothing, which is why the caller still
+ * stops for one this predicate does not recognise.
+ *
+ * The predicate reads the recorded side ONLY. A target that dies where the
+ * baseline answered is not covered here and must remain a failure.
+ *
+ * @param {Object} item the planned scenario, carrying its baselines
+ * @returns {boolean}
+ */
+function baselineLostTransport(item) {
+  return (item.steps || []).some(function(step) {
+    return outcomeOf(step.baseline) === OUTCOME_TRANSPORT;
+  });
+}
+
+/**
+ * How many scenarios of this selection record a transport failure.
+ *
+ * The relaunch budget: one per scenario the corpus says takes the application
+ * down. A death at a scenario that records one is expected and is absorbed; a
+ * budget computed from the corpus rather than a constant means a run cannot
+ * loop restarting a server that is failing for some other reason.
+ *
+ * @param {Array.<Object>} scenarios
+ * @returns {number}
+ */
+function countRecordedDeaths(scenarios) {
+  return scenarios.filter(baselineLostTransport).length;
+}
+
+/**
+ * Folds the per-segment evidence documents of one pass into one document.
+ *
+ * A relaunch cannot share the dead segment's run directory: ./server truncates
+ * the captured logs AND the four fixture evidence files when a `--run-dir` is
+ * reused - deliberately, so one run's evidence is never appended to the last
+ * one's - so a second start into the same directory would erase the 380
+ * scenarios that had already been driven. Each segment therefore gets its own
+ * directory, its evidence is collected while that directory is still the
+ * current one, and the parts are added up here.
+ *
+ * Counts sum and the `countBy` maps merge key by key, which is what every
+ * consumer of this document reads: `accountAuthOutcomes` reconciles the armed
+ * steps of the auth lookup-error scenario against `modelFault.faulted` and
+ * `modelFault.byId`, and those records belong to whichever segment drove that
+ * scenario. Availability is an AND with the reasons collected, because a
+ * segment whose log could not be read is a gap in the evidence and not a
+ * detail to average away.
+ *
+ * @param {Array.<Object>} docs one per segment, in the order they ran
+ * @returns {Object} an evidence document of the same shape
+ */
+function mergeEvidence(docs) {
+  var parts = (docs || []).filter(Boolean);
+  var out;
+
+  if (!parts.length) {
+    return {
+      available: false,
+      reason: 'no evidence was collected for this pass'
+    };
+  }
+
+  if (parts.length === 1) {
+    return parts[0];
+  }
+
+  out = {
+    available: parts.every(function(part) {
+      return part.available;
+    }),
+    reason: parts.filter(function(part) {
+      return !part.available;
+    }).map(function(part) {
+      return part.reason;
+    }).join('; ') || null,
+    // Named so a reader of the result document knows the counts below are a
+    // sum over restarts rather than one server's whole life.
+    segments: parts.length,
+    http: mergeEvidenceSection(parts, 'http', ['intercepted', 'malformedLines'],
+      ['byEndpoint', 'byProfile']),
+    mail: mergeEvidenceSection(parts, 'mail', ['captured', 'malformedLines'],
+      ['byType']),
+    s3: mergeEvidenceSection(parts, 's3', ['calls', 'malformedLines'],
+      ['byOperation']),
+    modelFault: mergeEvidenceSection(parts, 'modelFault',
+      ['records', 'malformedLines', 'faulted'], ['byEvent', 'byId'])
+  };
+
+  // Carried through unchanged: it is the fixture's declared send result, the
+  // same value in every segment, and summing or joining it would turn one
+  // fact into a list.
+  out.mail.expectedSendResult = parts[0].mail
+    ? parts[0].mail.expectedSendResult
+    : null;
+
+  // Each segment's object store is a different directory, so the stored
+  // objects are the union of the snapshots rather than one listing. The
+  // segment is recorded on every entry, because a key written before a
+  // relaunch and a key written after it are in different stores and a reader
+  // comparing them needs to know that.
+  out.s3.stored = {
+    available: parts.every(function(part) {
+      return part.s3 && part.s3.stored && part.s3.stored.available;
+    }),
+    objects: parts.reduce(function(all, part, position) {
+      var stored = part.s3 && part.s3.stored ? part.s3.stored : null;
+
+      return all.concat(((stored && stored.objects) || []).map(function(entry) {
+        var copy = JSON.parse(JSON.stringify(entry));
+
+        copy.segment = position + 1;
+
+        return copy;
+      }));
+    }, []),
+    errors: parts.reduce(function(all, part) {
+      var stored = part.s3 && part.s3.stored ? part.s3.stored : null;
+
+      return all.concat((stored && stored.errors) || []);
+    }, []),
+    reason: parts.filter(function(part) {
+      return part.s3 && part.s3.stored && !part.s3.stored.available;
+    }).map(function(part) {
+      return part.s3.stored.reason;
+    }).join('; ') || null
+  };
+
+  return out;
+}
+
+/**
+ * Adds up one named section of several evidence documents.
+ *
+ * @param {Array.<Object>} parts the per-segment documents
+ * @param {string} section the key to fold
+ * @param {Array.<string>} counters numeric fields to sum
+ * @param {Array.<string>} maps `countBy` fields to merge
+ * @returns {Object} the folded section
+ */
+function mergeEvidenceSection(parts, section, counters, maps) {
+  var present = parts.map(function(part) {
+    return part[section] || null;
+  });
+  var out = {
+    available: present.every(function(entry) {
+      return entry && entry.available;
+    }),
+    reason: present.filter(function(entry) {
+      return !entry || !entry.available;
+    }).map(function(entry) {
+      return (entry && entry.reason) ||
+        'this segment collected no ' + section + ' evidence';
+    }).join('; ') || null
+  };
+
+  counters.forEach(function(field) {
+    out[field] = present.reduce(function(total, entry) {
+      return total + ((entry && entry[field]) || 0);
+    }, 0);
+  });
+
+  maps.forEach(function(field) {
+    out[field] = present.reduce(function(merged, entry) {
+      var source = (entry && entry[field]) || {};
+
+      Object.keys(source).forEach(function(key) {
+        merged[key] = (merged[key] || 0) + source[key];
+      });
+
+      return merged;
+    }, {});
+  });
+
+  return out;
+}
+
+/**
+ * Joins the captured stderr of every segment of one pass into one file.
+ *
+ * The warning gate judges "the application's stderr over this pass", and after
+ * a relaunch that stream is in two files. Judging only the last one would
+ * discard the segment in which almost everything ran - and it is the segment
+ * where a warning would appear - so the parts are concatenated, in order, each
+ * under a header naming the segment it came from. `noticesFromText` reads the
+ * lines it recognises and ignores the rest, so the headers cost nothing.
+ *
+ * A part that cannot be read is written into the combined file as a line
+ * saying so, and the failure to read it is left visible rather than silently
+ * dropping that segment's stream.
+ *
+ * @param {Array.<string>} paths the per-segment stderr paths, in order
+ * @param {string} target where to write the combined stream
+ * @returns {(string|null)} the path the gate should judge
+ */
+function combineStderrLogs(paths, target) {
+  var present = (paths || []).filter(Boolean);
+  var unreadable = [];
+  var text;
+
+  if (!present.length) {
+    return { path: null, complete: true, reason: null, segments: [] };
+  }
+
+  if (present.length === 1) {
+    return {
+      path: present[0],
+      complete: true,
+      reason: null,
+      segments: present.slice()
+    };
+  }
+
+  text = present.map(function(entry, position) {
+    var header = '--- segment ' + (position + 1) + ' of ' + present.length +
+      ' ---\n';
+
+    try {
+      return header + fs.readFileSync(entry, 'utf8');
+    }
+    catch (err) {
+      unreadable.push(entry + ' (' + reasonOf(err) + ')');
+
+      return header + 'this segment\'s captured stderr could not be read: ' +
+        reasonOf(err) + '\n';
+    }
+  }).join('');
+
+  // FAILS CLOSED, and this is the whole point of returning a document rather
+  // than a path. Returning the last segment on a write failure - which this
+  // did - handed `accountWarnings` a FRAGMENT of the run's stderr, which it
+  // then judged as though it were the run: a DEP0169 in the first segment
+  // with an empty final segment produced ok, qualifying, no notices and no
+  // failures. A pass that relaunches twice has three segments, so the corpus
+  // as delivered exercises exactly this path, and the message the tool
+  // printed about its own inability to fold decided nothing.
+  //
+  // An unreadable SEGMENT is the same fault by another route: what is judged
+  // is then a stream with a hole in it, and the hole is where a warning would
+  // have been. Both make the evidence incomplete, and incomplete evidence
+  // cannot qualify - the remedy is to re-run, which the reason names.
+  try {
+    fs.writeFileSync(target, text, { mode: 0o600 });
+  }
+  catch (err) {
+    return {
+      path: present[present.length - 1],
+      complete: false,
+      reason: 'the ' + present.length + ' stderr segments this pass produced ' +
+        'could not be combined at ' + target + ' (' + reasonOf(err) + '), so ' +
+        'only the last segment is readable and the earlier ' +
+        (present.length - 1) + ' are unjudged',
+      segments: present.slice()
+    };
+  }
+
+  return {
+    path: target,
+    complete: !unreadable.length,
+    reason: unreadable.length
+      ? unreadable.length + ' of the ' + present.length + ' stderr segments ' +
+        'this pass produced could not be read, so the combined stream has a ' +
+        'hole in it: ' + unreadable.join('; ')
+      : null,
+    segments: present.slice()
+  };
+}
+
+/**
+ * Seeds the fixtures, opens a cookie jar and establishes the sessions.
+ *
+ * Everything a started application needs before a scenario may be driven
+ * against it, in the order that matters: the seeder runs after the server is
+ * up and is awaited for the pipe-starvation reason on `seedFixtures`, and the
+ * sessions are established before any case is driven, because a case driven as
+ * an identity with no session is compared against a recording made with one.
+ *
+ * Extracted from `runPass` so a relaunch brings the application to the same
+ * state by the same code path rather than a second, drifting copy of it. The
+ * `from` index is what the relaunch needs: only the identities the REMAINING
+ * scenarios use have to be logged in again, and a login is a request.
+ *
+ * @param {Object} info the launcher's start result
+ * @param {Object} options the run's options
+ * @param {Array.<Object>} scenarios the pass's scenarios
+ * @param {number} from the first index still to be driven
+ * @returns {Promise<Object>} {seeded, jar, sessions}
+ * @throws {ToolError} if the fixtures could not be seeded
+ */
+async function prepareApplicationState(info, options, scenarios, from) {
+  var seeded = await seedFixtures(info);
+  var jar;
+  var sessions;
+
+  if (!seeded.ok) {
+    throw new ToolError('the fixtures could not be seeded, so every ' +
+      'scenario would be compared against a database the corpus was not ' +
+      'recorded against: ' + seeded.reason);
+  }
+
+  note('seeded the fixtures (' + seeded.summary + ')');
+
+  jar = new Jar({
+    baseUrl: info.baseUrl,
+    referer: refererFor(info),
+    timeoutMs: options.timeoutMs
+  });
+
+  sessions = await establishSessions(jar, scenarios.slice(from));
+
+  return { seeded: seeded, jar: jar, sessions: sessions };
+}
+
+/**
+ * Restarts the application after a death the corpus records, and re-seeds it.
+ *
+ * Called only when `baselineLostTransport` recognised the scenario, so this is
+ * recovery from an EXPECTED death and not a retry of a failure. The order is
+ * fixed by what each step needs:
+ *
+ * 1. The dying segment's evidence is collected FIRST, while its run directory
+ *    is still the current one. After the new start it is unreachable through
+ *    `info`, and ./server truncates a reused directory's logs.
+ * 2. The launcher is stopped rather than abandoned. The child is already gone,
+ *    so ./server's kill path is skipped and no teardown fault is recorded, but
+ *    the descriptors, the PID file and the provisioned database are released -
+ *    and a database left running would be leaked for the rest of the process.
+ * 3. MongoDB's own teardown records are folded in before the next start,
+ *    because ./server's `startInternal` clears them.
+ * 4. The new segment gets its own run directory.
+ * 5. The port must not move. The corpus embeds absolute origins captured on
+ *    the port it was recorded on, so a relaunch that landed elsewhere would
+ *    compare a body full of one origin against a body full of another; that is
+ *    refused here rather than reported 137 times as a body difference.
+ * 6. The state is rebuilt through `prepareApplicationState`, which re-seeds a
+ *    freshly provisioned database and logs the remaining identities back in.
+ *    The sessions are Mongo-backed, so the jar's old cookies name sessions in
+ *    a database that no longer exists and a new jar is required.
+ *
+ * Re-seeding is also the more faithful comparison, not a compromise: each of
+ * these scenarios was CAPTURED in its own run, against a freshly seeded
+ * database, because the baseline application died the moment it was driven.
+ *
+ * Never throws. A relaunch that cannot be completed comes back as
+ * `{ok: false}` with its reason, and the caller then treats the death exactly
+ * as it treats an unexpected one.
+ *
+ * @param {Object} spec {passName, options, scenarios, index, item, info,
+ *   s3SeedPath, attempt}
+ * @returns {Promise<Object>} {ok, evidence, info, seeded, jar, sessions,
+ *   reason, runDir}
+ */
+async function relaunchAfterRecordedDeath(spec) {
+  var evidence = collectEvidence(spec.info);
+  var previousBaseUrl = spec.info ? spec.info.baseUrl : null;
+  var launcher;
+  var info;
+  var prepared;
+
+  await foldStop('stop the application after a recorded death', server,
+    'test/parity/server.js', 'test/parity/server.js');
+
+  mongo.cleanupFailures().forEach(function(entry) {
+    recordCleanupFailure(entry.operation + ' (test/parity/mongo.js)',
+      entry.message);
+  });
+
+  launcher = launcherOptions(spec.options, spec.passName, spec.s3SeedPath);
+
+  if (launcher.runDir) {
+    launcher.runDir = launcher.runDir + '.relaunch-' + spec.attempt;
+  }
+
+  try {
+    info = await server.start(launcher);
+  }
+  catch (err) {
+    return {
+      ok: false,
+      evidence: evidence,
+      info: null,
+      reason: 'the application could not be restarted: ' + reasonOf(err)
+    };
+  }
+
+  if (previousBaseUrl && info.baseUrl !== previousBaseUrl) {
+    return {
+      ok: false,
+      evidence: evidence,
+      info: info,
+      runDir: info.runDir,
+      reason: 'the restarted application answers on ' + info.baseUrl +
+        ' rather than ' + previousBaseUrl + ', and the corpus embeds the ' +
+        'origin it was recorded on, so every remaining comparison would ' +
+        'differ in the address and not in the behaviour'
+    };
+  }
+
+  try {
+    prepared = await prepareApplicationState(info, spec.options, spec.scenarios,
+      spec.index + 1);
+  }
+  catch (err) {
+    return {
+      ok: false,
+      evidence: evidence,
+      info: info,
+      runDir: info.runDir,
+      reason: reasonOf(err)
+    };
+  }
+
+  return {
+    ok: true,
+    evidence: evidence,
+    info: info,
+    runDir: info.runDir,
+    seeded: prepared.seeded,
+    jar: prepared.jar,
+    sessions: prepared.sessions,
+    reason: null
+  };
 }
 
 /**
@@ -9674,9 +11588,9 @@ function classifyScenario(item, options) {
   //
   // `result.deviation` is set by runScenario exactly when the scenario carries
   // a marker and this is not a --self-check run, so this block covers every
-  // case in which a deviation can be approved. Three further branches used to
-  // repeat these two verdicts further down and none of them was reachable: the
-  // conditions they tested had already returned here.
+  // case in which a deviation can be approved. It is therefore the only place
+  // these two verdicts are produced: a branch further down testing the same
+  // conditions would be unreachable, because they have already returned here.
   if (result.deviation && !options.selfCheck) {
     if (result.deviation.approved) {
       return {
@@ -9852,23 +11766,21 @@ function accountPass(pass, plan, manifestDocument, options, selectionComplete,
     selectionComplete));
   checks.push(accountFixtureProfiles(scenarios, selectionComplete));
   // Each of the four accounting checks above is pushed ONCE, with the full
-  // argument list its definition declares. They were each pushed a second time
-  // in the shorter form the signatures used to have, and the shorter form is
+  // argument list its definition declares. A second push in a shorter form is
   // not a harmless duplicate: `accountAuthOutcomes(scenarios)` leaves
   // `evidence` undefined, so `checkInjectedFaults` takes the "this pass
   // collected no fault evidence at all" branch and reports the injected faults
-  // NOT CONFIRMED while the pass's own `evidence.modelFault` records them -
-  // measured, `faulted: 2, byId: {000000000000000000000101: 2}` reported as
-  // "2 armed, no record". A duplicate that reaches a different verdict from the
-  // same data makes the auth-outcome gate unpassable, so the argument-less
-  // calls are gone rather than left as redundancy.
+  // NOT CONFIRMED while the pass's own `evidence.modelFault` records them. A
+  // duplicate reaching a different verdict from the same data makes the
+  // auth-outcome gate unpassable.
   // The warning check is re-judged here rather than in runPass, because the
-  // breadth AAP 0.9.3 requires of this exercise - the whole route surface,
-  // more than one identity, methods beyond GET, and the worker - is only known
+  // breadth this exercise requires - the whole route surface, more than one
+  // identity, methods beyond GET, and the worker - is only known
   // once coverage has been accounted. `pass.warnings` is replaced by the
   // re-judged document so there is exactly one warning check in the report.
   pass.warnings = qualifyWarningEvidence(pass.warnings, coverage, scenarios,
-    selectionComplete, readWorkerEvidence(options.workerEvidence));
+    selectionComplete, readWorkerEvidence(options.workerEvidence,
+      pass.appHead, options.diagnostic || options.allowUnreviewedCorpus));
   checks.push(pass.warnings);
   checks.push(accountCoverageCheck(coverage, selectionComplete));
   checks.push(accountManifestCardinality(manifestDocument, corpus,
@@ -9967,6 +11879,7 @@ async function replay(options) {
   var corpusProvenance;
   var secureProvenance = null;
   var normalizationProbes;
+  var suppressionProbes;
   var passes = [];
   var plans = {};
   var passName;
@@ -9977,6 +11890,19 @@ async function replay(options) {
 
   assertVolatileSetIntegrity();
   normalizationProbes = assertNormalizationRules();
+  // Beside them, and for the same reason: an exemption that removes real
+  // difference records is checked before a request is driven, not trusted.
+  suppressionProbes = assertFrameworkCookieSuppression();
+
+  // One identity contract, applied before any fixture is used, in this process
+  // and in the application this run launches. The two artifacts state the same
+  // two addresses - the seeder creates them and publishes them, the fixture
+  // serves them - and the alignment is what makes a drift between the copies
+  // impossible to act on rather than merely discouraged. Without it, the OAuth
+  // profile named for the existing-user branch can serve an address the seeder
+  // never created, and both OAuth scenarios then exercise the new-user branch
+  // while appearing to cover both.
+  alignIdentitiesToSeeder();
 
   resetCleanupFailures();
 
@@ -10094,19 +12020,16 @@ async function replay(options) {
   // Two distinct properties, deliberately not conflated. A COMPLETE SELECTION
   // means every scenario in the corpus ran, which is what makes route coverage
   // accountable and is therefore what the coverage gate is conditioned on. A
-  // GATE-QUALIFYING run satisfies every requirement AAP §0.9.3 puts on the gate
-  // as a whole, which `qualifyGate` decides once the passes have run - it needs
-  // the flags the children actually received and the manifest check's verdict,
-  // neither of which is knowable here. So `--pass non-secure` still enforces
-  // coverage - it does not narrow the scenario set - while being honestly
-  // labelled as not the gate.
-  // GATE-QUALIFYING run additionally drove both cookie configurations, which is
-  // what AAP §0.9.3 requires of the gate as a whole. So `--pass non-secure`
-  // still enforces coverage - it does not narrow the scenario set - while being
-  // honestly labelled as not the gate.
+  // GATE-QUALIFYING run additionally drove both cookie configurations and
+  // satisfies every other requirement the gate puts on a run, which
+  // `qualifyGate` decides once the passes have run - it needs the flags the
+  // children actually received and the manifest check's verdict, neither of
+  // which is knowable here. So `--pass non-secure` still enforces coverage -
+  // it does not narrow the scenario set - while being honestly labelled as not
+  // the gate.
   //
-  // Selection and cookie configuration are NOT the whole of qualification. AAP
-  // §0.9.3 measures the zero-warning condition over this same exercise, so a
+  // Selection and cookie configuration are NOT the whole of qualification. The
+  // zero-warning condition is measured over this same exercise, so a
   // run that produced no warning evidence cannot be the gate however cleanly it
   // compared: without --pending-deprecation a pending deprecation is silent, a
   // suppressor makes the stream meaningless, a narrowed or GET-only sweep
@@ -10163,10 +12086,400 @@ async function replay(options) {
     manifestDocument, plans, passes, gate, {
       corpus: corpusProvenance,
       secureCorpus: secureProvenance,
-      normalizationProbes: normalizationProbes
+      normalizationProbes: normalizationProbes,
+      suppressionProbes: suppressionProbes
     });
 
+  // The one thing this tool writes outside its own two artifacts, and only
+  // when asked: the target comparison, into the committed provenance sidecar
+  // of each corpus it replayed.
+  if (options.attest) {
+    result.attestation = attestCorpora(result, options, plans, passes);
+  }
+
   return result;
+}
+
+/**
+ * Writes the target-replay evidence into each replayed corpus's sidecar.
+ *
+ * WHY THIS EXISTS. A corpus records what the BASELINE did. Nothing in the
+ * delivery recorded what the TARGET did about it, so the committed evidence
+ * could not distinguish "the replay passed" from "the replay was never run" -
+ * and it had never been run: the corpora carried baseline responses and no
+ * target result at all, while the aggregate gate exited non-zero. The result
+ * document this tool writes is a scratch artifact by contract (see --out), so
+ * the durable place for the comparison is the corpus's own sidecar, which is
+ * committed, is beside the thing it describes, and is already the file that
+ * says which trees the recording came from.
+ *
+ * WHAT IT WRITES. Per scenario, `replayVerdict` - match, approved-deviation,
+ * difference, undriven, no-baseline or unreachable-by-design - and per step a
+ * `targetResponse` holding exactly the surface AAP 0.9.3 compares: the status,
+ * the content type, the Location, the four error-page headers, the
+ * Content-Disposition, every Set-Cookie attribute, and the body as its
+ * encoding, byte length, raw digest and NORMALIZED digest. The normalized
+ * digest is what makes the record verifiable without carrying a second copy of
+ * every page: two bodies with the same normalized digest are the same body
+ * under the declared volatile set.
+ *
+ * WHAT IT REFUSES. Anything but an accepted gate run. A sidecar that recorded
+ * a failing or non-qualifying replay as the target evidence would be the exact
+ * overstatement this file exists to prevent, so the refusal is a hard error
+ * rather than a skipped write, and it names which condition failed.
+ *
+ * @param {Object} result the result document, already built
+ * @param {Object} options
+ * @param {Object} plans by pass name
+ * @param {Array.<Object>} passes
+ * @returns {Object} what was written, for the result document
+ * @throws {ToolError} If the run is not an accepted gate run.
+ */
+function attestCorpora(result, options, plans, passes) {
+  var written = [];
+
+  if (result.verdict !== VERDICT_PASS) {
+    throw new ToolError('--attest writes the target comparison into the ' +
+      'committed corpus sidecar, so it accepts only a run that passed: this ' +
+      'one is ' + result.verdict + ' (exit ' + result.exitCode + '). Fix what ' +
+      'it found, or drop --attest and read the result artifact instead.');
+  }
+
+  if (!result.gateQualifying) {
+    throw new ToolError('--attest accepts only a GATE-QUALIFYING run, and ' +
+      'this one is not: ' + result.gateQualifyingReason + '. The sidecar ' +
+      'would otherwise record a narrowed diagnostic as the parity evidence.');
+  }
+
+  passes.forEach(function(entry) {
+    var passName = entry.pass.name;
+    var corpusPath = passName === PASS_SECURE
+      ? options.secureCorpus
+      : options.corpus;
+    var sidecarPath;
+    var sidecar;
+    var evidence;
+
+    if (!corpusPath) {
+      throw new ToolError('the ' + passName + ' pass replayed no corpus of ' +
+        'its own, so there is nothing to attest for it');
+    }
+
+    sidecarPath = corpusPath + PROVENANCE_SUFFIX;
+
+    try {
+      sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
+    }
+    catch (err) {
+      throw new ToolError('cannot attest ' + corpusPath + ': its provenance ' +
+        'sidecar ' + sidecarPath + ' could not be read (' + reasonOf(err) +
+        '). capture.js writes one beside every corpus it records.');
+    }
+
+    evidence = targetReplayEvidence(result, options, plans[passName], entry);
+
+    // Verified against the bytes on disk, not against the corpus this process
+    // holds in memory: the sidecar's whole contribution is a digest of the
+    // exact file it sits beside, and an attestation attached to a sidecar that
+    // no longer describes that file would be evidence about nothing.
+    evidence.corpusDigest = sha256Hex(fs.readFileSync(corpusPath, 'utf8'));
+
+    sidecar.targetReplay = evidence;
+
+    // capture.js writes its sidecar as a scratch companion and says so in this
+    // field - "RUN OUTPUT, not a delivery artifact, and not to be committed",
+    // which is true of the file it wrote. Attesting changes what the file IS:
+    // it now carries the target comparison, which is nowhere else, and the
+    // corpus beside it is committed with it. Leaving the original wording in
+    // place would tell a reader of the committed record to disregard it.
+    sidecar.capturedNote = sidecar.capturedNote || sidecar.note;
+    sidecar.note = 'DELIVERY RECORD for the corpus beside it. Everything ' +
+      'above `targetReplay` is capture.js\'s own provenance block, embedded ' +
+      'identically in the corpus under its `provenance` key, plus a digest ' +
+      'of the exact corpus bytes; `capturedNote` is what capture.js wrote ' +
+      'about the file when it was still only that. `targetReplay` is written ' +
+      'by test/parity/replay.js --attest from a passing, gate-qualifying run ' +
+      'and exists nowhere else: it carries the per-scenario verdict and the ' +
+      'target response every claim of parity rests on. Neither part is ' +
+      'hand-editable - the digests authenticate the corpus, and the ' +
+      'attestation records the command that produced it.';
+
+    fs.writeFileSync(sidecarPath, serialize(sidecar) + '\n');
+
+    written.push({
+      pass: passName,
+      corpus: pathLabelFor(corpusPath, options.appRoot),
+      sidecar: pathLabelFor(sidecarPath, options.appRoot),
+      scenarios: Object.keys(evidence.scenarios).length
+    });
+
+    note('attested ' + sidecarPath + ': ' +
+      Object.keys(evidence.scenarios).length + ' scenario verdict(s) and ' +
+      'their target responses');
+  });
+
+  return {
+    what: 'the target comparison, written into each replayed corpus\'s ' +
+      'committed provenance sidecar under `targetReplay`',
+    verdict: result.verdict,
+    gateQualifying: result.gateQualifying,
+    written: written
+  };
+}
+
+/**
+ * The target-replay evidence for one pass.
+ *
+ * @param {Object} result
+ * @param {Object} options
+ * @param {Object} plan the plan for this pass, holding the driven items
+ * @param {Object} entry the accounted pass
+ * @returns {Object}
+ */
+function targetReplayEvidence(result, options, plan, entry) {
+  var scenarios = {};
+
+  (plan ? plan.scenarios : []).forEach(function(item) {
+    var classified = entry.scenarios.filter(function(record) {
+      return record.id === item.id;
+    })[0];
+
+    if (!classified) {
+      return;
+    }
+
+    scenarios[item.id] = {
+      // The field name the record is read by: what the target did about this
+      // scenario's recorded baseline.
+      replayVerdict: classified.status,
+      failing: classified.failing,
+      differences: classified.differences,
+      reason: portableReason(classified.reason, options.appRoot),
+      expectationMet: item.result && item.result.expectation
+        ? item.result.expectation.met
+        : null,
+      steps: (item.result ? item.result.steps : []).map(function(step) {
+        return {
+          step: step.label,
+          request: step.request
+            ? { method: step.request.method, target: step.request.target }
+            : null,
+          outcome: step.outcome,
+          baselineOutcome: step.baselineOutcome,
+          targetResponse: targetResponseRecord(step.observed)
+        };
+      })
+    };
+  });
+
+  return {
+    schema: 1,
+    what: 'What the TARGET tree did when this corpus was replayed against ' +
+      'it, scenario by scenario. Written by test/parity/replay.js --attest ' +
+      'and only from a run that both PASSED and qualified as the gate, so a ' +
+      'reader can tell a proven pair from an unrun one - which the corpus ' +
+      'alone cannot say.',
+    tool: 'test/parity/replay.js',
+    toolHead: gitHead(TOOL_ROOT),
+    pass: entry.pass.name,
+    secure: entry.pass.secure,
+    command: attestedCommand(options),
+    verdict: result.verdict,
+    exitCode: result.exitCode,
+    gateQualifying: result.gateQualifying,
+    gateRequirementsMet: result.gateQualification.requirements.length -
+      result.gateQualification.unmet.length,
+    gateRequirements: result.gateQualification.requirements.length,
+    target: {
+      root: pathLabelFor(options.appRoot, options.appRoot),
+      head: entry.pass.appHead,
+      nodeFlags: (entry.pass.nodeFlags || []).slice()
+    },
+    counts: entry.counts,
+    scenariosDriven: entry.pass.driven,
+    failingScenarios: entry.failingScenarios,
+    namedChecks: (entry.checks || []).map(function(check) {
+      return {
+        name: check.name,
+        // `ok` is the field a check carries; there is no `verdict` on one, and
+        // reading a name that does not exist wrote `undefined` - which
+        // JSON.stringify drops, so the committed evidence would have listed
+        // each check by name with no result at all.
+        ok: check.ok !== false,
+        asserted: check.asserted,
+        failures: (check.failures || []).length
+      };
+    }),
+    approvedDeviations: (entry.approvedDeviations || []).map(function(record) {
+      return {
+        id: record.id,
+        route: record.route,
+        approvedBy: record.approvedBy,
+        rule: record.rule,
+        verified: record.verified
+      };
+    }),
+    coverage: {
+      routes: entry.coverage ? entry.coverage.routes : null,
+      represented: entry.coverage ? entry.coverage.represented : null,
+      unrepresented: entry.coverage ? entry.coverage.unrepresented : null
+    },
+    // The category ids, from `describeVolatileSet`'s document - which is an
+    // object carrying `categories`, not an array. Read as an array this threw
+    // at the last step of a complete passing run, after both passes had been
+    // driven, so the attestation was the only thing lost; the ids are what the
+    // digest note below refers to.
+    volatileSet: ((result.volatileSet && result.volatileSet.categories) || [])
+      .map(function(category) {
+        return category.id;
+      }),
+    // The one framework-imposed exemption in force, by id, so a reader of the
+    // committed sidecar sees it without opening the tool.
+    frameworkExemptions: [FRAMEWORK_COOKIE_SUPPRESSION.id],
+    // THE WORKER ARTIFACT THIS QUALIFICATION RESTS ON, by identity rather
+    // than by claim. AAP 0.9.3 measures the zero-warning condition over the
+    // server, the route surface AND the standalone worker; this tool drives
+    // the first two and consumes an artifact for the third. A sidecar that
+    // recorded `warning-evidence: met` without naming that artifact asserted
+    // a third of the measurement and pointed at nothing - so the digest, the
+    // generator blob and the commit the worker measured are carried here, and
+    // a reader can reconcile them against the artifact itself.
+    workerEvidence: workerAttestation(entry),
+    bodyDigest: 'sha256 over the response body as recorded, and over its ' +
+      'normalized form. Two bodies whose normalized digests agree are the ' +
+      'same body under the volatile set named above.',
+    scenarios: scenarios
+  };
+}
+
+/**
+ * The worker artifact's identity, for the attestation.
+ *
+ * Read from the pass's re-judged warning check, which is where
+ * `qualifyWarningEvidence` attaches what `readWorkerEvidence` authenticated.
+ * Null rather than absent when a pass carries none, because "no worker
+ * evidence" is itself a fact about the run - and a passing gate run cannot be
+ * in that state, since `worker-warning-evidence` is one of the ten
+ * requirements it had to meet.
+ *
+ * @param {Object} entry one pass's accounted document
+ * @returns {(Object|null)}
+ */
+function workerAttestation(entry) {
+  var warnings = (entry.pass && entry.pass.warnings) || {};
+  var evidence = warnings.workerEvidence;
+
+  if (!evidence || !evidence.summary) {
+    return null;
+  }
+
+  return {
+    qualifying: !!evidence.qualifying,
+    artifactDigest: evidence.summary.artifactDigest || null,
+    generator: evidence.summary.generator || null,
+    measuredTree: evidence.summary.measuredTree || null,
+    verdict: evidence.summary.verdict || null,
+    jobs: evidence.summary.jobs,
+    failedChecks: evidence.summary.failedChecks
+  };
+}
+
+/**
+ * The compared surface of one observed response, as committed evidence.
+ *
+ * Deliberately not the whole response: a body per scenario per pass would
+ * double the delivered artifacts, and a digest over the normalized text proves
+ * the same thing. Every field here is one AAP 0.9.3 names for exact
+ * comparison.
+ *
+ * @param {(Object|null)} observed
+ * @returns {(Object|null)}
+ */
+function targetResponseRecord(observed) {
+  var headers;
+  var body;
+
+  if (!observed) {
+    return null;
+  }
+
+  headers = observed.headers || {};
+  body = observed.body || null;
+
+  return {
+    status: observed.status === undefined ? null : observed.status,
+    timedOut: !!observed.timedOut,
+    error: observed.error || null,
+    contentType: headers['content-type'] === undefined
+      ? null
+      : headers['content-type'],
+    location: headers.location === undefined ? null : headers.location,
+    errorPageHeaders: ERROR_PAGE_HEADERS.reduce(function(out, name) {
+      out[name] = headers[name] === undefined ? null : headers[name];
+      return out;
+    }, {}),
+    contentDisposition: headers['content-disposition'] === undefined
+      ? null
+      : headers['content-disposition'],
+    setCookies: (observed.setCookies || []).map(function(cookie) {
+      return {
+        name: cookie.name,
+        attributes: cookie.attributes,
+        expiresInDays: cookie.expiresInDays === undefined
+          ? null
+          : cookie.expiresInDays
+      };
+    }),
+    body: body
+      ? {
+        encoding: body.encoding,
+        length: body.length,
+        truncated: !!body.truncated,
+        digest: body.digest,
+        normalizedDigest: typeof body.text === 'string'
+          ? sha256Hex(normalized(body.text))
+          : null
+      }
+      : null
+  };
+}
+
+/**
+ * The command an attested sidecar records as its own reproduction.
+ *
+ * Built from the options in force rather than from a literal, so it cannot
+ * describe a run that was not the one performed.
+ *
+ * @param {Object} options
+ * @returns {string}
+ */
+function attestedCommand(options) {
+  var parts = [
+    'node test/parity/replay.js',
+    '--app ' + pathLabelFor(options.appRoot, options.appRoot),
+    '--corpus ' + pathLabelFor(options.corpus, options.appRoot)
+  ];
+
+  if (options.secureCorpus) {
+    parts.push('--secure-corpus ' +
+      pathLabelFor(options.secureCorpus, options.appRoot));
+  }
+
+  if (options.annotations) {
+    parts.push('--annotations ' +
+      pathLabelFor(options.annotations, options.appRoot));
+  }
+
+  parts.push('--pass ' + options.pass);
+  parts.push('--node-flags "' + REQUIRED_NODE_FLAGS.join(' ') + '"');
+
+  if (options.workerEvidence) {
+    parts.push('--worker-evidence <the artifact test/parity/worker.js wrote>');
+  }
+
+  parts.push('--port ' + (options.port === null ? '<overlay>' : options.port));
+
+  return parts.join(' ');
 }
 
 /**
@@ -10286,10 +12599,9 @@ var cleanupFailures = [];
 /**
  * Records a teardown operation that did not complete, once.
  *
- * The note is left at each site, unchanged: those lines are the diagnostic
- * evidence and none of them was the defect. What this adds is the entry
- * `buildResult` folds into `gates`, so the failure reaches both the result
- * document and the exit code.
+ * The note at each site stays: those lines are the diagnostic evidence a
+ * human reads. What this adds is the entry `buildResult` folds into `gates`,
+ * so the failure reaches both the result document and the exit code.
  *
  * DEDUPLICATED ON THE MESSAGE, because ./server adopts ./mongo's records when
  * it stopped a database it provisioned: one leaked mongod is reachable through
@@ -10438,9 +12750,9 @@ function buildResult(options, corpus, annotations, secureCorpus,
   manifestDocument, plans, passes, gate, evidence) {
   // `failingScenarios` counts SCENARIOS and `differenceRecords` counts
   // individual differences, and they are two different numbers - one
-  // restructured page can contribute twenty-five records. The report used to
-  // print the scenario count under the label "unapproved differences", which
-  // understates a failure by as much as the fan-out of its worst scenario, so
+  // restructured page can contribute the whole per-step cap on its own.
+  // Printing the scenario count under the label "unapproved differences" would
+  // understate a failure by as much as the fan-out of its worst scenario, so
   // both are carried and each is labelled as what it counts.
   var gates = {
     failingScenarios: 0,
@@ -10516,10 +12828,18 @@ function buildResult(options, corpus, annotations, secureCorpus,
     gateQualification: {
       requirements: gate.requirements,
       unmet: gate.unmet,
+      // Whether the run was ASKED to be a diagnostic, which is the only thing
+      // that separates an unmet requirement from a non-zero exit. Recorded
+      // beside the requirements so a reader of the artifact alone can tell a
+      // deliberately narrowed run from a gate command that fell short.
+      declaredDiagnostic: !!options.diagnostic,
       note: 'AAP §0.9.3 decides what the gate is; this list is that decision, ' +
-        'requirement by requirement. None of these fails the run - a narrowed ' +
-        'diagnostic is a legitimate thing to run - they decide whether this ' +
-        'run may be cited AS the gate.'
+        'requirement by requirement. An unmet requirement DECIDES THE VERDICT: ' +
+        'the run is reported ' + VERDICT_NOT_THE_GATE + ' and exits ' +
+        EXIT_ERROR + ' unless it was asked for with --diagnostic, which is how ' +
+        'a narrowed run - a legitimate thing to run - says that it is not ' +
+        'being cited as the gate. What it never changes is the comparison: a ' +
+        'difference fails a diagnostic run too.'
     },
     // The zero-warning gate this run was judged against, and the evidence it
     // stands on. Persisted so the artifact says which bar was applied and
@@ -10550,7 +12870,16 @@ function buildResult(options, corpus, annotations, secureCorpus,
     approvedDeviations: approved,
     volatileSet: describeVolatileSet(evidence.normalizationProbes),
     comparisonContract: {
-      binaryBodies: describeBinaryBodyContract()
+      binaryBodies: describeBinaryBodyContract(),
+      // The one framework-imposed difference this run will not fail on, with
+      // its measurement, its conditions and what it costs. Emitted into every
+      // artifact for the same reason the volatile set is: an exemption a reader
+      // has to discover from a source file is an exemption nobody audits.
+      frameworkCookieSuppression: Object.assign({},
+        FRAMEWORK_COOKIE_SUPPRESSION,
+        // The conditions, as exercised at startup rather than as described.
+        // A reader auditing the exemption reads what actually fired.
+        { probes: evidence.suppressionProbes || [] })
     },
     sources: {
       appRoot: options.appRoot,
@@ -10584,16 +12913,16 @@ function buildResult(options, corpus, annotations, secureCorpus,
   };
 
   if (gates.fatalPasses.length) {
-    result.verdict = 'NOT PERFORMED';
+    result.verdict = VERDICT_NOT_PERFORMED;
     result.exitCode = EXIT_ERROR;
   }
-  // `failingScenarios` is this document's name for the difference count the
-  // predicate used to read as `differences`; `cleanupFailures` is the teardown
-  // fault that must reach the exit code even when every comparison matched.
+  // `failingScenarios` is this document's name for the count of scenarios
+  // carrying an unapproved difference; `cleanupFailures` is the teardown fault
+  // that must reach the exit code even when every comparison matched.
   else if (gates.failingScenarios || gates.undriven || gates.missingBaselines ||
            gates.failedChecks.length || gates.applicationDied ||
            gates.cleanupFailures.length) {
-    result.verdict = 'FAIL';
+    result.verdict = VERDICT_FAIL;
     // A teardown fault is OPERATIONAL and dominates: the passes may have
     // compared cleanly, but this process could not release what it acquired, so
     // the honest code is "could not be performed cleanly" rather than "found a
@@ -10602,8 +12931,20 @@ function buildResult(options, corpus, annotations, secureCorpus,
       ? EXIT_ERROR
       : EXIT_DIFFERENCE;
   }
+  // The comparison was sound and INCOMPLETE. Every run is the canonical gate
+  // unless it was asked for with --diagnostic, so an unmet gate requirement
+  // decides the verdict here rather than being recorded beside a PASS: the
+  // requirement list is what AAP §0.9.3 asks this tool to measure, and a run
+  // missing the secure corpus, the deprecation flags, worker evidence or a
+  // driven auth outcome has not measured it. EXIT_ERROR rather than
+  // EXIT_DIFFERENCE, because nothing was found to differ - the gate could not
+  // be performed as the gate.
+  else if (!gate.qualifying && !options.diagnostic) {
+    result.verdict = VERDICT_NOT_THE_GATE;
+    result.exitCode = EXIT_ERROR;
+  }
   else {
-    result.verdict = 'PASS';
+    result.verdict = VERDICT_PASS;
     result.exitCode = EXIT_OK;
   }
 
@@ -10613,12 +12954,13 @@ function buildResult(options, corpus, annotations, secureCorpus,
 /**
  * The specific warning shortfalls of each pass, by name.
  *
- * AAP 0.9.3 measures the zero-warning condition over THIS exercise, so a run
- * that cannot vouch for its own stream is not the gate - and a reader is owed
- * the reason, because a missing flag and a GET-only sweep are different
- * problems with different fixes. Read in two places, deliberately: the
- * `warning-evidence` requirement in `qualifyGate` is decided on it, and
- * `unmetGateReason` reports it.
+ * The zero-warning condition is measured over THIS exercise, so a run that
+ * cannot vouch for its own stream is not the gate - and a reader is owed the
+ * reason, because a missing flag and a GET-only sweep are different problems
+ * with different fixes. Each shortfall is stated specifically rather than as a
+ * category, and it is read in two places deliberately: the `warning-evidence`
+ * requirement in `qualifyGate` is decided on it, and `unmetGateReason`
+ * reports it.
  *
  * @param {Array.<Object>} passes
  * @returns {Array.<string>}
@@ -10626,11 +12968,6 @@ function buildResult(options, corpus, annotations, secureCorpus,
 function warningShortfalls(passes) {
   var shortfalls = [];
 
-  // The warning evidence, stated as the specific shortfall rather than as a
-  // category. AAP §0.9.3 measures the zero-warning condition over this exercise,
-  // so a run that cannot vouch for its own stream is not the gate, and a reader
-  // is owed the reason - a missing flag and a GET-only sweep are different
-  // problems with different fixes.
   (passes || []).forEach(function(entry) {
     var warnings = entry.pass && entry.pass.warnings;
 
@@ -10681,6 +13018,11 @@ function warningShortfalls(passes) {
  * name which requirement did it.
  *
  * @param {Object} gate as `qualifyGate` returns
+ * @param {Object} options the parsed options, read for the
+ *   --allow-unreviewed-corpus escape, which is not a gate requirement and
+ *   would otherwise go unmentioned
+ * @param {Array.<Object>} passes the accounted passes, for the per-pass
+ *   warning shortfalls
  * @returns {string}
  */
 function unmetGateReason(gate, options, passes) {
@@ -10807,6 +13149,13 @@ function summarizePass(entry) {
     s3Seed: entry.pass.s3Seed,
     ordering: entry.pass.ordering,
     applicationDied: entry.pass.applicationDied,
+    recordedDeaths: entry.pass.recordedDeaths,
+    relaunchBudget: entry.pass.relaunchBudget,
+    relaunches: entry.pass.relaunches,
+    stderrPaths: entry.pass.stderrPaths,
+    warningStderrPath: entry.pass.warningStderrPath,
+    reseedBeforeDestructive: entry.pass.reseedBeforeDestructive,
+    reseeds: entry.pass.reseeds,
     undriven: entry.pass.undriven,
     evidence: entry.pass.evidence,
     coverage: entry.coverage,
@@ -10939,46 +13288,12 @@ function inputIdentity(target, appRoot) {
 }
 
 /**
- * Builds the replay result's provenance block.
- *
- * "Replayed against the migrated tree" means replayed BY target-worktree
- * tooling against a particular install of a particular commit, and this block
- * is what makes that claim checkable. It is built by the shared contract in
- * `./manifest`, which is what removes the three things this record used to
- * assert without being able to prove:
- *
- *   the tool identified itself by `toolRoot` plus the HEAD of whatever
- *   worktree ran it. A path is machine state and that HEAD belonged to a
- *   clone, not to an artifact - so the tool is now named by the git BLOB that
- *   ran and the commit verified to contain it;
- *
- *   `generatedAt` was a wall clock, which made two runs over one tree differ
- *   for no reason a reviewer could act on. There is no clock here, so a
- *   re-run over one tree produces the same block; and
- *
- *   each pass carried its `appRoot`, `port`, `baseUrl`, `runDir`, `stderrPath`
- *   and Mongo settings. Every one of those is run-local. What a reader needs
- *   from a pass is what it MEANT - which cookie configuration, whether it
- *   compared against a capture or asserted the documented differential, which
- *   node flags were in force, how many scenarios were driven, and which tree
- *   it drove - and that is what is kept.
- *
- * The result's own `sources` and `passes` keep their full detail, absolute
- * paths included: they are the run's report, and the contract's guard applies
- * to the provenance block. What is NOT allowed is for that unattributable
- * detail to be the artifact's provenance.
- *
- * @param {Object} options
- * @param {Object} result
- * @returns {Object}
- */
-/**
  * A requirement list reduced to its verdicts, for the provenance block.
  *
- * Every key is kept except the free-form `detail` and `reason`, and that is
- * the whole point: a requirement's prose enumerates route paths, and an HTTP
- * route path is indistinguishable from a filesystem path to the contract's
- * portability guard. Measured, `provenance.portableText` rewrites
+ * Every key is kept except the free-form `detail` and `reason`, for one
+ * reason: a requirement's prose enumerates route paths, and an HTTP route path
+ * is indistinguishable from a filesystem path to the contract's portability
+ * guard - `provenance.portableText` rewrites
  * `DELETE /api/admin/featured-course/{courseId}` to
  * `DELETE ephemeral:featured-course{courseId}`, so making the prose portable
  * would corrupt the very names it exists to report.
@@ -11039,6 +13354,39 @@ function portableEvidence(value, appRoot) {
   return value;
 }
 
+/**
+ * Builds the replay result's provenance block.
+ *
+ * "Replayed against the migrated tree" means replayed BY target-worktree
+ * tooling against a particular install of a particular commit, and this block
+ * is what makes that claim checkable. It is built by the shared contract in
+ * `./manifest`, which settles three things this record cannot establish for
+ * itself:
+ *
+ *   the tool is named by the git BLOB that ran and the commit verified to
+ *   contain it, rather than by a path plus the HEAD of whatever worktree ran
+ *   it - a path is machine state, and that HEAD belongs to a clone rather than
+ *   to an artifact;
+ *
+ *   there is no clock in the block, because a wall-clock `generatedAt` makes
+ *   two runs over one tree differ for no reason a reviewer can act on, and a
+ *   re-run over one tree has to produce the same block; and
+ *
+ *   a pass contributes what it MEANT - which cookie configuration, whether it
+ *   compared against a capture or asserted the documented differential, which
+ *   node flags were in force, how many scenarios were driven, and which tree
+ *   it drove - rather than its run-local `appRoot`, `port`, `baseUrl`,
+ *   `runDir`, `stderrPath` and Mongo settings.
+ *
+ * The result's own `sources` and `passes` keep their full detail, absolute
+ * paths included: they are the run's report, and the contract's guard applies
+ * to the provenance block. What is NOT allowed is for that unattributable
+ * detail to be the artifact's provenance.
+ *
+ * @param {Object} options
+ * @param {Object} result
+ * @returns {Object}
+ */
 function buildProvenance(options, result) {
   var provenance = manifest.provenance;
   var appRoot = path.resolve(options.appRoot);
@@ -11079,7 +13427,14 @@ function buildProvenance(options, result) {
       // exactly as each pass's own stderr does below.
       warningGate: {
         policy: result.warningGate.policy,
-        workerEvidence: result.warningGate.workerEvidence,
+        // A LABEL, like every other path in this block. The worker evidence is
+        // produced by a separate run and is routinely pointed at a directory
+        // outside the tree - `verify:corpus` puts it under $TMPDIR - and the
+        // contract's guard rejects any provenance field containing an absolute
+        // path. Measured: with PARITY_OUT set outside the repository, a
+        // complete passing run then wrote no artifact at all, because the
+        // block was built after the comparison and refused at the last step.
+        workerEvidence: pathLabelFor(result.warningGate.workerEvidence, appRoot),
         passes: (result.warningGate.passes || []).map(function(entry) {
           return {
             pass: entry.pass,
@@ -11278,13 +13633,25 @@ function renderGateQualification(lines, result, heading) {
   lines.push('  ' + (result.gateQualifying
     ? 'Every requirement is met, so this run may be cited as the parity gate.'
     : result.gateQualification.unmet.length + ' requirement(s) unmet, so this ' +
-      'run is a DIAGNOSTIC. It can still'));
+      'run did not measure the gate.'));
 
   if (!result.gateQualifying) {
-    lines.push('  exit 0 - a narrowed comparison that matches is a real ' +
-      'result - but it does not stand');
-    lines.push('  as the gate, and a document citing it as one would ' +
-      'overstate what was measured.');
+    if (result.gateQualification.declaredDiagnostic) {
+      lines.push('  It was asked for with --diagnostic, so it is reported as ' +
+        'a diagnostic and may exit 0 -');
+      lines.push('  a narrowed comparison that matches is a real result. It ' +
+        'does not stand as the gate,');
+      lines.push('  and a document citing it as one would overstate what was ' +
+        'measured.');
+    }
+    else {
+      lines.push('  It was NOT asked for with --diagnostic, so it is the ' +
+        'canonical gate and the unmet');
+      lines.push('  requirement(s) above decide the verdict: ' +
+        VERDICT_NOT_THE_GATE + ', exit ' + EXIT_ERROR + '. Supply the missing');
+      lines.push('  input(s), or pass --diagnostic to declare that this run ' +
+        'is not the gate.');
+    }
   }
 }
 
@@ -11305,6 +13672,7 @@ function renderGateQualification(lines, result, heading) {
  */
 function renderBinaryContract(lines, result, heading, bullet) {
   var contract = result.comparisonContract.binaryBodies;
+  var suppression;
 
   heading('BINARY AND STREAM BODIES - what is compared, exactly');
 
@@ -11319,6 +13687,19 @@ function renderBinaryContract(lines, result, heading, bullet) {
   bullet('made up for by ' + contract.entryLevelAssertedBy.join(' and ') +
     ', which open the archive rather than hashing it');
   bullet('coverage lost ' + contract.coverageLost);
+
+  suppression = result.comparisonContract.frameworkCookieSuppression;
+
+  if (suppression) {
+    heading('SET-COOKIE ON A 500 - the one framework-imposed exemption');
+
+    bullet('rule          ' + suppression.framework +
+      ' emits only cookie CLEARS when the response is a 500');
+    bullet('measured      ' + suppression.measurement);
+    bullet('why exempt    ' + suppression.why);
+    bullet('what it costs ' + suppression.costs);
+    bullet('still exact   ' + suppression.retained);
+  }
 }
 
 /**
@@ -11447,6 +13828,51 @@ function renderPass(lines, pass, result, heading, bullet) {
     lines.push('  ' + (pass.applicationDied.stderrPath || '(unknown)') + '.');
   }
 
+  if ((pass.reseeds || []).length) {
+    lines.push('');
+    lines.push('  ' + pass.reseeds.length + ' forced reseed(s) ran, one ' +
+      'before each destructive case, as the capture did.');
+    (pass.reseeds || []).filter(function(entry) {
+      return !entry.ok;
+    }).forEach(function(entry) {
+      lines.push('  RESEED BEFORE ' + entry.beforeScenario + ' FAILED: ' +
+        entry.reason);
+    });
+  }
+  else if (pass.reseedBeforeDestructive === false) {
+    lines.push('');
+    lines.push('  no forced reseed ran, because the corpus records that its ' +
+      'capture did not force one either.');
+  }
+
+  if ((pass.recordedDeaths || []).length) {
+    lines.push('');
+    lines.push('  ' + pass.recordedDeaths.length + ' scenario(s) took the ' +
+      'application down, as the recorded baseline did:');
+    pass.recordedDeaths.forEach(function(entry) {
+      lines.push('    ' + entry.id + ' (case ' + (entry.index + 1) + ') - ' +
+        (entry.relaunched
+          ? 'restarted and re-seeded, ' + entry.remaining +
+            ' scenario(s) driven after it'
+          : entry.remaining
+            ? 'NOT restarted'
+            : 'the last case of the pass, nothing to restart'));
+    });
+    lines.push('  The corpus holds a transport failure for each of them, so ' +
+      'the two trees agree there. Each');
+    lines.push('  restart provisions its own database and its own run ' +
+      'directory, which is why the evidence');
+    lines.push('  counts above are a sum over ' +
+      ((pass.relaunches || []).length + 1) + ' segment(s).');
+
+    (pass.relaunches || []).filter(function(entry) {
+      return !entry.ok;
+    }).forEach(function(entry) {
+      lines.push('  RESTART ' + entry.attempt + ' FAILED after ' +
+        entry.afterScenario + ': ' + entry.reason);
+    });
+  }
+
   renderDifferences(lines, pass);
   renderChecks(lines, pass, bullet);
   renderCoverage(lines, pass, bullet);
@@ -11492,21 +13918,13 @@ function renderDifferences(lines, pass) {
 }
 
 /**
- * The named checks.
- *
- * @param {Array.<string>} lines
- * @param {Object} pass
- * @param {function(string): undefined} bullet
- * @returns {undefined}
- */
-/**
  * The flag audit, beside the flags themselves in the report.
  *
  * Read off the pass's own warning check rather than from a second copy, so the
  * line a human reads and the field a machine reads cannot disagree. Printed
  * next to `node flags` because that is where a reader looks when asking whether
- * this run could have SEEN a warning at all - the question AAP §0.9.3's gate
- * turns on, and the one a flagless run silently answered "no" to.
+ * this run could have SEEN a warning at all - the question the zero-warning
+ * gate turns on, and the one a flagless run answers "no" to without saying so.
  *
  * @param {Object} pass A summarized pass.
  * @returns {string}
@@ -11529,6 +13947,14 @@ function describeWarningFlags(pass) {
     : 'suppressed by ' + check.flags.suppressors.join(' ')) + ']';
 }
 
+/**
+ * The named checks.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} pass
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
 function renderChecks(lines, pass, bullet) {
   lines.push('');
   lines.push('  CHECKS');
@@ -12047,14 +14473,13 @@ async function main(argv) {
 }
 
 module.exports = {
-  // The lifecycle.
   replay: replay,
   runPass: runPass,
   runScenario: runScenario,
 
-  // Comparison - the gate. Exported because every one of these has a failure
-  // mode worth testing directly rather than through a spawned server: a
-  // comparator that cannot fail in a category is not comparing it.
+  // Every one of these has a failure mode worth testing directly rather than
+  // through a spawned server: a comparator that cannot fail in a category is
+  // not comparing it.
   compareStep: compareStep,
   compareHeaders: compareHeaders,
   compareCookies: compareCookies,
@@ -12071,10 +14496,21 @@ module.exports = {
   outcomeOf: outcomeOf,
   transportCodeOf: transportCodeOf,
 
-  // Normalization. Every rule comes from the volatile set, and these are the
+  // Every normalization rule comes from the volatile set, and these are the
   // accessors that prove it.
   normalizeText: normalizeText,
   normalized: normalized,
+
+  // The write-time subset, exported for the RECORDER. capture.js applies these
+  // before it writes a body or a header, so the committed corpus carries no
+  // credential-format value and no absolute path from the capturing machine,
+  // and the placeholder it writes is the one this file normalizes a live
+  // response to. Exported from here rather than duplicated there because two
+  // copies of a regular expression that must agree is a drift waiting to
+  // happen, and the drift's symptom would be a difference on every redacted
+  // field.
+  redactForRecording: redactForRecording,
+  recordingRedactions: recordingRedactions,
   assertVolatileSetIntegrity: assertVolatileSetIntegrity,
   assertNormalizationRules: assertNormalizationRules,
   describeVolatileSet: describeVolatileSet,
@@ -12082,7 +14518,6 @@ module.exports = {
   volatileField: volatileField,
   categoryForHeader: categoryForHeader,
 
-  // Planning and accounting.
   readCorpus: readCorpus,
   readCorpusFile: readCorpusFile,
   verifyCorpusBlock: verifyCorpusBlock,
@@ -12132,7 +14567,6 @@ module.exports = {
   isFailurePathScenario: isFailurePathScenario,
   describeOrdering: describeOrdering,
 
-  // Driving and recording.
   drive: drive,
   Jar: Jar,
   encodePayload: encodePayload,
@@ -12144,17 +14578,31 @@ module.exports = {
   readEvidenceLog: readEvidenceLog,
   collectEvidence: collectEvidence,
   serverAlive: serverAlive,
+  // The framework-cookie exemption and its conditions, exported so the
+  // fail-closed behaviour can be exercised directly and not only through the
+  // startup assertion that already runs it.
+  frameworkCookieSuppression: frameworkCookieSuppression,
+  assertFrameworkCookieSuppression: assertFrameworkCookieSuppression,
+  isCookieClear: isCookieClear,
+  FRAMEWORK_COOKIE_SUPPRESSION: FRAMEWORK_COOKIE_SUPPRESSION,
   establishSessions: establishSessions,
   refererFor: refererFor,
   launcherOptions: launcherOptions,
   mergeGoogleStub: mergeGoogleStub,
   markRemainingUndriven: markRemainingUndriven,
+  // The recorded-death machinery. Exported so the predicate, the budget and
+  // the two folds a restart depends on can be exercised without a database or
+  // a listening socket - the restart itself needs both, so its parts are what
+  // a check can reach.
+  baselineLostTransport: baselineLostTransport,
+  countRecordedDeaths: countRecordedDeaths,
+  mergeEvidence: mergeEvidence,
+  combineStderrLogs: combineStderrLogs,
   seedFixtures: seedFixtures,
   prepareS3Seed: prepareS3Seed,
   resolveManifest: resolveManifest,
   gitHead: gitHead,
 
-  // Artifacts.
   buildResult: buildResult,
   buildProvenance: buildProvenance,
   // The provenance building blocks, exported for the same reason the checks

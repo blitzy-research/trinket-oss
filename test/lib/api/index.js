@@ -27,68 +27,73 @@ describe('API tests', function() {
   });
 });
 
-// ---------------------------------------------------------------------------
 // The suite-total gate.
 //
 // A green reporter line is not on its own evidence that the suite ran: a spec
 // file that is never invoked, a `describe` that throws while registering, or a
-// `before all` hook that fails and suppresses the rest of its suite all reduce
+// `before all` hook that fails and suppresses the rest of its suite each reduce
 // the number of cases Mocha reports without reporting a failure of their own.
-// The 90-passing/39-failing state this checkpoint started from was reported as
-// 129 cases for exactly that reason - the failing `before all` in
-// test/lib/api/course.js suppressed the copy-course case, and nothing said so.
+// This hook closes that gap: it walks the root suite after the run and requires
+// the number of cases registered, the number executed and the number that
+// passed all to equal EXPECTED_CASES, failing with the three counts otherwise.
+// A tally that is quietly short is indistinguishable from a tally that is right,
+// which is why the total is asserted rather than read.
 //
-// This hook closes that gap mechanically: it walks the root suite after the run
-// and requires that the number of cases REGISTERED, the number EXECUTED and the
-// number that PASSED are all equal to EXPECTED_CASES. Any divergence fails the
-// run with the three counts in the message.
-//
-// It lives at the top level of a collected spec file, so `after` attaches to the
-// ROOT suite and therefore runs once, after every suite in the run - including
-// the model and utility suites, which are collected from outside this directory.
-// It is a hook and not a case, so it does not change the total it asserts.
-// ---------------------------------------------------------------------------
+// It sits at the top level of a collected spec file, so `after` attaches to the
+// root suite and runs once, after every suite in the run - including the model
+// and utility suites, which are collected from outside this directory. Being a
+// hook rather than a case, it does not change the total it asserts.
 
-// 234 = 130 + 21 + 83.
+// 130 = 124 + 6, the figure AAP 0.9.2 freezes for this suite.
 //
-// 130 = 124 + 6 is the figure AAP 0.9.2 states for the route-level suite, and it
-// is derived immediately below. The other two terms are the coverage this
-// checkpoint added outside test/lib/api/, which this gate counts because it
-// walks the ROOT suite:
+// 124 is the number of `it()` bodies present at base commit 2f8712a, measured
+// per file rather than summed from intent:
 //
-//   +21  test/lib/api/trinket.js, `Legacy URL, MIME and inline-image contracts`
-//        - the lib/util/url.js parseLegacy oracle matrix, the frozen contract as
-//        values, real invocation of users.assetUploadFromURL, source pinning of
-//        all six parseLegacy call sites, the 13 explicit mime mappings and the
-//        mismatched-metadata classifier outcomes.
-//   +83  test/lib/util/email-compat.js (59) and test/lib/util/diff-compat.js
-//        (24) - the two behaviour ports that keep `validator` 5.7.0 isEmail and
-//        `diff` 1.0.8 applyPatch semantics while both packages move for HIGH
-//        advisories (AAP 0.5.1.2).
+//    69  test/lib/api/ - admin 3, course 27, files 5, forgot_pass 7, login 5,
+//        logout 2, profile 1, registration 9, trinket 10
+//    55  the model and utility suites - plugins/paginate 21, plugins/roles 12,
+//        User 10 (7 in models/user.js and 3 in util/user.js), models/trinket 9,
+//        models/course 2, models/lesson 1
 //
-// Measured per file rather than summed from intent: 75 in test/lib/api/ outside
-// the Legacy URL describe, 21 inside it, 59 Email, 24 Diff, and 66 across the
-// model and utility suites (paginate 21, roles 12, User 10, Trinket 9, Course 2,
-// Lesson 1) = 234.
+// 123 of those 124 are active at that commit. The 124th is
+// `it('should respond with a zip file', ...)`, which sits inside the /* ... */
+// block at 2f8712a:test/lib/api/course.js:254-280, and is the reason a
+// comment-stripped count of that tree returns 123 where the AAP's count returns
+// 124. Removing those two comment delimiters is the ONLY difference between this
+// tree's course.js and the base commit, so all 124 bodies now register.
 //
-// 124 is the number of `it()` bodies present at base commit 2f8712a: 123 of them
-// active, plus `it('should respond with a zip file', ...)`, which sits inside the
-// /* ... */ block at 2f8712a:test/lib/api/course.js:254-280 and is the reason a
-// comment-stripped count of that tree returns 123 while the AAP's count returns
-// 124. 6 is test/lib/api/pages.js, created by this migration.
+// 6 is test/lib/api/pages.js, created by this migration. `'pages'` in the
+// sequence array above is what invokes it: this file requires and calls only the
+// names in that array, so without the entry the spec would load and register
+// nothing at all - which is the failure mode this gate exists to catch.
 //
-// That 124th body is now ACTIVE and passing. Only its request was ever wrong:
-// the application declares `GET /{userSlug}/courses/{courseSlug}/download.zip`
-// with a required `format` query of 'md' or 'html' (config/routes.js:163-173),
-// while the URL its `before` hook built carried neither the `.zip` suffix nor the
-// query, so it matched no route. Its five assertions are byte-identical to the
-// ones written at base commit; what the hook needed in addition was its own data
-// precondition, which is established at the case and explained there.
+// REGISTERED and EXECUTED both measure 130 under the canonical `npm test`, so
+// the composition half of the contract holds exactly. PASSED measures fewer, and
+// the shortfall belongs to the baseline rather than to this migration: 27 of the
+// 124 bodies assert expectations that production code `git diff 2f8712a` reports
+// byte-identical has never satisfied. Four examples, each checkable:
 //
-// No pre-existing case was added, removed or renumbered: 124 baseline bodies, all
-// active, plus the 6 new page cases, plus the 104 cases the two sections above
-// describe.
-var EXPECTED_CASES = 234;
+//   test/lib/models/trinket.js:55 expects a short code cut to 10 characters
+//   where lib/models/trinket.js:120 cuts 12;
+//   plugins/roles.js expects hasRole('trinket-code') where lib/models/user.js:68
+//   grants only the `user` role on first save, and lib/models/roles.js:85 makes
+//   'trinket-code' a separate role name carrying the same permission list;
+//   course.js expects a 302 to /login on unauthenticated /api/ paths where
+//   app.js classifies a path beginning /api/ as an API request and answers its
+//   401 as JSON;
+//   course.js asserts `should.not.exist` of an emptied collection where
+//   lib/models/model.js serialize() has always written `[]`.
+//
+// AAP 0.6.5 records that this suite died during file collection at 2f8712a, so
+// its "124 passing" was inferred from the registration count and never measured.
+//
+// Those bodies are preserved exactly as written, which is why the gate fails
+// rather than passing. Correcting an expectation would change an assertion the
+// AAP 0.9.2 gate bars changing, and making one pass would need the production
+// behaviour change R-d prohibits. The gate therefore reports all three counts on
+// every run: it is unmet today, by 27, and it becomes satisfiable only when those
+// baseline bodies are addressed under their own approval.
+var EXPECTED_CASES = 130;
 
 after(function() {
   var suite = this.test.parent;

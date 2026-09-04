@@ -1,198 +1,76 @@
 #!/usr/bin/env node
 'use strict';
 
-// The route manifest generator and comparator - the PRIMARY PARITY GATE.
+// The route manifest generator and comparator - the PRIMARY PARITY GATE for
+// the HTTP surface.
 //
-// AAP §0.9.1 binds the BOUNDARIES & PRESERVATION clause on the HTTP surface to
-// this one artifact. If this file is wrong, the migration has no evidence that
-// the HTTP surface survived. Node core only, CommonJS, no network.
+// It reads a tree's route declarations, parses them as the application does,
+// and emits one entry per registered route: method, path, controller binding,
+// handler kind, effective auth, pre-handlers, validation keys and the
+// success/fail/reply specs. One tool serves both trees, selected by `--app`, so
+// a baseline is captured with tooling that does not exist at that commit. Node
+// core only, CommonJS, no network, no database.
 //
-// ===========================================================================
-// RULES
-// ===========================================================================
-// `review_rules` returns exactly "No user rules provided." for this project,
-// which AAP §0.7 and §0.10.1 independently record. NO rules are invented here
-// and their absence is not read as licence to lower the bar: enterprise
-// practice governs, and the three commitments of test/parity/ all land on this
-// file. The baseline is captured BEFORE anything changes - one tool, two
-// worktrees, selected by `--app`. Every parity claim is backed by an
-// inspectable artifact - the emitted manifest IS the claim. Nothing is
-// normalized away that could be compared exactly - the pre-parse bindings and
-// specs are recorded, not just method and path.
+// INVOCATION - the artifact goes to --out, and BOTH STREAMS ARE DISCARDED.
+// Parsing requires every controller: `lib/controllers/users.js` calls the
+// exports-queue getter at module load, printing the in-memory-queue line on
+// stdout, and a tree that does not suppress it prints the AWS SDK v2
+// end-of-support notice on stderr. Neither is suppressible from here.
 //
-// The request's own RULES block is binding and is not that document:
-//   R-f  Baseline behaviour at 2f8712a is the tie-breaker, which is exactly why
-//        this tool must run UNMODIFIED against a tree that does not contain it.
-//        That is what `--app` is for, and why every application require is
-//        resolved absolutely inside the tree under test.
-//   R-d  Behaviour improvements are prohibited, so this tool REPORTS a
-//        difference and never smooths one over. It also never reimplements the
-//        route table: the FAIL column's width is derived from the SUCCESS
-//        strings (lib/util/routeParser.js:615 computes `sizes.fail` from
-//        `successStr`), a quirk that is preserved by CAPTURING what `tab`
-//        emits rather than by reproducing it.
+//   # generate, once per tree; a baseline worktree needs its own `npm ci`
+//   node test/parity/manifest.js --out T.json >/dev/null 2>&1
+//   node test/parity/manifest.js --app <baseline-worktree> --out B.json \
+//     >/dev/null 2>&1
 //
-// ===========================================================================
-// INVOCATION - the artifact goes to --out, BOTH STREAMS ARE DISCARDED
-// ===========================================================================
-// "No infrastructure" does not mean no side effects. Parsing the routes
-// dynamically requires every controller (lib/util/routeParser.js:266), and
-// lib/controllers/users.js executes `require('../util/queues').exports()` at
-// module load, which prints the in-memory-queue line on STDOUT. On a baseline
-// tree the AWS SDK v2 end-of-support notice also prints on STDERR (only the
-// target's config/aws.js suppresses it). Neither is suppressible from here, so
-// the gate discards both streams EXPLICITLY and reads the artifact from disk:
+//   # THE GATE - per-entry comparison, non-zero exit on any difference
+//   node test/parity/manifest.js --compare B.json T.json 2>&1 >/dev/null
 //
-//   # generate, target tree
-//   node test/parity/manifest.js --out /tmp/target-manifest.json \
-//     >/dev/null 2>/dev/null
+//   # supporting check - the route-table CLI, all three invocation forms per
+//   # tree, then compared ACROSS trees, since the forms drift together
+//   node test/parity/manifest.js --cli-table --out CT.json >/dev/null 2>&1
+//   node test/parity/manifest.js --compare-cli CB.json CT.json 2>&1 >/dev/null
 //
-//   # generate, baseline worktree (its own `npm ci`, from the baseline lockfile)
-//   node test/parity/manifest.js --app /path/to/baseline-2f8712a \
-//     --out /tmp/baseline-manifest.json >/dev/null 2>/dev/null
+// ARTIFACT - `--out` receives `schema`, `summary`, `entries` and an embedded
+// `provenance` block; a sibling `<out>.provenance.json` adds a SHA-256 `digest`
+// of the manifest's exact bytes, which makes the pair a BINDING rather than a
+// description. No provenance reaches a compared byte - `--compare` reads the
+// schema and the entries, `--verify` compares payloads with the embedded block
+// stripped by `payloadText` - so the manifest stays comparable between two
+// trees whose paths, commits and dependency graphs differ by construction. A
+// consumer that did not generate the file reads it through `readManifestForApp`
+// rather than `readManifest`, for the reason `verifyManifestIntegrity` gives.
 //
-//   # THE GATE: per-entry comparison, non-zero exit on any difference
-//   node test/parity/manifest.js --compare /tmp/baseline-manifest.json \
-//     /tmp/target-manifest.json 2>&1 >/dev/null
+// `parseRoutes` MUTATES ITS INPUT, EXHAUSTIVELY: it deletes `route.route`,
+// `route.success`, `route.fail`, `route.ext`, `route.reply`, `route.enable`,
+// `route.html`, `route.redirect`, `route.cookie` and the validate section's
+// `language` key, renames `config` to `options`, deletes `options.validate` and
+// forces `options.cors` false. So the parsed routes cannot answer for the
+// declarations: the declaration modules are required directly, a PRISTINE deep
+// copy is taken BEFORE any parse, and a SECOND throwaway copy is handed to
+// `parse`. The pristine copy supplies every binding and spec - `route.reply` is
+// the projection contract `request.success` applies - and the parsed copy
+// supplies method, path, handler and options. `structuredClone` cannot make
+// that copy: route objects hold pre-handler FUNCTIONS and JOI SCHEMA OBJECTS,
+// and it throws DataCloneError on a function. `deepCopy` below recurses into
+// PLAIN OBJECTS AND ARRAYS ONLY and shares everything else BY REFERENCE, which
+// is safe because `parseRoutes` mutates neither: only the plain-object
+// containers have to be per-copy, so a `delete` on one is invisible.
 //
-//   # supporting check, per tree: the route-table CLI, all three invocation
-//   # forms, byte-compared against each other and against the verified row count
-//   node test/parity/manifest.js --cli-table --out /tmp/cli-table-target.json \
-//     >/dev/null 2>/dev/null
-//   node test/parity/manifest.js --cli-table --app /path/to/baseline-2f8712a \
-//     --out /tmp/cli-table-baseline.json >/dev/null 2>/dev/null
+// `config/app.config` IS NEVER REQUIRED, directly or transitively: it requires
+// `config/db`, which calls `mongoose.connect` at module scope and exits
+// non-zero without a database. The require set is exactly config/constants,
+// config/routes, config/api_routes and lib/util/routeParser, constants FIRST
+// because it assigns `config.constants`, which config/routes.js's
+// language-expansion loop reads AT MODULE LOAD - nothing is re-expanded here.
 //
-//   # and the CROSS-TREE half of that check, which is the half a single tree
-//   # cannot make: all three forms drift together, so they stay identical to
-//   # each other while no longer describing the same routes
-//   node test/parity/manifest.js --compare-cli /tmp/cli-table-baseline.json \
-//     /tmp/cli-table-target.json 2>&1 >/dev/null
-//
-// Provenance is written to a SIBLING file, `<out>.provenance.json`, never
-// inside the manifest. That is what lets the manifest itself be compared
-// byte-for-byte while still satisfying AAP §0.9.3's requirement that tool
-// provenance be recorded alongside every artifact: "captured at baseline"
-// means captured by TARGET-worktree tooling against a BASELINE install, and
-// the sidecar is what makes that checkable.
-//
-// The sidecar carries a SHA-256 `digest` of the manifest's exact bytes, which
-// is what makes the pair a BINDING rather than a description, and
-// `verifyManifestProvenance(manifestPath, appRoot)` /
-// `readManifestForApp(manifestPath, appRoot)` are what a consumer uses in place
-// of `readManifest` when it did not generate the file itself. That matters
-// because THE DEFAULT ARTIFACT PATH IS SHARED: test/parity/capture.js and
-// test/parity/replay.js both default to test/parity/route-manifest.json and
-// consume it whenever it exists, so a baseline manifest left there would
-// otherwise be read by a target replay and the target judged by the baseline's
-// HTTP surface. Note that two manifests of DIFFERENT trees can be
-// byte-identical - at this commit they are, which is the gate passing - so the
-// digest alone cannot tell them apart; the tree path and commit recorded in the
-// sidecar are what do.
-//
-// ===========================================================================
-// THE THREE FACTS THAT MAKE A NAIVE IMPLEMENTATION FAIL
-// ===========================================================================
-// 1. `parseRoutes` MUTATES ITS INPUT, EXHAUSTIVELY. Measured deletions, at the
-//    baseline line numbers: `delete route.enable` (:250),
-//    `delete validation.language` (:270), `delete route.route` (:273),
-//    `delete route.success` (:274), `delete route.fail` (:275),
-//    `delete route.ext` (:276), `delete route.reply` (:277), `route.config` ->
-//    `route.options` (:280-283), `delete route.options.validate` (:285),
-//    `route.options.cors` forced false (:288-290), `delete route.html` (:295),
-//    `delete route.redirect` (:299), `delete route.cookie` (:303). The obvious
-//    JSON.stringify-the-parsed-routes shortcut reports ZERO MATCHES FOR EVERY
-//    DECLARED PATH, and after parsing `options.validate` survives on 0 of 233
-//    routes. `route.reply` - the replySpec captured at :260 and deleted at :277
-//    - is the projection contract `request.success` applies at :422-424, and
-//    this manifest needs it.
-// 2. THEREFORE: the declaration modules are required directly, a PRISTINE deep
-//    copy is taken BEFORE any parse, and a SECOND throwaway copy is handed to
-//    `parse`. The pristine copy supplies every binding and spec; the parsed
-//    copy supplies method, path, handler and options.
-// 3. `structuredClone` WILL NOT WORK. Route objects hold pre-handler FUNCTIONS
-//    (config/routes.js imports them from lib/util/helpers.js) and JOI SCHEMA
-//    OBJECTS, and structuredClone throws DataCloneError on a function. The
-//    deep copy below recurses into PLAIN OBJECTS AND ARRAYS ONLY and passes
-//    everything else - functions, Joi schemas, RegExp - through BY REFERENCE.
-//    Nothing in `parseRoutes` mutates a schema or a function, so sharing them
-//    is safe; what matters is that each copy owns its own plain-object
-//    containers, so a `delete` on one is invisible to the other.
-//
-// Two further facts govern the require set:
-//   - THE LANGUAGE EXPANSION HAS ALREADY HAPPENED. config/routes.js's loop runs
-//     at MODULE LOAD, pushing 5 routes for each of the 11
-//     config.constants.trinketLangs. The required array already contains all
-//     55; it is not re-expanded here.
-//   - config/app.config IS NEVER REQUIRED, directly or transitively. It
-//     requires ./db, and config/db.js calls connect() at MODULE SCOPE via
-//     mongoose.connect, exiting non-zero with no database. The require set is
-//     exactly config/constants, config/routes, config/api_routes and
-//     lib/util/routeParser. config/constants.js does
-//     `module.exports = config.constants = constants`, which is what makes
-//     config.constants.trinketLangs available to config/routes.js, so it is
-//     required FIRST.
-//
-// ===========================================================================
-// THE 233 RECONCILIATION - AND ITS TWO EQUALLY TRUE DECOMPOSITIONS
-// ===========================================================================
-//   config/routes.js      112 exported objects
-//   config/api_routes.js  116 exported objects
-//                        --------------------------------------------------
-//                       = 228 exported objects
-//   + 2  addStaticPages PREPENDS /about and /help (lib/views/static/*.html)
-//   + 3  addStaticRoutes APPENDS the cache-prefix directory route,
-//        /.well-known/{path*} and the /{path*} catch-all
-//   = 233 registered routes
-//
-// THE 112 DECOMPOSES TWO WAYS, BOTH ARITHMETICALLY TRUE, AND NEITHER IS
-// ASSERTED HERE. config/routes.js contains 62 `route :` declaration lines, 5 of
-// which are written INSIDE the per-language expansion loop body, and the loop
-// runs once for each of the 11 config.constants.trinketLangs:
-//
-//   (A) 57 top-level + 55 expansion  = 112   the 5 in-loop lines counted as
-//                                            EXPANSION (11 x 5), so the
-//                                            literal count excludes them
-//   (B) 62 literal   + 50 expansion  = 112   the 5 in-loop lines counted as
-//                                            LITERAL, so the expansion adds
-//                                            only the further (11 - 1) x 5
-//
-// THE ONLY DIFFERENCE BETWEEN THEM IS THAT ATTRIBUTION. Reading (A) is what
-// earlier revisions of this comment stated; reading (B) is what
-// docs/baseline-parity.md states; each read as an error against the other, and
-// a delivery carrying both looked self-contradictory when in fact nothing
-// disagreed. So this comment asserts neither, and the figures are no longer
-// carried in prose at all: measureDeclarations reads them from the analysed
-// tree's own source - the declaration lines, the loop located BY CONTENT rather
-// than by a line number that differs between the two trees, the language count
-// from config.constants - records BOTH readings with the attribution named in
-// each, and appends a self-check failure to the summary's unexpected figures if
-// either stops closing, which fails generation. The numbers above are the
-// measured values at both trees' current commits, quoted so a reader has a
-// reference point; the sidecar's declarationCounts.decomposition is the source
-// of truth, and it is per-tree by design.
-//
-// addStaticRoutes contributes only 3 because ALL EIGHT config/default.yaml
-// `app.prefixes` keys are empty, so its prefix loop pushes zero. No `.json`
-// duplicate contributes either: `ext : true` appears nowhere at this commit,
-// so the extension path produces 0 - the extension branch is still handled
-// below, and an extension-derived entry is marked, because a manifest that
-// silently mis-attributed one would be worse than one that reported it.
-//
-// ===========================================================================
-// WHY THE PASS CONDITION IS PER ENTRY
-// ===========================================================================
-// Swapping auth between two routes leaves EVERY aggregate unchanged. The
-// summary block and the sidecar figures are a SUMMARY, NOT THE PARITY GATE; the
-// parity gate is `--compare`, which joins on method + path and compares every
-// recorded field of every entry, with auth compared per entry.
-//
-// That does not make the summary advisory. Its `unexpected` list is a check on
-// the CAPTURE - do these 233 entries still reconcile the way the verified
-// baseline says a manifest of this application does - and generation exits
-// non-zero when it does not, because a capture nobody can trust is not evidence
-// to compare. The two are different questions and both are mechanical: the
-// summary asks whether THIS manifest is sound, `--compare` asks whether TWO
-// manifests agree, and neither answer is substituted for the other.
+// THE PASS CONDITION IS PER ENTRY. Swapping auth between two routes leaves
+// every aggregate unchanged, so the summary and the sidecar figures are a
+// SUMMARY, NOT THE PARITY GATE; the gate is `--compare`, which joins on method
+// plus path and compares every recorded field of every entry, auth included.
+// The summary is mechanical too: `unexpected` checks the CAPTURE and generation
+// exits non-zero when a figure does not reconcile. The declaration figures are
+// measured from the analysed tree's own source and recorded in the sidecar's
+// `declarationCounts`, so they are per-tree by design and not asserted here.
 
 var fs           = require('fs');
 var path         = require('path');
@@ -229,25 +107,19 @@ var TOOL_ROOT = path.resolve(__dirname, '..', '..');
 // `--help`-less first run, a diagnostic re-run, a sibling harness spawning it -
 // modify tracked source, which is how an evidence artifact gets overwritten by
 // a run nobody meant to publish. So a destination is always either named on the
-// command line or taken from this directory, and naming a path inside the
-// worktree stays possible but has to be asked for: writing the committed
-// evidence is `--out test/parity/route-manifest.json`, spelled out.
+// command line or taken from this directory. Naming a path inside the worktree
+// stays possible but has to be spelled out, and nothing in the delivery asks
+// for it: no generated manifest or route table is tracked.
 var ARTIFACT_DIR_ENV = 'PARITY_ARTIFACT_DIR';
 
 // The artifact basenames this tool produces, used when the destination comes
-// from ARTIFACT_DIR_ENV rather than from a flag. The names are the ones AAP
-// §0.9.1 refers to, so an artifact written into the scratch directory is still
-// recognisable as the same evidence.
+// from ARTIFACT_DIR_ENV rather than from a flag. They are the delivered
+// artifacts' own names, so an artifact written into the scratch directory is
+// still recognisable as the same evidence.
 var ARTIFACT_NAMES = {
   manifest : 'route-manifest.json',
   cliTable : 'route-table.json'
 };
-
-// The committed manifest, and it is a READ default only: --verify reads the
-// delivered artifact a reviewer can see, and a read cannot damage it. There is
-// deliberately no WRITE default - generation and --cli-table require --out or
-// ARTIFACT_DIR_ENV - so no ordinary run leaves an artifact in tracked source.
-var COMMITTED_MANIFEST = path.join(__dirname, ARTIFACT_NAMES.manifest);
 
 // The provenance sidecar's suffix. One constant, because the writer and the
 // verifier must agree on the path byte for byte - a sidecar the verifier cannot
@@ -264,7 +136,7 @@ var PROVENANCE_SUFFIX = '.provenance.json';
 // nothing but Node core and the tree under test.
 //
 // It matters here for one specific reason: the route-table capture below is
-// compared BYTE FOR BYTE across two worktrees (AAP §0.9.1), and a preloaded
+// compared BYTE FOR BYTE across two worktrees, and a preloaded
 // module that wrote a single line to the child's stdout, or that resolved a
 // different `tab` or `lib/util/routeParser.js`, would make the two captures
 // differ for a reason that has nothing to do with either tree.
@@ -289,12 +161,11 @@ var CLI_TIMEOUT_MS = 120000;
 // `app.js` is read as TEXT to recover it per tree (see readServerAuthDefault)
 // rather than being required, because requiring app.js boots the application
 // and pulls in config/app.config. This is the DOCUMENTED EXPECTED VALUE, not a
-// fallback: it is what both trees actually declare - `server.auth.default({
-// strategy: 'session', mode: 'try' })` at app.js:287 on the baseline and
-// app.js:310 on the target - and the recovered pair is ASSERTED against it in
-// buildSummary. It is never substituted for a value that could not be
-// recovered, because 126 of the 233 entries inherit it and substituting it
-// would hide up to 126 auth differences behind a PASS.
+// fallback: it is what both trees declare in their own
+// `server.auth.default({ ... })` call, and the recovered pair is ASSERTED
+// against it in buildSummary. It is never substituted for a value that could
+// not be recovered, because 126 of the 233 entries inherit it and substituting
+// it would hide up to 126 auth differences behind a PASS.
 var FALLBACK_DEFAULT_AUTH = { strategy: 'session', mode: 'try' };
 
 // Effective auth modes for a declared strategy and for `auth: false`. A route
@@ -313,9 +184,9 @@ var HANDLER_FALLBACK        = 'missing-controller-fallback';
 var HANDLER_UNCLASSIFIED    = 'unclassified';
 
 // The validation section named in a route's `config.validate` that is NOT a
-// schema: `language` is the custom-message map, and lib/util/routeParser.js:270
-// deletes it before validating. It is excluded from the recorded key list, and
-// excluding it is what makes the total come to 102.
+// schema: `language` is the custom-message map, and `parseRoutes` in
+// lib/util/routeParser.js deletes it before validating. It is excluded from the
+// recorded key list, and excluding it is what makes the total come to 102.
 var VALIDATE_LANGUAGE_KEY = 'language';
 
 // The fixed serialization order of an entry's keys. Insertion order is what
@@ -410,10 +281,10 @@ var EXPECTED_UNRESOLVED_PRE_ENTRIES = [
 ];
 
 // The three routes that answer entirely through the parser's no-controller
-// fallback, which returns `request.success(request.params)`. AAP §0.6.6
-// preserves that branch verbatim precisely so these three keep answering, and
-// recording them by name is what makes their disposition visible in the
-// artifact instead of inferred from a count.
+// fallback, which returns `request.success(request.params)`. That branch is
+// preserved verbatim precisely so these three keep answering, and recording
+// them by name is what makes their disposition visible in the artifact instead
+// of inferred from a count.
 var EXPECTED_FALLBACK_ROUTES = [
   'GET /api/trinkets/active',
   'GET /api/trinkets/popular',
@@ -470,8 +341,8 @@ var USAGE = [
   '                 and for --cli-table unless ' + ARTIFACT_DIR_ENV + ' names a',
   '                 directory to put the default filenames in - there is no',
   '                 repository default, so no run writes into tracked source',
-  '                 unless it was asked to. The committed evidence is written',
-  '                 with --out test/parity/' + ARTIFACT_NAMES.manifest + '.',
+  '                 unless it was asked to. --verify reads the manifest at',
+  '                 this path and resolves it the same way.',
   '',
   'OPTION RULES',
   '  No option here is repeatable: a second --app, --out, --compare or',
@@ -830,9 +701,10 @@ function deepCopy(value) {
  * invisible one.
  *
  * Key order is preserved verbatim and deliberately NOT sorted. For a `reply`
- * spec the key order IS the projection order that ObjectUtils.pull applies at
- * lib/util/routeParser.js:422-424, so it reaches the client; sorting it would
- * normalize away something that can be compared exactly.
+ * spec the key order IS the projection order that `request.success` in
+ * lib/util/routeParser.js applies through ObjectUtils.pull, so it reaches the
+ * client; sorting it would normalize away something that can be compared
+ * exactly.
  *
  * @param {*} value
  * @returns {*} A JSON-safe mirror of `value`, with non-serializable leaves
@@ -1134,9 +1006,7 @@ function resolveArtifactPath(basename, flag) {
   throw new ToolError(flag + ' is required: this tool has no repository ' +
     'default, so that an invocation without a destination cannot write into ' +
     'tracked source. Pass ' + flag + ' <path>, or set ' + ARTIFACT_DIR_ENV +
-    ' to a scratch directory and the artifact goes to <dir>/' + basename + '. ' +
-    'To write the committed evidence, name it: ' + flag + ' test/parity/' +
-    basename);
+    ' to a scratch directory and the artifact goes to <dir>/' + basename + '.');
 }
 
 // Counter behind the temporary filenames below, so two artifacts written in
@@ -1242,8 +1112,8 @@ function readManifest(target) {
 }
 
 /**
- * Verifies that a manifest's provenance sidecar describes THAT manifest AND
- * THAT tree - the check that makes a shared default artifact un-poisonable.
+ * Verifies that a manifest's provenance sidecar describes THAT manifest - the
+ * check that makes a shared default artifact un-poisonable.
  *
  * test/parity/capture.js and test/parity/replay.js both default their manifest
  * to the SAME path, test/parity/route-manifest.json, and consume it whenever it
@@ -1255,34 +1125,23 @@ function readManifest(target) {
  * exactly what the two trees share. Identity is what differs, and identity
  * lives in the sidecar.
  *
- * This function is the FILE-INTEGRITY half, and it needs nothing but the two
- * files. Four conditions, each fatal and each named in the message:
- *   1. the sidecar is missing or unparseable          - no identity to check
- *   2. `artifact` is not the manifest's own basename  - sidecar of another file
- *   3. `schema` differs from the manifest's           - different tool version
- *   4. `digest` differs from the manifest's bytes     - edited or truncated
+ * This is the FILE-INTEGRITY half, and it needs nothing but the two files.
+ * Every condition is fatal and each is named in the message it throws:
+ *   1. the sidecar is missing, unparseable or not an object - no identity
+ *   2. `artifact` is not the manifest's own basename        - another file's
+ *   3. the manifest is missing or unparseable               - nothing to hash
+ *   4. `schema` differs from the manifest's                 - two runs
+ *   5. `digest` differs from the manifest's bytes           - edited or cut
  *
- * `verifyManifestProvenance` below adds the TREE-BINDING half - `tree.appRoot`
- * and `tree.head` against a tree the caller supplies - which is what actually
- * closes the poisoning case and which only a caller holding that tree can ask.
- *
- * Paths are compared through `fs.realpathSync` ON BOTH SIDES, so a symlinked
- * worktree, a trailing separator or a differently spelled but identical path is
- * not reported as a mismatch - only a genuinely different tree is.
- *
- * A null HEAD on either side is treated as UNVERIFIABLE AND FATAL, not as
- * permission to continue. `gitHead` returns null for a directory outside a
- * repository, and that is the one situation in which nothing distinguishes a
- * baseline artifact from a target one: passing it silently would readmit the
- * whole failure this function exists to close. A caller that legitimately has
- * no git tree must compare manifests it generated itself rather than trust a
- * sidecar it cannot check.
+ * `verifyTreeBinding` adds the TREE-BINDING half, which is what closes the
+ * poisoning case and which only a caller holding that tree can ask;
+ * `verifyManifestProvenance` is the two together.
  *
  * @param {string} manifestPath Absolute path of the manifest.
- * @param {string} appRoot Absolute path of the tree the caller intends to use
- *   the manifest for.
- * @returns {Object} The parsed, verified sidecar.
- * @throws {ToolError} On any of the six conditions above.
+ * @returns {{sidecar: Object, manifest: Object, digest: string}} The verified
+ *   sidecar, the manifest parsed from the same read whose digest passed, and
+ *   that digest.
+ * @throws {ToolError} Naming the first condition that failed.
  */
 function verifyManifestIntegrity(manifestPath) {
   var sidecarPath = manifestPath + PROVENANCE_SUFFIX;
@@ -1362,10 +1221,11 @@ function verifyManifestIntegrity(manifestPath) {
 /**
  * Verifies a manifest's INTEGRITY and then binds it to a specific tree.
  *
- * Integrity is `verifyManifestIntegrity` above. The binding is the other two
- * conditions - `tree.appRoot` and `tree.head` - and it is what closes the
- * poisoning case, because a baseline manifest and a target manifest are
- * structurally identical and differ only in which tree produced them.
+ * Integrity is `verifyManifestIntegrity` above. The binding is
+ * `verifyTreeBinding` below - `tree.appRoot`, then the recorded sources digest
+ * or, failing that, `tree.head` - and it is what closes the poisoning case,
+ * because a baseline manifest and a target manifest are structurally identical
+ * and differ only in which tree produced them.
  *
  * The split matters because the two halves answer different questions and are
  * needed in different places. Integrity asks "is this file the one its sidecar
@@ -1392,13 +1252,60 @@ function verifyManifestProvenance(manifestPath, appRoot) {
 /**
  * The tree-binding half, applied to a sidecar ALREADY read.
  *
- * Separate from the read so that a caller which has verified a manifest can
- * bind THAT snapshot rather than re-opening the path. `readManifestForApp` used
- * to verify one read of the file and then return a second, independent read of
- * it - a check/use gap in which the bytes that passed verification are not
- * necessarily the bytes the caller gets. The window is small and the failure is
- * silent, which is the worst combination for a function whose entire purpose is
- * to refuse a manifest that does not belong to the tree.
+ * Separate from the read so that a caller which has verified a manifest binds
+ * THAT snapshot rather than re-opening the path. Verifying one read of the file
+ * and then returning a second, independent read of it is a check/use gap in
+ * which the bytes that passed verification are not necessarily the bytes the
+ * caller gets: the window is small and the failure is silent, which is the
+ * worst combination for a function whose entire purpose is to refuse a manifest
+ * that does not belong to the tree.
+ *
+ * Paths are compared through `fs.realpathSync` ON BOTH SIDES, so a symlinked
+ * worktree, a trailing separator or a differently spelled but identical path is
+ * not reported as a mismatch - only a genuinely different tree is.
+ *
+ * The recorded `tree.sources` digest is checked FIRST and is conclusive on its
+ * own, because it identifies the manifest-determining inputs by content. Only a
+ * sidecar that carries no such digest falls back to the commit, and there an
+ * unreadable HEAD on either side is UNVERIFIABLE AND FATAL rather than
+ * permission to continue: `gitHead` returns null for a directory outside a
+ * repository, which is the one situation in which nothing distinguishes a
+ * baseline artifact from a target one. A caller with no git tree must compare
+ * manifests it generated itself rather than trust a sidecar it cannot check.
+ *
+ * WHAT IDENTIFIES A TREE HERE, IN ORDER OF STRENGTH, AND WHY THE ORDER MATTERS.
+ * Two things could stand for "this manifest describes that tree": the CONTENT of
+ * the manifest-determining inputs, digested into `tree.sources.combined`, and
+ * the PATH the generator ran in, recorded as `tree.appRoot`. Content is the
+ * stronger of the two by a wide margin - if every input still hashes to what it
+ * hashed when the manifest was written, the manifest provably describes this
+ * tree's HTTP surface, whatever directory it sits in, whatever commit it is on
+ * and whether or not it is dirty. Path is a proxy that answers a narrower
+ * question: it says the generator ran HERE.
+ *
+ * This function used to evaluate the proxy first, and that made the whole API
+ * unusable by its own consumers. `tree.appRoot` is an absolute path baked into
+ * the sidecar at generation time, so a DELIVERED manifest - the committed
+ * `test/parity/route-manifest.json`, which capture.js and replay.js both
+ * default to - names the one worktree that happened to generate it. Measured in
+ * a second checkout of this repository: `readManifestForApp` threw on the path
+ * comparison while `sources.combined` matched EXACTLY, 0 of 21 inputs differing.
+ * A tree-binding check that refuses a manifest which provably describes the
+ * tree in front of it is not a stricter check, it is a broken one, and the
+ * consumers responded by not calling it at all.
+ *
+ * So content is evaluated first and BINDS when it matches; the recorded path is
+ * then provenance rather than a condition, and a difference in it is reported
+ * only when content has already failed, where it is the explanation. Path and
+ * HEAD identity remain the fallback for a sidecar written before the sources
+ * block existed, which carries nothing else to check.
+ *
+ * The purpose survives the reordering intact, which is the point: the case this
+ * exists to refuse is a BASELINE manifest consumed by a TARGET replay, and the
+ * two trees differ in exactly the inputs `sources.combined` digests. Measured on
+ * the same pair - the committed baseline manifest's recorded digest does not
+ * match the target tree's, so it is still refused, by content rather than by
+ * path.
  *
  * @param {string} manifestPath Absolute path, for diagnostics.
  * @param {Object} sidecar The parsed provenance sidecar.
@@ -1414,22 +1321,16 @@ function verifyTreeBinding(manifestPath, sidecar, appRoot) {
   var recordedSources;
   var currentSources;
   var moved;
+  var relocated;
 
   if (!sidecar.tree || typeof sidecar.tree.appRoot !== 'string') {
     throw new ToolError('provenance sidecar ' + sidecarPath +
       ' records no tree.appRoot, so the manifest cannot be attributed to a tree');
   }
 
-  try {
-    recordedRoot = fs.realpathSync(sidecar.tree.appRoot);
-  }
-  catch (err) {
-    throw new ToolError('provenance sidecar ' + sidecarPath + ' attributes ' +
-      manifestPath + ' to ' + sidecar.tree.appRoot +
-      ', which cannot be resolved on this host (' + err.message +
-      '), so the manifest cannot be shown to describe ' + appRoot);
-  }
-
+  // The SUPPLIED root must resolve: it is the tree the caller is about to
+  // drive, so a path that does not exist is the caller's own fault and there is
+  // nothing to bind to.
   try {
     suppliedRoot = fs.realpathSync(appRoot);
   }
@@ -1438,19 +1339,34 @@ function verifyTreeBinding(manifestPath, sidecar, appRoot) {
       ' while verifying ' + manifestPath + ': ' + err.message);
   }
 
-  if (recordedRoot !== suppliedRoot) {
-    throw new ToolError('manifest ' + manifestPath + ' describes the tree at ' +
-      recordedRoot + ', not ' + suppliedRoot +
-      '. Using it here would judge one tree by the other tree\'s HTTP ' +
-      'surface; generate a manifest for ' + suppliedRoot + ' instead.');
+  // The RECORDED root is resolved tolerantly, and that is the reordering this
+  // function turns on. It is a path from another run, so on this host it may
+  // name a directory that has been removed, or a checkout that only ever
+  // existed elsewhere - which is the normal state of a delivered artifact. It
+  // is provenance, so failing to resolve it is recorded and carried into the
+  // diagnostics below rather than raised: whether the manifest describes this
+  // tree is decided by content, and content does not consult it.
+  try {
+    recordedRoot = fs.realpathSync(sidecar.tree.appRoot);
+  }
+  catch (err) {
+    recordedRoot = null;
   }
 
-  // CONTENT IDENTITY, checked before the commit identity, because it is the
-  // stronger of the two and because it is the one that can succeed for a
-  // committed artifact. `sources.combined` digests every input that determines
-  // the manifest; if it still matches, this manifest provably describes THIS
-  // tree's HTTP surface, whatever commit the tree is now on and whether or not
-  // the tree is dirty.
+  relocated = recordedRoot === null
+    ? ' The sidecar attributes it to ' + sidecar.tree.appRoot +
+      ', which does not resolve on this host.'
+    : (recordedRoot === suppliedRoot
+      ? ''
+      : ' The sidecar attributes it to ' + recordedRoot +
+        ', which is a different tree from ' + suppliedRoot + '.');
+
+  // CONTENT IDENTITY, checked FIRST, because it is the stronger of the two
+  // available identities and the only one that can succeed for a committed
+  // artifact consumed from a second checkout. `sources.combined` digests every
+  // input that determines the manifest; if it still matches, this manifest
+  // provably describes THIS tree's HTTP surface, whatever directory it sits in,
+  // whatever commit the tree is on and whether or not the tree is dirty.
   recordedSources = sidecar.tree && sidecar.tree.sources &&
     typeof sidecar.tree.sources.combined === 'string'
     ? sidecar.tree.sources.combined
@@ -1460,7 +1376,9 @@ function verifyTreeBinding(manifestPath, sidecar, appRoot) {
     currentSources = measureManifestSources(suppliedRoot);
 
     if (recordedSources === currentSources.combined) {
-      // Bound by content. Nothing the commit hash could add.
+      // Bound by content. Neither the commit hash nor the recorded directory
+      // could add anything to a match over every input that decides the
+      // manifest, so a relocated or vanished `tree.appRoot` is not consulted.
       return;
     }
 
@@ -1468,20 +1386,38 @@ function verifyTreeBinding(manifestPath, sidecar, appRoot) {
       return sidecar.tree.sources.files[relative] !== currentSources.files[relative];
     });
 
-    throw new ToolError('manifest ' + manifestPath + ' was generated from ' +
-      recordedRoot + ' when its manifest-determining sources hashed to ' +
-      recordedSources + ', and they now hash to ' + currentSources.combined +
-      '. ' + moved.length + ' input(s) changed: ' +
+    throw new ToolError('manifest ' + manifestPath + ' does not describe ' +
+      suppliedRoot + ': it was generated when the manifest-determining sources ' +
+      'hashed to ' + recordedSources + ', and in that tree they hash to ' +
+      currentSources.combined + '. ' + moved.length + ' input(s) differ: ' +
       moved.slice(0, 8).join(', ') +
-      (moved.length > 8 ? ', and ' + (moved.length - 8) + ' more' : '') +
-      '. The manifest may no longer describe this tree; regenerate it, or ' +
-      'establish that it still reproduces with `node ' +
+      (moved.length > 8 ? ', and ' + (moved.length - 8) + ' more' : '') + '.' +
+      relocated + ' Using it here would judge one tree by another tree\'s HTTP ' +
+      'surface; generate a manifest for ' + suppliedRoot + ' instead, or ' +
+      'establish that this one still reproduces with `node ' +
       path.relative(TOOL_ROOT, __filename) + ' --verify --out ' + manifestPath +
       '`.');
   }
 
-  // No sources block: an older sidecar. Fall back to the commit identity, which
-  // is all such a sidecar carries.
+  // No sources block: an older sidecar, which carries nothing but the directory
+  // and the commit. Both are then conditions rather than provenance, because
+  // there is no stronger identity left to fall back on.
+  if (recordedRoot === null) {
+    throw new ToolError('provenance sidecar ' + sidecarPath + ' attributes ' +
+      manifestPath + ' to ' + sidecar.tree.appRoot +
+      ', which cannot be resolved on this host, and records no sources digest ' +
+      'to bind by content instead - so the manifest cannot be shown to ' +
+      'describe ' + suppliedRoot + '. Regenerate it.');
+  }
+
+  if (recordedRoot !== suppliedRoot) {
+    throw new ToolError('manifest ' + manifestPath + ' describes the tree at ' +
+      recordedRoot + ', not ' + suppliedRoot +
+      ', and its sidecar records no sources digest to bind by content ' +
+      'instead. Using it here would judge one tree by the other tree\'s HTTP ' +
+      'surface; generate a manifest for ' + suppliedRoot + ' instead.');
+  }
+
   currentHead = gitHead(suppliedRoot);
 
   if (sidecar.tree.head === null || sidecar.tree.head === undefined) {
@@ -1607,39 +1543,33 @@ function gitHead(directory) {
 // Node-core-only at module scope, is already required by capture.js and
 // replay.js, and adds no path to the delivery.
 //
-// WHY IT EXISTS. Each tool used to identify its own generator by the git HEAD
-// of whatever worktree happened to run it, and nothing checked that the
-// recorded SHA resolved in the repository the artifact was delivered into. An
-// artifact produced in one clone therefore named a commit that existed only
-// there. Three delivered artifacts did exactly that: two inventories named
-// `d65ad861...` and `7feda413...`, neither of which is an object in this
-// repository, and a joi sidecar named `6da0a28...`, which IS a commit here but
-// predates the creation of test/parity/joi-matrix.js and so cannot have
-// produced the artifact that cited it. The same blocks carried run-local data -
-// absolute worktree roots, a live PID, a wall clock, ports, a database name -
-// which made two correct runs of one tool differ for reasons that say nothing
-// about the tree, and leaked a sibling clone's identity into the delivery.
+// A GENERATOR IS IDENTIFIED BY ITS BLOB, NOT BY A COMMIT. A commit id names
+// whatever worktree happened to run the tool, and a commit that exists in one
+// clone need not exist in the repository the artifact is delivered into - so a
+// commit-identified artifact can cite a SHA nobody downstream can resolve, or
+// one that predates the generator it claims produced it. A git BLOB id is the
+// hash of the file's exact bytes and is worktree-independent: `git hash-object`
+// computes the same 40 hex characters in every clone, and
+// `git cat-file blob <id>` returns that exact generator from any clone holding
+// the file. The commit is recorded as well, but only once RESOLVED - the newest
+// commit whose tree holds that blob at that path - with `verified` saying
+// whether the resolution succeeded. Where no commit holds the running source,
+// `commit` is null and `commitState` says `uncommitted-source` rather than
+// naming a commit that cannot reproduce the artifact.
 //
-// THE FIX, AND WHY IT IS THE BLOB. A generator is identified by its git BLOB
-// id - the hash of its exact bytes - and not by a commit id. A blob is
-// worktree-independent: `git hash-object` computes the same 40 hex characters
-// in every clone, and `git cat-file blob <id>` returns the exact generator in
-// any clone that contains the file, so the identity survives being delivered
-// from a different worktree than the one that ran the tool. The commit is
-// recorded too, but only after it has been RESOLVED - the newest commit whose
-// tree holds that exact blob at that path - and `verified` says whether that
-// resolution succeeded. When no commit holds the running source, `commit` is
-// null and `commitState` says `uncommitted-source` rather than naming a commit
-// that cannot reproduce the artifact.
+// A PROVENANCE BLOCK CARRIES NO RUN-LOCAL DATA, for the same reason: an
+// absolute worktree root, a live PID, a wall clock, a port or a database name
+// makes two correct runs of one tool differ over facts that say nothing about
+// the tree, and carries one clone's identity into the delivery.
 //
 // FOUR RULES, ENFORCED RATHER THAN DOCUMENTED
 //   1. A provenance block names a commit only when that commit is verified to
 //      contain the exact source that ran. assertProvenance() below is what
 //      makes an unverified claim impossible to emit silently.
 //   2. A provenance block carries NO run-local data. assertPortable() throws on
-//      an absolute path, an ISO timestamp, or any of the field names the review
-//      named - pid, port, runDir, execPath, appRoot, database. A tool that
-//      needs to name a path uses pathLabel(), which yields a symbolic label.
+//      an absolute path, an ISO timestamp, and the run-local field names - pid,
+//      port, runDir, execPath, appRoot, database. A tool that needs to name a
+//      path uses pathLabel(), which yields a symbolic label.
 //   3. Every artifact is hash-linked to its own provenance: attach() embeds the
 //      block together with a digest of the artifact WITHOUT it, so a consumer
 //      recomputes the digest and detects an artifact whose provenance was
@@ -1649,15 +1579,15 @@ function gitHead(directory) {
 //      of artifacts describes one target state.
 // ===========================================================================
 
-// The provenance schema. Bumped from the implicit 1 because the field set is
-// different in kind, not merely in content: `generator.blob` and
-// `generator.verified` did not exist, and a consumer that accepted a v1 block
-// would be accepting exactly the unverifiable claim this contract removes.
+// The provenance schema. A consumer must refuse a block below this version
+// rather than read it leniently: version 1 has no `generator.blob` and no
+// `generator.verified`, so accepting one means accepting an unverifiable claim
+// about which source produced the artifact.
 var PROVENANCE_SCHEMA = 2;
 
-// AAP §0.10.3's base commit, in full. Every baseline claim in this delivery is
-// a claim about this tree, so the tools assert it rather than trusting a
-// caller's `--app` to be pointed at the right worktree.
+// The base commit every baseline claim is a claim about, in full. The tools
+// assert it rather than trusting a caller's `--app` to be pointed at the right
+// worktree.
 var BASELINE_HEAD = '2f8712a112db46f923918c4507c75abc732d83d0';
 
 // What an artifact IS, recorded rather than inferred from which flags ran.
@@ -1669,9 +1599,8 @@ var BASELINE_HEAD = '2f8712a112db46f923918c4507c75abc732d83d0';
 var PROVENANCE_ROLES = ['baseline', 'target', 'analysis', 'unreviewed'];
 
 // Field names that carry run-local state. Rule 2 is enforced against this list
-// because each one is a field the review found in a committed artifact, and a
-// name-based check catches the value before it is written rather than after a
-// reviewer notices it.
+// because a name-based check catches such a value before it is written, rather
+// than leaving it to be noticed in the committed artifact.
 var PROVENANCE_PROHIBITED_KEYS = [
   'pid', 'ppid', 'port', 'ports', 'rundir', 'execpath', 'approot', 'root',
   'worktree', 'toolroot', 'database', 'capturedat', 'generatedat', 'timestamp',
@@ -1688,13 +1617,12 @@ var ABSOLUTE_PATH = /^(?:\/|[A-Za-z]:[\\/])/;
 
 // The same two, unanchored, and they are the ones the guard actually uses.
 //
-// An earlier revision of this file tested only the anchored forms, which meant
-// a value was rejected when it WAS a path and accepted when it merely
-// CONTAINED one. That is backwards for the values most likely to carry one: a
-// Node error message is `ENOENT: no such file or directory, open
+// The anchored forms alone would reject a value that IS a path and accept one
+// that merely CONTAINS one, which is backwards for the values most likely to
+// carry one: a Node error message is `ENOENT: no such file or directory, open
 // '/tmp/run/x'`, and a caption is `captured at 2026-09-04T01:02:03Z`. Both
-// passed, and both put exactly the host state this guard exists to keep out of
-// a committed artifact.
+// would pass, and both put exactly the host state this guard exists to keep
+// out of a committed artifact.
 //
 // The path form requires a separator and one path-ish character after the
 // root, so a bare `/` or a fraction like `3/4` is not an offence, and it
@@ -1917,11 +1845,11 @@ function gitWorktreeState(directory) {
 /**
  * The identity of a tree, WITHOUT its path.
  *
- * A path is where a tree sat on one machine; the HEAD is what it contained. The
- * review found `/tmp/blitzy-c5/baseline-2f8712a`, `/tmp/blitzy-c8/...` and
- * `/tmp/blitzy-c1/...` in delivered artifacts, all three naming the same
- * commit, which is the whole argument for recording the commit and dropping the
- * path.
+ * A path is where a tree sat on one machine; the HEAD is what it contained.
+ * Several `<worktree>/baseline-<commit>` directories on different machines all
+ * hold the same tree, so the path distinguishes artifacts that are identical
+ * and the commit distinguishes artifacts that are not. The commit is therefore
+ * what is recorded, and the path is not.
  *
  * @param {string} root Absolute path of the tree. Used, not recorded.
  * @returns {{head: (string|null), headShort: (string|null),
@@ -1941,10 +1869,10 @@ function treeIdentity(root) {
 }
 
 /**
- * True when a head is AAP §0.10.3's base commit.
+ * True when a head is the base commit BASELINE_HEAD names.
  *
- * Accepts an abbreviation of at least seven characters so a caller may compare
- * against `2f8712a`, which is how the AAP writes it.
+ * Accepts an abbreviation of at least seven characters, which is how the commit
+ * is usually written.
  *
  * @param {(string|null)} head
  * @returns {boolean}
@@ -2013,8 +1941,8 @@ function generatorIdentity(absolutePath, toolRoot) {
       ? 'not-a-checkout'
       : (resolved === null ? 'uncommitted-source' : 'contains-this-exact-source'),
     // True only when the recorded commit exists AND its tree holds the exact
-    // bytes that ran. Both halves are checked: the review's joi sidecar named a
-    // commit that existed, and that was not enough.
+    // bytes that ran. Both halves are required: a commit that merely exists
+    // says nothing about which source produced the artifact.
     verified            : resolved !== null &&
       gitObjectExists(toolRoot, resolved) &&
       gitBlobAt(toolRoot, resolved, relative) === blob,
@@ -2031,8 +1959,8 @@ function generatorIdentity(absolutePath, toolRoot) {
  * The runtime, reduced to what is reproducible.
  *
  * `process.execPath` and the machine's architecture are deliberately absent:
- * neither can be reproduced from the repository, and both were among the
- * run-local values the review found in committed blocks.
+ * neither can be reproduced from the repository, so both are run-local values
+ * that may not reach a committed block.
  *
  * @returns {{node: string, platform: string}}
  */
@@ -2144,9 +2072,13 @@ function sidecarArtifactDigest(sidecar) {
  * part is its basename. The fourth - something outside all of them - is
  * recorded as its basename alone, because its directory is machine state.
  *
- * @param {(string|null)} target
+ * @param {*} target The path to label. Anything that is not a non-empty string
+ *   yields null, so a caller may pass a field that may be absent.
  * @param {{toolRoot: (string|undefined), analysedRoot: (string|undefined)}} roots
- * @returns {(string|null)}
+ *   The two roots a label may be taken relative to. Either may be omitted, and
+ *   a path inside neither is reduced to its basename.
+ * @returns {(string|null)} A `tool:`, `analysed:` or `ephemeral:` label, or
+ *   null for a value that is not a non-empty string.
  */
 function pathLabel(target, roots) {
   var bounds = roots || {};
@@ -2334,9 +2266,14 @@ function readIfPresent(file) {
  * absolute path with its pathLabel, every instant with a marker - which leaves
  * a message that says what happened and is identical on the next run.
  *
- * @param {string} value
+ * @param {*} value The message to record. A non-string is coerced, and
+ *   undefined or null becomes null, because the fields this guards are often
+ *   absent.
  * @param {{toolRoot: (string|undefined), analysedRoot: (string|undefined)}} bounds
- * @returns {(string|null)}
+ *   Passed straight to pathLabel for each embedded path; either root may be
+ *   omitted.
+ * @returns {(string|null)} The message with every absolute path replaced by its
+ *   label and every instant by `<instant>`.
  */
 function portableText(value, bounds) {
   var limits = bounds || {};
@@ -2462,8 +2399,9 @@ function configurationDigest(value) {
  * The digest of a generated Markdown document's BODY.
  *
  * Needed because a Markdown artifact has no `payloadDigest`: its payload is
- * prose, so nothing bound the recorded provenance to the text it describes,
- * and a document whose rows had been edited by hand verified clean.
+ * prose, so without this digest nothing binds the recorded provenance to the
+ * text it describes and a document whose rows were edited by hand verifies
+ * clean.
  *
  * The canonicalization has to be non-circular, since the digest is recorded
  * INSIDE the document it covers. Two rules give that: the provenance comment
@@ -2541,9 +2479,9 @@ function buildProvenanceBlock(spec) {
  * makes the link non-circular and what a consumer recomputes. An artifact whose
  * provenance was copied in from another run fails that recomputation.
  *
- * Embedding is what removes the last reason for a committed sidecar file: a
- * delivered artifact says which tree it measured all by itself, so nothing
- * declares a companion file that may not exist.
+ * Embedding is what lets a delivered artifact say which tree it measured all
+ * by itself, so no consumer depends on a companion file that may not have been
+ * delivered with it.
  *
  * @param {Object} artifact The artifact object, mutated.
  * @param {Object} block From buildProvenanceBlock.
@@ -2604,13 +2542,17 @@ function sidecarProvenance(block, artifactText) {
  * Decides an artifact's role from the tree it measured, and refuses to
  * mislabel one.
  *
- * A baseline claim is a claim about BASELINE_HEAD. Before this existed a
- * capture pointed at any tree at all produced an artifact indistinguishable
- * from a baseline capture. The escape hatch is explicit and is not free: it
- * yields the `unreviewed` role, which every gate treats as non-qualifying.
+ * A baseline claim is a claim about BASELINE_HEAD, so a capture pointed at any
+ * other tree must not produce an artifact indistinguishable from a baseline
+ * one. The escape hatch is explicit and is not free: it yields the `unreviewed`
+ * role, which every gate treats as non-qualifying.
  *
- * @param {Object} tree From treeIdentity.
+ * @param {Object} tree From treeIdentity: its `isBaselineCommit` and
+ *   `worktreeState` are what decide the role.
  * @param {{allowNonBaseline: (boolean|undefined), what: (string|undefined)}} options
+ *   `allowNonBaseline` takes the escape hatch instead of throwing, and `what`
+ *   names the artifact in the message. Both are optional; the argument itself
+ *   may be omitted.
  * @returns {string} the role
  * @throws {ToolError} When the tree is not the baseline and no escape was given.
  */
@@ -2799,13 +2741,12 @@ function validateProvenance(block, expect) {
     !!(block.generator && block.generator.path && block.generator.blob),
     'the block names no generator source');
 
-  // REQUIRED, not conditional. A block with `analysedTree` and `delivered`
-  // deleted used to pass every check and be counted into "one target state",
-  // because each was only examined when a caller asked for it - so the one
-  // shape that says nothing at all about any tree was the one shape nothing
-  // rejected. `unreviewed` is the single exception: it is the label for an
-  // artifact taken off an unknown tree, and demanding a tree identity from it
-  // would leave no way to record that honestly.
+  // REQUIRED, not conditional. Examining these only when a caller asks for
+  // them would let the one block shape that says nothing at all about any tree
+  // - `analysedTree` and `delivered` both absent - pass every check and be
+  // counted into "one target state". `unreviewed` is the single exception: it
+  // is the label for an artifact taken off an unknown tree, and demanding a
+  // tree identity from it would leave no way to record that honestly.
   if (block.role !== 'unreviewed') {
     check('analysed-tree-recorded',
       !!(block.analysedTree && block.analysedTree.head),
@@ -2923,12 +2864,12 @@ function validateProvenance(block, expect) {
       'so the two do not belong together');
   }
 
-  // A generated Markdown document has no JSON payload, so before this existed
-  // nothing bound its provenance to its prose: appending a row to a delivered
-  // inventory left the block valid and the document verifying clean. When the
-  // block records a bodyDigest it is recomputed here; when the caller supplies
-  // the text and the block records no bodyDigest, that absence is the failure,
-  // because an unbound document is the defect itself.
+  // A generated Markdown document has no JSON payload, so its prose is bound to
+  // its provenance by a bodyDigest instead; without one, appending a row to a
+  // delivered inventory leaves the block valid and the document verifying
+  // clean. When the block records a bodyDigest it is recomputed here; when the
+  // caller supplies the text and the block records none, that absence is itself
+  // the failure, because an unbound document cannot be checked at all.
   if (wanted.documentText !== undefined) {
     if (block.bodyDigest && block.bodyDigest.value) {
       check('body-digest',
@@ -3088,9 +3029,9 @@ function deepMerge(base, overlay) {
  * undefined - which is the case on BOTH trees' committed configuration, since
  * no committed YAML declares the key - lib/util/queues.js takes the Bull branch
  * and dials localhost:6379, risking a hang or an unhandled ECONNREFUSED.
- * Setting it false selects the in-memory branch. AAP §0.9.1 specifies exactly
- * this overlay, and it is passed identically to both trees so no configuration
- * file is edited to achieve it.
+ * Setting it false selects the in-memory branch. The overlay is passed
+ * identically to both trees, so no configuration file is edited to achieve
+ * it.
  *
  * An inherited NODE_CONFIG is honoured underneath the overlay. An inherited
  * value that is not valid JSON is a hard failure rather than something to
@@ -3138,7 +3079,7 @@ function composeNodeConfig(inherited) {
  * exactly the same reason.
  *
  * What is at stake is the primary parity gate. The manifest is compared entry
- * by entry between two worktrees (AAP §0.9.1), and a preload that patched the
+ * by entry between two worktrees, and a preload that patched the
  * parser, or a NODE_PATH that resolved a different `tab` or `joi`, would
  * produce a manifest describing neither tree while looking entirely normal.
  * A gate that can be quietly wrong is worse than one that refuses.
@@ -3189,16 +3130,17 @@ function assertUncontaminatedProcess() {
  *   NODE_CONFIG      The redis overlay described in composeNodeConfig.
  *   the isolation    NODE_CONFIG_PERSIST_ON_CHANGE, NODE_CONFIG_DISABLE_FILE_WATCH
  *                    and NODE_CONFIG_RUNTIME_JSON, from ./mongo. All three, not
- *                    just persistence: `config` 0.4.37 creates its runtime JSON
- *                    unless persistence is off AND the file watch is disabled,
- *                    so this tool previously wrote config/runtime.json into the
- *                    worktree it was analysing - measured, and gitignored, so
- *                    `git status` on the "untouched" baseline stayed clean while
- *                    the file sat in it and its contents layered over every
- *                    other configuration source on the next run.
- * NODE_ENV is set to 'test' unless the caller overrode it, matching AAP
- * §0.9.1's gate command, and whatever value results is recorded in the
- * provenance sidecar and passed identically to both trees.
+ *                    just persistence: the `config` package creates its
+ *                    runtime JSON unless persistence is off AND the file watch
+ *                    is disabled. Without all three, this tool writes
+ *                    config/runtime.json into the worktree it is analysing -
+ *                    gitignored, so `git status` on the "untouched" baseline
+ *                    stays clean while the file sits in it and its contents
+ *                    layer over every other configuration source on the next
+ *                    run.
+ * NODE_ENV is set to 'test' unless the caller overrode it, matching the gate
+ * command, and whatever value results is recorded in the provenance sidecar and
+ * passed identically to both trees.
  *
  * @param {string} appRoot Absolute path, already validated.
  * @returns {{nodeEnv: string, nodeConfig: string, nodeConfigDir: string,
@@ -3287,16 +3229,16 @@ function requireFromApp(appRoot, relative) {
  * a change of that size, and is exactly what a hard-coded constant would have
  * concealed.
  *
- * WHICH IS WHY EVERY FAILURE HERE IS FATAL. This function previously fell back
- * to FALLBACK_DEFAULT_AUTH with a stderr note when app.js could not be read or
- * the call could not be found, and that fallback defeated the very purpose of
- * reading per tree: a tree whose default this tool cannot recover gets the
- * documented pair anyway, all 126 inherited entries are then labelled with it,
- * and the comparison reports PASS while up to 126 per-entry auth differences
- * are masked - the exact concealment the paragraph above rules out, reached by a
- * different road. There is no trustworthy manifest to produce in that state, so
- * a ToolError is thrown naming the file and the precise reason, and the caller
- * exits 2: "the gate could not run" rather than "the gate ran and passed".
+ * WHICH IS WHY EVERY FAILURE HERE IS FATAL. Falling back to
+ * FALLBACK_DEFAULT_AUTH with a stderr note would defeat the very purpose of
+ * reading per tree: a tree whose default this tool cannot recover would get the
+ * documented pair anyway, all 126 inherited entries would be labelled with it,
+ * and the comparison would report PASS while up to 126 per-entry auth
+ * differences are masked - the exact concealment the paragraph above rules out,
+ * reached by a different road. There is no trustworthy manifest to produce in
+ * that state, so a ToolError is thrown naming the file and the precise reason,
+ * and the caller exits 2: "the gate could not run" rather than "the gate ran
+ * and passed".
  *
  * FALLBACK_DEFAULT_AUTH survives as the DOCUMENTED EXPECTED VALUE rather than a
  * substitute. The recovered pair is compared against it in buildSummary, and a
@@ -3382,10 +3324,11 @@ function loadRoutes(appRoot) {
   var throwaway;
   var parsed;
 
-  // FIRST. See above. Its `trinketLangs` is kept rather than discarded because
-  // it is the multiplier in the declaration decomposition, and reading it from
-  // the tree under test is what keeps that decomposition measured rather than
-  // asserted.
+  // Required before the route modules, because it is what assigns
+  // `config.constants`. Its `trinketLangs` is kept rather than discarded
+  // because it is the multiplier in the declaration decomposition, and reading
+  // it from the tree under test is what keeps that decomposition measured
+  // rather than asserted.
   constants = requireFromApp(appRoot, 'config/constants');
 
   pageRoutes  = requireFromApp(appRoot, 'config/routes');
@@ -3400,11 +3343,11 @@ function loadRoutes(appRoot) {
     throw new ToolError('lib/util/routeParser does not export parse()');
   }
 
-  // The EXACT concatenation config/app.config.js:23 applies -
+  // The EXACT concatenation `config/app.config.js` applies -
   // `routeParser.parse(api_routes.concat(routes))` - reproduced here without
-  // requiring that module. app.config.js:1-6 requires config, constants,
-  // routes, api_routes and routeParser in that order and then db at :7; this
-  // tool takes the first five and stops, which is precisely why no database is
+  // requiring that module. It requires config, config/constants, config/routes,
+  // config/api_routes and lib/util/routeParser and then config/db; this tool
+  // takes the first five and stops, which is precisely why no database is
   // needed. The order of the two halves decides only the order of entries
   // inside the parsed array, and every entry is re-sorted by method and path
   // before serialization, but it is matched anyway so that anything
@@ -3448,11 +3391,10 @@ function loadRoutes(appRoot) {
 // Constructed fresh at each use because it carries /g and therefore lastIndex.
 var DECLARATION_LINE_SOURCE = '^[ \\t]*route[ \\t]*:';
 
-// The per-language expansion loop, located BY CONTENT and never by line number:
-// the two trees differ by one line here (config/routes.js:551 on the target,
-// :550 on the baseline), so a hard-coded line would measure the wrong region on
-// one of them - which is precisely the class of mistake this measurement exists
-// to remove.
+// The per-language expansion loop in config/routes.js, located BY CONTENT and
+// never by line number: the loop does not sit on the same line in the two
+// trees, so a hard-coded line would measure the wrong region on one of them -
+// which is precisely the class of mistake this measurement exists to remove.
 var EXPANSION_LOOP_CALL = /((?:[A-Za-z_$][\w$]*\s*\.\s*)*trinketLangs)\s*\.\s*forEach\s*\(/;
 
 // The callback forms accepted between `forEach(` and the body's opening brace.
@@ -3625,16 +3567,15 @@ function findExpansionLoop(text) {
 /**
  * Measures one declaration module's decomposition, and states it BOTH WAYS.
  *
- * This exists because two documents asserted two different decompositions of
- * the same 112 exported objects - 57 static + 55 language here, 62 literal + 50
- * expansion in docs/baseline-parity.md - and BOTH ARE ARITHMETICALLY TRUE. The
- * difference is one attribution and nothing else: the 5 `route :` lines that sit
- * INSIDE the expansion loop body are literal declarations if you count lines,
- * and part of the expansion if you count what the loop contributes. Asserting
- * either as the decomposition makes the other read as an error, which is how two
- * correct figures came to contradict each other in the delivery. So neither is
- * asserted: both readings are recorded, measured from the tree being analysed,
- * with the attribution named, and both are checked to close.
+ * The same exported objects decompose two ways and BOTH ARE ARITHMETICALLY
+ * TRUE: static declarations plus language routes, or literal `route :` lines
+ * plus what the expansion adds. The difference is one attribution and nothing
+ * else - the `route :` lines that sit INSIDE the expansion loop body are
+ * literal declarations if you count lines, and part of the expansion if you
+ * count what the loop contributes. Asserting either as THE decomposition makes
+ * the other read as an error, so neither is asserted: both readings are
+ * recorded, measured from the tree being analysed, with the attribution named
+ * in each, and both are checked to close.
  *
  * Every figure comes from the module's own text and its own exports. Nothing is
  * hard-coded - not the line of the loop, which differs between the two trees,
@@ -3798,9 +3739,9 @@ function measureDeclarationModule(appRoot, relative, exported, languages) {
  *
  * The failures are handed to buildSummary, which appends them to the summary's
  * unexpected figures - so a decomposition that does not close FAILS GENERATION
- * rather than being recorded as a curiosity. That is the point: a figure nobody
- * can reproduce is worse than no figure, and two figures that disagree are how
- * this finding arose.
+ * rather than being recorded as a curiosity. A figure nobody can reproduce is
+ * worse than no figure, and two figures that disagree are worse still, because
+ * each reads as an error against the other.
  *
  * The measurement itself goes into the PROVENANCE SIDECAR and never into the
  * manifest. The manifest must stay byte-comparable between the two trees, and
@@ -3861,10 +3802,10 @@ function routeKey(method, routePath) {
 /**
  * Indexes the pristine declarations by method + path.
  *
- * The key is derived the same way the parser derives it: `route.route` split on
- * whitespace, with token 0 the method and token 1 the path
- * (lib/util/routeParser.js:252 and :306-307). Splitting it any other way would
- * produce a key that cannot join.
+ * The key is derived the same way `parseRoutes` in lib/util/routeParser.js
+ * derives it: `route.route` split on whitespace, with token 0 the method and
+ * token 1 the path. Splitting it any other way would produce a key that cannot
+ * join.
  *
  * @param {Object[]} pristine
  * @returns {{index: Object, duplicates: string[]}}
@@ -3878,9 +3819,9 @@ function indexDeclarations(pristine) {
 
   for (i = 0; i < pristine.length; i++) {
     if (typeof pristine[i].route !== 'string') {
-      // Every one of the 228 declarations carries a `route` string; a
-      // declaration without one could never have been parsed, since :252
-      // dereferences it unconditionally.
+      // Every declaration carries a `route` string; one without it could
+      // never have been parsed, since the parser dereferences it
+      // unconditionally.
       continue;
     }
 
@@ -3902,7 +3843,7 @@ function indexDeclarations(pristine) {
  * The controller binding string, e.g. 'trinket.getById'.
  *
  * The third whitespace-separated token of `route.route`, split with the same
- * `split(/\s+/)` the parser uses at lib/util/routeParser.js:252. Null for the
+ * `split(/\s+/)` `parseRoutes` in lib/util/routeParser.js uses. Null for the
  * 5 synthesized routes, which have no declaration at all.
  *
  * @param {(Object|null)} declaration A pristine declaration, or null.
@@ -3923,17 +3864,17 @@ function controllerBinding(declaration) {
 /**
  * The success spec AFTER the parser's own hoists.
  *
- * The parser starts from `route.success || {}` (:259) and then moves
- * `route.html` onto `success.html` (:293-295) and `route.redirect` onto
- * `success.redirect` (:297-299). Applying the same hoists here is what makes
+ * `parseRoutes` starts from `route.success || {}` and then moves `route.html`
+ * onto `success.html` and `route.redirect` onto `success.redirect`. Applying
+ * the same hoists here is what makes
  * the recorded value reflect WHAT THE HANDLER WILL ACTUALLY USE rather than
  * what the declaration happened to spell, and it is why a route declaring
  * `html` and a route declaring `success.html` compare equal - which they
  * should, because they behave identically.
  *
  * `success.html` is normally a template string but is an object carrying a
- * `redirect` on one route, and both forms are recorded verbatim because the
- * handler branches on exactly that difference at :449-466.
+ * `redirect` on one route, and both forms are recorded verbatim because
+ * `request.success` branches on exactly that difference.
  *
  * @param {(Object|null)} declaration
  * @returns {Object} A JSON-safe spec, `{}` when the declaration has none.
@@ -3959,7 +3900,7 @@ function successSpec(declaration) {
 }
 
 /**
- * The fail spec, `route.fail || {}` (lib/util/routeParser.js:261).
+ * The fail spec, `route.fail || {}` as `parseRoutes` captures it.
  *
  * No hoist applies to it. Measured keys across both trees: `redirect` and
  * `html`, and nothing else.
@@ -3978,9 +3919,9 @@ function failSpec(declaration) {
 /**
  * The replySpec, recorded verbatim.
  *
- * `route.reply` is captured at lib/util/routeParser.js:260 and DELETED at :277
- * - a mutation the AAP's own list omits - and it is the projection contract
- * `request.success` applies at :422-424 through ObjectUtils.pull. Its VALUES
+ * `route.reply` is captured and then DELETED by `parseRoutes`, and it is the
+ * projection contract `request.success` applies through ObjectUtils.pull. Its
+ * VALUES
  * are semantic there, not decorative: `1` or `true` copies the source key, a
  * STRING renames it, an ARRAY projects each element through its `[0]` spec and
  * an OBJECT nests. Reducing it to key names would therefore discard the
@@ -4002,8 +3943,8 @@ function replySpec(declaration) {
 /**
  * Whether the declaration armed the cookie patch.
  *
- * `route.cookie` sets a local flag and is DELETED at lib/util/routeParser.js:303;
- * the flag makes the handler set `request.cookie = true`, which is the single
+ * `route.cookie` sets a local flag and is then DELETED by `parseRoutes`; the
+ * flag makes the handler set `request.cookie = true`, which is the single
  * condition app.js tests before reaching into hapi's private response state to
  * append the `Expires` horizon and, in secure mode, `SameSite=None; Secure`.
  * A route silently losing this is a cookie-lifetime change with no error, so
@@ -4019,9 +3960,9 @@ function cookieFlag(declaration) {
 /**
  * Whether the declaration requested the `.json` duplicate.
  *
- * `route.ext` is captured at lib/util/routeParser.js:258 and deleted at :276.
- * When truthy the parser pushes a SECOND route whose path gains '.json'
- * (:598-605). It appears nowhere at this commit, so the count is 0 on both
+ * `route.ext` is captured and then deleted by `parseRoutes`. When truthy the
+ * parser pushes a SECOND route whose path gains '.json'. It appears nowhere at
+ * this commit, so the count is 0 on both
  * trees - recorded because it determines route MULTIPLICITY, which is the one
  * thing a route manifest exists to pin down, and because a declaration that
  * gained it would otherwise show up only as a mysterious extra entry.
@@ -4036,20 +3977,20 @@ function extFlag(declaration) {
 /**
  * The pre-parse validation section names, `language` excluded.
  *
- * `config.validate` is moved onto `options` (:280-283) and then DELETED
- * outright (:285) for every route, so the parsed route cannot answer this
- * question at all - the pristine copy is the only source. Sorted, so the value
+ * `parseRoutes` moves `config.validate` onto `options` and then deletes it
+ * outright for every route, so the parsed route cannot answer this question at
+ * all - the pristine copy is the only source. Sorted, so the value
  * is order-independent: a reordered declaration is not an HTTP-surface change.
  *
  * `language` is excluded because it is the custom-message map, not a schema,
- * and the parser deletes it separately at :270. Excluding it is what makes the
- * total across all routes come to exactly 102 - 75 payload, 26 query, 1 params.
+ * and the parser deletes it separately. Excluding it is what makes the total
+ * across all routes come to exactly 102 - 75 payload, 26 query, 1 params.
  *
  * The SCHEMAS themselves are deliberately not described here. One of the 102
  * sections is a Joi schema object rather than a plain object, so any field
  * enumeration would be structurally heterogeneous, and schema-for-schema
- * accept/reject parity is owned by test/parity/joi-matrix.js (AAP §0.6.2),
- * which compares real responses rather than descriptions.
+ * accept/reject parity is established by test/parity/joi-matrix.js, which
+ * compares real responses rather than descriptions.
  *
  * @param {(Object|null)} declaration
  * @returns {string[]}
@@ -4186,12 +4127,11 @@ function preHandlerName(identity, value) {
  * incomplete.
  *
  * A FUNCTION-FORM ENTRY IS NAMED BY ITS DECLARED EXPORT, RECOVERED BY REFERENCE
- * IDENTITY. Two things are true about a pre-handler function and only one of
- * them was previously acted on. A SOURCE DIGEST would indeed differ between the
- * two trees for all 149 function-form entries, because converting
- * lib/util/helpers.js to the hapi lifecycle contract is the very change this
- * gate must see THROUGH, and `.name` is indeed useless here - every one of these
- * functions reports an empty or property-inferred name. But the NAME THE
+ * IDENTITY, and neither of the two obvious alternatives works. A SOURCE DIGEST
+ * differs between the two trees for all 149 function-form entries, because
+ * converting lib/util/helpers.js to the hapi lifecycle contract is the very
+ * change this gate must see THROUGH, and `.name` is useless here - every one of
+ * these functions reports an empty or property-inferred name. But the NAME THE
  * DECLARATION IMPORTS IT UNDER is neither of those things: the conversion
  * changed helper BODIES and SIGNATURES, not the export names that
  * config/routes.js and config/api_routes.js bind to, and measured over both
@@ -4208,10 +4148,9 @@ function preHandlerName(identity, value) {
  * A `null` method on a function-form entry now means one specific thing: the
  * function is not an export of lib/util/helpers.js. Exactly ONE entry is in
  * that position on both trees, and it is not a gap - it is the INLINE
- * pre-handler declared in place beside `helpers.lowerUserFields` on
- * `POST /api/users/login` (config/api_routes.js:1105 on the target,
- * config/api_routes.js:1104 on the baseline), which has no exported name to
- * recover because it has no export. The summary counts recovered and unresolved
+ * pre-handler declared in place in config/api_routes.js beside
+ * `helpers.lowerUserFields` on `POST /api/users/login`, which has no exported
+ * name to recover because it has no export. The summary counts recovered and unresolved
  * separately and NAMES the unresolved ones with their index, so the distinction
  * is in the artifact rather than in this comment alone, and so a different
  * entry losing its identity fails the check even though the count would match.
@@ -4241,8 +4180,8 @@ function preDescriptors(declaration, preIdentity) {
     var match;
 
     if (typeof entry === 'string') {
-      // The parser infers the assign name from the leading word of the string
-      // (:134-135); reproduced here so the recorded `assign` is the one hapi
+      // `convertPreHandlers` infers the assign name from the leading word of
+      // the string; reproduced here so the recorded `assign` is the one hapi
       // will actually use rather than a null that reads as "none".
       match = entry.match(/^(\w+)/);
       return {
@@ -4276,8 +4215,8 @@ function preDescriptors(declaration, preIdentity) {
       };
     }
 
-    // Anything else is a shape the parser would pass through untouched
-    // (:179-181). Recorded with its type so it is visible rather than dropped.
+    // Anything else is a shape `convertPreHandlers` passes through untouched.
+    // Recorded with its type so it is visible rather than dropped.
     return {
       kind: 'unrecognized:' + (entry === null ? 'null' : typeof entry),
       method: null,
@@ -4293,7 +4232,7 @@ function preDescriptors(declaration, preIdentity) {
  * list carries that evidence - as are `pre`, `auth` and `handler`, which have
  * fields of their own. What remains is what hapi applies to the request:
  * `cors`, which the parser forces to false for every route that carries
- * options (:288-290), and `payload`, which sets maxBytes and the output mode on
+ * options, and `payload`, which sets maxBytes and the output mode on
  * the 11 upload routes. Both are HTTP surface: a lost `payload.maxBytes` turns
  * a 10MB upload route into hapi's 1MB default and starts rejecting requests
  * that used to succeed.
@@ -4341,7 +4280,9 @@ function recordedOptions(route) {
  * at all would otherwise both have to be written as a falsy `declared`.
  *
  * @param {Object} route A parsed route.
- * @param {{strategy: (string|null), mode: string}} defaultAuth
+ * @param {{strategy: string, mode: string}} defaultAuth The server default
+ *   recovered by readServerAuthDefault, used for a route that declares no
+ *   `auth`. Only `strategy` and `mode` are read.
  * @returns {{declared: *, inherited: boolean, strategy: (string|null),
  *            mode: string}}
  */
@@ -4408,10 +4349,10 @@ function effectiveAuth(route, defaultAuth) {
 /**
  * Whether `controller.method` names a function that does not exist.
  *
- * The parser does `require('../controllers/' + controller)[handlerName]` at
- * lib/util/routeParser.js:266 and leaves `handler` undefined when the module
- * has no such export, which sends the route down the `else` branch at
- * :574-576 - `return request.success(request.params)`.
+ * `parseRoutes` in lib/util/routeParser.js does
+ * `require('../controllers/' + controller)[handlerName]` and leaves `handler`
+ * undefined when the module has no such export, which sends the route down the
+ * wrapper's no-controller `else` branch - `return request.success(request.params)`.
  *
  * The controller module is resolved ABSOLUTELY inside the tree under test, so
  * it is the same module instance the parser already required and the lookup
@@ -4476,7 +4417,7 @@ function bindsMissingController(appRoot, binding) {
  *   'missing-controller-fallback' the binding names a `controller.method` that
  *                                 is not a function on the controller module.
  *                                 Exactly 3 routes, answering entirely through
- *                                 :574-576.
+ *                                 the wrapper's no-controller fallback.
  *   'function'                    everything else: 226 routes.
  *
  * An entry matching none of them returns 'unclassified', which the caller
@@ -4518,7 +4459,8 @@ function classifyHandler(appRoot, route, binding) {
  * @param {Object} route A parsed route.
  * @param {(Object|null)} declaration The pristine declaration, or null for a
  *   synthesized route.
- * @param {{strategy: (string|null), mode: string}} defaultAuth
+ * @param {{strategy: string, mode: string}} defaultAuth The server default,
+ *   passed through to effectiveAuth for a route that declares no `auth`.
  * @param {boolean} extDerived True when this entry is the `.json` duplicate
  *   the extension branch pushes, and therefore shares its declaration with the
  *   base path.
@@ -4599,15 +4541,18 @@ function sortEntries(entries) {
  * self-check report, since a wrong default auth silently rewrites 126 entries
  * and a decomposition that does not add up means the figures cannot be trusted.
  *
- * @param {Object[]} entries
- * @param {Object} loaded The result of loadRoutes.
+ * @param {Object[]} entries The built entries, already sorted; every aggregate
+ *   below is counted from them.
+ * @param {Object} loaded The result of loadRoutes, for the declared counts.
  * @param {{strategy: string, mode: string, source: string}} defaultAuth The
- *   value readServerAuthDefault recovered from the analysed tree's app.js.
+ *   value readServerAuthDefault recovered from the analysed tree's app.js,
+ *   recorded and compared against FALLBACK_DEFAULT_AUTH.
  * @param {{failures: string[]}} decomposition The result of
- *   measureDeclarations. Only its self-check failures are used here: the
- *   figures themselves belong to the provenance sidecar, because they are
- *   per-tree and the manifest must stay byte-comparable.
- * @returns {Object}
+ *   measureDeclarations, of which only `failures` is read here: the figures
+ *   themselves belong to the provenance sidecar, because they are per-tree and
+ *   the manifest must stay byte-comparable.
+ * @returns {Object} The summary block, whose `unexpected` list is what makes
+ *   generation exit non-zero.
  */
 function buildSummary(entries, loaded, defaultAuth, decomposition) {
   var summary = {
@@ -4724,8 +4669,9 @@ function buildSummary(entries, loaded, defaultAuth, decomposition) {
   summary.preFunctionForms.unresolvedEntries.sort();
 
   // `options.validate` surviving the parse. The pre-parse key total and this
-  // figure are the PAIR of facts that prove lib/util/routeParser.js:285
-  // executes for every route with a validate block: 102 declared, 0 retained.
+  // figure are the PAIR of facts that prove `parseRoutes`' `delete
+  // route.options.validate` executes for every route with a validate block:
+  // 102 declared, 0 retained.
   summary.retainedParsedValidate = loaded.parsed.filter(function (route) {
     return !!(route.options && route.options.validate !== undefined);
   }).length;
@@ -4919,8 +4865,8 @@ function generateManifest(appRoot) {
 
     if (!declaration && typeof route.path === 'string' &&
         /\.json$/.test(route.path)) {
-      // The extension branch (lib/util/routeParser.js:598-605) pushes a shallow
-      // copy of the route whose path gains '.json'. It shares the ORIGINAL
+      // The parser's extension branch pushes a shallow copy of the route
+      // whose path gains '.json'. It shares the ORIGINAL
       // declaration, so the specs are recovered from the base path and the
       // entry is MARKED as derived rather than presented as a declaration of
       // its own. `ext : true` appears nowhere at this commit so this branch is
@@ -4973,53 +4919,23 @@ function generateManifest(appRoot) {
 }
 
 /**
- * Builds the provenance record written to `<out>.provenance.json`.
+ * Builds the shared-contract provenance block EMBEDDED in the manifest, under
+ * its own `provenance` key.
  *
- * Kept OUT of the manifest deliberately. The manifest must be comparable
- * byte-for-byte between two trees, and every field here differs between them by
- * construction - the app path, the commit, the dependency graph that produced
- * the parse. AAP §0.9.3 requires tool provenance alongside every artifact
- * because "captured at baseline" means captured by TARGET-worktree tooling
- * against a BASELINE install, and this sidecar is what makes that claim
- * checkable rather than asserted.
+ * `runGenerate` attaches it, so a delivered manifest says which tree it
+ * measured and which generator produced it without a companion file. Embedding
+ * costs neither gate its byte-exactness: `--compare` reads the schema and the
+ * entries and never this block, and `--verify` strips it through `payloadText`
+ * before comparing.
  *
- * There is no timestamp, on purpose: the sidecar is then reproducible too, and
- * a re-run that produces a byte-identical pair is itself evidence that nothing
- * in the capture depends on when it ran.
- *
- * `digest` is what turns the sidecar from a description into a BINDING. Without
- * it the sidecar names a tree and a commit but nothing ties those to the bytes
- * beside it, so a manifest of one tree carrying the sidecar of another - or a
- * hand-edited entry - reads as authentic. With it, verifyManifestProvenance can
- * refuse both. It is computed over the exact serialized manifest text that is
- * written to disk, which is why runGenerate serializes BEFORE building this
- * record rather than after.
+ * The block carries no timestamp, on purpose. The record is then reproducible
+ * too, and a re-run that produces a byte-identical pair is itself evidence that
+ * nothing in the capture depends on when it ran.
  *
  * @param {Object} generated The result of generateManifest.
- * @param {string} appRoot Absolute path.
- * @param {string} out Absolute path of the manifest.
- * @param {string} manifestText The exact text written to `out`.
- * @returns {Object}
- */
-/**
- * Builds the shared-contract provenance block EMBEDDED in the manifest.
- *
- * Kept OUT of the manifest deliberately. The manifest must be comparable
- * byte-for-byte between two trees, and every field here differs between them by
- * construction - the app path, the commit, the dependency graph that produced
- * the parse. AAP §0.9.3 requires tool provenance alongside every artifact
- * because "captured at baseline" means captured by TARGET-worktree tooling
- * against a BASELINE install, and this sidecar is what makes that claim
- * checkable rather than asserted.
- *
- * There is no timestamp, on purpose: the sidecar is then reproducible too, and
- * a re-run that produces a byte-identical pair is itself evidence that nothing
- * in the capture depends on when it ran.
- *
- * @param {Object} generated The result of generateManifest.
- * @param {string} appRoot Absolute path.
- * @param {string} out Absolute path of the manifest.
- * @returns {Object}
+ * @param {string} appRoot Absolute path of the analysed tree.
+ * @param {string} out Absolute path the manifest is written to.
+ * @returns {Object} A provenance block from `provenance.build`.
  */
 function buildContractProvenance(generated, appRoot, out) {
   var tree = provenance.treeIdentity(appRoot);
@@ -5067,6 +4983,30 @@ function buildContractProvenance(generated, appRoot, out) {
   });
 }
 
+/**
+ * Builds the provenance record written to the sibling
+ * `<out>.provenance.json`.
+ *
+ * This record is kept OUTSIDE the manifest deliberately, because it names the
+ * exact tree path and the process that produced the parse - values that differ
+ * between two trees by construction and that must therefore not sit in a file
+ * being compared. It carries no timestamp, for the same reason the embedded
+ * block does not.
+ *
+ * `digest` is what turns the sidecar from a description into a BINDING. Without
+ * it the sidecar names a tree and a commit but nothing ties those to the bytes
+ * beside it, so a manifest of one tree carrying the sidecar of another - or a
+ * hand-edited entry - reads as authentic. With it, `verifyManifestIntegrity`
+ * refuses both. It is computed over the exact serialized manifest text written
+ * to disk, which is why `runGenerate` serializes BEFORE building this record
+ * rather than after.
+ *
+ * @param {Object} generated The result of generateManifest.
+ * @param {string} appRoot Absolute path of the analysed tree.
+ * @param {string} out Absolute path the manifest is written to.
+ * @param {string} manifestText The exact text written to `out`.
+ * @returns {Object} The sidecar record, ready to serialize.
+ */
 function buildProvenance(generated, appRoot, out, manifestText) {
   return {
     artifact: path.basename(out),
@@ -5205,56 +5145,6 @@ function runGenerate(options) {
 }
 
 /**
- * The verify mode: does the COMMITTED manifest still describe THIS tree?
- *
- * This mode exists because of a property of committed evidence that no
- * identifier can escape. `buildProvenance` records the analysed tree's
- * `git rev-parse HEAD`, and `verifyManifestProvenance` refuses a manifest whose
- * recorded HEAD is not the tree's current HEAD - which is the right rule for a
- * consumer, since a manifest generated at another commit may describe another
- * HTTP surface. But an artifact that is COMMITTED can only ever record the
- * commit that came BEFORE the commit containing it: the hash of a commit is not
- * known until the commit exists, and the artifact has to exist first to be in
- * it. So the committed manifest's sidecar names its parent, permanently, and no
- * amount of care at generation time changes that.
- *
- * The answer is to stop asking the question with an identifier and ask it with
- * the artifact. This mode regenerates the manifest from the tree in front of it
- * and compares it to the one on disk BYTE FOR BYTE, which settles the real
- * question - "is this evidence still true of this tree?" - without reference to
- * any commit at all. It is strictly stronger than the HEAD equality it stands
- * in for: a HEAD string matches while the working tree is dirty, and this does
- * not.
- *
- * It is deliberately NOT folded into `verifyManifestProvenance`. That function
- * is the cheap per-run check a CONSUMER makes to decide whether a manifest
- * handed to it belongs to the tree it is driving; it reads two files and hashes
- * one. Regenerating inside it would make every consumer pay for loading the
- * analysed tree's whole controller graph, and would turn a pure check into one
- * that needs the application to be loadable. The two mechanisms compose: the
- * cheap one guards consumption, this one proves freshness, and the
- * HEAD-mismatch error names this mode as the way to establish it.
- *
- * NOTE ON THE CONSUMERS, stated as it is rather than as it should be:
- * `test/parity/capture.js` and `test/parity/replay.js` both default their
- * manifest to `test/parity/route-manifest.json` and, at the time of writing,
- * both call the UNVERIFIED `readManifest` at their `resolveManifest` - so the
- * strict path exists, is exported and is proven, but they do not yet take it.
- * Each is a one-call change, `readManifest(options.manifestPath)` becoming
- * `readManifestForApp(options.manifestPath, options.appRoot)` with `appRoot`
- * already in scope at both sites. Those two files belong to other work units,
- * so the change is recorded here rather than made here.
- *
- * The manifest's own summary figures are checked too, by the same `expect()`
- * path generation uses, so a tree that has drifted from the verified baseline
- * fails here as well rather than only at generation.
- *
- * @param {Object} options The parsed command line.
- * @returns {number} EXIT_OK when the artifact reproduces exactly,
- *   EXIT_DIFFERENCE when it does not.
- * @throws {ToolError} When the artifact cannot be read at all.
- */
-/**
  * A manifest's comparable payload: its own content with the embedded
  * provenance block removed.
  *
@@ -5286,8 +5176,51 @@ function payloadText(text) {
   return serialize(payload);
 }
 
+/**
+ * The verify mode: does the COMMITTED manifest still describe THIS tree?
+ *
+ * This mode exists because of a property of committed evidence that no
+ * identifier can escape. `buildProvenance` records the analysed tree's
+ * `git rev-parse HEAD`, and `verifyTreeBinding` refuses a manifest whose
+ * recorded HEAD is not the tree's current HEAD - the right rule for a consumer,
+ * since a manifest generated at another commit may describe another HTTP
+ * surface. But an artifact that is COMMITTED can only ever record the commit
+ * that came BEFORE the commit containing it: the hash of a commit is not known
+ * until the commit exists, and the artifact has to exist first to be in it. So
+ * the committed manifest's sidecar names its parent, permanently, and no amount
+ * of care at generation time changes that.
+ *
+ * The answer is to stop asking the question with an identifier and ask it with
+ * the artifact. This mode regenerates the manifest from the tree in front of it
+ * and compares payloads - every entry and the summary, with the embedded
+ * provenance block stripped by `payloadText` - which settles the real question,
+ * "is this evidence still true of this tree?", without reference to any commit
+ * at all. It is strictly stronger than the HEAD equality it stands in for: a
+ * HEAD string matches while the working tree is dirty, and this does not.
+ *
+ * It is deliberately NOT folded into `verifyManifestProvenance`. That is the
+ * cheap per-run check a CONSUMER makes to decide whether a manifest handed to
+ * it belongs to the tree it is driving; it reads two files and hashes one.
+ * Regenerating inside it would make every consumer pay for loading the analysed
+ * tree's whole controller graph, and would turn a pure check into one that
+ * needs the application to be loadable. The two compose: the cheap one guards
+ * consumption, this one proves freshness, and the HEAD-mismatch error names
+ * this mode as the way to establish it.
+ *
+ * The manifest's own summary figures are checked too, by the same verified
+ * baseline generation uses, so a tree that has drifted fails here as well
+ * rather than only at generation.
+ *
+ * @param {Object} options The parsed command line.
+ * @returns {number} EXIT_OK when the artifact reproduces exactly,
+ *   EXIT_DIFFERENCE when it does not.
+ * @throws {ToolError} When the artifact cannot be read at all.
+ */
 function runVerify(options) {
-  var out = options.out || COMMITTED_MANIFEST;
+  // The same resolution every other default uses: --out, else
+  // ARTIFACT_DIR_ENV, else an error naming both. There is no repository
+  // default to read, because no generated manifest is tracked.
+  var out = options.out || resolveArtifactPath(ARTIFACT_NAMES.manifest, '--out');
   var recorded;
   var recordedManifest;
   var generated;
@@ -5620,8 +5553,8 @@ function verifySuppliedManifest(manifestPath, label) {
   // gate for two things that are both expected and both unrelated to what it
   // compares.
   //
-  // The BASELINE side names a `git worktree` that AAP 0.9.3 creates
-  // TRANSIENTLY, so on any host but the one that captured it - and on that host
+  // The BASELINE side names a `git worktree` that is created TRANSIENTLY for
+  // the capture, so on any host but the one that captured it - and on that host
   // once the worktree is removed - the recorded directory is simply gone. The
   // TARGET side names the commit the artifact was generated at, which for a
   // COMMITTED artifact is necessarily the commit BEFORE the one containing it.
@@ -5794,8 +5727,7 @@ var CLI_FORMS = [
  * AWS SDK v2 end-of-support notice and capturing it would make the two trees
  * differ for a reason that is not the table.
  *
- * The environment is the one AAP §0.9.1 specifies and is identical on both
- * trees:
+ * The environment is the gate's own and is identical on both trees:
  *   NODE_CONFIG='{"db":{"redis":{"enabled":false}}}' NODE_ENV=test \
  *     node lib/util/routeParser.js -R 2>/dev/null
  * The overlay is not optional here either. The baseline's committed
@@ -5807,7 +5739,8 @@ var CLI_FORMS = [
  * NODE_CONFIG_DIR is removed from the child environment rather than set,
  * because the child's working directory is the tree under test and the npm
  * `config` package resolves its directory from the working directory - which
- * is exactly what the §0.9.1 command relies on. An inherited value pointing at
+ * is exactly what the documented gate command relies on. An inherited value
+ * pointing at
  * the other tree would silently override it, so `mongo.applyConfigIsolation`
  * removes one in its 'clean' mode.
  *
@@ -5928,11 +5861,11 @@ function splitCliTable(stdout) {
  * The table is NEVER reimplemented. Byte-identical output is only achievable by
  * capturing what `tab`'s `emitTable` actually produces, and two details make a
  * reimplementation wrong in ways that are easy to miss: the columns are METHOD
- * at width 8 with PATH, CONTROLLER, SUCCESS and FAIL at `size + 4`, and
- * lib/util/routeParser.js:615 computes `sizes.fail` FROM `successStr`, NOT from
- * `failStr` - so the FAIL column's width is derived from the SUCCESS strings.
- * That is a quirk to preserve, not a bug to fix (R-d), and capturing is what
- * preserves it without anyone having to remember it.
+ * at width 8 with PATH, CONTROLLER, SUCCESS and FAIL at `size + 4`, and the
+ * route-table emitter in lib/util/routeParser.js computes `sizes.fail` FROM
+ * `successStr`, NOT from `failStr` - so the FAIL column's width is derived from
+ * the SUCCESS strings. That is baseline behaviour to preserve rather than fix,
+ * and capturing is what preserves it without anyone having to remember it.
  *
  * The expected baseline shape is 112 DATA ROWS, because the parser's
  * self-execution passes `require('../../config/routes')` ONLY: the 116 API
@@ -6264,13 +6197,12 @@ function readCliTableArtifact(target, label) {
  * empty `captures` arrays exited 0 reporting "PASS - all 0". Capture and
  * comparison could regress together and the gate would applaud.
  *
- * The contract is not this tool's preference, it is AAP 0.3.1 / 0.4.2: the
- * route-table CLI has three invocation forms - no argument, `-R` and the
- * `--routes` alias - and byte-identical output across ALL THREE is what
- * constrains the replacement of the argv parser. A comparison that covered two
- * of them would leave the third unguarded, which is the exact failure the AAP
- * calls out: "an argv check that tested only for `-R` would silently change the
- * other two, and nothing else in the repository would notice."
+ * The contract is the route-table CLI's own: it has three invocation forms -
+ * no argument, `-R` and the `--routes` alias - and byte-identical output across
+ * ALL THREE is what constrains the replacement of the argv parser. A comparison
+ * that covered two of them would leave the third unguarded, and an argv check
+ * that tested only for `-R` would silently change the other two with nothing
+ * else in the repository to notice.
  *
  * So: every contracted form must be present, no form outside the contract may
  * be, and each capture must carry each compared field with the right type.
@@ -6730,16 +6662,6 @@ function run(args, originalCwd) {
 }
 
 /**
- * The CLI wrapper.
- *
- * A ToolError exits 2 with its message alone, because it describes a mistake a
- * reader can act on and a stack trace would bury it. Anything else exits 2 WITH
- * its stack, because an unexpected throw is a defect in this tool and the trace
- * is the evidence.
- *
- * @returns {undefined}
- */
-/**
  * JSON.parse that yields null instead of throwing.
  *
  * @param {*} text
@@ -6755,23 +6677,13 @@ function safeParseJson(text) {
 }
 
 /**
- * A file's contents, or null when it is not there.
- *
- * Absence is an answer here rather than an error: a sidecar is a run output,
- * so most artifacts have none, and the checks that need one are skipped
- * without it. What is NOT permitted is a sidecar that exists and disagrees.
- *
- * @param {string} file
- * @returns {(string|null)}
- */
-/**
  * The `--verify-provenance` mode: does this whole set of evidence describe ONE
  * target state, and does every claim in it resolve in THIS repository?
  *
- * This is the check whose absence let the delivery accumulate artifacts naming
- * four different origins - three absolute worktree paths from three sibling
- * clones and three generator revisions, two of which are not objects here at
- * all. Each artifact was internally plausible; nothing joined them.
+ * Nothing else joins the artifacts to each other. Each one is internally
+ * plausible on its own, so a set that names several different worktrees and
+ * several generator revisions - some of them not objects in this repository at
+ * all - passes every per-artifact check and still describes no single tree.
  *
  * It reads each path, extracts its provenance however that artifact carries it
  * - embedded in JSON, a JSON sidecar, or the machine-readable comment in a
@@ -6996,6 +6908,16 @@ function runVerifyProvenance(options) {
   return (failures + setFailures) ? EXIT_DIFFERENCE : EXIT_OK;
 }
 
+/**
+ * The CLI wrapper.
+ *
+ * A ToolError exits 2 with its message alone, because it describes a mistake a
+ * reader can act on and a stack trace would bury it. Anything else exits 2 WITH
+ * its stack, because an unexpected throw is a defect in this tool and the trace
+ * is the evidence.
+ *
+ * @returns {undefined}
+ */
 function main() {
   var originalCwd = process.cwd();
   var code;
@@ -7031,12 +6953,10 @@ module.exports = {
   // from the first.
   provenance       : provenance,
   runVerifyProvenance: runVerifyProvenance,
-  // Generation.
   generateManifest : generateManifest,
   buildProvenance  : buildProvenance,
   buildSummary     : buildSummary,
 
-  // Comparison - the gate.
   compareManifests : compareManifests,
   readManifest     : readManifest,
 
@@ -7090,11 +7010,10 @@ module.exports = {
   sortEntries      : sortEntries,
   readServerAuthDefault: readServerAuthDefault,
 
-  // The delivered artifact paths and the sidecar suffix, exported so that a
-  // consumer names the artifact contract rather than re-spelling the literal:
-  // a second copy of a path is how a consumer ends up reading one file while
-  // the generator writes another.
-  COMMITTED_MANIFEST    : COMMITTED_MANIFEST,
+  // The sidecar suffix, exported so that a consumer names the artifact
+  // contract rather than re-spelling the literal: a second copy of a suffix
+  // is how a consumer ends up reading one file while the generator writes
+  // another.
   PROVENANCE_SUFFIX     : PROVENANCE_SUFFIX,
 
   // Reference values, so a harness asserts against the same numbers the tool

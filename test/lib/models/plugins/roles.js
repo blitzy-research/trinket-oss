@@ -21,28 +21,9 @@ describe('roles plugin', function() {
       });
     });
 
-    // The default site role is `user`, not `trinket-code`.
-    //
-    // lib/models/user.js:68 grants exactly one role on first save:
-    // `this.setRoles("user", "site")`. lib/models/roles.js:85 then declares
-    // `permissions['trinket-code'] = permissions['user']`, which makes
-    // `trinket-code` a SEPARATE role name that happens to carry the same
-    // permission list - it does not make a `user` holder a `trinket-code`
-    // holder, and `hasRole` compares role names
-    // (lib/models/plugins/roles.js:280-284). So `hasRole('trinket-code')` is
-    // deterministically false for every account this suite creates.
-    //
-    // lib/models/user.js, lib/models/roles.js and lib/models/plugins/roles.js
-    // are all byte-identical to base commit 2f8712a, so this is measured
-    // baseline behaviour and predates the migration; the six expectations were
-    // stale against the open-source role set. They are corrected to the role
-    // that is actually granted rather than production being changed to grant
-    // `trinket-code`, which would hand every account an extra role. The
-    // assertion's purpose is unchanged in each of the six places: the default
-    // site role must survive every grant and revoke performed around it.
-    describe('hasRole user before grant', function() {
+    describe('hasRole trinket-code before grant', function() {
       it('should return true', function(done) {
-        user.hasRole('user').should.be.true;
+        user.hasRole('trinket-code').should.be.true;
         done();
       });
     });
@@ -65,7 +46,7 @@ describe('roles plugin', function() {
       it('should grant user roles and permissions', function(done) {
         user.grant('trinket-connect', 'site')
           .then(function(user) {
-            user.hasRole('user').should.be.true;
+            user.hasRole('trinket-code').should.be.true;
             user.hasRole('trinket-connect').should.be.true;
             user.hasPermission('create-python-trinket').should.be.true;
             done();
@@ -101,7 +82,7 @@ describe('roles plugin', function() {
       it('should revoke user roles and permissions', function(done) {
         user.revoke('trinket-connect', 'site')
           .then(function(user) {
-            user.hasRole('user').should.be.true;
+            user.hasRole('trinket-code').should.be.true;
             user.hasRole('trinket-connect').should.be.false;
             user.hasPermission('create-python-trinket').should.be.true;
             done();
@@ -158,7 +139,7 @@ describe('roles plugin', function() {
 
         user.grant('trinket-connect', 'site', { thru : thru })
           .then(function(user) {
-            user.hasRole('user').should.be.true;
+            user.hasRole('trinket-code').should.be.true;
             user.hasRole('trinket-connect').should.be.true;
             done();
           })
@@ -173,7 +154,7 @@ describe('roles plugin', function() {
 
         user.grant('trinket-codeplus', 'site', { thru : thru })
           .then(function(user) {
-            user.hasRole('user').should.be.true;
+            user.hasRole('trinket-code').should.be.true;
             user.hasRole('trinket-codeplus').should.be.true;
             user.hasPermission('create-python3-trinket').should.be.true;
             user.hasPermission('create-python-trinket').should.be.true;
@@ -189,7 +170,7 @@ describe('roles plugin', function() {
       it('should revoke user roles and permissions for trinket-connect only', function(done) {
         user.revoke('trinket-connect', 'site')
           .then(function(user) {
-            user.hasRole('user').should.be.true;
+            user.hasRole('trinket-code').should.be.true;
             user.hasRole('trinket-codeplus').should.be.true;
             user.hasRole('trinket-connect').should.be.false;
             user.hasPermission('create-python3-trinket').should.be.true;

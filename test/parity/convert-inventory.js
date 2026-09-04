@@ -1,138 +1,83 @@
 #!/usr/bin/env node
 /**
- * Generator for docs/conversion-inventory.md -- the per-site completion
- * checklist for the callback-to-lifecycle conversion.
+ * Generates docs/conversion-inventory.md -- the per-site checklist for the
+ * callback-to-lifecycle conversion -- from the analysed tree's own source text.
+ * Over the base commit it is the work to be done, over a converted tree what is
+ * closed and what is not, and the document states which. Every input is read AS
+ * TEXT: requiring lib/controllers/users.js would create the exports queue and
+ * load the AWS SDK inside a static generator.
  *
- * Usage:
+ * INVOCATION
  *   node test/parity/convert-inventory.js [--app <path>] [--out <path>]
  *                                         [--check] [--verbose]
  *
- *   --app <path>   tree to analyse. Default: the repository root containing
- *                  this file. Point it at a `git worktree` to inventory the
- *                  baseline commit.
- *   --out <path>   document to write. Default: <repo>/docs/conversion-inventory.md
- *   --check        write nothing; regenerate in memory and compare with the
- *                  document at --out, exiting 3 if it differs. This is how a
- *                  committed artifact is proven to still describe the tree
- *                  without trusting its own header.
- *   --verbose      emit a one-screen summary on STDERR. Off by default (see
- *                  "Output discipline" below).
+ *   --app      tree to analyse; default the repository holding this file. A
+ *              `git worktree` path inventories another commit.
+ *   --out      document to write; default <repo>/docs/conversion-inventory.md.
+ *   --check    write nothing: regenerate in memory, compare with the document at
+ *              --out, exit 3 if it differs -- so a committed artifact is proven
+ *              current without trusting its own header.
+ *   --verbose  a one-screen summary on STDERR. Off by default.
  *
- * WHICH TREE, AND WHY IT DECIDES WHAT THE DOCUMENT MEANS
- * ------------------------------------------------------
- * The same generator over the base commit and over the delivered tree emits
- * two documents that look alike and mean opposite things: the first is the
- * work to be done, the second is what is closed and what is not. Neither can
- * stand in for the other, so the analysed tree is identified in the emitted
- * front matter four ways -- its revision, whether that revision still
- * describes the analysed bytes, a content digest over exactly the files read,
- * and the generator's own digest -- and the document states in its opening
- * section which of the two views it is.
+ *   The document goes ONLY to --out; nothing goes to stdout, and a successful
+ *   run writes nothing to stderr either, because this tooling's stderr sits in
+ *   the zero-deprecation-warning gate's captured stream. Failures do report
+ *   there. Exit codes: 0 written or already current, 1 usage error or unreadable
+ *   tree, 2 self-check failure with nothing written, 3 --check found it stale.
  *
- * WHAT CANNOT BE DECIDED BY READING THE TREE
- * ------------------------------------------
- * Two row kinds are behavioural, not textual, and this generator does not
- * pretend otherwise.
+ * ARTIFACT
+ *   One Markdown document, written atomically through a same-directory rename so
+ *   a reader never sees a partial file. Its first line is a machine-readable
+ *   `provenance-json` block, repeated in the front matter and read back by
+ *   `node test/parity/manifest.js --verify-provenance <document>`: the analysed
+ *   revision, whether it still describes the analysed BYTES, a digest over
+ *   exactly the files read, this generator's digest and git blob, and a
+ *   `bodyDigest` over the prose beneath.
  *
- * A reply chain's outcome depended on which builder method ran LAST -- three
- * of the eight returned the builder object to hapi, four resolved real
- * responses, one never settled -- so the legacy syntax disappearing proves
- * only that the syntax disappeared. A stream site's correctness is whether
- * completion and error TIMING survived, which no reading of a `.pipe(...)`
- * answers. Both therefore carry the identifier of the corpus scenario that
- * drives them, read from test/parity/corpus.json (DATA -- nothing here starts
- * a server or a database), and close only when that scenario holds a captured
- * baseline response. A tree with no corpus is reported as having no evidence.
+ *   A row carries the SITE, anchored by the symbol enclosing it rather than by a
+ *   line so the anchor survives editing; its CURRENT SHAPE as measured here; its
+ *   TARGET DISPOSITION; and, where that target is a measured outcome rather than
+ *   a construction, its EVIDENCE STATE.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * The claim "all 154 hapi-invoked functions were converted correctly" is not
- * inspectable as a number. In hapi 17+ every lifecycle method must return a
- * value, return a promise, or throw; `undefined` is turned into a server error
- * by the toolkit. The requirement that makes a conversion *correct* is that
- * each handler returns exactly once on every path -- and neither a
- * returned-but-unawaited chain nor an awaited-but-unreturned one is visible in
- * a signature count. Both are `async (request, h)` functions. Both pass any
- * grep for the new signature. Only one of them works.
+ * THE ROW COUNT IS DERIVED, NEVER DECLARED
+ *   Handler rows come from the binding graph, not the export list: routes name
+ *   controller methods that do not exist, and exports go unrouted. Every other
+ *   row is whatever the analysers find, and a signature census cannot stand in
+ *   for them -- a returned-but-unawaited chain and an awaited-but-unreturned one
+ *   are both `async (request, h)`, and hapi turns the `undefined` into a 500.
  *
- * So the artifact has to be a per-site checklist, and this file generates it.
+ * FOUR RECURRING SHAPES, EACH WITH ITS OWN FAILURE MODE
+ *   promise chain      its value must leave the enclosing function exactly once
+ *                      per path, and a terminal link handed a bare function
+ *                      reference has its return value discarded by the caller.
+ *   callback boundary  the `await` is created AT THE CALL SITE, inside the
+ *                      converted lifecycle method, not pushed down into
+ *                      lib/util/file.js, lib/util/store.js or lib/util/queues.js,
+ *                      which keep their callback interfaces.
+ *   reply chain        the outcome is NOT uniform: in the shim's response
+ *                      builder some links resolve the deferred and others hand
+ *                      the builder back, so the outcome turns on which ran LAST.
+ *   stream             completion and error TIMING is what must survive, and no
+ *                      reading of a `.pipe(...)` establishes it.
+ *   The last two are joined to the scenario that drives them, read from
+ *   test/parity/corpus.json as DATA, and close only on a captured baseline plus
+ *   a confirming replay verdict; a corpus-less tree reports having no evidence.
  *
- * WHY THE CONVERSION IS SAFELY ORDERABLE
- * --------------------------------------
- * The mechanism being removed is the response emulation in the route wrapper:
+ * SCRUB, THEN SCAN
+ *   The order inside scrubSource() is load-bearing: comments first, then quotes,
+ *   then regex literals. The password schema in config/routes.js and
+ *   config/api_routes.js has a character class holding a single quote, a double
+ *   quote and an UNPAIRED backtick, so a scan reaching template literals first
+ *   blanks the rest of the file; lib/controllers/trinket.js has a pair of
+ *   backticks inside a `//` comment that such a scan reads as a template. Regex
+ *   and division share `/`, decided from the preceding token; the balance check
+ *   in checkDelimiterBalance() is the tokenizer's self-test.
  *
- *     if (result === undefined) { result = await responsePromise; }
- *
- * at lib/util/routeParser.js:567-570 (baseline coordinates). It intercepts
- * ONLY an `undefined` result and passes any defined result straight through,
- * so a handler converted to return its response already works under the shim.
- * Converted and unconverted handlers coexist, which is what lets the work be
- * closed one row at a time -- and is what makes a per-site checklist the right
- * instrument rather than a big-bang cutover plan.
- *
- * Immediately BELOW that block, lib/util/routeParser.js:574-576 is a different
- * mechanism -- the `else` branch returning `request.success(request.params)`
- * when a route names a controller method that does not exist. Three registered
- * routes depend on it. The emulation goes; the fallback stays. This generator
- * emits those three routes as their own section precisely so nobody deletes
- * the fallback by association or hunts for a handler that was never written.
- *
- * ANALYSIS APPROACH
- * -----------------
- * The tree is read AS TEXT. Nothing here requires a controller, or
- * config/app.config, or anything under test/helpers or test/lib:
- * lib/controllers/users.js creates the exports queue at module load and loads
- * the AWS SDK, and a static generator has no business doing either.
- *
- * Reading JavaScript as text needs a real tokenizer, not a regex sweep. Three
- * measured hazards in this repository prove it:
- *
- *   1. config/routes.js and config/api_routes.js both contain
- *        Joi.string().min(3).regex(/^[\w`~!@#$%^&*+=:;'"<>,.?{}\-\/...]*$/)
- *      whose character class holds a single quote, a double quote AND a
- *      backtick. Measured: a naive string-stripper finds 10 `Joi.` references
- *      in config/routes.js where the correct answer is 36 -- a silent
- *      under-count of 26. The same bug would silently drop conversion sites,
- *      which is the failure mode this tool exists to prevent.
- *   2. Backticks appear where they are not template literals, and the counts
- *      make the failure mode concrete. config/routes.js and
- *      config/api_routes.js each hold a SINGLE, unpaired backtick -- inside
- *      the character class above -- so a scan that looks for template
- *      literals before it consumes regex literals finds no closing backtick
- *      and blanks everything to end-of-file: measured, 12891 of
- *      config/routes.js's 15120 characters, 85% of the file. Meanwhile
- *      lib/controllers/trinket.js:625 holds a PAIR of backticks inside a `//`
- *      comment, which such a scan would read as a template literal spanning
- *      the comment. Comments and regexes must therefore be consumed first.
- *   3. Regex literals and division share the `/` character, so the tokenizer
- *      has to decide between them from the preceding token.
- *
- * Hence `scrubSource()` below, and hence the delimiter-balance check that runs
- * over every scrubbed file: a desynchronized tokenizer produces wildly
- * unbalanced braces, so balance is a cheap and decisive self-test.
- *
- * OUTPUT DISCIPLINE
- * -----------------
- * The document is written ONLY to --out. Nothing is ever written to stdout.
- * On a successful run nothing is written to stderr either, because this
- * tooling's stderr sits inside the zero-deprecation-warning gate's captured
- * stream and a chatty tool would pollute it. Failures do report on stderr --
- * a failing run is not a gate run -- and --verbose opts in to a summary.
- *
- * `url.parse` is not used anywhere in this file (DEP0169). Nothing here needs
- * to parse a URL at all; paths are handled with node:path. If that ever
- * changes, use `new URL(...)`.
- *
- * Exit codes:
- *   0   document written, or --check found the document current
- *   1   usage error, or a tree that cannot be read
- *   2   SELF-CHECK FAILURE -- the analysis disagrees with the measured
- *       baseline in a way conversion cannot explain. No document is written.
- *       Failing loudly is the point: a quietly incomplete checklist is worse
- *       than no checklist, because it reads as completed work.
- *   3   --check only: the committed document does not describe the analysed
- *       tree. A separate code because the analysis succeeded and what is
- *       wrong is that the artifact is stale.
+ * A ROW THAT CANNOT BE PLACED FAILS THE RUN
+ *   runSelfChecks() exits 2 without writing when the analysis disagrees with the
+ *   recorded baseline in a way conversion cannot explain, or when an anchored
+ *   site or roster entry cannot be located by its symbol. auditRenderedEvidence
+ *   then refuses to write a document asserting a measurement the corpus lacks.
  */
 
 'use strict';
@@ -155,14 +100,12 @@ var provenanceContract = require('./manifest').provenance;
 // ---------------------------------------------------------------------------
 // SECTION 1 -- MEASURED BASELINE CONSTANTS
 //
-// Every figure below was measured on a worktree at the base commit named in
-// BASELINE_COMMIT, using the very analysers in this file. They are recorded
-// here rather than recomputed because their whole purpose is to be a fixed
+// Every figure below is measured on a worktree at the base commit named in
+// BASELINE_COMMIT, using the analysers in this file. They are recorded here
+// rather than recomputed because their whole purpose is to be a fixed
 // reference the analysis can be checked against: a figure that moves with the
-// code it is supposed to police checks nothing.
-//
-// R-f makes the base commit the tie-breaker, so these are also the "current
-// shape" column's authority.
+// code it is supposed to police checks nothing. The base commit is also the
+// authority for the "current shape" column.
 // ---------------------------------------------------------------------------
 
 var BASELINE_COMMIT = '2f8712a';
@@ -198,9 +141,9 @@ var BASELINE_REPLY_SITES_INLINE = 1;
 var BASELINE_REPLY_SITES_TOTAL = 202;
 
 // Promise-chain scale, reply-chain scale and stream-site scale. All progress
-// metrics. The stream figure is the one the AAP flags as needing derivation
-// rather than a grep: a crude pattern returns 10, and the documented rule in
-// deriveStreamSites() returns 17 across four controllers.
+// metrics. The stream figure has to be DERIVED rather than grepped: a crude
+// pattern under-counts, and the rule deriveStreamSites() documents is what
+// yields the figure below across four controllers.
 var BASELINE_THEN_CALLS = 183;
 var BASELINE_CATCH_CALLS = 85;
 var BASELINE_TYPE_BYTES_CALLS = 13;
@@ -223,23 +166,39 @@ var BASELINE_STREAM_CONTROLLERS = { trinket: 11, files: 3, courses: 2, users: 1 
 // after conversion alike). A constant measured by a corrected analyser is a
 // corrected constant; what would be dishonest is leaving the old number and
 // letting the check fail on the tree it was measured from.
+//
+// THE OPEN FIGURE IS PREDICATE-RELATIVE, and it was re-measured a second time
+// for the same reason. It was 37 under a closure test that read only
+// `return`/`await` and only a first-argument function literal; under the
+// disposition model in `resolveChainDispositions` -- which recognizes the five
+// delivery mechanisms this codebase actually uses and asks whether a discarded
+// value could have been the response -- the base commit measures 21: 17
+// discarded inside a carrier with no proven delivery, and 4 delivered into a
+// terminal reaction that produces nothing. The POPULATION figure is unchanged
+// at 127, because what a chain IS did not change; only the question asked of
+// it did. Re-measured with:
+//
+//   git worktree add --detach "$BASELINE" 2f8712a
+//   node test/parity/convert-inventory.js --app "$BASELINE" --out "$OUT"
+//
+// The same run corroborates the direction the whole document depends on: at
+// the base commit 2 of 145 routed handlers close and 52 of 57 callback
+// boundaries are open, against 145 and 0 in the delivered tree. A predicate
+// that closed rows indiscriminately could not produce that gap.
 var BASELINE_PROMISE_CHAINS = 127;
-var BASELINE_PROMISE_CHAINS_OPEN = 37;
+var BASELINE_PROMISE_CHAINS_OPEN = 21;
 var BASELINE_NON_REACTION_CATCHES = 2;
 var BASELINE_CALLBACK_BOUNDARIES = 57;
 
-// Coordinates the AAP cites for a site whose measured extent differs, so the
-// row can carry the citation a reader will be searching for. The chain in
-// `pages.home` is cited as `lib/controllers/pages.js:52`; measured at the base
-// commit it spans :48-54 with the terminal `.catch(request.fail)` on :54.
-// Both are shown -- the citation because every other document uses it, the
-// measurement because it is what is true.
+// Coordinates the surrounding documents cite for a site whose measured extent
+// differs from the citation, so the row can carry both: the citation a reader
+// will be searching for, and the extent measured in the analysed tree. The
+// chain in `lib/controllers/pages.js`'s `home` is the case in point.
 //
-// The anchor is the ENCLOSING FUNCTION, not the line span. Anchoring on the
-// span was tried and is wrong: once the file is edited the chain moves out
-// from under the cited line -- measured, :48-54 becomes :65-71 in the
-// converted tree -- and the citation silently disappears from the document
-// exactly when a reader cross-referencing the AAP most needs it.
+// The anchor is the ENCLOSING FUNCTION, never the line span. Once the file is
+// edited the chain moves out from under any cited line, and a span-anchored
+// citation then disappears from the document exactly when a reader
+// cross-referencing another document most needs it.
 var AAP_CITED_CHAINS = [
   {
     file: 'lib/controllers/pages.js',
@@ -272,17 +231,17 @@ var EXCLUDED_MISSING_BINDINGS = [
 //
 // Two exports are deliberately absent from this list because they are ALREADY
 // native lifecycle methods and so are not conversion work:
-// `internals.lowerUserFields` (baseline :111) and `findFeaturedTrinkets`
-// (baseline :397), both declared `(request, h)`. That exclusion is exactly
-// what makes 11 = 8 routed + 3 unrouted close.
+// `internals.lowerUserFields` and `findFeaturedTrinkets`, both declared
+// `(request, h)`. That exclusion is exactly what makes 11 = 8 routed + 3
+// unrouted close.
 var BASELINE_NAMED_PRE_HANDLERS = 11;
 
 // ---------------------------------------------------------------------------
 // SECTION 2 -- THE ANCHORED ROSTER
 //
-// Eight reply chains, and they are NOT uniform. In the shim's response
-// builder (lib/util/routeParser.js:375-405) `.type()` and `.bytes()` return
-// the builder WITHOUT resolving the deferred, while `.code()`, `.header()`,
+// Eight reply chains, and they are NOT uniform. In the response builder the
+// shim's fake `reply` returns, `.type()` and `.bytes()` hand back the builder
+// WITHOUT resolving the deferred, while `.code()`, `.header()`,
 // `.redirect()` and `.view()` resolve it. So what a client actually receives
 // depends on which chain method ran LAST -- and 13 `.type()`/`.bytes()` calls
 // spread across 8 chains produce three different outcomes.
@@ -290,9 +249,9 @@ var BASELINE_NAMED_PRE_HANDLERS = 11;
 // That three-way classification is an EXECUTION-TIME measurement of the shim.
 // No amount of reading the text tells you whether a given chain settled,
 // because the answer depends on the order the builder's methods ran in. The
-// roster is therefore carried here as a recorded baseline fact (AAP 0.6.6),
-// and each entry is VERIFIED against the analysed tree with an open/closed
-// determination rather than re-derived from it.
+// roster is therefore carried here as a recorded baseline fact, and each entry
+// is VERIFIED against the analysed tree with an open/closed determination
+// rather than re-derived from it.
 // ---------------------------------------------------------------------------
 
 var REPLY_CHAIN_ROSTER = [
@@ -318,8 +277,8 @@ var REPLY_CHAIN_ROSTER = [
     approvedDeviation: true,
     // One sentence, and it is the sentence an implementer needs at the call
     // site: the response to serve is not inferred, it is already written four
-    // lines below. The precedence argument is NOT repeated here -- it is owned
-    // by docs/preserved-quirks.md, and the renderer emits the pointer.
+    // lines below. The precedence argument lives in docs/preserved-quirks.md
+    // and the renderer emits a pointer to it, so it is not repeated here.
     justification:
       'The response to serve is not inferred: the sibling branch four lines below performs ' +
       'the identical chain ending in .header() and returns a working stream response, so ' +
@@ -376,17 +335,21 @@ var REPLY_CHAIN_ROSTER = [
     ordinal: 1,
     // No target SHAPE is declared for a builder-returned chain, and that is a
     // decision rather than an omission: what the builder emitted is not
-    // inferable from the text (AAP 0.6.6), so the target is the MEASURED
-    // status, content-type and body. The structural half of closure is that
-    // the legacy chain is gone; the behavioural half is the corpus.
+    // inferable from the text, so the target is the MEASURED status,
+    // content-type and body. The structural half of closure is that the legacy
+    // chain is gone; the behavioural half is the corpus.
     targetShape: null,
     scenario: 'quirk.reply-chain.builder-returned.download-main',
     category: 'builder-returned',
     current: 'return reply(code[0].content).type(type) -- hands the WRAPPER the builder ' +
       'object rather than a hapi response. What is emitted depends on whether the ' +
       'deferred had already been resolved earlier in the request.',
-    targetText: 'Reproduce the measured status, content-type and body, captured before ' +
-      'conversion by test/parity/capture.js.',
+    // Phrased as the REQUIREMENT, not as a claim that the measurement exists.
+    // Whether it does is the row's own EVIDENCE sentence, computed from the
+    // corpus; stating it twice let the target text assert a capture the
+    // evidence sentence was simultaneously reporting as absent.
+    targetText: 'Reproduce the status, content-type and body this branch measures, as ' +
+      'recorded for its scenario by test/parity/capture.js.',
     approvedDeviation: false
   },
   {
@@ -404,8 +367,12 @@ var REPLY_CHAIN_ROSTER = [
     scenario: 'quirk.reply-chain.builder-returned.download-code-file',
     category: 'builder-returned',
     current: 'return reply(file.content).type(type) -- builder object returned to hapi.',
-    targetText: 'Reproduce the measured status, content-type and body, captured before ' +
-      'conversion by test/parity/capture.js.',
+    // Phrased as the REQUIREMENT, not as a claim that the measurement exists.
+    // Whether it does is the row's own EVIDENCE sentence, computed from the
+    // corpus; stating it twice let the target text assert a capture the
+    // evidence sentence was simultaneously reporting as absent.
+    targetText: 'Reproduce the status, content-type and body this branch measures, as ' +
+      'recorded for its scenario by test/parity/capture.js.',
     approvedDeviation: false
   },
   {
@@ -421,8 +388,12 @@ var REPLY_CHAIN_ROSTER = [
     category: 'builder-returned',
     current: 'return reply(stream).type(type) inside a .then() -- builder object ' +
       'returned to hapi, wrapping a stream.',
-    targetText: 'Reproduce the measured status, content-type and body, captured before ' +
-      'conversion by test/parity/capture.js.',
+    // Phrased as the REQUIREMENT, not as a claim that the measurement exists.
+    // Whether it does is the row's own EVIDENCE sentence, computed from the
+    // corpus; stating it twice let the target text assert a capture the
+    // evidence sentence was simultaneously reporting as absent.
+    targetText: 'Reproduce the status, content-type and body this branch measures, as ' +
+      'recorded for its scenario by test/parity/capture.js.',
     approvedDeviation: false
   },
   {
@@ -513,11 +484,19 @@ var ANCHORED_SITES = [
 ];
 
 // Target-idiom anchors. Every one of these is already in the tree, so the
-// conversion has references rather than inventions to work from. Coordinates
-// are baseline (R-f); a converted tree will have moved some of them.
+// conversion has references rather than inventions to work from. The
+// coordinates are the base commit's; a converted tree has moved some of them.
 var TARGET_IDIOM_ANCHORS = [
   {
     site: 'lib/util/helpers.js:397-403',
+    // The anchor carries the SYMBOL it names, so the analysed tree is searched
+    // for that export rather than for a position. An earlier revision printed
+    // this anchor's name beside `nativePreHandlers[0].line`, which is the
+    // first native pre-handler in file order -- `findTrinket`, at
+    // lib/util/helpers.js:143 and not even declared `async`. The document
+    // therefore reported the exemplar at a line belonging to a different
+    // function, which is the one thing a reader follows this pointer to check.
+    symbol: 'findFeaturedTrinkets',
     what: 'The target PRE-HANDLER shape, already present: ' +
       '`async function (request, h) { ...; return await internals.namedTrinketList(lang, \'featured\'); }`'
   },
@@ -549,9 +528,9 @@ var TARGET_IDIOM_ANCHORS = [
 // SECTION 2b -- CROSS-REFERENCES TO THE DOCUMENTS THAT OWN WHAT THIS ONE DOES NOT
 //
 // This document records, per site, the RETURN SHAPE: what the body does now and
-// what it must return afterwards. Two sibling documents own the rest of the
-// story about the same sites, and R-d and R-e both require the pointer rather
-// than a second copy:
+// what it must return afterwards. Two sibling documents carry the rest of the
+// story about the same sites, and a pointer rather than a second copy is what
+// keeps one place for each fact:
 //
 //   docs/preserved-quirks.md      -- the measured baseline OUTCOME of a quirk,
 //                                    and, for each of the TWO approved
@@ -627,18 +606,18 @@ var GENERIC_MANDATE_LABELS = {
 // Three optional fields carry that:
 //
 //   kinds    -- the row kinds this entry applies to AT ALL. Omitted means every
-//               kind, which is what the five original entries want: a quirk
-//               about whether a handler settles is worth pointing at from the
-//               chain, callback and stream rows inside it. An entry that is
-//               about ONE expression names its kinds, so it does not decorate
-//               ten unrelated rows in the same function.
+//               kind, which is right for a quirk about whether a handler
+//               settles: that is worth pointing at from the chain, callback and
+//               stream rows inside it. An entry that is about ONE expression
+//               names its kinds, so it does not decorate ten unrelated rows in
+//               the same function.
 //   governs  -- per row kind, the governing target action: `action` (what to
 //               do), `why` (why the generic mandate is wrong there, from
 //               Appendix A's third column) and `mode`:
 //                 'replace'  -- the mandate does not apply to this row at all;
 //                 'qualify'  -- the mandate still governs the rest of the body
 //                               and the governed branch is carved out of it.
-//   note     -- unchanged: the measured outcome, emitted by quirkRef().
+//   note     -- the measured outcome, emitted by quirkRef().
 var QUIRK_REFS = [
   {
     file: 'lib/controllers/pages.js',
@@ -703,7 +682,18 @@ var QUIRK_REFS = [
         action: 'take the `await` at this call site, and keep the surrounding order intact -- ' +
           'persist, mutate the session, then report the generic failure',
         why: 'continuing with a result on every path can drop the throw that produces the ' +
-          'failure'
+          'failure',
+        // The same quirk, stated for a boundary that KEEPS its callback
+        // interface: there is no `await` to place, so what survives is the
+        // order the conversion must not disturb.
+        whenKept: {
+          action: 'keep the surrounding ORDER intact through this callback -- persist the ' +
+            'user, mutate the session, and only THEN report the generic failure -- and do ' +
+            'not let the conversion of anything around it drop the throw that produces that ' +
+            'failure',
+          why: 'a callback-boundary mandate that continues with a result on every path can ' +
+            'drop the throw that produces the failure'
+        }
       }
     }
   },
@@ -749,15 +739,27 @@ var QUIRK_REFS = [
           'path settle: the upload never starts when `end` never arrives, and the route is ' +
           'left unsettled',
         why: 'a callback-boundary mandate that continues with a result on every path removes ' +
-          'the unsettled outcome'
+          'the unsettled outcome',
+        // The same quirk, stated for a boundary that KEEPS its shape -- a
+        // callee with no promise form, or a scheduling primitive whose timing
+        // is the target. Nothing is being converted at the site, so the
+        // surviving requirement is the outcome the surrounding function must
+        // still produce.
+        whenKept: {
+          action: 'keep the refused-connection path UNSETTLED -- when `end` never arrives ' +
+            'the upload never starts and that path deliberately produces no response, so ' +
+            'nothing done to this boundary or to the code around it may make the route ' +
+            'answer on it',
+          why: 'a callback-boundary mandate that continues with a result on every path ' +
+            'removes the unsettled outcome'
+        }
       }
     }
   },
   {
-    // Absent from this table until the allow-list was encoded, so this handler
-    // carried the generic mandate with no pointer at all -- and the mandate is
-    // exactly wrong here. §9.7 is the corrected statement of the outcome: the
-    // route is real, routed and authenticated, and it answers 500.
+    // The generic mandate is exactly wrong for this handler, so it needs both
+    // an entry here and a governing action. docs/preserved-quirks.md states the
+    // outcome: the route is real, routed and authenticated, and it answers 500.
     file: 'lib/controllers/courses.js',
     enclosing: 'download',
     section: '9.7',
@@ -778,12 +780,12 @@ var QUIRK_REFS = [
   },
   {
     // The two measured-dead 301s have their own anchored rows, which state
-    // "return null" per site. What was missing is the pre-handler row for the
-    // function that CONTAINS each of them: those rows carried the generic
-    // mandate, and "every reply(...) becomes a returned toolkit response"
-    // applied to reply().redirect(...).permanent().takeover() emits a 301 the
-    // baseline never emitted. The mandate is right for the rest of each body,
-    // so this is a qualification rather than a replacement.
+    // "return null" per site. This entry covers the pre-handler row for the
+    // function that CONTAINS one of them, which would otherwise take the
+    // generic mandate: "every reply(...) becomes a returned toolkit response",
+    // applied to reply().redirect(...).permanent().takeover(), emits a 301 the
+    // baseline never emitted. The mandate is right for the rest of the body, so
+    // this is a qualification rather than a replacement.
     file: 'lib/util/helpers.js',
     enclosing: 'findTrinket',
     section: '2',
@@ -835,10 +837,11 @@ var QUIRK_REFS = [
 //               or REPLY_CHAIN_ROSTER, so no generic mandate is ever composed
 //               for it and there is nothing to displace.
 //
-// The last row is the INVERSE case and is deliberately here: at
-// lib/controllers/trinket.js:375 the statement genuinely must change to
-// preserve the outcome. The allow-list is not "never change a statement" --
-// it is "the quirk record decides, and it is consulted first".
+// The last row is the INVERSE case and is deliberately here: in
+// `lib/controllers/trinket.js`'s `create`, the unreturned `reply(err)` on the
+// error path genuinely must change for the outcome to be preserved. The
+// allow-list is not "never change a statement" -- it is "the quirk record
+// decides, and it is consulted first".
 var ALLOW_LIST_COVERAGE = [
   {
     site: 'lib/controllers/pages.js `login`',
@@ -954,15 +957,10 @@ var ANCHORED_QUIRK_SECTIONS = {
 // So a row cites \u00a711.1, and the cross-reference section names both and says
 // which is which.
 var DEVIATION_QUIRK_SECTION = '11.1';
-// The rest of the deviation register, named because "the single approved
-// deviation" was wrong twice over: on the count, and on which of the two a row
-// in this checklist can be affected by. Deviation 1 is a RESPONSE deviation and
-// the only one a conversion row touches; deviation 2 is an AUDIT deviation with
-// no conversion site.
-var AUDIT_DEVIATION_QUIRK_SECTION = '11.2';
-var DEVIATION_REGISTER_QUIRK_SECTION = '11';
-var DEFERRED_DEPENDENCY_DOC = 'docs/deferred-dependencies.md';
-var AUDIT_DEVIATION_DEFERRED_SECTION = '4.2';
+// The rest of the deviation register. There are TWO deviations and they differ
+// in kind, which is what makes the reference useful to a row: deviation 1 is a
+// RESPONSE deviation and the only one a conversion row touches, deviation 2 is
+// an AUDIT deviation with no conversion site.
 var AUDIT_DEVIATION_QUIRK_SECTION = '11.2';
 var DEVIATION_REGISTER_QUIRK_SECTION = '11';
 var DEFERRED_DEPENDENCY_DOC = 'docs/deferred-dependencies.md';
@@ -1012,8 +1010,8 @@ function anchoredQuirkRef(site) {
  * which is right for a quirk about whether the function settles at all; an
  * entry that names its kinds covers only those, so a quirk about one
  * expression does not decorate ten unrelated rows in the same body. Calling
- * this without a `kind` keeps the pre-allow-list behaviour, which is what the
- * exported quirkRef/2 form does.
+ * this without a `kind` matches on the function alone, which is what the
+ * exported two-argument quirkRef form does.
  */
 function quirkEntry(file, enclosing, kind) {
   if (!enclosing) {
@@ -1044,27 +1042,52 @@ function quirkRef(file, enclosing, kind) {
 /**
  * The governing target action for one row, or null when the generic mandate
  * for that row kind is compatible with the quirk and stands as it is.
+ *
+ * `state` is the row's CURRENT state, and it selects between two phrasings of
+ * the same quirk. A governing action is written as an instruction, and an
+ * instruction is only correct against a stated starting point: "take the
+ * `await` at this call site" presumes the site still has a callback to
+ * replace. On a boundary the migration KEEPS -- rule T-3, no promise form to
+ * await without pushing the boundary into the callee -- that instruction is
+ * not merely redundant but the opposite of the row's own disposition, and nine
+ * rows read "LEAVE THE INTERFACE AS IT STANDS ... Do not promisify the callee
+ * to create an `await` here" followed by "GOVERNING ACTION -- take the `await`
+ * at this call site" before this existed.
+ *
+ * So an entry whose action presumes a conversion carries a `whenKept` variant
+ * stating what survives of the quirk when there is no conversion left to
+ * perform: the OUTCOME to reproduce, without the instruction that contradicts
+ * the kept interface. `why` falls back to the base entry's when the variant
+ * does not restate it, because the reason the generic mandate is wrong there
+ * does not change with the row's state.
  */
-function governingAction(file, enclosing, kind) {
+function governingAction(file, enclosing, kind, state) {
   var ref = quirkEntry(file, enclosing, kind);
   if (!ref || !ref.governs) {
     return null;
   }
-  return ref.governs[kind] || null;
+  var base = ref.governs[kind] || null;
+  if (!base || state !== 'kept' || !base.whenKept) {
+    return base;
+  }
+  return {
+    mode: base.whenKept.mode || base.mode,
+    action: base.whenKept.action,
+    why: base.whenKept.why || base.why
+  };
 }
 
 /**
  * One row's target-disposition cell, with the quirk allow-list resolved
  * BEFORE the generic mandate is composed.
  *
- * The ordering is the whole content of this function. Composing
- * `generic + pointer` puts a mandate first and a quirk note second, and for a
- * site whose preserved outcome requires the body NOT to return -- unsettled,
- * or throwing -- those two clauses contradict each other in one cell with the
- * mandate leading. Nine rows read that way before this existed. So:
+ * The ordering is what this function is for. Composing `generic + pointer`
+ * puts a mandate first and a quirk note second, and for a site whose preserved
+ * outcome requires the body NOT to return -- unsettled, or throwing -- those
+ * two clauses contradict each other in one cell, with the mandate leading. So:
  *
- *   no governing action  -- emit exactly what was emitted before, so every row
- *                           where the mandate is compatible is unchanged;
+ *   no governing action  -- emit the mandate alone, so every row where it is
+ *                           compatible is unaffected by this resolution;
  *   mode 'replace'       -- the mandate is not emitted at all; the governing
  *                           action takes its place and the row says which
  *                           mandate was displaced and why;
@@ -1076,6 +1099,13 @@ function governingAction(file, enclosing, kind) {
  * -- a signature conversion, or where the `await` goes -- and it is kept in
  * front of the governing action rather than thrown away with the mandate.
  *
+ * `state` is the row's current state, forwarded to governingAction() so that a
+ * quirk whose action presumes a conversion states its OUTCOME instead on a row
+ * where there is no conversion left to perform. Without it a row can carry a
+ * lead that preserves the current shape and a governing action that instructs
+ * replacing it -- two opposite instructions in one cell, which is exactly the
+ * failure this function exists to prevent, arriving from the other direction.
+ *
  * The `Owned by ... reproduce it, do not fix it.` tail is emitted on every
  * governed row, in the same words quirkRef() uses: it is the sentence that
  * makes the row's authority explicit, and a governed row needs it more than an
@@ -1083,7 +1113,7 @@ function governingAction(file, enclosing, kind) {
  */
 function composeTarget(spec) {
   var trailing = spec.trailing || '';
-  var governing = governingAction(spec.file, spec.enclosing, spec.kind);
+  var governing = governingAction(spec.file, spec.enclosing, spec.kind, spec.state);
   if (!governing) {
     return spec.generic + trailing + quirkRef(spec.file, spec.enclosing, spec.kind);
   }
@@ -1122,7 +1152,7 @@ function composeTarget(spec) {
 // Order matters and is the whole reason this function exists rather than a
 // chain of regexes:
 //
-//   comments FIRST, because lib/controllers/trinket.js:625 holds a pair of
+//   comments FIRST, because lib/controllers/trinket.js holds a pair of
 //   backticks inside a `//` comment, which a template-literal-first scan would
 //   read as a template spanning that comment;
 //
@@ -1132,7 +1162,7 @@ function composeTarget(spec) {
 //   config/api_routes.js bite: their password schema's character class holds a
 //   single quote, a double quote and a backtick simultaneously. That backtick
 //   is UNPAIRED in both files, so mis-tokenizing the regex blanks the rest of
-//   the file -- 85% of config/routes.js, measured.
+//   the file -- most of config/routes.js.
 //
 // Delimiters themselves are LEFT IN PLACE (only the interior is blanked) so
 // that the balance check in checkDelimiterBalance() still sees a well-formed
@@ -1389,10 +1419,11 @@ function matchDelimiter(scrubbed, open) {
  * Verify that a scrubbed file has balanced `()`, `[]` and `{}`.
  *
  * This is the tokenizer's self-test. A desynchronized scrub -- the failure
- * mode the config/routes.js regex and the trinket.js comment backtick both
- * provoke -- swallows or exposes large spans of code and the counts go wildly
- * unbalanced. Balanced delimiters are not a proof of correctness, but no
- * desync this repository can produce survives the check.
+ * mode the config/routes.js regex and the backtick pair inside a
+ * lib/controllers/trinket.js comment both provoke -- swallows or exposes large
+ * spans of code and the counts go wildly unbalanced. Balanced delimiters are
+ * not a proof of correctness, but no desync this repository can produce
+ * survives the check.
  */
 function checkDelimiterBalance(scrubbed) {
   var counts = { paren: 0, bracket: 0, brace: 0 };
@@ -1442,9 +1473,8 @@ function oneLine(text, limit) {
 
 /**
  * "1 chain" / "2 chains". Generated prose should read as prose: a heading that
- * says "1 chains" tells a reviewer the document was assembled rather than
- * written, which is precisely the impression a generated artifact cannot
- * afford when its whole claim is that every figure in it was measured.
+ * says "1 chains" reads as assembled rather than written, which undercuts a
+ * document whose claim is that every figure in it was measured.
  */
 function pluralize(count, singular, plural) {
   return count + ' ' + (count === 1 ? singular : (plural || singular + 's'));
@@ -1661,12 +1691,12 @@ var EXPRESSION_CONTINUATION = /[?:|&,!~+\-*\/%^<>=]/;
  * Decide whether an offset sits in a `return`/`throw` position -- i.e. whether
  * the value it produces actually leaves the function.
  *
- * Looking only at the immediately preceding token is not enough, and getting
- * this wrong matters more than anything else in this file: `reliesOnInterception`
- * is the document's central column, and a false positive sends someone chasing
- * a handler that was already correct.
+ * Looking only at the immediately preceding token is not enough, and this is
+ * the measurement it costs most to get wrong: `reliesOnInterception` is the
+ * document's central column, and a false positive sends someone chasing a
+ * handler that was already correct.
  *
- * The case that proves it is `lib/controllers/trinket.js:881`:
+ * The case that proves it is this ternary in `lib/controllers/trinket.js`:
  *
  *     return err === "threshold exceeded" ? reply(errors.forbidden()) : reply();
  *
@@ -1762,13 +1792,13 @@ function isInReturnPosition(scrubbed, offset) {
 //      inside `return await new Promise(function (resolve) { ... })` is not an
 //      unreturned call in the handler: it belongs to the executor, and its
 //      value settles the promise the handler returns. Counting it against the
-//      handler produced 17 false "relies on the interception" flags -- measured
-//      in lib/controllers/users.js and lib/controllers/admin.js.
+//      handler yields false "relies on the interception" flags, which
+//      lib/controllers/users.js and lib/controllers/admin.js both provoke.
 //
 //   3. If it belongs to a nested function, does its value still reach hapi?
 //      A value returned from a `.then()` handler on a chain the handler
 //      returns does; the same value dropped inside a fire-and-forget callback
-//      does not, and that difference is the whole point of the column.
+//      does not, and that difference is what the column records.
 //
 // The statement reader below is what makes 1 and 3 answerable: it gives the
 // analysed function's own statement tree, treating any nested function literal
@@ -1811,14 +1841,14 @@ var STATEMENT_HEAD = /^(?:return|throw|if|for|while|do|try|switch|var|let|const|
  * End of a simple statement.
  *
  * A `;` at nesting depth zero ends it, and so do the two automatic-semicolon
- * cases this codebase actually contains -- both measured, both previously
- * swallowing statements whole:
+ * cases this codebase actually contains, each of which otherwise swallows
+ * statements whole:
  *
- *   1. `var mkLessonDirs = function () { ... }` with NO trailing semicolon
- *      (lib/controllers/courses.js:249, :287). Scanning on to the next `;`
- *      absorbed 166 lines including the handler's own
- *      `return fs.promises.mkdir(...)`, and the row read "no proven exit" for
- *      a body that exits on both branches.
+ *   1. `var mkLessonDirs = function () { ... }` with NO trailing semicolon, in
+ *      `lib/controllers/courses.js`. Scanning on to the next `;` absorbs the
+ *      rest of the enclosing body, including the handler's own
+ *      `return fs.promises.mkdir(...)`, and the row then reads "no proven
+ *      exit" for a body that exits on both branches.
  *   2. A newline followed by a statement keyword.
  *
  * Nested function literals passed as arguments sit inside parentheses, so
@@ -1922,10 +1952,10 @@ function readStatement(scrubbed, from, to) {
   // A function DECLARATION in statement position. It has to be recognized
   // explicitly, because a declaration carries no trailing semicolon: read as a
   // simple statement it swallows everything up to the next `;`, which in
-  // `lib/controllers/courses.js` `download` absorbed the handler's own
+  // `lib/controllers/courses.js`'s `download` absorbs the handler's own
   // `return fs.promises.mkdir(...)` into the declaration of the nested
-  // `returnZip` and hid the exit. Measured -- the row read "no proven exit" for
-  // a body that exits on both branches.
+  // `returnZip` and hides the exit, so the row reads "no proven exit" for a
+  // body that exits on both branches.
   if (w.word === 'function' || (w.word === 'async' &&
       readWord(scrubbed, skipWhitespace(scrubbed, w.end, to)).word === 'function')) {
     var declaration = readFunctionAt(scrubbed, i);
@@ -2132,10 +2162,10 @@ var VOID_CALLEES = /^(?:console\s*\.\s*(?:log|info|warn|error|debug|trace|dir|ta
  * Whether one exit statement delivers a LIFECYCLE RESULT, as distinct from
  * merely transferring control out of the function.
  *
- * This distinction is the whole point of the document. hapi converts an
- * `undefined` return into `Boom.badImplementation` -- it is the exact failure
- * the migration exists to remove -- so a handler whose every path ends in
- * `return;` is not converted, even though every path ends in `return`.
+ * This distinction is what the document records. hapi converts an `undefined`
+ * return into `Boom.badImplementation` -- the exact failure the migration
+ * exists to remove -- so a handler whose every path ends in `return;` is not
+ * converted, even though every path ends in `return`.
  * Rejected here:
  *
  *   * `return;`                     -- no value at all
@@ -2145,8 +2175,8 @@ var VOID_CALLEES = /^(?:console\s*\.\s*(?:log|info|warn|error|debug|trace|dir|ta
  *
  * A `throw` DOES deliver: hapi maps a thrown error onto a response, and the
  * three preserved error funnels depend on that. `return null` also delivers --
- * `null` is the value the AAP specifies for a pre-handler with nothing to
- * contribute, and it is not `undefined`.
+ * `null` is what a pre-handler with nothing to contribute returns, and it is
+ * not `undefined`.
  */
 function exitDelivers(statement) {
   if (!statement || statement.kind !== 'exit') {
@@ -2334,10 +2364,9 @@ function innermostStatementContaining(scrubbed, list, offset) {
 /**
  * Every function literal nested inside `[from, to)`, innermost-resolvable.
  *
- * The `function` keyword covers this codebase -- measured, the analysed source
- * contains no arrow function at either commit -- but arrows are collected too,
- * because the conversion may introduce them and a missed nested function would
- * silently re-create the ownership bug this exists to fix.
+ * The `function` keyword covers the analysed source as it stands, but arrows
+ * are collected too, because the conversion may introduce them and a missed
+ * nested function silently mis-attributes the values produced inside it.
  */
 function collectNestedFunctions(scrubbed, from, to) {
   var found = [];
@@ -2512,16 +2541,6 @@ function nameLeavesFunction(scrubbed, fn, statements, name) {
 }
 
 /**
- * Static shape analysis for one hapi-invoked function.
- *
- * Three measurements, each answering one of the questions in this section's
- * header: whether every path exits, who owns each signalling call, and whether
- * a nested call's value still reaches hapi. It remains a documented analysis
- * of TEXT rather than a proof over a control-flow graph, and the generated
- * document says so -- but it no longer mistakes a delivered value for a
- * dropped one, and it no longer accepts an empty body as converted.
- */
-/**
  * Whether a nested function occupies the argument slot of a PROMISE REACTION
  * -- `.then(fn)`, `.catch(fn)`, `.finally(fn)`, or the second argument of
  * `.then(onFulfilled, onRejected)`.
@@ -2541,9 +2560,8 @@ function nameLeavesFunction(scrubbed, fn, statements, name) {
  *     });
  *
  * the same text delivers, because a reaction's return value becomes the
- * chain's value. An earlier revision of this analysis asked only whether the
- * enclosing STATEMENT exited, which made those two shapes indistinguishable
- * and closed `trinket.updateMetrics` on a discarded Mongoose callback return.
+ * chain's value. Asking only whether the enclosing STATEMENT exits cannot tell
+ * the two apart, and closes a handler on a discarded callback return.
  *
  * The receiver is put through `isPromiseReaction`, so `request.catch({...})`
  * -- a data property in this codebase, not a rejection handler -- does not
@@ -2631,6 +2649,16 @@ function matchingClose(scrubbed, open) {
   return scrubbed.length - 1;
 }
 
+/**
+ * Static shape analysis for one hapi-invoked function.
+ *
+ * Three measurements, each answering one of the questions in this section's
+ * header: whether every path exits, who owns each signalling call, and whether
+ * a nested call's value still reaches hapi. It is an analysis of TEXT rather
+ * than a proof over a control-flow graph, and the generated document says so;
+ * within that limit it distinguishes a delivered value from a dropped one, and
+ * an empty body never reads as converted.
+ */
 function analyseFunctionShape(scrubbed, fn) {
   var body = scrubbed.slice(fn.bodyStart, fn.bodyEnd + 1);
   var nested = collectNestedFunctions(scrubbed, fn.bodyStart, fn.bodyEnd);
@@ -2685,8 +2713,8 @@ function analyseFunctionShape(scrubbed, fn) {
       offset: abs,
       text: m[0].replace(/\s*\($/, ''),
       owned: !owner,
-      // Retained under its original name: several renderers read `.returned`,
-      // and its meaning is unchanged -- this call's value leaves the function.
+      // Named `.returned` because several renderers read that field. Its
+      // meaning: this call's value leaves the function.
       returned: delivery !== 'unreturned' && delivery !== 'nested-dropped',
       delivery: delivery
     });
@@ -2719,7 +2747,7 @@ function analyseFunctionShape(scrubbed, fn) {
     nestedDropped: nestedDropped,
     captured: count('captured-and-returned'),
     // "Signals whose value does not reach hapi", which is what every consumer
-    // of this field has always meant by it.
+    // of this field means by it.
     unreturnedSignals: ownUnreturned + nestedDropped,
     // `reply` appearing at all means the fake reply is still being consumed.
     usesReply: signals.some(function (s) {
@@ -2729,7 +2757,28 @@ function analyseFunctionShape(scrubbed, fn) {
     alwaysExits: alwaysExits,
     alwaysDelivers: alwaysDelivers,
     statementCount: statements.length,
-    reliesOnInterception: ownUnreturned + nestedDropped > 0
+    // RELIANCE IS ABOUT THE MECHANISM BEING REMOVED, not about tidiness. The
+    // interception is `if (result === undefined) { result = await
+    // responsePromise; }`: it fires only when the body returns `undefined`. So
+    // a body that delivers a lifecycle value on EVERY path cannot reach it,
+    // whatever its discarded signalling calls do -- under the shim those calls
+    // resolved a deferred whose value was then thrown away, exactly as they
+    // now return a response that is thrown away. Reading reliance as
+    // `unreturnedSignals > 0` alone reported `lib/controllers/trinket.js`'s
+    // `updateMetrics` as relying on a mechanism it cannot reach, and attached
+    // to it an instruction to make the discarded value the response -- which
+    // would turn that branch's measured 500 into a 200, the change R-d
+    // prohibits and the branch's own source comment refuses.
+    //
+    // `usesReply` keeps its place in the test. For a body that still consumes
+    // the shim's fake `reply`, the value it returns may itself be the shim's
+    // builder object, so "the interception cannot fire, therefore nothing
+    // changes" does not hold and the older framing is the accurate one. Only a
+    // body already off the shim earns the settled reading.
+    reliesOnInterception: ownUnreturned + nestedDropped > 0 &&
+      (!alwaysDelivers || signals.some(function (s) {
+        return s.text === 'reply';
+      }))
   };
 }
 
@@ -2745,9 +2794,9 @@ function analyseFunctionShape(scrubbed, fn) {
  * tracked alongside brace depth so that an object literal passed as a call
  * argument cannot contribute keys either.
  *
- * Measured against the base commit this rule yields exactly 147 exports with
- * the per-file distribution in BASELINE_EXPORTS, which is what makes it
- * trustworthy enough to police the rest of the analysis.
+ * At the base commit the rule yields the per-file distribution recorded in
+ * BASELINE_EXPORTS, which is the calibration that lets the export census
+ * police the rest of the analysis.
  */
 function findControllerExports(scrubbed, lineIndex) {
   var anchor = scrubbed.indexOf('module.exports');
@@ -2904,8 +2953,7 @@ function expressionStart(scrubbed, dotOffset) {
  * expressionStart() stops in front of the previous statement's terminator, so
  * its result can sit before a run of blank lines and comments. Without this
  * trim the reported line number belongs to the previous statement and the
- * extracted expression text begins with a comment, both of which were
- * observed before it was added.
+ * extracted expression text begins with a comment.
  */
 function trimLeading(scrubbed, from, to) {
   var i = from;
@@ -2948,8 +2996,8 @@ var PROMISE_LINK = /\.\s*(then|catch|finally)\s*\(/g;
  * conversion `lib/controllers/folders.js` calls `request.catch({ err : err,
  * message : ... })` in two places -- a preserved quirk in which the member does
  * not exist, so the call throws `TypeError` and the route catch-all answers
- * 500. Reading those as promise chains produced two rows whose "current shape"
- * described a chain that is not there and whose target disposition proposed
+ * 500. Reading those as promise chains yields rows whose "current shape"
+ * describes a chain that is not there and whose target disposition proposes
  * wrapping a bare reference that is an object literal.
  *
  * The structure that distinguishes them, applied to the call rather than to
@@ -2959,7 +3007,7 @@ var PROMISE_LINK = /\.\s*(then|catch|finally)\s*\(/g;
  *     promise reaction -- `Model.find().then(...)`, `.then(...).catch(...)`;
  *   - a receiver that is a plain identifier or member path is one only when
  *     the argument is FUNCTION-SHAPED: a function literal, an arrow, or a bare
- *     reference such as `.catch(request.fail)`. That admits the 14 measured
+ *     reference such as `.catch(request.fail)`. That admits the
  *     promise-variable receivers in this tree (`promise.then(...)`,
  *     `trinketPromise.then(...)`, `usernameCheck.then(...)`,
  *     `addFolderSlugJob.then(...)`, `getUserFiles.then(...)`,
@@ -3039,11 +3087,170 @@ function findNonReactionMemberCalls(scrubbed, lineIndex, original) {
  * disposition is then read once, at the head, because "returned or awaited
  * exactly once per path" is a property of the chain, not of each link.
  *
- * Every chain gets ONE row. The measured link totals (183 `.then(` and 85
- * `.catch(` at the base commit) are reported as scale in the document but are
- * deliberately not the row count -- a row is a unit of work an implementing
- * agent closes, and closing a chain means fixing all of its links at once.
+ * Every chain gets ONE row. The link totals recorded in BASELINE_THEN_CALLS
+ * and BASELINE_CATCH_CALLS are reported as scale in the document but are
+ * deliberately not the row count -- a row is a unit of work someone closes,
+ * and closing a chain means fixing all of its links at once.
  */
+// The two response-producing helpers the wrapper re-shapes to RETURN a toolkit
+// response (AAP rule T-1). A bare reference to one of them in a reaction slot
+// is therefore a reaction that produces a value, and the AAP names this exact
+// shape as the trap to get right: "the bare `request.fail` reference must have
+// its return value propagated".
+var RESPONSE_HELPER_REFERENCE = /^request\s*\.\s*(success|fail)$/;
+
+/**
+ * What the terminal link's reaction produces.
+ *
+ * Two mechanisms, and reading only the first argument saw neither of the
+ * second two forms that occur in this tree:
+ *
+ *   - a function literal in ANY argument slot. `.then(null, function (e) {
+ *     return e; })` registers a rejection handler in the SECOND slot;
+ *     `readFunctionAt` at the first argument returns null for it, so the
+ *     measured `lib/controllers/users.js:103` and `lib/controllers/auth.js:199`
+ *     chains were reported as having no reaction at all.
+ *   - a bare reference to `request.success` / `request.fail`. Six chains in
+ *     this tree end `.catch(request.fail)` or `.then(request.success)`, three
+ *     of them with an in-source comment recording that the call shape is
+ *     preserved verbatim. Since those helpers now RETURN the response, the
+ *     reaction produces the chain's value.
+ *
+ * @returns {{delivers: boolean, kind: string, helper: (string|null)}}
+ */
+function terminalReactionOf(scrubbed, original, terminal, argIsFunction) {
+  if (argIsFunction) {
+    return { delivers: true, kind: 'function-literal', helper: null };
+  }
+
+  var argText = original.slice(terminal.open + 1, terminal.close).trim();
+  var helper = RESPONSE_HELPER_REFERENCE.exec(argText.replace(/\s+/g, ''));
+  if (helper) {
+    return {
+      delivers: true,
+      kind: 'response-helper-reference',
+      helper: 'request.' + helper[1]
+    };
+  }
+
+  // A function literal in a later argument slot: scan the argument list at the
+  // call's own depth so a nested call's arguments cannot be mistaken for it.
+  var depth = 0;
+  for (var i = terminal.open + 1; i < terminal.close; i++) {
+    var ch = scrubbed[i];
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth++;
+    } else if (ch === ')' || ch === ']' || ch === '}') {
+      depth--;
+    } else if (depth === 0 && ch === 'f' && readFunctionAt(scrubbed, i) !== null &&
+        /(?:^|[^A-Za-z0-9_$])function$/.test(scrubbed.slice(Math.max(0, i - 1), i + 8))) {
+      return { delivers: true, kind: 'function-literal-later-slot', helper: null };
+    }
+  }
+
+  return { delivers: false, kind: 'no-reaction-value', helper: null };
+}
+
+/**
+ * How a chain's value leaves the expression it sits in.
+ *
+ * `returned`/`awaited` were the only two mechanisms recognized, and the
+ * measured tree uses five. The other three are not sloppiness: they are how
+ * this codebase composes work.
+ *
+ *   settlement-argument  `resolve(chain)` inside a `new Promise` executor --
+ *                        the chain's value becomes the settled value.
+ *   argument             `promises.push(chain)` -- handed to a consumer, which
+ *                        `Promise.all` then awaits.
+ *   capture              `promise = chain` -- bound to a name that a later
+ *                        `return promise.then(...)` delivers.
+ *
+ * A chain in none of these positions is in STATEMENT position: its value is
+ * discarded. That is a defect only where the discarded value could have been
+ * the response, which is decided by the carrier's own proof of delivery, not
+ * here (see chainDisposition).
+ *
+ * @returns {{kind: string, detail: (string|null)}}
+ */
+function chainDeliveryOf(scrubbed, original, headStart) {
+  var prefix = precedingToken(scrubbed, headStart);
+
+  if (prefix === 'return') {
+    return { kind: 'return', detail: null };
+  }
+  if (prefix === 'await') {
+    return { kind: 'await', detail: null };
+  }
+  if (isSettlementArgument(scrubbed, headStart)) {
+    return { kind: 'settlement-argument', detail: null };
+  }
+
+  var captured = capturedInto(scrubbed, headStart);
+  if (captured) {
+    return { kind: 'capture', detail: captured };
+  }
+
+  // An argument to some other call. The callee is recorded rather than
+  // asserted to be an aggregate: `promises.push` and `resolve` are what the
+  // tree uses, and a reader closing the row needs to see which one.
+  var before = headStart - 1;
+  while (before >= 0 && /\s/.test(scrubbed[before])) {
+    before--;
+  }
+  if (scrubbed[before] !== '(' && scrubbed[before] !== ',') {
+    return { kind: 'statement', detail: null };
+  }
+
+  var open = enclosingCallOpen(scrubbed, before);
+  if (open === -1) {
+    return { kind: 'argument', detail: null };
+  }
+  var calleeStart = trimLeading(scrubbed, expressionStart(scrubbed, open), open);
+  var callee = oneLine(original.slice(calleeStart, open), 40);
+  return { kind: 'argument', detail: callee === '' ? null : callee };
+}
+
+/**
+ * The offset of the `(` that opens the call an offset sits inside, or -1.
+ *
+ * Walks back at balanced depth so a preceding argument that is itself a call
+ * cannot be mistaken for the enclosing one. Needed for a chain in a later
+ * argument slot, where the character before it is a comma rather than the
+ * open paren.
+ */
+function enclosingCallOpen(scrubbed, from) {
+  var depth = 0;
+  for (var i = from; i >= 0; i--) {
+    var ch = scrubbed[i];
+    if (ch === ')' || ch === ']' || ch === '}') {
+      depth++;
+    } else if (ch === '(' || ch === '[' || ch === '{') {
+      if (depth === 0) {
+        return ch === '(' ? i : -1;
+      }
+      depth--;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Whether one of the chain's own reactions settles the promise its carrier
+ * returns, by handing a value to `resolve(...)` / `reject(...)`.
+ *
+ * The same mechanism the handler analysis counts as `nestedSettling`, applied
+ * to a chain: `lib/controllers/admin.js:357` and `lib/controllers/course.js:1840`
+ * both sit in statement position inside a `new Promise` executor and deliver
+ * through settlement, and reading them as discarded said the opposite of what
+ * their in-source comments record.
+ */
+function chainSettlesInReaction(scrubbed, headStart, endOffset) {
+  var re = /(?<![A-Za-z0-9_$.])(?:resolve|reject)\s*\(/g;
+  re.lastIndex = headStart;
+  var match = re.exec(scrubbed);
+  return match !== null && match.index < endOffset;
+}
+
 function findPromiseChains(scrubbed, lineIndex, original) {
   var links = offsetsOf(scrubbed, PROMISE_LINK).map(function (hit) {
     var openParen = scrubbed.indexOf('(', hit.index);
@@ -3098,6 +3305,8 @@ function findPromiseChains(scrubbed, lineIndex, original) {
     var terminal = members[members.length - 1];
     var argText = original.slice(terminal.open + 1, terminal.close).trim();
     var argIsFunction = readFunctionAt(scrubbed, terminal.open + 1) !== null;
+    var reaction = terminalReactionOf(scrubbed, original, terminal, argIsFunction);
+    var delivery = chainDeliveryOf(scrubbed, original, headStart);
 
     chains.push({
       startLine: lineAt(lineIndex, headStart),
@@ -3111,6 +3320,17 @@ function findPromiseChains(scrubbed, lineIndex, original) {
       terminalName: terminal.name,
       terminalIsFunction: argIsFunction,
       terminalArg: argIsFunction ? null : oneLine(argText, 60),
+      // Whether the TERMINAL LINK produces a value at all, and by which of the
+      // two mechanisms this repository uses. `terminalIsFunction` alone answers
+      // only the first-argument case and reported `.then(null, fn)` and
+      // `.catch(request.fail)` as producing nothing -- see terminalReactionOf.
+      terminalDelivers: reaction.delivers,
+      terminalReactionKind: reaction.kind,
+      terminalHelper: reaction.helper,
+      // How the chain's own value or settlement leaves the expression.
+      delivery: delivery.kind,
+      deliveryDetail: delivery.detail,
+      settlesInReaction: chainSettlesInReaction(scrubbed, headStart, terminal.close),
       returned: prefix === 'return',
       awaited: prefix === 'await',
       prefix: prefix,
@@ -3131,6 +3351,26 @@ function findPromiseChains(scrubbed, lineIndex, original) {
 var NON_CALLBACK_CALLEES = /(?:^|\.)(?:then|catch|finally|on|once|addListener|map|forEach|each|filter|find|findIndex|findWhere|reduce|reduceRight|sort|some|every|reject|pluck|groupBy|sortBy|countBy|partition|flatMap|bind|call|apply|defineProperty|freeze)$/;
 var UNDERSCORE_CALLEE = /^(?:_|lodash|Object|Array|JSON|Math|Promise|util)\./;
 
+// Node-core callback APIs. Rule T-5 converts one of these to its promise
+// equivalent when it sits inside the hapi-facing surface, and -- this is the
+// part a warning-driven reading of the rule gets wrong -- REGARDLESS of
+// whether it emits a deprecation warning: AAP 0.6.4 measured
+// `util.promisify(fs.writeFile)`, callback `fs.stat` and `fs.unlink` as silent
+// on Node 22 and converts them anyway. `rimraf` and `mkdirp` are here because
+// the plan treats them as exactly that -- Node-core-style callbacks whose
+// conversion to `fs.promises.rm` / `fs.promises.mkdir` is what removes the
+// package.
+var NODE_CORE_CALLBACK_CALLEE = /(?:^|\.)(?:fs|fsPromises)\s*\.\s*[A-Za-z]+$|^(?:rimraf|mkdirp)$|^(?:zlib|dns|child_process|childProcess)\s*\.\s*[A-Za-z]+$|^crypto\s*\.\s*(?:randomBytes|pbkdf2|scrypt|generateKeyPair|randomFill)$|^util\s*\.\s*promisify$/;
+
+// Node-core, but NOT completion callbacks: these schedule work rather than
+// report the outcome of it, so there is no promise equivalent that preserves
+// what they do. `setTimeout` has a promisified form whose semantics differ,
+// and `process.nextTick` has none at all. Converting one changes when the next
+// tick of work runs, which is a timing change R-d prohibits -- so T-5 does not
+// reach them and the row says which of the two Node-core categories it is in
+// rather than leaving a reader to assume the mandate applies.
+var NODE_SCHEDULING_CALLEE = /^(?:process\s*\.\s*nextTick|setTimeout|setImmediate|setInterval)$/;
+
 /**
  * Node-style callback boundaries inside a controller.
  *
@@ -3139,16 +3379,15 @@ var UNDERSCORE_CALLEE = /^(?:_|lodash|Object|Array|JSON|Math|Promise|util)\./;
  * two shapes a completion callback takes -- where the callee is not a promise
  * link, an event registration or a synchronous iteration helper.
  *
- * Empty-parameter callbacks are deliberately included, because two of the
- * conversions the plan names are exactly that shape:
- * `rimraf(dir, function() {})` and `fs.unlink(file, function() {})`.
+ * Empty-parameter callbacks are deliberately included, because two conversion
+ * sites are exactly that shape: `rimraf(dir, function() {})` and
+ * `fs.unlink(file, function() {})`.
  *
- * Rule T-3 is what each row records: the `await` is created AT THE CALL SITE,
- * inside the converted lifecycle method. It is not pushed down into
- * lib/util/file.js, lib/util/store.js or lib/util/queues.js, which keep their
- * callback interfaces -- three, three and one controller consume them
- * respectively -- because they are utilities a handler awaits, not lifecycle
- * methods themselves.
+ * What each row records is where the `await` goes: AT THE CALL SITE, inside the
+ * converted lifecycle method. It is not pushed down into lib/util/file.js,
+ * lib/util/store.js or lib/util/queues.js, which keep their callback interfaces,
+ * because they are utilities a handler awaits rather than lifecycle methods
+ * themselves.
  */
 function findCallbackBoundaries(scrubbed, lineIndex, original) {
   var boundaries = [];
@@ -3193,9 +3432,8 @@ function findCallbackBoundaries(scrubbed, lineIndex, original) {
 
     // The exclusion tests MUST run on the full callee text, not on the
     // truncated display form. `NON_CALLBACK_CALLEES` anchors on the end of
-    // the callee, and truncating first cut the trailing `.then` off a long
-    // chain -- which let promise links through as callback boundaries. That
-    // was measured, not hypothesised.
+    // the callee, and truncating first cuts the trailing `.then` off a long
+    // chain, which lets promise links through as callback boundaries.
     var calleeFull = oneLine(original.slice(calleeStart, callOpen));
     var callee = oneLine(calleeFull, 60);
     if (calleeFull === '' || NON_CALLBACK_CALLEES.test(calleeFull) ||
@@ -3203,22 +3441,22 @@ function findCallbackBoundaries(scrubbed, lineIndex, original) {
       continue;
     }
     // A promise constructor is not a callback boundary: `new Promise(function
-    // () {})` produces a promise whose settlement is the point, and the plan's
-    // T-3 boundary is the call that takes a completion callback.
+    // () {})` produces a promise whose settlement is the point, whereas a
+    // boundary is a call that takes a completion callback.
     //
-    // Two tests, because one of them was measured to miss. `expressionStart`
-    // walks back over identifier characters, so for `new Promise(...)` it
-    // returns the offset of `new` ITSELF -- `new` becomes part of the callee
-    // text and the token before it is whatever precedes the expression
-    // (`return`, here). That is why `lib/controllers/trinket.js:876`'s
-    // `return new Promise(function() {})` was classified as an error-first-or-
-    // empty callback boundary despite the stated exclusion. Testing the callee
-    // text for a leading `new` closes it; the preceding-token test is retained
-    // for the case where the walk stops before the keyword.
+    // Two tests, because either one alone misses. `expressionStart` walks back
+    // over identifier characters, so for `new Promise(...)` it returns the
+    // offset of `new` ITSELF -- `new` becomes part of the callee text and the
+    // token before it is whatever precedes the expression (`return`, in
+    // `lib/controllers/trinket.js`'s `return new Promise(function() {})`),
+    // which the preceding-token test alone reads as a boundary. Testing the
+    // callee text for a leading `new` closes that; the preceding-token test is
+    // retained for the case where the walk stops before the keyword.
     if (precedingToken(scrubbed, calleeStart) === 'new' || /^new(?![A-Za-z0-9_$])/.test(calleeFull)) {
       continue;
     }
 
+    var normalizedCallee = calleeFull.replace(/\s+/g, '');
     boundaries.push({
       line: lineAt(lineIndex, calleeStart),
       callee: callee,
@@ -3226,7 +3464,13 @@ function findCallbackBoundaries(scrubbed, lineIndex, original) {
       errorFirst: errorFirst,
       offset: calleeStart,
       endOffset: fn.bodyEnd,
-      alreadyAwaited: precedingToken(scrubbed, calleeStart) === 'await'
+      alreadyAwaited: precedingToken(scrubbed, calleeStart) === 'await',
+      // Which side of rule T-5 this callee falls on -- the question that
+      // decides whether the boundary must convert or is one the AAP keeps in
+      // callback form. Measured on the callee text, not on the callback's
+      // shape, because the mandate is about the API being called.
+      nodeCore: NODE_CORE_CALLBACK_CALLEE.test(normalizedCallee),
+      scheduling: NODE_SCHEDULING_CALLEE.test(normalizedCallee)
     });
     re.lastIndex = fn.bodyStart + 1;
   }
@@ -3240,9 +3484,8 @@ function findCallbackBoundaries(scrubbed, lineIndex, original) {
 /**
  * Stream sites, DERIVED rather than grepped.
  *
- * The plan counts 17 across four controllers and warns that a crude pattern
- * returns 10, so the rule is stated here in full and the result is
- * cross-checked against BASELINE_STREAM_SITES.
+ * A crude pattern under-counts them, so the rule is stated here in full and
+ * the result is cross-checked against BASELINE_STREAM_SITES.
  *
  * A stream site is a single source LINE that does one of:
  *   (a) creates a stream          -- createReadStream( / createWriteStream(
@@ -3256,8 +3499,8 @@ function findCallbackBoundaries(scrubbed, lineIndex, original) {
  * is (a) and (b) at once but is one place a reader has to look, and
  * `outputWriteStream = fs.createWriteStream(zipFile)` is (a) and (e) at once.
  *
- * What is deliberately EXCLUDED is what makes the rule land on 17 rather than
- * on a larger number: `.on('close')` / `.on('error')` lifecycle listeners are
+ * What is deliberately EXCLUDED is what keeps the count to one row per place a
+ * reader has to look: `.on('close')` / `.on('error')` lifecycle listeners are
  * attached AT a stream site already counted, and a `.then(function (stream))`
  * parameter merely names a stream without operating on one.
  */
@@ -3444,9 +3687,9 @@ function findNamedPreHandlers(scrubbed, lineIndex, original) {
 //     route : 'GET /' + lang + '/{shortCode} trinket.getByShortCode'
 //
 // and a literal-only scan silently misses all three such bindings -- which
-// then show up as phantom "unrouted" exports. Measured: a literal-only scan
-// finds 145 bindings and reports 5 unrouted exports; assembling the
-// concatenation finds 148 bindings and reports the correct 2.
+// then show up as phantom "unrouted" exports. At the base commit a
+// literal-only scan finds 145 bindings and reports 5 unrouted exports, where
+// assembling the concatenation finds 148 and reports the correct 2.
 //
 // assembleRouteExpression() therefore walks the value expression, reads each
 // string literal from the ORIGINAL text (the scrubbed copy has blanked their
@@ -3556,9 +3799,9 @@ function findPreHandlerReferences(scrubbed) {
 
 /**
  * Inline pre-handlers: function literals declared directly inside a `pre :`
- * array in a route-config module. There is exactly one at the base commit --
- * config/api_routes.js:1104, on POST /api/users/login -- and it is the single
- * member of its own category in the conversion set.
+ * array in a route-config module. There is exactly one at the base commit, on
+ * `POST /api/users/login` in config/api_routes.js, and it is the single member
+ * of its own category in the conversion set.
  */
 function findInlinePreHandlers(scrubbed, lineIndex, original, file) {
   var found = [];
@@ -3611,7 +3854,7 @@ function findInlinePreHandlers(scrubbed, lineIndex, original, file) {
 // ---------------------------------------------------------------------------
 // SECTION 9 -- REPLY CHAINS
 //
-// In the shim's builder (lib/util/routeParser.js:375-405) these four methods
+// In the response builder the shim's fake `reply` returns, these four methods
 // resolve the deferred and hand back a real hapi response...
 var RESOLVING_BUILDER_METHODS = ['redirect', 'code', 'header', 'view'];
 // ...while these two mutate the response and hand back the BUILDER, leaving
@@ -3780,8 +4023,8 @@ function findReplyChains(scrubbed, lineIndex, original) {
 
 /**
  * `reply(...)` call sites that are NOT returned and carry no chain at all --
- * the shape at lib/controllers/trinket.js:375, where `reply(err)` on an error
- * path relies entirely on the deferred.
+ * the shape in `lib/controllers/trinket.js`'s `create`, where `reply(err)` on
+ * an error path relies entirely on the deferred.
  */
 function findUnreturnedBareReplies(scrubbed, lineIndex, original) {
   var found = [];
@@ -4038,9 +4281,9 @@ function runSelfChecks(model) {
   );
   // The same arithmetic over the MEASURED model rather than over the
   // constants, because the document's headline sentence -- "the function rows
-  // are exactly the 154" -- is a claim about the rows it emits. Bundling the
-  // two dead-301 branch sites in with the pre-handler functions made that
-  // sentence false by two while every constant still agreed with itself.
+  // are exactly the 154" -- is a claim about the rows it emits. Counting the
+  // two dead-301 branch sites as pre-handler functions makes that sentence
+  // false by two while every constant still agrees with itself.
   var measuredFunctionRows = model.routedHandlers + model.routedPreHandlerNames.length +
     model.inlinePreHandlers.length;
   invariant(
@@ -4145,10 +4388,9 @@ function runSelfChecks(model) {
   // The roster is anchored by SYMBOL, so the anchor itself is what gets
   // asserted at the base commit: every entry must be locatable by its carrier
   // and link sequence, and the chain found there must sit at the coordinates
-  // the roster records. That is the check a mis-specified anchor fails -- and
-  // it is the check that was missing when all eight entries matched on
-  // `file` + `startLine`, reported "not found" the moment the lines moved, and
-  // had the renderer read that as "converted".
+  // the roster records. That is the check a mis-specified anchor fails. An
+  // anchor on `file` + `startLine` instead reports "not found" the moment the
+  // lines move, which a renderer reads as "converted".
   REPLY_CHAIN_ROSTER.forEach(function (entry) {
     var located = locateRosterEntry(model, entry);
     calibrated(
@@ -4235,6 +4477,100 @@ function runSelfChecks(model) {
     }
   }
 
+  // --- TIER 1: THE COMPLETION ACCOUNTING ----------------------------------
+  // Every closure figure the document prints comes from one census, and these
+  // checks are what make that a fact rather than an intention. The defect they
+  // exist to prevent is the one the row totals carried: two closure figures
+  // computed by different routes, printed a few hundred lines apart, that did
+  // not agree -- and a closed row in a population whose authority is a
+  // measurement nobody took.
+  // The section-4 policy prints one row per delivery mechanism and states that
+  // they sum to the delivered total. That is an arithmetic claim, so it is
+  // asserted here rather than left to a reader: a mechanism recognized by
+  // chainDeliveryOf() and absent from CHAIN_DELIVERY_MECHANISMS would silently
+  // fall into the reaction-settlement bucket and mislabel every row using it.
+  var chainCensus = chainDeliveryCensus(model.promiseChains);
+  var mechanismSum = CHAIN_DELIVERY_MECHANISMS.reduce(function (acc, key) {
+    return acc + (chainCensus.byDelivery[key] || 0);
+  }, 0);
+  invariant(
+    mechanismSum === chainCensus.delivered,
+    'The section-4 delivery-mechanism table sums to ' + mechanismSum +
+      ' but ' + chainCensus.delivered + ' chains are delivered. Every delivered chain must ' +
+      'appear under exactly one mechanism, or the section states an arithmetic claim that ' +
+      'does not hold.'
+  );
+  invariant(
+    chainCensus.delivered + (chainCensus.byState['discarded-by-design'] || 0) +
+      (chainCensus.byState['discarded-outside-lifecycle'] || 0) +
+      (chainCensus.byState['discarded-in-unproven-carrier'] || 0) === model.promiseChains.length,
+    'The section-4 disposition states do not partition the ' + model.promiseChains.length +
+      ' chain rows. Delivered, deliberately discarded and open must cover the population ' +
+      'exactly once each.'
+  );
+
+  var accounting = model.accounting;
+  if (accounting) {
+    invariant(
+      accounting.populationRows === accounting.totalRows,
+      'Population rows (' + accounting.populationRows + ') do not sum to the census total (' +
+        accounting.totalRows + '). Every section must carry exactly one population, or the ' +
+        'accounting describes a different set of rows from the table above it.'
+    );
+    invariant(
+      accounting.populationClosed === accounting.totalClosed,
+      'Population closures (' + accounting.populationClosed + ') do not sum to the census ' +
+        'closure total (' + accounting.totalClosed + '). Both must be derived from one ' +
+        'computed census.'
+    );
+    invariant(
+      accounting.measuredClosed === 0 || model.evidence.recorded > 0,
+      accounting.measuredClosed + ' row(s) whose target is a MEASUREMENT are closed while ' +
+        'the corpus records ' + model.evidence.recorded + ' scenarios with a confirming ' +
+        'replay verdict. Such a row cannot be closed by reading the tree: the source does ' +
+        'not say what the measurement was.'
+    );
+
+    // PER ROW, against its OWN scenario. Not a count against a count: one
+    // confirmed scenario legitimately closes every row pinned to it, so
+    // comparing the closed-row total to the confirmed-scenario total rejects
+    // valid partial evidence. See measuredRowLedger().
+    var ledger = measuredRowLedger(model);
+    var closedRows = ledger.filter(function (row) {
+      return row.closed;
+    });
+    closedRows.forEach(function (row) {
+      invariant(
+        Boolean(row.scenario) && row.evidenceState === EVIDENCE.RECORDED,
+        'Section ' + row.section + ' row ' + row.label + ' is closed, but its linked ' +
+          'scenario ' + (row.scenario ? '`' + row.scenario + '` is in state ' +
+            row.evidenceState : 'is absent') + '. A measurement-gated row closes only on a ' +
+          'confirming replay verdict for the scenario that drives IT.'
+      );
+    });
+    invariant(
+      accounting.measuredClosed === closedRows.length,
+      'The accounting reports ' + accounting.measuredClosed + ' closed measurement-gated ' +
+        'rows and the per-row ledger finds ' + closedRows.length +
+        '. Both enumerate the same populations, so a difference means one of them is ' +
+        'counting a row the other does not.'
+    );
+
+    // The distinct scenarios backing those rows cannot outnumber the confirmed
+    // scenarios in the corpus. This is the aggregate form that DOES hold,
+    // because it compares scenario identities rather than row counts.
+    var backing = Object.create(null);
+    closedRows.forEach(function (row) {
+      backing[row.scenario] = true;
+    });
+    invariant(
+      Object.keys(backing).length <= model.evidence.recorded,
+      Object.keys(backing).length + ' distinct scenarios back the closed ' +
+        'measurement-gated rows while only ' + model.evidence.recorded +
+        ' carry a confirming replay verdict.'
+    );
+  }
+
   return { failures: failures, notes: notes, atBaseline: atBaseline };
 }
 
@@ -4288,8 +4624,8 @@ function isCommit(head, shortSha) {
  * directory is not a git worktree.
  *
  * Scoped to the paths that were actually READ, which is the only cleanliness
- * question this document can answer honestly: a commit identifies the analysed
- * bytes exactly when the analysed files match that commit. Whether unrelated
+ * question this document can answer: a commit identifies the analysed bytes
+ * exactly when the analysed files match that commit. Whether unrelated
  * files in the tree are dirty says nothing about the analysis -- and this
  * document is itself one of them, so a whole-tree check would report dirt the
  * moment the document is written.
@@ -4342,11 +4678,10 @@ function digestOf(text) {
  *
  * This is the provenance claim that does not depend on commit identity at
  * all. A commit hash answers "which revision was analysed" only while the
- * working tree matches it, and it is useless to a reader if the hash names an
- * object their clone does not contain -- which is precisely what happened
- * when this document recorded a generator revision from a throwaway worktree.
- * A content digest is checkable from the files themselves, by anyone, with no
- * repository at all.
+ * working tree matches it, and it is useless to a reader when the hash names
+ * an object their clone does not contain -- a revision recorded from a
+ * throwaway worktree, for instance. A content digest is checkable from the
+ * files themselves, by anyone, with no repository at all.
  */
 function analysedSourceDigest(files) {
   var parts = files.slice().sort(function (a, b) {
@@ -4388,9 +4723,9 @@ var EVIDENCE = {
   // separate from PENDING because the two are different distances from
   // closure and a reader is entitled to know which one a row is at -- and
   // separate from RECORDED because a baseline alone says what the OLD code
-  // did, which is not a comparison. Closing on it would have re-created, in
-  // the checklist, exactly the "syntax disappeared, therefore done" reasoning
-  // this gate replaced.
+  // did, which is not a comparison. Closing on it re-creates, in the checklist,
+  // exactly the "syntax disappeared, therefore done" reasoning this gate exists
+  // to prevent.
   BASELINE_ONLY: 'baseline-captured-not-replayed',
   PENDING: 'defined-not-captured',
   // A scenario covers the ROUTE this site is reached from, but nothing pins
@@ -4416,10 +4751,12 @@ var EVIDENCE = {
  * the site's own line. Each roster entry names the scenario that drives it and
  * is located in the analysed tree by carrier and link sequence; a stream site
  * whose line falls inside a located chain's span is on that chain's branch and
- * inherits its scenario. That keeps the pin correct as lines move, and it is
- * honest about the sites it CANNOT place: `files.js:145` constructs the stream
- * before the branch, so no branch-exact scenario exists for it and its state
- * is `EVIDENCE.INDIRECT` -- candidates reported, row held open.
+ * inherits its scenario. That keeps the pin correct as lines move, and it
+ * reports the sites it CANNOT place: in `lib/controllers/files.js`'s `download`
+ * the stream is constructed by `FileUtil.downloadMaterialFile(remoteFile)`
+ * before the image/attachment branch splits, so no branch-exact scenario exists
+ * for that site and its state is `EVIDENCE.INDIRECT` -- candidates reported,
+ * row held open.
  */
 function pinStreamScenario(model, site) {
   var best = null;
@@ -4447,13 +4784,73 @@ function pinStreamScenario(model, site) {
           scenario: entry.scenario,
           span: span,
           branch: entry.carrier + ' ' + chain.startLine + '-' + chain.endLine,
-          category: entry.category || null
+          category: entry.category || null,
+          basis: 'the site sits inside the located chain'
         };
       }
     });
   });
 
-  return best;
+  if (best) {
+    return best;
+  }
+
+  // SOLE-BRANCH PIN. A site that sits in a carrier holding exactly ONE located
+  // reply chain is on that chain's branch, because there is no other branch in
+  // that carrier to be on. This is the case the containment test alone cannot
+  // reach: `downloadZip` builds its archive and its read stream BEFORE the
+  // response expression, so four of its five sites fall outside the chain's
+  // span while being unambiguously on the same path through the function.
+  //
+  // The condition is exactly one chain, and that is the whole safeguard.
+  // `files.download` holds TWO -- the inline-image branch and the attachment
+  // branch, which are mutually exclusive -- so a result for one is silent
+  // about the other and no pin is derived there. The basis is recorded on the
+  // pin so a reader checks the reasoning rather than taking the scenario id.
+  var carrierName = site.carrier ? site.carrier.name : null;
+  if (!carrierName) {
+    return null;
+  }
+
+  // The branch count is the number of ROSTER ENTRIES in the carrier, not the
+  // number this run managed to locate in the text. That distinction is the
+  // safeguard, and getting it wrong is not hypothetical: `files.download`
+  // carries two entries -- the never-settling inline-image branch and the
+  // header-resolved attachment branch -- and only the second is locatable in
+  // the converted tree, so counting located chains found "exactly one" and
+  // pinned a site to a branch it may not be on. Counting declared entries
+  // refuses the pin, which is the correct answer for a carrier with two
+  // mutually exclusive branches.
+  var entriesInCarrier = REPLY_CHAIN_ROSTER.filter(function (entry) {
+    return entry.file === site.file && entry.carrier === carrierName;
+  });
+  if (entriesInCarrier.length !== 1 || !entriesInCarrier[0].scenario) {
+    return null;
+  }
+
+  var inCarrier = [];
+  entriesInCarrier.forEach(function (entry) {
+    var located = locateRosterEntry(model, entry);
+    var chain = located.target || located.legacy;
+    if (chain) {
+      inCarrier.push({ entry: entry, chain: chain });
+    }
+  });
+
+  if (inCarrier.length !== 1) {
+    return null;
+  }
+
+  return {
+    scenario: inCarrier[0].entry.scenario,
+    span: inCarrier[0].chain.endLine - inCarrier[0].chain.startLine,
+    branch: carrierName + ' ' + inCarrier[0].chain.startLine + '-' +
+      inCarrier[0].chain.endLine,
+    category: inCarrier[0].entry.category || null,
+    basis: 'the site is outside the located chain\'s span, but `' + carrierName +
+      '` DECLARES exactly one reply chain, so there is no other branch in it for the site ' +
+      'to be on'
+  };
 }
 
 /**
@@ -4475,7 +4872,8 @@ function loadEvidence(appRoot) {
       scenarios: Object.create(null),
       byRoute: Object.create(null),
       total: 0,
-      pending: 0
+      pending: 0,
+      recorded: 0
     };
   }
 
@@ -4512,8 +4910,8 @@ function loadEvidence(appRoot) {
       // code did; only a replay against the migrated tree says whether the
       // target matches it -- or, for the approved deviation, whether the
       // declared change is what actually happened. `test/parity/replay.js`
-      // owns producing this; the field names below are the ones it may write,
-      // and absence is reported as absence rather than assumed to be a pass.
+      // produces this; the field names below are the ones it may write, and
+      // absence is reported as absence rather than assumed to be a pass.
       replay: readReplayResult(scenario)
     };
     scenarios[entry.id] = entry;
@@ -4547,18 +4945,27 @@ function loadEvidence(appRoot) {
       ? summary.baselinesPending
       : ids.filter(function (id) {
         return !scenarios[id].hasBaseline;
-      }).length
+      }).length,
+    // Scenarios carrying BOTH halves of a comparison. Counted here rather than
+    // derived at each call site, because it is the figure the one
+    // runtime-evidence predicate answers from and the figure the document
+    // reports: a corpus can be fully captured and still prove nothing about
+    // this tree, which is exactly the state a `summary.captured` reading
+    // mistook for evidence.
+    recorded: ids.filter(function (id) {
+      var scenario = scenarios[id];
+      return scenario.hasBaseline && scenario.replay && scenario.replay.confirmed;
+    }).length
   };
 }
 
 /**
  * The replay result recorded on one scenario, or `null` when none is.
  *
- * `test/parity/replay.js` is owned elsewhere and has not run against this
- * corpus yet, so this reader accepts the shapes a replay result can
- * reasonably take rather than one field name, and treats anything it does not
- * recognize as ABSENT. Recognizing a result requires an explicit verdict:
- * a bare `replay: {}` is not a pass.
+ * The reader accepts the shapes a replay result written by
+ * `test/parity/replay.js` can reasonably take, rather than one field name, and
+ * treats anything it does not recognize as ABSENT. Recognizing a result
+ * requires an explicit verdict: a bare `replay: {}` is not a pass.
  */
 function readReplayResult(scenario) {
   var raw = scenario.replay || scenario.target || scenario.replayResult || null;
@@ -4578,21 +4985,188 @@ function readReplayResult(scenario) {
     // which is the point of reading the verdict rather than its presence.
     confirmed: normalized === 'match' || normalized === 'matched' ||
       normalized === 'identical' || normalized === 'pass' ||
-      normalized === 'approved-change' || normalized === 'approved',
-    approvedChange: normalized === 'approved-change' || normalized === 'approved'
+      normalized === 'approved-change' || normalized === 'approved' ||
+      normalized === 'approved-deviation',
+    approvedChange: normalized === 'approved-change' || normalized === 'approved' ||
+      normalized === 'approved-deviation'
   };
+}
+
+// Where a replay artifact keeps its per-scenario verdicts, and what a verdict
+// is called there. Read from test/parity/replay.js's own writer
+// (`summarizePass`, whose `scenarioResults` carries one record per scenario
+// with a `status` drawn from its STATUS_* constants) rather than guessed, so
+// the join is against the shape that tool actually emits.
+var REPLAY_ARTIFACT_TOOL = 'test/parity/replay.js';
+
+/**
+ * Reads the artifact `test/parity/replay.js --out` writes, and returns its
+ * per-scenario verdicts.
+ *
+ * WHY THIS EXISTS. The verdicts a measurement-gated row needs are produced by
+ * replay.js and written to ITS OWN artifact. Nothing in this repository writes
+ * a verdict back into `test/parity/corpus.json`: `--annotations` is an INPUT to
+ * replay.js (it joins `expectedDeviation` and `unreachableReason` by id), and
+ * capture.js is the only writer of the corpus. This generator read verdicts
+ * only off the corpus scenario objects, so the two halves of the workflow could
+ * not meet and no amount of replaying would have closed a single row. That was
+ * not a policy decision, it was a missing join, and it is the reason the 28
+ * measurement-gated rows could not close from evidence that had been produced.
+ *
+ * WHAT IT REFUSES. A replay run labelled `gateQualifying: false` by its own
+ * producer -- a narrowed `--only` run, a single pass, a corpus replayed under
+ * `--allow-unreviewed-corpus` -- cannot stand as the gate, and replay.js says
+ * so in the artifact. Its verdicts are read and REPORTED but do not close a
+ * row: closing on them would put back exactly what this area was repaired for,
+ * a checklist asserting a measurement that cannot be cited. The rows stay open
+ * and the document names the artifact and the reason it does not qualify.
+ *
+ * @param {string} artifactPath the path given to --replay
+ * @returns {{path: string, verdict: (string|null), gateQualifying: boolean,
+ *            gateQualifyingReason: (string|null), digest: string,
+ *            statuses: Object, scenarios: number, confirming: number,
+ *            usable: boolean}}
+ * @throws {Error} a usage error when the artifact is missing or unreadable
+ */
+function loadReplayArtifact(artifactPath) {
+  var raw;
+  try {
+    raw = fs.readFileSync(artifactPath, 'utf8');
+  } catch (err) {
+    throw usageError('Cannot read the replay artifact ' + artifactPath + ': ' + err.message);
+  }
+
+  var parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw usageError('Cannot parse the replay artifact ' + artifactPath + ': ' + err.message);
+  }
+
+  if (parsed.tool !== REPLAY_ARTIFACT_TOOL) {
+    throw usageError('The replay artifact ' + artifactPath + ' names ' +
+      JSON.stringify(parsed.tool || null) + ' as its tool, not ' +
+      JSON.stringify(REPLAY_ARTIFACT_TOOL) + '. --replay takes the `--out` artifact of ' +
+      REPLAY_ARTIFACT_TOOL + ' and nothing else: an artifact of unknown provenance joined ' +
+      'onto the evidence would close rows on verdicts whose meaning is unknown.');
+  }
+
+  var passes = Array.isArray(parsed.passes) ? parsed.passes : [];
+  if (passes.length === 0) {
+    throw usageError('The replay artifact ' + artifactPath + ' records no passes, so it ' +
+      'carries no per-scenario verdict to join.');
+  }
+
+  // A scenario driven in several passes must be confirmed in EVERY one of
+  // them. The weakest verdict governs, for the same reason
+  // weakestEvidenceState() takes the weakest of several scenarios: a row is
+  // only as proven as its least-proven driving, and the secure and non-secure
+  // passes measure different cookie contracts over the same route.
+  var statuses = Object.create(null);
+  passes.forEach(function (pass) {
+    var results = Array.isArray(pass.scenarioResults) ? pass.scenarioResults : [];
+    results.forEach(function (record) {
+      if (!record || typeof record.id !== 'string' || record.id === '') {
+        return;
+      }
+      var verdict = readReplayResult({ replay: { verdict: record.status } });
+      var confirmed = Boolean(verdict && verdict.confirmed);
+      var held = statuses[record.id];
+      if (!held) {
+        statuses[record.id] = {
+          verdict: record.status || null,
+          confirmed: confirmed,
+          approvedChange: Boolean(verdict && verdict.approvedChange),
+          passes: [pass.name || 'unnamed']
+        };
+        return;
+      }
+      held.passes.push(pass.name || 'unnamed');
+      if (!confirmed) {
+        held.verdict = record.status || null;
+        held.confirmed = false;
+        held.approvedChange = Boolean(verdict && verdict.approvedChange);
+      }
+    });
+  });
+
+  var ids = Object.keys(statuses);
+  return {
+    path: artifactPath,
+    verdict: typeof parsed.verdict === 'string' ? parsed.verdict : null,
+    gateQualifying: parsed.gateQualifying === true,
+    gateQualifyingReason: typeof parsed.gateQualifyingReason === 'string'
+      ? parsed.gateQualifyingReason
+      : null,
+    digest: crypto.createHash('sha256').update(raw).digest('hex'),
+    statuses: statuses,
+    scenarios: ids.length,
+    confirming: ids.filter(function (id) {
+      return statuses[id].confirmed;
+    }).length,
+    // Only a gate-qualifying artifact may close a row. See the note above.
+    usable: parsed.gateQualifying === true
+  };
+}
+
+/**
+ * Joins a replay artifact's verdicts onto the corpus evidence, in place.
+ *
+ * The corpus supplies the baseline half of every comparison and the artifact
+ * supplies the target half, which is the division the two tools already have.
+ * A verdict for a scenario the corpus does not contain is recorded as
+ * unmatched rather than silently ignored: it means the two artifacts describe
+ * different corpora, and a reader is entitled to see that rather than a lower
+ * closure figure with no reason.
+ *
+ * @param {Object} evidence the loaded corpus evidence, mutated
+ * @param {Object} artifact from loadReplayArtifact
+ * @returns {{joined: number, unmatched: string[], closed: number}}
+ */
+function joinReplayEvidence(evidence, artifact) {
+  var joined = 0;
+  var unmatched = [];
+  var closed = 0;
+
+  Object.keys(artifact.statuses).forEach(function (id) {
+    var status = artifact.statuses[id];
+    var scenario = evidence.scenarios[id];
+    if (!scenario) {
+      unmatched.push(id);
+      return;
+    }
+    joined++;
+    if (!artifact.usable) {
+      return;
+    }
+    scenario.replay = {
+      verdict: status.verdict,
+      confirmed: status.confirmed,
+      approvedChange: status.approvedChange
+    };
+    if (status.confirmed && scenario.hasBaseline) {
+      closed++;
+    }
+  });
+
+  // The one figure every closure rule reads. Recomputed here rather than
+  // adjusted, so it cannot drift from the scenarios it counts.
+  evidence.recorded = Object.keys(evidence.scenarios).filter(function (id) {
+    var scenario = evidence.scenarios[id];
+    return scenario.hasBaseline && scenario.replay && scenario.replay.confirmed;
+  }).length;
+
+  return { joined: joined, unmatched: unmatched.sort(), closed: closed };
 }
 
 /**
  * The evidence state of one named scenario.
  *
  * RECORDED requires BOTH halves: the baseline captured and the target
- * replayed with a confirming verdict. The generator's own explanation of
- * these rows has always said that a captured baseline and a replayed target
- * decide them; an earlier revision nonetheless returned RECORDED from
- * `hasBaseline` alone, so a fabricated baseline with no replay closed the
- * `files.js` deviation row and called it a measurement. The predicate now
- * matches the prose.
+ * replayed with a confirming verdict. A captured baseline alone records what
+ * the pre-migration code did, which is not a comparison, so it yields
+ * BASELINE_ONLY -- returning RECORDED from `hasBaseline` alone would let a
+ * baseline with no replay close a row and call it a measurement.
  */
 function evidenceStateOf(evidence, scenarioId) {
   if (!evidence.available) {
@@ -4615,10 +5189,10 @@ function evidenceStateOf(evidence, scenarioId) {
  *
  * The weakest state governs, not the strongest. A row that claims the
  * preserved behaviour of every branch it names is only as proven as its
- * least-proven branch, and taking the strongest let one captured scenario
- * close sibling rows for branches that scenario cannot reach -- the image
- * and attachment branches of `files.download` are mutually exclusive, so a
- * result for one is silent about the other.
+ * least-proven branch, and taking the strongest lets one captured scenario
+ * close sibling rows for branches that scenario cannot reach -- the image and
+ * attachment branches of `files.download` are mutually exclusive, so a result
+ * for one is silent about the other.
  */
 function weakestEvidenceState(evidence, scenarioIds) {
   if (!evidence.available) {
@@ -4736,7 +5310,7 @@ function loadFile(appRoot, relPath) {
  * as text, which is what keeps lib/controllers/users.js from creating the
  * exports queue and loading the AWS SDK inside a static generator.
  */
-function analyseTree(appRoot) {
+function analyseTree(appRoot, replayArtifact) {
   var files = [];
   var model = {
     appRoot: appRoot,
@@ -4968,9 +5542,29 @@ function analyseTree(appRoot) {
   // rather than re-deriving the join per table.
   model.evidence = loadEvidence(appRoot);
 
+  // The target half of every comparison, when a replay artifact was supplied.
+  // Joined here -- immediately after the corpus and before any row reads an
+  // evidence state -- so the stream pins, the roster rows and the accounting
+  // all see one settled evidence model. See loadReplayArtifact() for why the
+  // join is needed at all and what it refuses.
+  model.replayArtifact = replayArtifact || null;
+  model.replayJoin = replayArtifact
+    ? joinReplayEvidence(model.evidence, replayArtifact)
+    : null;
+
   model.replyChains.forEach(function (chain) {
     chain.carrier = carrierOf(model, chain.file, chain.startLine);
     chain.enclosing = chain.carrier ? chain.carrier.name : null;
+  });
+
+  resolveChainDispositions(model);
+
+  // Same carrier resolution for callback boundaries: the closure question has
+  // a carrier half, so the carrier travels with the row rather than being
+  // re-derived in the renderer.
+  model.callbackBoundaries.forEach(function (cb) {
+    cb.carrier = carrierOf(model, cb.file, cb.line);
+    cb.disposition = callbackDisposition(cb);
   });
 
   Object.keys(model.streamSitesByController).forEach(function (name) {
@@ -5012,7 +5606,7 @@ function analyseTree(appRoot) {
   // --- gate evidence for the five unrouted functions ----------------------
   // Only the unrouted ones are measured. The routed ones are in the
   // conversion set unconditionally, so a gate determination for them would be
-  // noise -- and findReferences() walks the tree, which is not free.
+  // noise -- and findExportReferences() walks the tree, which is not free.
   model.handlers.forEach(function (h) {
     if (!h.routed) {
       h.gate = gateEvidence(appRoot, h.file, h.name, h.bodyText);
@@ -5026,14 +5620,13 @@ function analyseTree(appRoot) {
 
   // --- provenance ---------------------------------------------------------
   //
-  // Four separate claims, because they answer four different questions and
-  // conflating them is what made the previous header unusable: the analysed
-  // tree's revision, whether that revision still describes the analysed BYTES,
-  // a content digest that is checkable without any repository, and the
-  // identity of the generator itself. The last one used to be recorded as a
-  // commit taken from whatever directory the generator happened to be run
-  // from -- a revision that was not an object in this repository at all, so a
-  // reader could not retrieve the generator the document claimed to come from.
+  // Four separate claims, because they answer four different questions and a
+  // header that conflates them is unusable: the analysed tree's revision,
+  // whether that revision still describes the analysed BYTES, a content digest
+  // checkable without any repository, and the identity of the generator itself.
+  // The last is resolved against the generator's OWN repository rather than the
+  // directory it happens to run from, so the revision it names is one a reader
+  // can retrieve.
   var appHead = gitHead(appRoot);
   var analysedPaths = files.map(function (f) {
     return f.path;
@@ -5064,6 +5657,12 @@ function analyseTree(appRoot) {
     evidencePath: CORPUS_PATH,
     evidenceAvailable: model.evidence.available,
     evidenceCaptured: model.evidence.captured,
+    // The gate-relevant figure: scenarios carrying BOTH a captured baseline
+    // and a confirming replay verdict. Recorded in the artifact's own header
+    // because it is the number every measurement-gated row answers to, and a
+    // header that carried only `evidenceCaptured` reported a corpus as
+    // evidence while none of it had been replayed against this tree.
+    evidenceRecorded: model.evidence.recorded,
     evidenceDigest: model.evidence.available
       ? digestOf(fs.readFileSync(path.join(appRoot, CORPUS_PATH), 'utf8'))
       : null,
@@ -5073,6 +5672,12 @@ function analyseTree(appRoot) {
     // holds that blob at that path.
     contractGenerator: provenanceContract.generator(__filename, GENERATOR_REPO_ROOT)
   };
+
+  // The row census and its population accounting, attached to the model so the
+  // self-checks can assert the arithmetic before anything is rendered.
+  var census = buildSectionCensus(model);
+  model.sections = census.sections;
+  model.accounting = census.accounting;
 
   return model;
 }
@@ -5108,7 +5713,19 @@ function carrierOf(model, file, line) {
     }
     var span = h.endLine - h.line;
     if (span < bestSpan) {
-      best = { name: h.name, kind: 'handler', binding: h.binding };
+      // `line`/`endLine` and the handler's own delivery proof travel with the
+      // carrier, because a site's disposition often depends on them: a value
+      // discarded inside a lifecycle method that is PROVEN to deliver on every
+      // path cannot have been the response.
+      best = {
+        name: h.name,
+        kind: 'handler',
+        binding: h.binding,
+        line: h.line,
+        endLine: h.endLine,
+        delivers: isHandlerClosed(h),
+        routed: h.routed
+      };
       bestSpan = span;
     }
   });
@@ -5119,12 +5736,222 @@ function carrierOf(model, file, line) {
     }
     var span = fn.endLine - fn.line;
     if (span < bestSpan) {
-      best = { name: fn.name, kind: 'function' };
+      best = {
+        name: fn.name,
+        kind: 'function',
+        line: fn.line,
+        endLine: fn.endLine,
+        // A module-scope helper is not a lifecycle method, so there is no
+        // delivery obligation on it to prove (rule T-3 puts the promise
+        // boundary at the lifecycle method).
+        delivers: null,
+        routed: false
+      };
       bestSpan = span;
     }
   });
 
   return best;
+}
+
+/**
+ * Whether a captured name is later read in a position that delivers its value,
+ * anywhere in the span given.
+ *
+ * Three positions count, and the third is transitive: a `return`/`throw`
+ * expression, a promise settlement argument, and the head of ANOTHER chain
+ * that this analysis has already established as delivered -- which is how
+ * `addFolderSlugJob = Folder.findByOwner(user)...` reaches hapi, through
+ * `addFolderSlugJob.then(...).then(function () { resolve(request.success(...)); })`
+ * twenty lines below it.
+ */
+function nameDeliveredIn(scrubbed, from, to, name, chains) {
+  var pattern = new RegExp('(?<![A-Za-z0-9_$.])' + name + '(?![A-Za-z0-9_$])', 'g');
+  pattern.lastIndex = from;
+  var match;
+
+  while ((match = pattern.exec(scrubbed)) !== null && match.index < to) {
+    if (isInReturnPosition(scrubbed, match.index) ||
+        isSettlementArgument(scrubbed, match.index)) {
+      return true;
+    }
+    var headOfDelivered = chains.some(function (other) {
+      return other.headStart === match.index && other.delivered === true;
+    });
+    if (headOfDelivered) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Settles every promise chain's disposition: whether its value reaches a
+ * consumer, and -- where it does not -- whether that is a defect or the
+ * preserved fire-and-forget the baseline had.
+ *
+ * WHY THIS IS NOT A PREFIX TEST. The question a chain row answers is the one
+ * AAP 0.4.1 poses: after conversion each chain must be "returned or awaited
+ * exactly once per path", because "neither a returned-but-unawaited chain nor
+ * an awaited-but-unreturned one is visible in a signature count". Reading only
+ * `return`/`await` and only a first-argument function literal answered a
+ * narrower question than that, and got 34 chains in this tree wrong in the
+ * SAFE-LOOKING direction -- reporting delivered work as open, including all
+ * ten `return ....catch(request.fail)` chains, which are the very shape the
+ * AAP singles out as correct and which three carry an in-source comment
+ * recording as preserved verbatim.
+ *
+ * A row therefore closes when either half of the disposition is settled:
+ *
+ *   DELIVERED -- the chain's value or settlement reaches a consumer (return,
+ *   await, `resolve(chain)`, an argument such as `promises.push(chain)`, a
+ *   capture whose name is later delivered, or a reaction that settles the
+ *   carrier's promise) AND its terminal reaction produces a value.
+ *
+ *   DELIBERATELY DISCARDED -- the chain is in statement position with no
+ *   settlement, and nothing can have depended on its value: either the carrier
+ *   is a lifecycle method PROVEN to deliver on every path (so the discarded
+ *   value provably was not the response), or the carrier is not a lifecycle
+ *   method at all, where T-3 puts no delivery obligation and the discard is
+ *   the helper's own timing -- preserved under R-d. Two of these are mandated
+ *   by T-5 in as many words: the fire-and-forget
+ *   `fs.promises.unlink(...).catch(() => {})` sites.
+ *
+ * It stays OPEN when the value is discarded inside a lifecycle method whose
+ * own delivery is NOT proven -- there the discarded value may have been the
+ * response -- or when it is delivered into a reaction that produces nothing.
+ * Both reasons are recorded on the chain and printed in the row.
+ */
+function resolveChainDispositions(model) {
+  var scrubbedByFile = Object.create(null);
+  model.files.forEach(function (file) {
+    scrubbedByFile[file.path] = file.scrubbed;
+  });
+
+  model.promiseChains.forEach(function (chain) {
+    chain.carrier = carrierOf(model, chain.file, chain.startLine);
+    chain.delivered = chain.delivery === 'return' || chain.delivery === 'await' ||
+      chain.delivery === 'settlement-argument' || chain.delivery === 'argument' ||
+      chain.settlesInReaction;
+  });
+
+  // The capture case is transitive -- a name delivered by a chain that is
+  // itself delivered by a name -- so it is resolved to a fixpoint rather than
+  // in one pass. The bound exists because a cycle in the tree must terminate
+  // the loop rather than hang the generator.
+  var pass = 0;
+  var changed = true;
+  while (changed && pass < 8) {
+    changed = false;
+    pass++;
+    model.promiseChains.forEach(function (chain) {
+      if (chain.delivered || chain.delivery !== 'capture' || !chain.deliveryDetail) {
+        return;
+      }
+      var scrubbed = scrubbedByFile[chain.file];
+      if (!scrubbed) {
+        return;
+      }
+      var siblings = model.promiseChains.filter(function (other) {
+        return other.file === chain.file;
+      });
+      var from = chain.endOffset;
+      var to = scrubbed.length;
+      if (chain.carrier) {
+        var lineIndex = null;
+        model.files.forEach(function (file) {
+          if (file.path === chain.file) {
+            lineIndex = file.lineIndex;
+          }
+        });
+        if (lineIndex) {
+          to = chain.carrier.endLine < lineIndex.length
+            ? lineIndex[chain.carrier.endLine]
+            : scrubbed.length;
+        }
+      }
+      if (nameDeliveredIn(scrubbed, from, to, chain.deliveryDetail, siblings)) {
+        chain.delivered = true;
+        changed = true;
+      }
+    });
+  }
+
+  model.promiseChains.forEach(function (chain) {
+    chain.disposition = chainDisposition(chain);
+  });
+}
+
+/** The settled disposition of one chain: closed or open, and why. */
+function chainDisposition(chain) {
+  if (chain.delivered && chain.terminalDelivers) {
+    return {
+      closed: true,
+      state: 'delivered',
+      reason: chainDeliveryPhrase(chain)
+    };
+  }
+  if (chain.delivered && !chain.terminalDelivers) {
+    return {
+      closed: false,
+      state: 'delivered-into-nothing',
+      reason: 'the chain leaves the expression (' + chainDeliveryPhrase(chain) +
+        ') but its terminal `.' + chain.terminalName + '(' +
+        (chain.terminalArg ? chain.terminalArg : '') + ')` registers no reaction that ' +
+        'produces a value, so what reaches hapi is whatever the previous link resolved to'
+    };
+  }
+  if (chain.carrier && chain.carrier.kind === 'handler' && chain.carrier.delivers !== true) {
+    return {
+      closed: false,
+      state: 'discarded-in-unproven-carrier',
+      reason: 'the chain is in statement position, so its value is discarded, and `' +
+        chain.carrier.name + '` is not proven to deliver on every path -- the discarded ' +
+        'value may be the response on the path that does not'
+    };
+  }
+  if (chain.carrier && chain.carrier.kind === 'handler') {
+    return {
+      closed: true,
+      state: 'discarded-by-design',
+      reason: 'the chain is in statement position and `' + chain.carrier.name +
+        '` is proven to deliver a lifecycle value on every path, so the discarded value ' +
+        'was not the response -- this is fire-and-forget timing, and preserving it is the ' +
+        'target (R-d)'
+    };
+  }
+  return {
+    closed: true,
+    state: 'discarded-outside-lifecycle',
+    reason: 'the chain is in statement position inside ' +
+      (chain.carrier ? '`' + chain.carrier.name + '`' : 'module scope') +
+      ', which is not a lifecycle method, so rule T-3 places no delivery obligation on ' +
+      'it and the discard is the helper\'s own timing -- preserved under R-d'
+  };
+}
+
+/** How a delivered chain's value leaves, in a phrase a row can carry. */
+function chainDeliveryPhrase(chain) {
+  if (chain.delivery === 'return') {
+    return 'returned';
+  }
+  if (chain.delivery === 'await') {
+    return 'awaited';
+  }
+  if (chain.delivery === 'settlement-argument') {
+    return 'handed to `resolve(...)` / `reject(...)`, settling the promise the carrier returns';
+  }
+  if (chain.delivery === 'argument') {
+    return 'passed to `' + (chain.deliveryDetail || 'a consumer') + '`';
+  }
+  if (chain.delivery === 'capture') {
+    return 'captured into `' + chain.deliveryDetail + '`, which a later expression delivers';
+  }
+  if (chain.settlesInReaction) {
+    return 'settled through `resolve(...)` / `reject(...)` inside one of its own reactions';
+  }
+  return 'delivered';
 }
 
 /**
@@ -5250,9 +6077,9 @@ function enclosingHandlerName(handlers, file, line) {
 //
 // The five defined-but-unrouted functions -- two controller exports and three
 // named pre-handlers -- are not hapi-facing work under blocking-only scope.
-// They convert only if another gate independently forces it, and the plan is
-// explicit that the determination must be RECORDED per function rather than
-// assumed. Two gates can force one:
+// They convert only if another gate independently forces it, and that
+// determination is RECORDED per function rather than assumed. Two gates can
+// force one:
 //
 //   the deprecation bar   -- a Node-core deprecated API inside the body
 //   the repaired suite    -- a reference from any spec or test helper
@@ -5309,19 +6136,100 @@ function collectJsFiles(root, relDir, maxDepth, out) {
 }
 
 /**
- * Where an identifier is referenced across the application and the suite,
- * excluding the file that defines it. Files are read as TEXT and scrubbed, so
- * a mention inside a comment or a string does not count as a reference -- and
- * nothing under test/lib or test/helpers is ever REQUIRED, only read.
+ * The module path a `require(...)` argument names, resolved to a path relative
+ * to the analysed tree's root, or null when it is not a relative require.
+ *
+ * Only relative requires can name a file in this tree; a bare specifier is a
+ * package. The `.js` extension is supplied when the specifier omits it, which
+ * is how every require in this repository is written.
  */
-function findReferences(appRoot, identifier, excludePath) {
+function resolveRequiredPath(fromRel, specifier) {
+  if (specifier.charAt(0) !== '.') {
+    return null;
+  }
+  var resolved = path.posix.normalize(
+    path.posix.join(path.posix.dirname(fromRel), specifier)
+  );
+  return /\.js$/.test(resolved) ? resolved : resolved + '.js';
+}
+
+/**
+ * The local names one file binds to a given module, plus whether it reaches
+ * that module's exports without binding a name at all.
+ *
+ * Read from the UNSCRUBBED text, because the module path is a string literal
+ * and `scrubSource` blanks string contents by design. The member access is
+ * then matched in the scrubbed text, so the two halves read the form each one
+ * survives in.
+ */
+function moduleBindingsIn(text, fromRel, targetRel, identifier) {
+  var bindings = [];
+  var direct = false;
+  var re = /require\s*\(\s*(['"])([^'"]+)\1\s*\)/g;
+  var match;
+
+  while ((match = re.exec(text)) !== null) {
+    if (resolveRequiredPath(fromRel, match[2]) !== targetRel) {
+      continue;
+    }
+
+    // `require('./x').name` -- the export is reached with no intermediate
+    // name, so there is nothing to match a member access against later.
+    var after = text.slice(match.index + match[0].length, match.index + match[0].length + 80);
+    if (new RegExp('^\\s*\\.\\s*' + identifier + '(?![A-Za-z0-9_$])').test(after)) {
+      direct = true;
+    }
+
+    // The binding is whatever the require is assigned to. All three forms this
+    // repository uses are accepted: `var x = require(...)`, a continued
+    // `x = require(...)` inside a multi-name declaration, and destructuring.
+    var before = text.slice(Math.max(0, match.index - 200), match.index);
+    var assigned = /([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*$/.exec(before);
+    if (assigned) {
+      bindings.push(assigned[1]);
+      continue;
+    }
+    var destructured = /\{([^{}]*)\}\s*=\s*$/.exec(before);
+    if (destructured && new RegExp('(?<![A-Za-z0-9_$])' + identifier +
+        '(?![A-Za-z0-9_$])').test(destructured[1])) {
+      direct = true;
+    }
+  }
+
+  return { bindings: bindings, direct: direct };
+}
+
+/**
+ * Where one EXPORT of one module is referenced across the application and the
+ * suite, excluding the file that defines it.
+ *
+ * A reference to `pages.features` is a member access on something bound to
+ * `lib/controllers/pages.js` -- under whatever local name that file chose,
+ * since `test/lib/api/trinket.js` binds controllers as `filesCtrl` and
+ * `usersCtrl` rather than by basename. So the module is resolved first and the
+ * access is matched against its local bindings.
+ *
+ * IT IS NOT A BARE OCCURRENCE OF THE NAME, which is what an earlier revision
+ * matched. Measured consequence: `pages.features` was reported as referenced
+ * by `lib/util/features.js`, `lib/controllers/files.js`,
+ * `lib/controllers/users.js`, `lib/util/helpers.js`, `test/lib/api/files.js`
+ * and `test/lib/api/trinket.js` -- every hit a `config.features.assets` read
+ * or a module of that name, and not one of them a reference to the export. On
+ * that evidence the document concluded that the repaired suite forced the
+ * conversion of a function no route and no test reaches, which R-a forbids and
+ * which would have been read as instructed work.
+ *
+ * Files are read as TEXT and scrubbed for the access match, so a mention
+ * inside a comment or a string does not count -- and nothing under test/lib or
+ * test/helpers is ever REQUIRED, only read.
+ */
+function findExportReferences(appRoot, identifier, definedIn) {
   var searchRoots = ['lib', 'test/lib', 'test/helpers', 'config'];
-  var pattern = new RegExp('(?<![A-Za-z0-9_$])' + identifier + '(?![A-Za-z0-9_$])');
   var hits = [];
 
   searchRoots.forEach(function (dir) {
     collectJsFiles(appRoot, dir, 6, []).forEach(function (rel) {
-      if (rel === excludePath) {
+      if (rel === definedIn) {
         return;
       }
       var text;
@@ -5333,20 +6241,35 @@ function findReferences(appRoot, identifier, excludePath) {
       if (text.indexOf(identifier) === -1) {
         return;
       }
+
+      var reached = moduleBindingsIn(text, rel, definedIn, identifier);
+      if (reached.direct) {
+        hits.push(rel);
+        return;
+      }
+      if (reached.bindings.length === 0) {
+        return;
+      }
+
       var scrubbed = scrubSource(text);
-      if (pattern.test(scrubbed)) {
+      var qualified = new RegExp('(?<![A-Za-z0-9_$.])(?:' +
+        reached.bindings.join('|') + ')\\s*\\.\\s*' + identifier +
+        '(?![A-Za-z0-9_$])');
+      if (qualified.test(scrubbed)) {
         hits.push(rel);
       }
     });
   });
 
-  return hits.sort();
+  return hits.filter(function (rel, index) {
+    return hits.indexOf(rel) === index;
+  }).sort();
 }
 
 /** Per-function gate evidence for one unrouted function. */
 function gateEvidence(appRoot, definedIn, identifier, bodyText) {
   var deprecated = deprecatedApisIn(bodyText);
-  var references = findReferences(appRoot, identifier, definedIn);
+  var references = findExportReferences(appRoot, identifier, definedIn);
   var suiteReferences = references.filter(function (rel) {
     return rel.indexOf('test/') === 0;
   });
@@ -5438,11 +6361,18 @@ function describeCurrentShape(entry) {
 
   if (a.signalCount === 0) {
     parts.push('no `request.success` / `request.fail` / `reply` call in the body');
-  } else if (a.unreturnedSignals > 0) {
+  } else if (a.reliesOnInterception) {
     parts.push('RELIES ON THE INTERCEPTION -- ' + a.unreturnedSignals + ' of ' +
       a.signalCount + ' signalling call' + (a.signalCount === 1 ? '' : 's') +
       ' produce a value that never leaves the function (' + a.ownUnreturned +
-      ' unreturned in the body, ' + a.nestedDropped + ' dropped inside a nested function)');
+      ' unreturned in the body, ' + a.nestedDropped + ' dropped inside a nested function)' +
+      ', and at least one path delivers nothing, which is where the interception fires');
+  } else if (a.unreturnedSignals > 0) {
+    parts.push('delivers on every path, with ' + a.unreturnedSignals + ' of ' +
+      a.signalCount + ' signalling call' + (a.signalCount === 1 ? '' : 's') +
+      ' discarded (' + a.ownUnreturned + ' unreturned in the body, ' + a.nestedDropped +
+      ' dropped inside a nested function) -- the interception cannot fire for this body, ' +
+      'so the discarded value was already discarded at baseline');
   } else {
     parts.push('returns its response -- all ' + a.signalCount + ' signalling call' +
       (a.signalCount === 1 ? '' : 's') + ' delivered: ' + describeDelivery(a));
@@ -5457,8 +6387,8 @@ function describeCurrentShape(entry) {
     // Exits everywhere and still delivers nothing: a bare `return;`, a
     // `return undefined`, a `void`/`console` return, or a non-settling
     // unconditional loop. Reported distinctly from "no exit", because the two
-    // need different fixes and reading one as the other is what let a body
-    // that hands hapi `undefined` look converted.
+    // need different fixes and reading one as the other lets a body that hands
+    // hapi `undefined` look converted.
     parts.push('NO PROVEN DELIVERY -- every path exits, but at least one exits WITHOUT ' +
       'a lifecycle value (a bare `return`, a statically `undefined` return, or a ' +
       'non-settling loop), which reaches hapi as `undefined`');
@@ -5494,23 +6424,41 @@ function handlerShape(isPreHandler) {
  * instruction. What does not survive is the return mandate that follows it in
  * describeHandlerTarget(), which is exactly the clause a governed row must not
  * carry.
+ *
+ * WHICH SHAPE THE SENTENCE NAMES depends on which direction it points. For an
+ * unconverted site the shape is the TARGET idiom, because the sentence is an
+ * instruction. For a site already in a lifecycle shape the sentence is a
+ * statement about the code, so it names the shape MEASURED on this body --
+ * exactly as describeHandlerTarget() does. Reading `handlerShape()` in both
+ * positions described `lib/controllers/auth.js`'s two handlers, which are
+ * plain promise-returning `function (request, h)` declarations, as
+ * `async function (request, h)`: a claim about the target dressed up as a
+ * claim about the code, and wrong on a row whose whole purpose is to record
+ * what the body currently does. The measured phrase is `async`-accurate
+ * because `signaturePhrase()` reads the declaration's own `async` keyword.
  */
 function describeHandlerLead(entry, isPreHandler) {
   var a = entry.analysis;
   var shape = handlerShape(isPreHandler);
+  var measured = '`' + signaturePhrase(entry) + '`';
 
   if (entry.signature === 'legacy') {
     return 'Convert to ' + shape + '.';
   }
-  if (a.unreturnedSignals > 0) {
-    return 'Signature is already ' + shape + ', with ' + a.unreturnedSignals + ' of ' +
+  if (a.reliesOnInterception) {
+    return 'Signature is already ' + measured + ', with ' + a.unreturnedSignals + ' of ' +
       a.signalCount + ' signalling call' + (a.signalCount === 1 ? '' : 's') +
       ' falling off the end.';
+  }
+  if (a.unreturnedSignals > 0) {
+    return 'Signature is already ' + measured + ', delivering on every path, with ' +
+      a.unreturnedSignals + ' of ' + a.signalCount + ' signalling call' +
+      (a.signalCount === 1 ? '' : 's') + ' discarded as at baseline.';
   }
   if (a.usesReply) {
     return 'Signature and returns are converted, with a residual `reply(` reference remaining.';
   }
-  return 'Signature is already ' + shape + ', returning on every measured path.';
+  return 'Signature is already ' + measured + ', returning on every measured path.';
 }
 
 /** Target disposition for a handler or pre-handler row. */
@@ -5520,8 +6468,7 @@ function describeHandlerTarget(entry, isPreHandler) {
   // in a lifecycle shape it is the shape MEASURED on this body, so a plain
   // `function (request, h)` that returns on every path is not described as
   // `async`. Both `lib/controllers/auth.js` handlers are exactly that, and
-  // describing them as async was a statement about the target dressed up as a
-  // statement about the code.
+  // calling them async would state the target as though it were the code.
   var shape = isPreHandler
     ? 'native lifecycle method `async function (request, h)`'
     : '`async function (request, h)`';
@@ -5556,13 +6503,35 @@ function describeHandlerTarget(entry, isPreHandler) {
       'on every path' + (isPreHandler ? ', or `null` where there is nothing to contribute' : '') + '.';
   }
 
-  if (a.unreturnedSignals > 0) {
+  if (a.reliesOnInterception) {
     return 'Signature is already ' + measured + ', but ' + a.unreturnedSignals +
       ' signalling call' + (a.unreturnedSignals === 1 ? '' : 's') +
       ' produce a value that never leaves the function (' + a.ownUnreturned +
-      ' unreturned in the body, ' + a.nestedDropped + ' dropped inside a nested function). ' +
+      ' unreturned in the body, ' + a.nestedDropped + ' dropped inside a nested function) ' +
+      'and at least one path delivers nothing, so the interception is what answers it today. ' +
       'Deliver the response on every path: return it, settle the promise the method returns ' +
       'with it, or return it from the nested handler of a chain this method returns.';
+  }
+
+  if (a.unreturnedSignals > 0) {
+    // Delivers everywhere AND discards a signalling call. The measurement is
+    // reported and no change is instructed, because there is none to make: the
+    // interception fires only on an `undefined` result, this body never returns
+    // one, and so the discarded value reached no client before the migration
+    // either. Rerouting it to deliver would REPLACE the response this body
+    // returns -- for `lib/controllers/trinket.js`'s `updateMetrics`, turning a
+    // measured 500 into a 200 (R-d).
+    return 'Already converted: ' + measured + ', every path delivering a lifecycle value. ' +
+      a.unreturnedSignals + ' signalling call' +
+      (a.unreturnedSignals === 1 ? ' produces' : 's produce') +
+      ' a value that is discarded (' + a.ownUnreturned + ' unreturned in the body, ' +
+      a.nestedDropped + ' dropped inside a nested function). That is the BASELINE outcome, ' +
+      'not an unfinished conversion: the wrapper\'s interception substitutes a value only ' +
+      'when the body returns `undefined`, which this body never does, so those calls ' +
+      'resolved a deferred nobody read before the migration and return a response nobody ' +
+      'reads after it. Do NOT reroute them to deliver -- that replaces the value this body ' +
+      'returns with a different response, which is a behaviour change (R-d). Nothing ' +
+      'further is required of this site.';
   }
 
   if (a.usesReply) {
@@ -5597,7 +6566,14 @@ function describeHandlerTarget(entry, isPreHandler) {
 function isHandlerClosed(entry) {
   var a = entry.analysis;
   return entry.signature === 'toolkit' &&
-    a.unreturnedSignals === 0 &&
+    // Reliance on the interception, not the presence of a discarded signalling
+    // call. The two differ on exactly one body in this tree -- `updateMetrics`,
+    // which delivers on every path and discards one nested `request.success`
+    // -- and the difference matters because the interception fires only on an
+    // `undefined` result. A body that never returns one is finished work; the
+    // discarded call is reported in the row and instructs nothing, since
+    // rerouting it would replace the response the body returns.
+    !a.reliesOnInterception &&
     !a.usesReply &&
     // Delivery, not merely an exit. A body whose every path ends in `return;`
     // exits everywhere and hands hapi `undefined`, which the toolkit turns
@@ -5649,8 +6625,22 @@ function describeInvocation(options) {
   var outToken = (relativeOut !== '' && relativeOut.indexOf('..') !== 0 &&
     !path.isAbsolute(relativeOut)) ? relativeOut : '"$OUT"';
 
+  // A replay artifact is a RUN OUTPUT and lives outside the repository, so its
+  // path is recorded as a token rather than verbatim -- the same treatment the
+  // baseline worktree gets, and for the same reason: a recorded absolute path
+  // is not reproducible and its presence in the document would make two runs
+  // over one tree differ. That the artifact was supplied IS recorded, because
+  // it changes which rows close.
+  var replayToken = null;
+  if (options.replay) {
+    var relativeReplay = path.relative(repoRoot, options.replay);
+    replayToken = (relativeReplay !== '' && relativeReplay.indexOf('..') !== 0 &&
+      !path.isAbsolute(relativeReplay)) ? relativeReplay : '"$REPLAY_RESULT"';
+  }
+
   var command = 'node test/parity/convert-inventory.js' +
     (appToken ? ' --app ' + appToken : '') +
+    (replayToken ? ' --replay ' + replayToken : '') +
     ' --out ' + outToken;
 
   return { command: command, appLabel: appLabel, recreate: recreate };
@@ -6005,11 +6995,15 @@ function renderPreamble(model) {
   } else {
     out.push('**This run analysed the delivered tree, not the base commit, so this is the');
     out.push('COMPLETION view: what is actually closed and what is not.** A row is open here');
-    out.push('because the site in the delivered code has not reached its target -- or, for the');
-    out.push('two row kinds whose correctness is behavioural rather than textual, because the');
-    out.push('parity evidence that would settle it has not been captured. Re-running the exact');
-    out.push('command in the header against a `git worktree` at `' + BASELINE_COMMIT +
-      '` reproduces the');
+    out.push('for one of exactly two reasons, and the row states which: the site in the');
+    out.push('delivered code has not reached its target, or -- for the row kinds whose');
+    out.push('correctness is behavioural rather than textual -- the driven comparison that');
+    out.push('settles it has not been completed. Those two are not interchangeable, and the');
+    out.push('accounting under "Row totals" keeps them apart rather than adding them up:');
+    out.push('reading a missing measurement as unfinished conversion work overstates what is');
+    out.push('left to do, and reading it as finished overstates what has been proved.');
+    out.push('Re-running the exact command in the header against a `git worktree` at `' +
+      BASELINE_COMMIT + '` reproduces the');
     out.push('planning view, which is how the two are compared.');
   }
   out.push('');
@@ -6039,7 +7033,10 @@ function renderPreamble(model) {
   out.push('  received from a reply chain depended on which builder method ran last, and');
   out.push('  whether a stream still errors after the response began is a timing question. Both');
   out.push('  are settled by a driven request, so those rows name the corpus scenario that');
-  out.push('  drives them and close on captured evidence rather than on absence.');
+  out.push('  drives them and close on a driven COMPARISON -- a captured baseline and a');
+  out.push('  confirming replay verdict against this tree -- rather than on absence. A');
+  out.push('  baseline on its own records what the pre-migration code did, which is one side');
+  out.push('  of that comparison.');
   out.push('');
   out.push('That is the entire reason this document exists.');
   out.push('');
@@ -6079,11 +7076,11 @@ function renderPreamble(model) {
   out.push('');
   out.push('| Kind | Closes when |');
   out.push('| --- | --- |');
-  out.push('| Routed handler, routed pre-handler, inline pre-handler | The signature is `(request, h)`; **every** signalling call\'s value reaches hapi; no `reply(` reference remains; and **every path through the body DELIVERS a value or throws**. Exiting is not enough: a path ending in a bare `return`, a statically `undefined` return, or a non-settling loop reaches hapi as `undefined`, which the toolkit converts into `Boom.badImplementation`. |');
-  out.push('| Promise chain | Its value leaves the enclosing function -- returned or awaited -- and its terminal link does not pass a bare function reference whose return value is dropped. |');
-  out.push('| Callback boundary | It ceases to exist. Replacing the call with an `await` removes the callback literal and the row with it, so this section shrinks rather than ticks; the box is set only for a call site that already carries an `await`. |');
+  out.push('| Routed handler, routed pre-handler, inline pre-handler | The signature is `(request, h)`; no `reply(` reference remains; **every path through the body DELIVERS a value or throws**; and the body does not RELY ON THE INTERCEPTION. Exiting is not enough: a path ending in a bare `return`, a statically `undefined` return, or a non-settling loop reaches hapi as `undefined`, which the toolkit converts into `Boom.badImplementation`. Reliance is about the mechanism being removed -- the interception substitutes a value only when the body returns `undefined` -- so a body that delivers on every path cannot reach it, and a signalling call whose value is discarded there is reported, instructs nothing, and does not hold the row open: it was discarded at baseline too. |');
+  out.push('| Promise chain | Its value or settlement reaches a consumer AND its terminal link registers a reaction that produces a value -- or the value is deliberately discarded somewhere nothing could have depended on it. Five mechanisms deliver: `return`, `await`, `resolve(chain)`, an argument such as `promises.push(chain)`, and a capture whose name a later expression delivers. A reaction produces a value when it is a function literal in any argument slot, or a bare reference to `request.success` / `request.fail`, which now RETURN the toolkit response. A statement-position chain is deliberate when its carrier is proven to deliver on every path -- so the discarded value provably was not the response -- or when its carrier is not a lifecycle method at all. |');
+  out.push('| Callback boundary | The callee is one the migration KEEPS in callback form, and its carrier is settled. Rules T-3 and T-5 divide the population: a Node-core callback API inside the hapi-facing surface must become its promise equivalent, warning or no warning, and stays OPEN until it does; anything else -- `lib/util/file.js`, `lib/util/store.js`, `lib/util/queues.js`, `lib/models/model.js`, a plugin API, a module-local helper -- has no promise form to await without pushing the boundary into the callee, which T-3 forbids, so it is finished in its current shape. The carrier half is the same one a discarded chain answers to. This population SHRINKS as work completes, because a converted site passes no callback literal and leaves it. |');
   out.push('| Reply chain, dead-301 branch site, unreturned bare `reply(` | The legacy construct is gone from its carrier, the declared target shape (where one can be declared) is present in it, **and** the corpus scenario that drives the site carries BOTH a captured baseline response AND a confirming replay verdict against this tree. A baseline alone records what the pre-migration code did, which is one half of a comparison. |');
-  out.push('| Stream site | A scenario is pinned to **this branch** -- derived from the structurally located reply chain that contains the site, not from the routes its carrier is reached from -- and that scenario carries a captured baseline plus a confirming replay. Whether completion and error timing survived is not visible in the text at all, and a sibling branch\'s result is silent about this one. |');
+  out.push('| Stream site | A scenario is pinned to **this branch** -- from the located reply chain that CONTAINS the site, or, for a site outside every located chain, from the single reply chain its carrier DECLARES, since a carrier with one declared branch has no other branch for the site to be on -- and that scenario carries a captured baseline plus a confirming replay. Whether completion and error timing survived is not visible in the text at all, and a sibling branch\'s result is silent about this one, which is why a carrier declaring two branches yields no pin. |');
   out.push('');
   out.push('The `Current shape` column for handlers and pre-handlers reports two measurements,');
   out.push('and both are needed because each misses what the other catches.');
@@ -6128,7 +7125,8 @@ function renderPreamble(model) {
   out.push('  the request corpus (`test/parity/capture.js` and `replay.js`), the storage cases');
   out.push('  and the joi matrix. What this document does is name, per row, the scenario that');
   out.push('  settles it and report that scenario\'s state as read from');
-  out.push('  `' + CORPUS_PATH + '`: recorded, defined-but-not-yet-captured, or absent. A row');
+  out.push('  `' + CORPUS_PATH + '`: recorded (both halves), captured-but-not-replayed,');
+  out.push('  defined-but-not-yet-captured, route-level-only, or absent. A row');
   out.push('  whose evidence is pending stays open and says so; a row with no scenario at all');
   out.push('  says that too, because an unlinked site is a gap in the corpus rather than a');
   out.push('  finished piece of work.');
@@ -6145,9 +7143,8 @@ function renderPreamble(model) {
   out.push('');
   out.push('| Document | What it owns about a site in this checklist |');
   out.push('| --- | --- |');
-  // Both deviations are named, with their kinds, because "the single approved
-  // deviation" was wrong twice over: on the count, and -- more usefully to a
-  // reader holding a row -- on which of the two a row can be affected by. The
+  // Both deviations are named, with their kinds: there are two, and which of
+  // the two a row can be affected by is what a reader holding a row needs. The
   // authority for this wording is the closing paragraph of
   // docs/preserved-quirks.md Appendix A.
   out.push('| `' + QUIRK_DOC + '` | The measured baseline **outcome** of a quirk, and the ' +
@@ -6258,9 +7255,25 @@ function renderShapeOverview(model) {
     out.push('- **`' + anchor.site + '`** -- ' + anchor.what);
   });
   out.push('');
-  if (model.nativePreHandlers.length > 0) {
-    out.push('In the analysed tree the pre-handler exemplar `findFeaturedTrinkets` sits at ' +
-      '`' + HELPERS_PATH + ':' + model.nativePreHandlers[0].line + '`.');
+  // Resolved by EXPORT IDENTITY: the anchor names a symbol, and the symbol is
+  // looked up among the pre-handler declarations this run measured. A tree
+  // that no longer declares it says so, rather than pointing at whichever
+  // pre-handler happens to come first.
+  var exemplarSymbol = TARGET_IDIOM_ANCHORS.filter(function (anchor) {
+    return anchor.symbol;
+  })[0];
+  if (exemplarSymbol) {
+    var exemplar = model.preHandlerDeclarations.filter(function (declared) {
+      return declared.name === exemplarSymbol.symbol;
+    })[0];
+    if (exemplar) {
+      out.push('In the analysed tree the pre-handler exemplar `' + exemplarSymbol.symbol +
+        '` sits at `' + HELPERS_PATH + ':' + exemplar.line + '`, declared `' +
+        signaturePhrase(exemplar) + '`.');
+    } else {
+      out.push('The analysed tree declares no pre-handler named `' + exemplarSymbol.symbol +
+        '`, so the exemplar above is a baseline coordinate only.');
+    }
     out.push('');
   }
   return out.join('\n');
@@ -6368,9 +7381,22 @@ function renderPreHandlerRows(model) {
     return a.line - b.line;
   });
   var closed = routed.filter(isHandlerClosed).length;
+  // This section renders 2a AND 2b, so the header counts both. A header reading
+  // "8 rows (8 closed)" above ten rows, two of them open, contradicts the table
+  // under it and the row-totals census, which counts the branch sites
+  // separately for exactly this reason.
+  var deadRedirectRows = ANCHORED_SITES.filter(function (site) {
+    return site.kind === 'dead-301';
+  });
+  var deadRedirectClosed = deadRedirectRows.filter(function (site) {
+    return anchoredSiteState(model, site).closed;
+  }).length;
 
-  out.push('## 2. Routed pre-handlers -- ' + pluralize(routed.length, 'row') +
-    ' (' + closed + ' closed)');
+  out.push('## 2. Routed pre-handlers -- ' +
+    pluralize(routed.length + deadRedirectRows.length, 'row') + ' (' +
+    (closed + deadRedirectClosed) + ' closed): ' + routed.length +
+    ' pre-handler functions plus ' +
+    pluralize(deadRedirectRows.length, 'dead 301 branch site') + ' inside two of them');
   out.push('');
   out.push('Named pre-handlers in `' + HELPERS_PATH + '` that a route references. The census is');
   out.push('' + BASELINE_NAMED_PRE_HANDLERS + ' named pre-handlers in total; ' + routed.length +
@@ -6489,10 +7515,10 @@ function sameLinks(a, b) {
 /**
  * Locate one roster entry in the analysed tree BY SYMBOL, not by line.
  *
- * The eight reply chains were anchored on `file` + `startLine`, and every one
- * of them moved during the conversion -- so all eight reported "not found at
- * its baseline coordinates", which the renderer then read as "converted" and
- * ticked. A line number is not an address once a file has been edited.
+ * A line number is not an address once a file has been edited: the reply
+ * chains all move during the conversion, so an anchor on `file` + `startLine`
+ * reports "not found at its baseline coordinates" for every one of them, and a
+ * renderer reads that as "converted" and ticks it.
  *
  * The anchor is therefore the carrier SYMBOL (the exported handler or the
  * module-scope function that contains the site), the chain's link sequence,
@@ -6550,10 +7576,9 @@ function locateRosterEntry(model, entry) {
  *      halves: a baseline alone is a record of the pre-migration behaviour,
  *      and closing a row on it asserts a match that nothing performed.
  *
- * Condition 3 is why these rows do not close today: the corpus defines all
- * eight scenarios and has captured none of them. Reporting that is the
- * correct answer -- "the legacy syntax is gone" is not a statement about what
- * the route now serves.
+ * Condition 3 is what holds a row open while the corpus defines its scenario
+ * but holds no captured response for it: "the legacy syntax is gone" is not a
+ * statement about what the route now serves.
  */
 function rosterRowState(model, entry) {
   var located = locateRosterEntry(model, entry);
@@ -6605,9 +7630,9 @@ function anchoredSiteStillLegacy(model, site) {
  * Same two halves as a roster row, for the same reason. The legacy construct
  * disappearing is structural; what the route now DOES -- a mapped error
  * reaching the same funnel with the same status, a pre-handler contributing
- * `null` where a discarded 301 used to be built -- is behaviour, and behaviour
- * is decided by the scenario that drives it. A site with no scenario reports
- * having none rather than closing on the syntax.
+ * `null` where the baseline built a discarded 301 -- is behaviour, and
+ * behaviour is decided by the scenario that drives it. A site with no scenario
+ * reports having none rather than closing on the syntax.
  */
 function anchoredSiteState(model, site) {
   var stillLegacy = anchoredSiteStillLegacy(model, site);
@@ -6760,8 +7785,12 @@ function anchoredSiteLabel(model, site) {
 
 function renderInlinePreHandlerRows(model) {
   var out = [];
+  var inlineClosed = model.inlinePreHandlers.filter(function (inline) {
+    return inline.signature === 'toolkit' && !inline.analysis.usesReply &&
+      inline.analysis.alwaysDelivers;
+  }).length;
   out.push('## 3. Inline pre-handler -- ' +
-    pluralize(model.inlinePreHandlers.length, 'row'));
+    pluralize(model.inlinePreHandlers.length, 'row') + ' (' + inlineClosed + ' closed)');
   out.push('');
   out.push('A function literal declared directly inside a `pre :` array in a route config.');
   out.push('There is exactly one, on `POST /api/users/login`, and it is the sole member of its');
@@ -6787,6 +7816,195 @@ function renderInlinePreHandlerRows(model) {
   return out.join('\n');
 }
 
+// The delivery mechanisms section 4 tabulates, in the order the table prints
+// them. Named here rather than inline so the self-check and the renderer
+// partition the delivered rows the same way: a mechanism recognized by
+// chainDeliveryOf() and missing from this list would leave the table summing
+// to less than the delivered total, which is what the check asserts against.
+var CHAIN_DELIVERY_MECHANISMS = Object.freeze([
+  'return', 'await', 'settlement-argument', 'argument', 'capture', 'reaction-settlement'
+]);
+
+/**
+ * Counts the chain population by delivery mechanism, disposition state and
+ * terminal reaction.
+ *
+ * One function so the rendered policy and the self-check that validates it
+ * cannot count differently -- which is the failure mode this whole area is
+ * being repaired for.
+ *
+ * @param {Object[]} chains model.promiseChains
+ * @returns {{byDelivery: Object, byState: Object, helpers: Object,
+ *            settleInReaction: number, noReaction: number, delivered: number}}
+ */
+function chainDeliveryCensus(chains) {
+  var byDelivery = Object.create(null);
+  var byState = Object.create(null);
+  var helpers = Object.create(null);
+  var settleInReaction = 0;
+  var noReaction = 0;
+  var delivered = 0;
+
+  chains.forEach(function (chain) {
+    var state = chain.disposition ? chain.disposition.state : 'unclassified';
+    byState[state] = (byState[state] || 0) + 1;
+    if (chain.delivered) {
+      delivered++;
+      var key = CHAIN_DELIVERY_MECHANISMS.indexOf(chain.delivery) > -1
+        ? chain.delivery
+        : 'reaction-settlement';
+      byDelivery[key] = (byDelivery[key] || 0) + 1;
+    }
+    if (chain.settlesInReaction) {
+      settleInReaction++;
+    }
+    if (chain.terminalReactionKind === 'response-helper-reference' && chain.terminalHelper) {
+      helpers[chain.terminalHelper] = (helpers[chain.terminalHelper] || 0) + 1;
+    }
+    if (!chain.terminalDelivers) {
+      noReaction++;
+    }
+  });
+
+  return {
+    byDelivery: byDelivery,
+    byState: byState,
+    helpers: helpers,
+    settleInReaction: settleInReaction,
+    noReaction: noReaction,
+    delivered: delivered
+  };
+}
+
+/**
+ * The section-4 policy, DERIVED from the disposition model rather than written
+ * beside it.
+ *
+ * This block was prose, and prose beside a classifier drifts from it in one
+ * direction: the classifier is changed because it was wrong, and the paragraph
+ * that describes it is not. It said a chain closes only when its value is
+ * "`return`ed or `await`ed", and that a bare `.catch(request.fail)` "produces
+ * nothing the handler returns" -- both true of the first implementation and
+ * both contradicted by the rows underneath them, which close 131 chains
+ * through five delivery mechanisms and count the bare response-helper
+ * reference as producing the response. A reader had a policy and a table that
+ * disagreed, in the document that is supposed to settle such questions.
+ *
+ * So every rule stated here is stated with the count of rows it decides in
+ * THIS tree, taken from the same chains the table renders. A rule that decides
+ * nothing says so, which is how a reader can tell a policy that has gone stale
+ * from one that is merely not exercised.
+ *
+ * @param {Object} model the analysed model
+ * @returns {string[]} markdown lines
+ */
+function chainPolicyLines(model) {
+  var census = chainDeliveryCensus(model.promiseChains);
+  var out = [];
+  var settleInReaction = census.settleInReaction;
+  var noReaction = census.noReaction;
+  var helpers = census.helpers;
+
+  var count = function (key) {
+    return census.byDelivery[key] || 0;
+  };
+  var stateCount = function (key) {
+    return census.byState[key] || 0;
+  };
+
+  out.push('One row per chain. AAP \u00a70.4.1 states the requirement this section measures:');
+  out.push('after conversion each chain must be delivered **exactly once per path**, because');
+  out.push('"neither a returned-but-unawaited chain nor an awaited-but-unreturned one is');
+  out.push('visible in a signature count". A row closes on one of two settled dispositions,');
+  out.push('and the `Current shape` and `Target disposition` columns name which one it is.');
+  out.push('');
+  out.push('**DELIVERED -- ' + stateCount('delivered') + ' rows.** The chain\'s value or its');
+  out.push('settlement reaches a consumer, AND its terminal link registers a reaction that');
+  out.push('produces a value. Delivery is not one mechanism: this codebase composes work');
+  out.push('through ' + CHAIN_DELIVERY_MECHANISMS.length +
+    ', and a row names the one it uses.');
+  out.push('');
+  out.push('| Delivery mechanism | Rows | What it looks like |');
+  out.push('| --- | --- | --- |');
+  out.push('| `return` | ' + count('return') + ' | `return chain.then(...)` |');
+  out.push('| `await` | ' + count('await') + ' | `await chain.then(...)` |');
+  out.push('| settlement argument | ' + count('settlement-argument') +
+    ' | `resolve(chain)` inside a `new Promise` executor -- the chain\'s value becomes ' +
+    'the settled value |');
+  out.push('| call argument | ' + count('argument') +
+    ' | `promises.push(chain)` -- handed to a consumer that awaits it later |');
+  out.push('| transitive capture | ' + count('capture') +
+    ' | `promise = chain`, bound to a name a later expression delivers. Resolved to a ' +
+    'fixpoint, so a name delivered by a delivered name counts |');
+  out.push('| reaction settlement | ' + count('reaction-settlement') +
+    ' | the chain settles the carrier\'s promise from INSIDE one of its own reactions, so ' +
+    'the expression itself has nothing left to return |');
+  out.push('');
+  out.push('Those columns sum to the ' + census.delivered +
+    ' chains whose value leaves the expression, which is');
+  out.push('asserted rather than asked of the reader: a mechanism added to the classifier and');
+  out.push('not to this table would make the section\'s own arithmetic fail before the');
+  out.push('document is written. ' + stateCount('delivered') + ' of those ' + census.delivered +
+    ' also have a terminal link that');
+  out.push('produces a value, which is what closes the row; the other ' +
+    stateCount('delivered-into-nothing') + ' are the');
+  out.push('delivered-into-nothing rows below.');
+  out.push(settleInReaction + ' chains carry a settling reaction in total -- the ' +
+    count('reaction-settlement') + ' counted under');
+  out.push('reaction settlement above, plus the ones that also leave by one of the earlier');
+  out.push('mechanisms and are counted there instead.');
+  out.push('');
+
+  var helperNames = Object.keys(helpers).sort();
+  if (helperNames.length > 0) {
+    out.push('**A terminal link passing a BARE REFERENCE to a response helper produces the');
+    out.push('value.** `request.success` and `request.fail` RETURN a toolkit response, so a');
+    out.push('chain ending `.catch(request.fail)` resolves to that response and a `return` in');
+    out.push('front of it delivers it. That is the shape AAP \u00a70.3.1 singles out as the');
+    out.push('correct one, and it occurs here as ' + helperNames.map(function (name) {
+      return helpers[name] + ' terminal reference(s) to `' + name + '`';
+    }).join(' and ') + '.');
+    out.push('');
+    out.push('An earlier revision of this section asserted the opposite -- that such a link');
+    out.push('"reads as handled and produces nothing the handler returns" -- and the classifier');
+    out.push('behind it reported every one of those rows as open. Both were wrong in the');
+    out.push('safe-looking direction. The `Current shape` column now states per row that the');
+    out.push('bare reference resolves to the toolkit response.');
+    out.push('');
+  }
+
+  out.push('**DELIBERATELY DISCARDED -- ' +
+    (stateCount('discarded-by-design') + stateCount('discarded-outside-lifecycle')) +
+    ' rows.** The chain is in statement position, so its');
+  out.push('value is discarded, and nothing could have depended on it. A discard is');
+  out.push('intentional for one of exactly two reasons, and the row states which:');
+  out.push('');
+  out.push('- **' + stateCount('discarded-by-design') + ' rows** -- the carrier is a lifecycle');
+  out.push('  method PROVEN to deliver on every path, so the discarded value provably was not');
+  out.push('  the response. The discard is fire-and-forget timing, and R-d preserves it. Two');
+  out.push('  are mandated by rule T-5 in as many words: the');
+  out.push('  `fs.promises.unlink(...).catch(() => {})` sites.');
+  out.push('- **' + stateCount('discarded-outside-lifecycle') + ' rows** -- the carrier is not');
+  out.push('  a lifecycle method at all. Rule T-3 places no delivery obligation there, so the');
+  out.push('  discard is the helper\'s own timing, preserved under R-d.');
+  out.push('');
+  out.push('**A row stays OPEN in exactly two states**, and the row prints the one it is in:');
+  out.push('');
+  out.push('- **' + stateCount('discarded-in-unproven-carrier') + ' rows** -- discarded inside');
+  out.push('  a lifecycle method whose own delivery is NOT proven. There the discarded value');
+  out.push('  may be the response on the path that does not deliver, so section 1\'s row for');
+  out.push('  the carrier has to close first.');
+  out.push('- **' + stateCount('delivered-into-nothing') + ' rows** -- delivered into a');
+  out.push('  terminal link that produces nothing (' + noReaction + ' chains have such a');
+  out.push('  terminal). What reaches hapi is then whatever the previous link resolved to.');
+  out.push('');
+  out.push('What happens INSIDE the links -- a `reply(...)` becoming a returned toolkit');
+  out.push('response -- is the enclosing function\'s row in section 1, not this one. Splitting');
+  out.push('it that way keeps each site closable by one person looking at one thing.');
+
+  return out;
+}
+
 function renderPromiseChainRows(model) {
   var out = [];
   var chains = model.promiseChains;
@@ -6795,13 +8013,9 @@ function renderPromiseChainRows(model) {
   out.push('## 4. Promise chains -- ' + pluralize(chains.length, 'row') +
     ' (' + closed + ' closed)');
   out.push('');
-  out.push('One row per chain. A chain is closed when its value leaves the enclosing function --');
-  out.push('`return`ed or `await`ed -- exactly once. Today the wrapper discards it.');
-  out.push('');
-  out.push('Terminal links that pass a **bare function reference** rather than a function');
-  out.push('literal are called out in the `Current shape` column, because that is the shape');
-  out.push('whose return value is silently dropped: `.catch(request.fail)` reads as handled and');
-  out.push('produces nothing the handler returns.');
+  chainPolicyLines(model).forEach(function (line) {
+    out.push(line);
+  });
   out.push('');
   out.push('A `.then(` / `.catch(` / `.finally(` call is admitted as a chain link only when its');
   out.push('STRUCTURE is a promise reaction: a receiver that is itself a call or an index, or a');
@@ -6885,17 +8099,19 @@ function chainSiteLabel(chain) {
 }
 
 /**
- * A promise-chain row closes on the two properties that belong to the CHAIN,
- * as opposed to the handler that contains it:
- *
- *   1. its value leaves the enclosing function -- `return`ed or `await`ed; and
- *   2. its terminal link does not pass a bare function reference, whose
- *      return value is silently dropped.
+ * A promise-chain row closes on its settled DISPOSITION, computed once in
+ * `resolveChainDispositions` and carried on the chain: either the chain's
+ * value or settlement reaches a consumer through one of the five mechanisms
+ * this tree uses and its terminal reaction produces a value, or its value is
+ * deliberately discarded somewhere nothing could have depended on it.
  *
  * What happens INSIDE the links -- a `reply(...)` becoming a returned toolkit
  * response -- is the enclosing handler's row, not this one. Splitting it that
  * way keeps each site closable by one person looking at one thing.
  */
+function isChainClosed(chain) {
+  return chain.disposition ? chain.disposition.closed : false;
+}
 // ---------------------------------------------------------------------------
 // RUNTIME-EVIDENCE ROWS, AND WHY SOURCE SHAPE CANNOT CLOSE THEM
 // ---------------------------------------------------------------------------
@@ -6909,90 +8125,91 @@ function chainSiteLabel(chain) {
 // legacy `reply(...)` chain stopped appearing in the source - so a
 // current-tree run ticked all three builder-returned rows and asserted that
 // their status, content type and body had been "captured before conversion".
-// Nothing had been captured: every baseline in test/parity/corpus.json is
-// null and `summary.captured` is false. The document therefore contradicted
-// its own evidence policy two hundred lines apart, which is the same
-// false-evidence defect it exists to prevent elsewhere.
+// Nothing had been captured. The document therefore contradicted its own
+// evidence policy two hundred lines apart, which is the same false-evidence
+// defect it exists to prevent elsewhere.
 //
-// The rule these two predicates enforce: a row whose TARGET is a measurement
-// rather than a construction cannot be closed by reading the source, because
-// the source cannot tell you what the measurement was. Converting the site is
-// necessary and is reported ("converted in this tree"); it is not sufficient,
-// and the box stays open until linked capture evidence exists. When such
-// evidence is delivered, `runtimeEvidence()` is the single place that learns
-// how to read it.
+// The rule: a row whose TARGET is a measurement rather than a construction
+// cannot be closed by reading the source, because the source cannot tell you
+// what the measurement was. Converting the site is necessary and is reported
+// ("converted in this tree"); it is not sufficient, and the box stays open
+// until linked evidence exists for it.
 //
 // A stream row's target is completion and error TIMING, which no static read
 // establishes either, so it takes the same rule.
-
-/**
- * Whether linked runtime evidence exists for a row whose target is a measured
- * outcome rather than a construction.
- *
- * There is no such evidence at this commit and this function says so honestly
- * rather than guessing: the corpus holds definitions with null baselines, so
- * nothing can be joined to a row. It is a named seam, so delivering the
- * evidence is a change here and not a change to five call sites.
- *
- * @returns {boolean} always false until a driven, provenanced corpus exists
- */
-function runtimeEvidenceAvailable() {
-  return false;
-}
-
-/** Whether a reply-chain row may be ticked. */
-function isReplyChainRowClosed(entry, stillLegacy) {
-  if (stillLegacy) {
-    return false;
-  }
-
-  // The builder-returned category's target IS the captured response, so source
-  // shape cannot close it. never-settles and header-resolved state a
-  // construction the source does show.
-  if (entry.category === 'builder-returned') {
-    return runtimeEvidenceAvailable();
-  }
-
-  return true;
-}
-
-function isChainClosed(chain) {
-  return (chain.returned || chain.awaited) && chain.terminalIsFunction;
-}
+//
+// THERE IS EXACTLY ONE PREDICATE FOR THAT QUESTION, and it lives at
+// `runtimeEvidenceAvailable(model)` in the self-check section. An earlier
+// revision declared a SECOND function of the same name here -- an
+// argumentless `return false` -- alongside a `isReplyChainRowClosed(entry,
+// stillLegacy)` helper that called it. Hoisting made the later declaration
+// win for every caller, so the argumentless call passed no model and the
+// helper's builder-returned branch was permanently false: the seam could
+// never learn to read delivered evidence, whatever the corpus held. Two
+// declarations of one predicate is the defect, not the `false`.
+//
+// The helper went with it rather than being repaired, because it was a
+// LOOSER duplicate of the live rule and nothing called it: it closed the
+// never-settling and header-resolved rows on source shape alone, while
+// `rosterRowState()` -- the authority the roster renderer actually uses --
+// requires a captured baseline AND a confirming replay for every category.
+// Wiring the duplicate in would have loosened five rows onto evidence that
+// does not exist. `rosterRowState()` decides a reply-chain row; nothing else
+// does.
 
 function describeChainCurrent(chain) {
   var parts = [];
   parts.push(chain.linkCount + '-link chain `.' + chain.linkNames.join('().') + '()`');
+
   if (chain.returned) {
     parts.push('currently RETURNED');
   } else if (chain.awaited) {
     parts.push('currently AWAITED');
+  } else if (chain.delivered) {
+    parts.push('currently ' + chainDeliveryPhrase(chain));
   } else {
-    parts.push('currently NEITHER returned nor awaited -- its value is discarded' +
+    parts.push('currently in statement position -- its value is discarded' +
       (chain.prefix ? ' (preceded by `' + chain.prefix + '`)' : ''));
   }
-  if (!chain.terminalIsFunction) {
+
+  if (chain.terminalReactionKind === 'response-helper-reference') {
     parts.push('terminal `.' + chain.terminalName + '(' + chain.terminalArg +
-      ')` passes a BARE REFERENCE, so its return value is dropped');
+      ')` passes a BARE REFERENCE to `' + chain.terminalHelper +
+      '`, which returns the toolkit response, so the chain resolves to it');
+  } else if (!chain.terminalDelivers) {
+    parts.push('terminal `.' + chain.terminalName + '(' + chain.terminalArg +
+      ')` registers no reaction that produces a value');
   }
+
   parts.push('head ' + code(chain.head));
   return parts.join('; ');
 }
 
 function describeChainTarget(chain) {
-  if (!chain.terminalIsFunction) {
-    return 'Await the chain and return its value, and make sure the bare `' +
-      chain.terminalArg + '` reference\'s return value PROPAGATES -- ' +
-      '`.' + chain.terminalName + '(function (err) { return ' + chain.terminalArg +
-      '(err); })` or an equivalent that does not drop it. Exactly once per path.';
+  var disposition = chain.disposition || chainDisposition(chain);
+
+  if (!disposition.closed) {
+    if (disposition.state === 'delivered-into-nothing') {
+      return 'Give the terminal link a reaction that produces the value: ' +
+        '`.' + chain.terminalName + '(function (err) { return /* the response */; })` or a ' +
+        'reference to a helper that returns one. Measured state: ' + disposition.reason + '.';
+    }
+    return 'Deliver this chain exactly once on the path that needs it -- return it, await it, ' +
+      'settle the carrier\'s promise with it, or hand it to a consumer that does. Measured ' +
+      'state: ' + disposition.reason + '.';
   }
-  if (chain.returned || chain.awaited) {
-    return 'Already leaves the function (' + (chain.returned ? '`return`' : '`await`') +
-      '). Confirm the value reaching hapi is a response and not a builder, and that no ' +
-      'branch inside the links returns nothing.';
+
+  if (disposition.state === 'discarded-by-design' ||
+      disposition.state === 'discarded-outside-lifecycle') {
+    return 'PRESERVE AS IT STANDS -- fire-and-forget, and that timing is the target. ' +
+      disposition.reason.charAt(0).toUpperCase() + disposition.reason.slice(1) +
+      '. Do not await it and do not attach a handler that reports an error the baseline ' +
+      'swallowed: either would change observable behaviour.';
   }
-  return 'Await the chain and return its value -- exactly once per path. Every branch inside ' +
-    'the links must produce the response, not signal it.';
+
+  return 'Already delivered (' + disposition.reason + '), and its terminal reaction produces ' +
+    'the value. Nothing further is required of this site: what remains is that no branch ' +
+    'inside the links returns nothing, which the enclosing function\'s own row proves.';
 }
 
 // The generic callback-boundary action, split at the point where a preserved
@@ -7010,34 +8227,85 @@ var CALLBACK_TARGET_MANDATE = 'Create the `await` AT THIS CALL SITE inside the c
   'result. Do not push the boundary into the callee. Preserve the baseline\'s error ' +
   'handling exactly -- swallowed stays swallowed, fire-and-forget stays fire-and-forget.';
 
+/**
+ * The target for a boundary the migration KEEPS.
+ *
+ * Not the conversion mandate: awaiting a callee that has no promise form means
+ * giving it one, which pushes the promise boundary past the lifecycle method
+ * and is precisely what rule T-3 forbids. So the row states that the site is
+ * settled and what would break if it were "finished" anyway.
+ */
+function describeKeptBoundaryTarget(cb) {
+  if (cb.disposition.state === 'scheduling-primitive') {
+    return 'LEAVE AS IT STANDS. ' + cb.disposition.reason.charAt(0).toUpperCase() +
+      cb.disposition.reason.slice(1) + '. The callback body\'s own contents are covered by ' +
+      'the rows for whatever it contains.';
+  }
+  return 'LEAVE THE INTERFACE AS IT STANDS -- this boundary is settled, not pending. ' +
+    cb.disposition.reason.charAt(0).toUpperCase() + cb.disposition.reason.slice(1) +
+    '. Do not promisify the callee to create an `await` here: rule T-3 puts the promise ' +
+    'boundary at the lifecycle method and no deeper, and the baseline\'s error handling ' +
+    'inside the callback is the target -- swallowed stays swallowed, fire-and-forget stays ' +
+    'fire-and-forget.';
+}
+
 function renderCallbackRows(model) {
   var out = [];
   var rows = model.callbackBoundaries;
   var closed = rows.filter(isCallbackClosed).length;
 
   var resolvedSinceBaseline = BASELINE_CALLBACK_BOUNDARIES - rows.length;
-  out.push('## 5. Callback boundaries -- ' + pluralize(rows.length, 'row'));
+  out.push('## 5. Callback boundaries -- ' + pluralize(rows.length, 'row') +
+    ' (' + closed + ' closed)');
   out.push('');
-  out.push('**A closed callback boundary ceases to exist**, so this section shrinks rather');
-  out.push('than ticks: replacing `util.f(x, function (err, r) { ... })` with `await` removes');
-  out.push('the callback literal, and the row with it. The `Done` box is therefore ticked only');
-  out.push('in the one case that is still detectable -- a call site that already carries an');
-  out.push('`await` -- and progress is read from the count instead. Baseline: **' +
+  out.push('**A CONVERTED callback boundary ceases to exist**, so this population shrinks as');
+  out.push('work completes: replacing `util.f(x, function (err, r) { ... })` with `await`');
+  out.push('removes the callback literal, and the row with it. Baseline: **' +
     BASELINE_CALLBACK_BOUNDARIES + '**. This tree: **' + rows.length + '**' +
     (resolvedSinceBaseline > 0
       ? ', so ' + resolvedSinceBaseline + ' boundar' +
-        (resolvedSinceBaseline === 1 ? 'y has' : 'ies have') + ' been resolved.'
+        (resolvedSinceBaseline === 1 ? 'y has' : 'ies have') + ' been converted away.'
       : resolvedSinceBaseline === 0
-        ? ' -- none resolved yet.'
-        : '. That is MORE than baseline, which needs explaining.') +
-    (closed > 0 ? ' ' + closed + ' remaining site' + (closed === 1 ? ' is' : 's are') +
-      ' already awaited.' : ''));
+        ? ' -- none converted away yet.'
+        : '. That is MORE than baseline, which needs explaining.'));
   out.push('');
-  out.push('Each row records **where the `await` goes**: at the call site, inside the converted');
-  out.push('lifecycle method. Rule T-3 puts the promise boundary at the lifecycle method and');
-  out.push('nowhere deeper, which is why `lib/util/file.js`, `lib/util/store.js` and');
-  out.push('`lib/util/queues.js` keep their callback interfaces -- a handler `await`s them, they');
-  out.push('are not lifecycle methods themselves.');
+  out.push('**A remaining boundary is not by itself unfinished work, and the `Done` box says');
+  out.push('which it is.** Rules T-3 and T-5 divide this population, and the division is the');
+  out.push('whole content of the box:');
+  out.push('');
+  out.push('- **T-5 -- must convert, box OPEN.** A Node-core callback API inside the');
+  out.push('  hapi-facing surface becomes its promise equivalent *whether or not it emits a');
+  out.push('  deprecation warning*: AAP \u00a70.6.4 measured `util.promisify(fs.writeFile)`,');
+  out.push('  callback `fs.stat` and `fs.unlink` as silent on Node 22 and converts them');
+  out.push('  anyway. `rimraf` and `mkdirp` count as the same thing, and converting them is');
+  out.push('  what removes those packages.');
+  out.push('- **T-3 -- keeps its callback interface, box CLOSED.** The promise boundary sits');
+  out.push('  AT the lifecycle method and no deeper, so `lib/util/file.js`,');
+  out.push('  `lib/util/store.js`, `lib/util/queues.js` and `lib/models/model.js` keep their');
+  out.push('  callback interfaces even though controllers call them directly. There is no');
+  out.push('  promise form to await without pushing the boundary into the callee, which T-3');
+  out.push('  forbids -- so such a site is finished in its current shape.');
+  out.push('- **Node-core but not a completion callback, box CLOSED.** `process.nextTick` and');
+  out.push('  `setTimeout` schedule work rather than report an outcome. T-5 does not reach');
+  out.push('  them and converting one would move when the work runs, which is a timing change');
+  out.push('  (R-d).');
+  out.push('');
+  out.push('The second half of a closed box is the CARRIER. A boundary hands its own value to');
+  out.push('the callee, so the response has to come from somewhere else -- and "somewhere');
+  out.push('else" is established only where the enclosing lifecycle method is PROVEN to');
+  out.push('deliver a value on every path, which is section 1\'s and section 2a\'s measurement.');
+  out.push('Inside a module-scope helper there is no lifecycle obligation to prove (T-3');
+  out.push('again), so the interface question decides the row alone. Every row states which');
+  out.push('of these applies to it.');
+  out.push('');
+  out.push('An earlier revision computed this box as "the call site already carries an');
+  out.push('`await`" -- a shape that is neither the legacy one nor the converted one, and');
+  out.push('occurs nowhere in this tree. The column could not reach anything but zero, and');
+  out.push('zero out of a shrinking population read, in the row totals, as ' + rows.length +
+    ' units of unfinished work.');
+  out.push('');
+  out.push('Each row still records **where the `await` goes** for the boundaries that must');
+  out.push('take one: at the call site, inside the converted lifecycle method.');
   out.push('');
   out.push('A boundary here is a call receiving a function literal whose parameters are either');
   out.push('error-first or empty -- the two shapes a completion callback takes. Empty-parameter');
@@ -7074,13 +8342,24 @@ function renderCallbackRows(model) {
           (c.errorFirst
             ? 'Node error-first callback'
             : 'completion callback with no parameters') +
-          (c.alreadyAwaited ? '; call site is already awaited' : '; call site is not awaited')) +
+          (c.alreadyAwaited ? '; call site is already awaited' : '') +
+          '; ' + c.disposition.reason) +
         ' | ' + cell(composeTarget({
           kind: 'callback',
           file: c.file,
           enclosing: c.enclosing,
-          generic: CALLBACK_TARGET_MANDATE,
-          lead: CALLBACK_TARGET_LEAD,
+          // A boundary T-5 mandates converting carries the conversion mandate.
+          // One T-3 KEEPS does not: instructing an `await` there would push the
+          // promise boundary into the callee, which is the thing T-3 forbids,
+          // and would read as unfinished work on a settled site.
+          generic: c.disposition.closed
+            ? describeKeptBoundaryTarget(c)
+            : CALLBACK_TARGET_MANDATE,
+          lead: c.disposition.closed ? describeKeptBoundaryTarget(c) : CALLBACK_TARGET_LEAD,
+          // The state a governing action is phrased against. A kept boundary
+          // has no `await` to place, so a quirk written as "take the `await`
+          // here" states its outcome instead (see governingAction).
+          state: c.disposition.closed ? 'kept' : 'converting',
           // An error-first callback carries an error disposition; an
           // empty-parameter one carries none, so only the former points at the
           // error-edge inventory.
@@ -7093,8 +8372,104 @@ function renderCallbackRows(model) {
   return out.join('\n');
 }
 
+/**
+ * Whether a callback-boundary row is closed.
+ *
+ * WHY `alreadyAwaited` WAS NOT A PREDICATE. A row in this section exists
+ * because a call PASSES A FUNCTION LITERAL as its completion callback -- that
+ * is the detection rule. A converted site passes no literal, so it does not
+ * appear at all: it leaves the population. `return cb.alreadyAwaited` therefore
+ * asked whether a site was written `await util.f(x, function (err) {...})`,
+ * which is neither the legacy shape nor the converted one and occurs nowhere
+ * in this tree. The column could not reach anything but zero -- measured, 0 of
+ * 52 -- and zero out of a population that shrinks as work completes read, in
+ * the row totals, as fifty-two units of unfinished work.
+ *
+ * The question the row actually poses is the one rules T-3 and T-5 answer
+ * together: is this boundary one the migration must remove, or one it keeps?
+ *
+ *   T-5 -- a Node-core callback API inside the hapi-facing surface becomes its
+ *   promise equivalent, whether or not it warns. Such a boundary is UNFINISHED
+ *   work and its row stays open. AAP 0.6.4 names the four:
+ *   lib/controllers/courses.js:145, :266, :268 and
+ *   lib/controllers/trinket.js:1389.
+ *
+ *   T-3 -- the promise boundary sits AT the lifecycle method and no deeper, so
+ *   lib/util/file.js, lib/util/store.js, lib/util/queues.js and
+ *   lib/models/model.js keep their callback interfaces even though controllers
+ *   call them directly. A boundary onto one of those, onto a Mongoose model or
+ *   document, onto a plugin's own callback API or onto a module-local helper is
+ *   FINISHED work in its current shape: there is no promise form to await
+ *   without pushing the boundary into the callee, which T-3 forbids.
+ *
+ * The second condition is the carrier's, and it is the same one a discarded
+ * promise chain answers to: the boundary's own value goes to the callee, so
+ * the response must come from somewhere else, and "somewhere else" is only
+ * established when the enclosing lifecycle method is PROVEN to deliver on
+ * every path. Inside a module-scope helper there is no lifecycle obligation to
+ * prove (T-3 again), and the row closes on the interface question alone.
+ *
+ * A closed row is not a claim that the site was edited. It is the claim the
+ * AAP asks this document for: that the site's disposition is settled and
+ * nothing further is required of it.
+ */
 function isCallbackClosed(cb) {
-  return cb.alreadyAwaited;
+  if (cb.nodeCore) {
+    return false;
+  }
+  if (cb.carrier && cb.carrier.kind === 'handler') {
+    return cb.carrier.delivers === true;
+  }
+  return true;
+}
+
+/** Why a callback-boundary row is in the state it is, for the row to carry. */
+function callbackDisposition(cb) {
+  if (cb.nodeCore) {
+    return {
+      closed: false,
+      state: 'node-core-callback',
+      reason: 'the callee is a Node-core callback API, so rule T-5 converts it to the ' +
+        'promise equivalent whether or not it emits a deprecation warning -- this row is ' +
+        'open until it is'
+    };
+  }
+  if (cb.carrier && cb.carrier.kind === 'handler' && cb.carrier.delivers !== true) {
+    return {
+      closed: false,
+      state: 'unproven-carrier',
+      reason: 'the callee keeps its callback interface under rule T-3, but `' +
+        cb.carrier.name + '` is not proven to deliver a lifecycle value on every path, and ' +
+        'a boundary\'s own value goes to the callee -- so the response this path produces ' +
+        'is not established'
+    };
+  }
+  if (cb.scheduling) {
+    return {
+      closed: true,
+      state: 'scheduling-primitive',
+      reason: 'the callee schedules work rather than reporting an outcome, so it has no ' +
+        'promise equivalent that preserves when the work runs; rule T-5 does not reach it ' +
+        'and changing it would be a timing change (R-d)'
+    };
+  }
+  if (cb.carrier && cb.carrier.kind === 'handler') {
+    return {
+      closed: true,
+      state: 'kept-interface',
+      reason: 'the callee keeps its callback interface under rule T-3 -- awaiting it would ' +
+        'push the promise boundary into the callee -- and `' + cb.carrier.name +
+        '` is proven to deliver a lifecycle value on every path, so this boundary is ' +
+        'settled in its current shape'
+    };
+  }
+  return {
+    closed: true,
+    state: 'kept-interface-outside-lifecycle',
+    reason: 'the callee keeps its callback interface under rule T-3, and the boundary sits ' +
+      'in ' + (cb.carrier ? '`' + cb.carrier.name + '`' : 'module scope') + ', which is not ' +
+      'a lifecycle method, so there is no delivery obligation to prove here'
+  };
 }
 
 function renderReplyChainRows(model) {
@@ -7104,7 +8479,23 @@ function renderReplyChainRows(model) {
     return c.root === 'reply';
   });
 
-  out.push('## 6. Reply chains -- ' + pluralize(REPLY_CHAIN_ROSTER.length, 'row'));
+  // The header counts every row the section RENDERS, not just the roster: the
+  // unreturned bare `reply(` shape is a row here too, so a header reading
+  // "8 rows" above nine of them contradicted both the table below it and the
+  // row-totals census, which counts 9.
+  var bareReplyRows = ANCHORED_SITES.filter(function (site) {
+    return site.kind === 'reply-no-return';
+  });
+  var sectionRows = REPLY_CHAIN_ROSTER.length + bareReplyRows.length;
+  var sectionClosed = REPLY_CHAIN_ROSTER.filter(function (entry) {
+    return rosterRowState(model, entry).closed;
+  }).length + bareReplyRows.filter(function (site) {
+    return anchoredSiteState(model, site).closed;
+  }).length;
+
+  out.push('## 6. Reply chains -- ' + pluralize(sectionRows, 'row') + ' (' + sectionClosed +
+    ' closed): the ' + REPLY_CHAIN_ROSTER.length + ' chains of the roster plus ' +
+    pluralize(bareReplyRows.length, 'unreturned bare `reply(` site'));
   out.push('');
   out.push('The roster below is a **recorded baseline measurement**, not a transcription: the');
   out.push('three-way classification depends on which builder method ran last, and the');
@@ -7143,20 +8534,46 @@ function renderReplyChainRows(model) {
   out.push('is one side of a comparison. Both sides are required, because a row that closed on');
   out.push('the baseline half would be asserting a match nothing had checked.');
   out.push('');
+  // The evidence sentence is DERIVED from the same figures the boxes are, and
+  // says which of the two halves is missing rather than which is present. An
+  // earlier revision printed "reports itself captured, so rows below close on
+  // the recorded comparison" whenever `summary.captured` was true -- which is
+  // the state of this corpus -- immediately above a table in which every row
+  // was open, because closure needs the replay half as well. A section that
+  // contradicts its own table is worse than a section that reports a gap.
+  var rosterClosed = REPLY_CHAIN_ROSTER.filter(function (entry) {
+    return rosterRowState(model, entry).closed;
+  }).length;
+
   if (!model.evidence.available) {
     out.push('Evidence state in this tree: `' + CORPUS_PATH + '` is **not present**, so no row');
-    out.push('here can close on measured behaviour.');
-  } else if (!model.evidence.captured) {
+    out.push('here can close on measured behaviour. ' + rosterClosed + ' of ' +
+      REPLY_CHAIN_ROSTER.length + ' rows below are closed.');
+  } else if (model.evidence.pending >= model.evidence.total) {
     out.push('Evidence state in this tree: `' + CORPUS_PATH + '` defines ' +
       model.evidence.total + ' scenarios and has captured **none** of them');
-    out.push('(`summary.captured: false`, `baselinesPending: ' + model.evidence.pending +
-      '`), so every row below reports a');
+    out.push('(`baselinesPending: ' + model.evidence.pending + '`), so every row below reports a');
     out.push('**prospective** comparison and stays open. Capturing the corpus against an');
     out.push('installed baseline worktree and replaying it is what closes them; nothing in this');
-    out.push('generator can substitute for that.');
+    out.push('generator can substitute for that. ' + rosterClosed + ' of ' +
+      REPLY_CHAIN_ROSTER.length + ' rows below are closed.');
+  } else if (model.evidence.recorded === 0) {
+    out.push('Evidence state in this tree: `' + CORPUS_PATH + '` holds ' +
+      (model.evidence.total - model.evidence.pending) + ' captured baseline' +
+      (model.evidence.total - model.evidence.pending === 1 ? '' : 's') + ' across ' +
+      model.evidence.total + ' scenarios and');
+    out.push('**no replay verdict for any of them**, so the comparison these rows close on has');
+    out.push('one side only. A captured baseline records what the PRE-migration code did; what');
+    out.push('this tree serves is unmeasured until `test/parity/replay.js` drives the corpus');
+    out.push('against it and records a verdict per scenario. ' + rosterClosed + ' of ' +
+      REPLY_CHAIN_ROSTER.length + ' rows below are therefore closed, and');
+    out.push('each open row names the scenario whose verdict would close it.');
   } else {
-    out.push('Evidence state in this tree: `' + CORPUS_PATH + '` reports itself captured, so ' +
-      'rows below close on the recorded comparison.');
+    out.push('Evidence state in this tree: ' + model.evidence.recorded + ' of ' +
+      model.evidence.total + ' scenarios in `' + CORPUS_PATH + '` carry both a');
+    out.push('captured baseline and a confirming replay verdict. ' + rosterClosed + ' of ' +
+      REPLY_CHAIN_ROSTER.length + ' rows below close on that');
+    out.push('recorded comparison; the rest name the scenario whose verdict is still missing.');
   }
   out.push('');
 
@@ -7191,9 +8608,8 @@ function renderReplyChainRows(model) {
     out.push('');
     // The deviation is STATED here and ARGUED in docs/preserved-quirks.md
     // §11.1. Restating the argument would put the same reasoning in two
-    // documents, which is the drift R-d's cross-reference requirement exists
-    // to prevent -- so this block gives the reader what changes, which
-    // requirement controls, and where the argument lives.
+    // documents, where it can drift, so this block gives the reader what
+    // changes, which requirement controls, and where the argument lives.
     entries.filter(function (e) {
       return e.approvedDeviation;
     }).forEach(function (entry) {
@@ -7299,8 +8715,13 @@ function renderStreamRows(model) {
     });
   });
 
+  var streamClosed = names.reduce(function (acc, name) {
+    return acc + model.streamSitesByController[name].filter(function (site) {
+      return site.evidenceState === EVIDENCE.RECORDED;
+    }).length;
+  }, 0);
   out.push('## 7. Stream sites -- ' + pluralize(model.streamSiteTotal, 'row') +
-    ' across ' + pluralize(names.length, 'controller'));
+    ' across ' + pluralize(names.length, 'controller') + ' (' + streamClosed + ' closed)');
   out.push('');
   out.push('Derived, then reviewed -- see "Streams" above for the rule and for what it');
   out.push('deliberately excludes. Several of these error **after the response has begun**,');
@@ -7346,29 +8767,49 @@ function renderStreamRows(model) {
           quirkRef(site.file, site.enclosing) +
           describeEvidence(model.evidence,
             // When nothing pins a scenario to this branch, the row names the
-            // route-level CANDIDATES it found -- reporting them is useful,
-            // treating them as proof is what closed unexercised rows.
+            // route-level CANDIDATES it found: reporting them is useful,
+            // treating them as proof closes unexercised rows.
             site.evidenceState === EVIDENCE.INDIRECT
               ? site.routeScenarios
               : site.scenarios,
             'the preserved timing this row claims',
-            site.evidenceState)) + ' |');
+            site.evidenceState) +
+          // How the pin was derived, so the join is checkable rather than
+          // taken on the scenario id. Two derivations reach a branch and they
+          // are not equally direct, so the row says which one it used.
+          (site.scenarioPin
+            ? ' PIN: ' + site.scenarioPin.basis + ' (`' + site.scenarioPin.branch + '`).'
+            : '')) + ' |');
     });
     out.push('');
   });
 
   out.push('A stream row closes on measured behaviour of ITS OWN BRANCH or not at all. Two');
-  out.push('things have to hold. First a scenario must be pinned to this branch: the pin is');
-  out.push('derived from the structurally located reply chain that CONTAINS the site, not from');
-  out.push('the routes the carrier is reached from. That distinction is load-bearing --');
-  out.push('`files.download` reaches three stream sites across two mutually exclusive branches,');
-  out.push('so a result for the inline-image branch is silent about the attachment branch, and');
-  out.push('spreading one route-level scenario across both would tick a row nothing exercised.');
-  out.push('A site that cannot be placed on a branch -- one that builds the stream BEFORE the');
-  out.push('branch, for instance -- reports its route-level scenarios as candidates and stays');
-  out.push('open. Second, the pinned scenario must carry a captured baseline AND a confirming');
-  out.push('replay verdict. Until both hold the row stays open with the reason stated in it,');
-  out.push('which is the difference between an open checklist item and an unsupported claim.');
+  out.push('things have to hold. First a scenario must be pinned to this branch, and the pin is');
+  out.push('derived rather than tabulated -- from the reply chains this document already');
+  out.push('anchors structurally, not from the routes the carrier is reached from. That');
+  out.push('distinction is load-bearing: `files.download` reaches three stream sites across two');
+  out.push('mutually exclusive branches, so a result for the inline-image branch is silent');
+  out.push('about the attachment branch, and spreading one route-level scenario across both');
+  out.push('would tick a row nothing exercised.');
+  out.push('');
+  out.push('Two derivations produce a pin, and each row says which one it used. A site INSIDE a');
+  out.push('located chain is on that chain\'s branch. A site outside every located chain is on');
+  out.push('the branch of the one reply chain its carrier declares -- when its carrier declares');
+  out.push('exactly one, because then there is no other branch in that carrier for the site to');
+  out.push('be on. `downloadZip` and `downloadPostedZip` build the archive and the read stream');
+  out.push('BEFORE the response expression, which is why the containment test alone left four');
+  out.push('sites in each of them resting on nothing. The branch count is the number of chains');
+  out.push('the carrier DECLARES rather than the number this run located, which is what');
+  out.push('refuses the pin for `files.download`: only one of its two branches is locatable in');
+  out.push('a converted tree, and counting located chains would have found "exactly one" and');
+  out.push('pinned a site to a branch it may not be on.');
+  out.push('');
+  out.push('Second, the pinned scenario must carry a captured baseline AND a confirming replay');
+  out.push('verdict. Until both hold the row stays open with the reason stated in it, which is');
+  out.push('the difference between an open checklist item and an unsupported claim. A site that');
+  out.push('cannot be pinned at all reports its route-level scenarios as candidates, or says');
+  out.push('that it has none.');
   out.push('');
   return out.join('\n');
 }
@@ -7553,6 +8994,219 @@ function renderRetainedByDesign() {
   return out.join('\n');
 }
 
+// The four populations the rows fall into, and what decides a row in each.
+// They are reported with their OWN denominators because they are not
+// commensurable: summing them and calling the result a completion figure was
+// the defect this accounting replaces.
+var POPULATIONS = [
+  {
+    key: 'lifecycle',
+    title: 'Lifecycle functions -- the conversion set',
+    decidedBy: 'the analysed tree: a lifecycle shape, no residual `reply(`, and a PROVEN ' +
+      'delivery of a value on every path through the body',
+    openMeans: 'a body that is still legacy, still consumes the shim, or cannot be shown to ' +
+      'deliver on some path -- unfinished conversion work, and the row says which half is ' +
+      'missing'
+  },
+  {
+    key: 'structural',
+    title: 'Sites inside those functions, decided by the tree',
+    decidedBy: 'the analysed tree: a chain\'s value or settlement reaching a consumer, and a ' +
+      'callback boundary falling on the side of rules T-3 and T-5 that keeps it',
+    openMeans: 'a value that is discarded where something could have depended on it, a ' +
+      'reaction that produces nothing, or a Node-core callback API that rule T-5 mandates ' +
+      'converting -- unfinished conversion work'
+  },
+  {
+    key: 'measured',
+    title: 'Sites whose target IS a measurement',
+    decidedBy: 'a DRIVEN COMPARISON -- the corpus scenario that drives the site carrying ' +
+      'both a captured baseline response and a confirming replay verdict against this tree',
+    openMeans: 'the comparison has not been performed, or has been performed on one side ' +
+      'only. This is NOT a statement that the site is unconverted: what the site now serves ' +
+      'is unmeasured, and no reading of the source can substitute'
+  },
+  {
+    key: 'excluded',
+    title: 'Rows outside the conversion set',
+    decidedBy: 'a recorded per-function determination -- whether an independent gate (the ' +
+      'zero-deprecation-warning bar, or the repaired suite) forces a defined-but-unrouted ' +
+      'function into scope -- and, for a route with no function, whether the preserved ' +
+      'fallback still serves it',
+    openMeans: 'a gate does force the function into scope, so it joins the conversion set'
+  }
+];
+
+/**
+ * The completion accounting, by population rather than by one sum.
+ *
+ * WHY THE SUM WAS THE DEFECT. The table above is a per-section census and is
+ * correct as one. Adding its Closed column up and printing `382 / 266` -- as an
+ * earlier revision did -- asserted a completion figure over four populations
+ * that answer to different authorities, and the arithmetic then read as one
+ * number of outstanding units of conversion work. It was not: the largest part
+ * of that gap was a callback-boundary column that could not reach anything but
+ * zero, and the rest was a driven comparison nobody in the delivery had run.
+ * Both are real facts, and neither is "116 sites left to convert".
+ *
+ * So the sum stays -- it is the census total and a reader may want it -- and
+ * the claim is made per population, each with its own denominator, the
+ * authority that decides it, and, for what remains, the artifact that would
+ * close it. Every figure here is derived from the same `sections` array the
+ * table is, and the self-check asserts the two agree.
+ */
+function renderPopulationAccounting(model, sections, totalRows, totalClosed) {
+  var out = [];
+  var buckets = populationTotals(sections);
+
+  out.push('### What that total does and does not say');
+  out.push('');
+  out.push('The census above is correct as a census. **Its Closed column must not be read as');
+  out.push('a single completion figure**, because the rows answer to four different');
+  out.push('authorities, and only two of the four are statements about conversion work at');
+  out.push('all. So the claim is made per population:');
+  out.push('');
+  out.push('| Population | Rows | Closed | Decided by |');
+  out.push('| --- | --- | --- | --- |');
+  POPULATIONS.forEach(function (population) {
+    var bucket = buckets[population.key];
+    out.push('| ' + population.title + ' | ' + bucket.rows + ' | ' + bucket.closed +
+      ' | ' + cell(population.decidedBy) + ' |');
+  });
+  out.push('| **All rows** | **' + totalRows + '** | **' + totalClosed + '** | |');
+  out.push('');
+
+  POPULATIONS.forEach(function (population) {
+    var bucket = buckets[population.key];
+    var open = bucket.rows - bucket.closed;
+    out.push('- **' + population.title + ' -- ' + bucket.closed + ' of ' + bucket.rows +
+      ' closed' + (open === 0 ? ', none open' : ', ' + open + ' open') + '.** ' +
+      (open === 0
+        ? 'Every row in this population is settled by the analysed tree.'
+        : 'An open row here means ' + population.openMeans + '.'));
+  });
+  out.push('');
+
+  var measured = buckets.measured;
+  var conversionRows = buckets.lifecycle.rows + buckets.structural.rows;
+  var conversionClosed = buckets.lifecycle.closed + buckets.structural.closed;
+  var conversionOpen = conversionRows - conversionClosed;
+
+  out.push('**The one completion claim this document supports, stated as narrowly as the');
+  out.push('evidence allows.** ' + conversionClosed + ' of the ' + conversionRows +
+    ' rows whose disposition the analysed tree decides are');
+  out.push('closed' + (conversionOpen === 0
+    ? ' -- every routed handler, every routed pre-handler, the inline pre-handler, every'
+    : ', and ' + conversionOpen + ' are not. The population covers every routed handler,') +
+    (conversionOpen === 0
+      ? ' promise chain and every callback boundary.'
+      : ' every routed pre-handler, the inline pre-handler, every promise chain and every ' +
+        'callback boundary.'));
+  out.push('');
+  if (measured.closed < measured.rows) {
+    out.push('**What is NOT claimed.** ' + (measured.rows - measured.closed) + ' of the ' +
+      measured.rows + ' rows whose target is a measurement remain');
+    out.push('open, and no amount of reading this tree closes one: a reply chain\'s outcome');
+    out.push('depended on which builder method ran last, and whether a stream still errors');
+    out.push('after the response has begun is a timing question. What closes them is');
+    out.push('`test/parity/replay.js` driving `' + CORPUS_PATH + '` against this tree and');
+    out.push('recording a verdict per scenario. This tree carries ' + model.evidence.total +
+      ' scenarios, ' +
+      (model.evidence.total - model.evidence.pending) + ' with a captured');
+    out.push('baseline and **' + model.evidence.recorded + ' with a confirming replay**, so');
+    out.push('the comparison exists on one side. Each open row below names the scenario whose');
+    out.push('verdict would close it, or states that no scenario is pinned to its branch.');
+    out.push('');
+    replayEvidenceLines(model).forEach(function (line) {
+      out.push(line);
+    });
+    out.push('');
+  }
+  return out.join('\n');
+}
+
+/**
+ * Where the target half of the comparison comes from, and its state in this
+ * run.
+ *
+ * Stated in the document because a reader looking at 28 open measurement rows
+ * needs to know what closes them, and the answer is not "run the replay
+ * again". The corpus holds baselines; replay.js writes verdicts to its own
+ * artifact; nothing writes them back into the corpus. So the closing step is
+ * two commands, and the second one is the join this generator now accepts.
+ *
+ * @param {Object} model the analysed model
+ * @returns {string[]} markdown lines
+ */
+function replayEvidenceLines(model) {
+  var out = [];
+  var artifact = model.replayArtifact;
+  var join = model.replayJoin;
+
+  if (!artifact) {
+    out.push('**How the target half arrives.** `test/parity/replay.js` writes its per-scenario');
+    out.push('verdicts to its OWN `--out` artifact, and nothing in this repository writes a');
+    out.push('verdict back into `' + CORPUS_PATH + '` -- that tool\'s `--annotations` flag is');
+    out.push('an input, joining `expectedDeviation` and `unreachableReason` by scenario id,');
+    out.push('and `test/parity/capture.js` is the only writer of the corpus. This run was');
+    out.push('given no replay artifact, so every row below stands on its captured baseline');
+    out.push('alone. To close them, produce the artifact and hand it back:');
+    out.push('');
+    out.push('```sh');
+    out.push('npm run verify:corpus                       # writes $PARITY_OUT/replay-result.json');
+    out.push('node test/parity/convert-inventory.js \\');
+    out.push('  --replay "$PARITY_OUT/replay-result.json" --out docs/conversion-inventory.md');
+    out.push('```');
+    return out;
+  }
+
+  out.push('**The replay artifact this run was given.** `' + path.basename(artifact.path) +
+    '`, written by');
+  out.push('`' + REPLAY_ARTIFACT_TOOL + '`, digest `sha256:' + artifact.digest.slice(0, 16) +
+    '...`, verdict ' + JSON.stringify(artifact.verdict) + '. It carries ' +
+    artifact.scenarios + ' scenario');
+  out.push('verdicts, ' + artifact.confirming + ' of them confirming' +
+    (join ? ', of which ' + join.joined + ' matched a scenario in the corpus' : '') + '.');
+  out.push('');
+
+  if (!artifact.usable) {
+    out.push('**Those verdicts close no row.** The artifact labels itself');
+    out.push('`gateQualifying: false`' + (artifact.gateQualifyingReason
+      ? ' -- ' + artifact.gateQualifyingReason
+      : '') + '. A run its own producer says cannot stand as the gate cannot');
+    out.push('close a row here either: that would put back the thing this section exists to');
+    out.push('prevent, a checklist asserting a measurement that cannot be cited. The');
+    out.push('verdicts are reported above and the rows stay open.');
+    return out;
+  }
+
+  if (join && join.unmatched.length > 0) {
+    out.push('**' + join.unmatched.length + ' verdict(s) name a scenario the corpus does not');
+    out.push('contain**, so the two artifacts describe different corpora and those verdicts');
+    out.push('were not joined: ' + join.unmatched.slice(0, 6).map(function (id) {
+      return '`' + id + '`';
+    }).join(', ') + (join.unmatched.length > 6 ? ', and others' : '') + '.');
+  }
+  return out;
+}
+
+/** Rows and closed rows per population, derived from the section census. */
+function populationTotals(sections) {
+  var buckets = Object.create(null);
+  POPULATIONS.forEach(function (population) {
+    buckets[population.key] = { rows: 0, closed: 0 };
+  });
+  sections.forEach(function (section) {
+    var bucket = buckets[section.population];
+    if (!bucket) {
+      return;
+    }
+    bucket.rows += section.rows;
+    bucket.closed += section.closed;
+  });
+  return buckets;
+}
+
 function renderTotals(model, sections) {
   var out = [];
   out.push('## Row totals');
@@ -7570,6 +9224,7 @@ function renderTotals(model, sections) {
   }, 0);
   out.push('| **Total** | **' + totalRows + '** | **' + totalClosed + '** | |');
   out.push('');
+  out.push(renderPopulationAccounting(model, sections, totalRows, totalClosed));
 
   var functionRows = sections.filter(function (s) {
     return s.functionRows;
@@ -7616,7 +9271,82 @@ function renderTotals(model, sections) {
 // SECTION 15 -- DOCUMENT ASSEMBLY
 // ---------------------------------------------------------------------------
 
-function renderDocument(model, checks) {
+/**
+ * The per-section row census, and the population accounting derived from it.
+ *
+ * Built here rather than inside `renderDocument` so that the SELF-CHECKS can
+ * assert the arithmetic before a document exists: a closure figure that only
+ * comes into being while rendering cannot be checked, and the accounting
+ * defect this replaces was two figures computed by different routes that did
+ * not agree.
+ */
+/**
+ * Every measurement-gated row, with the scenario that is supposed to close it.
+ *
+ * The accounting needs this per row rather than in aggregate, and the reason is
+ * that one confirmed scenario can legitimately close SEVERAL rows. The
+ * sole-branch stream pin does exactly that on purpose: a controller declaring
+ * one reply chain in a function that owns five stream sites pins all six to
+ * that chain's scenario, because the response those sites produce IS the one
+ * that scenario drives. An earlier revision asserted
+ * `measuredClosed <= evidence.recorded`, which reads one scenario as licensing
+ * one row and therefore FAILS generation on valid partial evidence: marking a
+ * single scenario replay-confirmed closed its six pinned rows and the run
+ * exited 2 complaining that "6 rows are closed but only 1 scenario carries a
+ * confirming verdict". The invariant that actually holds is per row -- every
+ * closed row's OWN scenario must carry the confirming verdict -- and it is
+ * strictly stronger, because it also catches a row closed on some other row's
+ * evidence, which the aggregate never could.
+ *
+ * @param {Object} model the analysed model
+ * @returns {{section: string, label: string, scenario: (string|null),
+ *            evidenceState: string, closed: boolean}[]}
+ */
+function measuredRowLedger(model) {
+  var ledger = [];
+
+  ANCHORED_SITES.forEach(function (site) {
+    if (site.kind !== 'dead-301' && site.kind !== 'reply-no-return') {
+      return;
+    }
+    var state = anchoredSiteState(model, site);
+    ledger.push({
+      section: site.kind === 'dead-301' ? '2b' : '6',
+      label: site.file + ' `' + site.enclosing + '` (' + site.kind + ')',
+      scenario: site.scenario || null,
+      evidenceState: state.evidenceState,
+      closed: state.closed
+    });
+  });
+
+  REPLY_CHAIN_ROSTER.forEach(function (entry) {
+    var state = rosterRowState(model, entry);
+    ledger.push({
+      section: '6',
+      label: entry.file + ':' + entry.lines + ' `' + entry.carrier + '`',
+      scenario: entry.scenario || null,
+      evidenceState: state.evidenceState,
+      closed: state.closed
+    });
+  });
+
+  Object.keys(model.streamSitesByController).forEach(function (name) {
+    model.streamSitesByController[name].forEach(function (site) {
+      ledger.push({
+        section: '7',
+        label: site.file + ':' + site.line +
+          (site.enclosing ? ' `' + site.enclosing + '`' : ''),
+        scenario: site.scenario || null,
+        evidenceState: site.evidenceState,
+        closed: site.evidenceState === EVIDENCE.RECORDED
+      });
+    });
+  });
+
+  return ledger;
+}
+
+function buildSectionCensus(model) {
   var routedHandlers = model.handlers.filter(function (h) {
     return h.routed;
   });
@@ -7642,28 +9372,30 @@ function renderDocument(model, checks) {
       rows: routedHandlers.length,
       closed: routedHandlers.filter(isHandlerClosed).length,
       inSet: 'yes',
-      functionRows: true
+      functionRows: true,
+      population: 'lifecycle'
     },
     {
       title: '2a. Routed pre-handler functions',
       rows: routedPre.length,
       closed: routedPre.filter(isHandlerClosed).length,
       inSet: 'yes',
-      functionRows: true
+      functionRows: true,
+      population: 'lifecycle'
     },
     {
       // Counted apart from 2a because they are not functions: they are two
       // BRANCH SITES inside two of 2a's functions (`findTrinket` and
-      // `courseBySlug`). Bundling them into section 2 made sections 1 to 3
-      // hold 156 rows while the prose called them the 154, which is an
-      // arithmetic claim that does not hold -- 145 + 8 + 1 is 154, and the
-      // two dead 301s are sites within, exactly like a promise chain.
+      // `courseBySlug`). Counting them in section 2 puts 156 rows in sections
+      // 1 to 3 while the prose calls them the 154 -- 145 + 8 + 1 is 154, and
+      // the two dead 301s are sites within, exactly like a promise chain.
       title: '2b. Dead pre-handler 301 branch sites (inside 2a)',
       rows: deadRedirects.length,
       closed: deadRedirects.filter(function (s) {
         return anchoredSiteState(model, s).closed;
       }).length,
-      inSet: 'sites within'
+      inSet: 'sites within',
+      population: 'measured'
     },
     {
       title: '3. Inline pre-handler',
@@ -7672,19 +9404,22 @@ function renderDocument(model, checks) {
         return i.signature === 'toolkit' && !i.analysis.usesReply && i.analysis.alwaysDelivers;
       }).length,
       inSet: 'yes',
-      functionRows: true
+      functionRows: true,
+      population: 'lifecycle'
     },
     {
       title: '4. Promise chains',
       rows: model.promiseChains.length,
       closed: model.promiseChains.filter(isChainClosed).length,
-      inSet: 'sites within'
+      inSet: 'sites within',
+      population: 'structural'
     },
     {
       title: '5. Callback boundaries',
       rows: model.callbackBoundaries.length,
       closed: model.callbackBoundaries.filter(isCallbackClosed).length,
-      inSet: 'sites within'
+      inSet: 'sites within',
+      population: 'structural'
     },
     {
       title: '6. Reply chains (+1 distinct shape)',
@@ -7694,7 +9429,8 @@ function renderDocument(model, checks) {
       }).length + bareReplyRows.filter(function (s) {
         return anchoredSiteState(model, s).closed;
       }).length,
-      inSet: 'sites within'
+      inSet: 'sites within',
+      population: 'measured'
     },
     {
       title: '7. Stream sites',
@@ -7704,7 +9440,8 @@ function renderDocument(model, checks) {
           return site.evidenceState === EVIDENCE.RECORDED;
         }).length;
       }, 0),
-      inSet: 'sites within'
+      inSet: 'sites within',
+      population: 'measured'
     },
     {
       title: '8. Unrouted controller exports',
@@ -7712,7 +9449,8 @@ function renderDocument(model, checks) {
       closed: unroutedHandlers.filter(function (h) {
         return !h.gate.forced;
       }).length,
-      inSet: 'NO -- excluded'
+      inSet: 'NO -- excluded',
+      population: 'excluded'
     },
     {
       title: '9. Unrouted named pre-handlers',
@@ -7720,7 +9458,8 @@ function renderDocument(model, checks) {
       closed: unroutedPre.filter(function (p) {
         return !p.gate.forced;
       }).length,
-      inSet: 'NO -- excluded'
+      inSet: 'NO -- excluded',
+      population: 'excluded'
     },
     {
       title: '10. Routes with no function',
@@ -7730,9 +9469,38 @@ function renderDocument(model, checks) {
           return d.binding === entry.binding;
         });
       }).length,
-      inSet: 'NO -- excluded'
+      inSet: 'NO -- excluded',
+      population: 'excluded'
     }
   ];
+
+  var totalRows = sections.reduce(function (acc, section) {
+    return acc + section.rows;
+  }, 0);
+  var totalClosed = sections.reduce(function (acc, section) {
+    return acc + section.closed;
+  }, 0);
+  var buckets = populationTotals(sections);
+
+  return {
+    sections: sections,
+    accounting: {
+      totalRows: totalRows,
+      totalClosed: totalClosed,
+      populationRows: POPULATIONS.reduce(function (acc, population) {
+        return acc + buckets[population.key].rows;
+      }, 0),
+      populationClosed: POPULATIONS.reduce(function (acc, population) {
+        return acc + buckets[population.key].closed;
+      }, 0),
+      measuredRows: buckets.measured.rows,
+      measuredClosed: buckets.measured.closed
+    }
+  };
+}
+
+function renderDocument(model, checks) {
+  var sections = model.sections;
 
   var body = [
     renderFrontMatter(model),
@@ -7804,13 +9572,20 @@ var USAGE = [
   '                 this file). Point it at a `git worktree` to inventory the',
   '                 baseline commit ' + BASELINE_COMMIT + '.',
   '  --out <path>   document to write (default: <repo>/docs/conversion-inventory.md)',
+  '  --replay <path>  the `--out` artifact of test/parity/replay.js, supplying the',
+  '                 TARGET half of every measurement-gated row. The corpus holds',
+  '                 the captured baselines; replay.js writes its verdicts to its',
+  '                 own artifact and nothing writes them back into the corpus, so',
+  '                 without this the measurement-gated rows cannot close however',
+  '                 many times the replay is run. An artifact the tool labelled',
+  '                 gateQualifying: false is read and reported but closes no row.',
   '  --check        write nothing; regenerate in memory and compare against the',
   '                 document at --out. Exits 3 when it differs, so the committed',
   '                 artifact can be proven current without trusting its header.',
   '  --verbose      print a short summary to stderr',
   '  --help, -h     print this message',
   '',
-  'No option is repeatable: a second --app, --out or --verbose is a usage',
+  'No option is repeatable: a second --app, --out, --replay or --verbose is a usage',
   'error rather than a last-one-wins, and a path beginning with "-" is a usage',
   'error too, so a missing value cannot swallow the following option.',
   '',
@@ -7840,41 +9615,144 @@ function selfCheckError(message) {
 // a general "recorded"/"captured" scan on purpose: the document legitimately
 // says a row "stays OPEN until the captured response it must reproduce exists",
 // which describes a requirement, while the phrases below assert a result. A
-// scan loose enough to catch the second would fail on the first, and a check
-// that cries wolf gets deleted.
+// scan loose enough to catch the second fails on the first, and a check that
+// fires on correct prose stops being run.
 var FALSE_EVIDENCE_CLAIMS = Object.freeze([
-  'captured before conversion by',
-  'the baseline result is recorded',
-  'the target result as a 200',
-  'results are recorded',
-  'has been captured',
-  'were captured before'
+  { phrase: 'captured before conversion by', requires: 'baseline' },
+  { phrase: 'the baseline result is recorded', requires: 'baseline' },
+  { phrase: 'has been captured', requires: 'baseline' },
+  { phrase: 'were captured before', requires: 'baseline' },
+  { phrase: 'the target result as a 200', requires: 'target' },
+  { phrase: 'results are recorded', requires: 'target' }
 ]);
 
+// A rendered row names the scenario that closes it in one form -- the EVIDENCE
+// sentence -- so the audit can join a row back to its own evidence state
+// without trusting the model that rendered it.
 /**
- * Whether this run has runtime evidence to cite at all.
+ * Whether this run carries captured baseline evidence AT ALL.
+ *
+ * A document-wide claim asks that question; `summary.captured` answers a
+ * stricter one -- whether EVERY scenario carries a baseline -- and goes false
+ * as soon as one scenario is recorded as unreachable by design. That is a
+ * state a capture may legitimately be in, and the corpus records the reason
+ * rather than driving a request that terminates the application: the folder
+ * duplicate-name contract raises a duplicate-key error inside a save callback
+ * that reaches an undefined `request.catch`, which Mongoose re-emits as an
+ * unlistened 'error' event, so the process exits and every scenario ordered
+ * after it would be lost. Reading the strict flag here refused a document
+ * whose baselines were otherwise complete, with `baselinesPending: 0`.
+ *
+ * So the predicate is: the corpus is readable, nothing is pending, and at
+ * least one baseline exists. A claim on a row that names its own scenario is
+ * still judged against THAT scenario, which is stricter than this and
+ * unchanged -- this only governs prose that names none.
+ *
+ * @returns {boolean}
+ */
+function baselineEvidenceAvailable(evidence) {
+  if (!evidence || !evidence.available) {
+    return false;
+  }
+  if (evidence.captured) {
+    return true;
+  }
+  return evidence.pending === 0 && evidence.total > 0;
+}
+
+var SCENARIO_IN_ROW = /EVIDENCE: `([^`]+)`/g;
+
+// Row kinds whose target IS a measurement. Used for the rows that name NO
+// scenario: those must never be ticked, and without a kind test they would be
+// invisible to an audit that keys on the EVIDENCE sentence.
+var MEASURED_ROW_KINDS = Object.freeze([
+  '| stream site',
+  '| reply chain (',
+  '| reply call, no return'
+]);
+
+/** The scenario ids one rendered line names, in order, without duplicates. */
+function scenariosNamedIn(line) {
+  var found = [];
+  var match;
+  SCENARIO_IN_ROW.lastIndex = 0;
+  while ((match = SCENARIO_IN_ROW.exec(line)) !== null) {
+    if (found.indexOf(match[1]) === -1) {
+      found.push(match[1]);
+    }
+  }
+  return found;
+}
+
+/** Whether one scenario carries the half of the evidence a claim asserts. */
+function claimBackedByScenario(evidence, id, requires) {
+  var state = evidenceStateOf(evidence, id);
+  if (requires === 'baseline') {
+    return state === EVIDENCE.RECORDED || state === EVIDENCE.BASELINE_ONLY;
+  }
+  return state === EVIDENCE.RECORDED;
+}
+
+/**
+ * Whether this run has runtime evidence to cite at all -- THE one predicate
+ * for that question, passed the model explicitly by every caller.
  *
  * Read from the corpus this run loaded rather than hardcoded: the predicate
  * exists so that a claim about a measurement is permitted exactly when the
  * measurement is present, and a constant answer is wrong on one side or the
  * other as soon as the corpus changes state.
+ *
+ * "Present" means a scenario in `EVIDENCE.RECORDED` -- a captured baseline AND
+ * a confirming replay verdict -- because that is the state every closure rule
+ * in this file requires, and a predicate that answered a weaker question than
+ * the rules it guards would license exactly the claims it exists to refuse. An
+ * earlier revision read `evidence.available && evidence.captured`, which the
+ * corpus in this tree satisfies with 383 captured baselines and zero replays:
+ * the audit below therefore returned early and let the reply-chain section
+ * assert that "rows below close on the recorded comparison" while every one of
+ * them was open. A baseline alone records what the PRE-migration code did,
+ * which is one half of a comparison.
+ *
+ * Its scope is deliberately narrow: a DOCUMENT-WIDE claim, one whose row names
+ * no scenario and which can therefore only be about the run as a whole. A
+ * claim attached to a row is judged against that row's own scenario instead,
+ * because a run holding one confirmed scenario says nothing about a row driven
+ * by a different one -- and reading this predicate as an answer for every row
+ * is what let a ticked stream row through on an unrelated verdict.
  */
 function runtimeEvidenceAvailable(model) {
-  return Boolean(model && model.evidence && model.evidence.available &&
-    model.evidence.captured);
+  return Boolean(model && model.evidence && model.evidence.recorded > 0);
 }
 
 /**
  * Refuses to write a document that asserts a measurement nobody took.
  *
- * Two invariants, both derived from the document's own stated policy:
+ * Two invariants, both derived from the document's own stated policy and both
+ * evaluated PER ROW:
  *
- *   1. no assertive capture claim while there is no linked runtime evidence;
- *   2. no ticked box on a row whose target IS a measurement - the
- *      builder-returned reply chains and the stream sites.
+ *   1. no assertive capture claim unless the scenario the claim's own row
+ *      names carries the half of the evidence the claim asserts -- a claim
+ *      about a captured baseline needs a captured baseline, a claim about a
+ *      target result needs a confirming replay verdict;
+ *   2. no ticked box on a row whose target IS a measurement unless that row's
+ *      own scenario is in EVIDENCE.RECORDED. A row that names no scenario can
+ *      never be ticked, because there is nothing for it to have measured.
  *
- * Invariant 2 is checked against the rendered table rows rather than against
- * the model, so it holds however a future renderer computes the box.
+ * WHY PER ROW. An earlier revision opened with `if
+ * (runtimeEvidenceAvailable(model)) { return; }`, which switched the whole
+ * audit off as soon as ONE scenario anywhere in the corpus carried a verdict.
+ * Both scans then stopped running for every other row, and a ticked stream row
+ * whose own scenario had no verdict at all was accepted -- the exact claim the
+ * function exists to refuse, admitted by an unrelated scenario's evidence. The
+ * all-or-nothing shape also contradicted the guarantee stated below: a check
+ * that stops evaluating cannot hold "however a future renderer computes the
+ * box".
+ *
+ * Both invariants are checked against the rendered rows rather than against
+ * the model, and the join back to the evidence is the scenario id the row
+ * itself prints. So the audit is independent of whatever computed the box, and
+ * a renderer that ticked a row without printing its scenario fails on
+ * invariant 2 rather than passing unnoticed.
  *
  * @param {string} document the rendered markdown
  * @param {Object} model the analysed model, for its evidence state
@@ -7884,37 +9762,133 @@ function runtimeEvidenceAvailable(model) {
 function auditRenderedEvidence(document, model) {
   var failures = [];
   var lines = document.split('\n');
-
-  if (runtimeEvidenceAvailable(model)) {
-    return;
-  }
-
-  FALSE_EVIDENCE_CLAIMS.forEach(function (claim) {
-    lines.forEach(function (line, index) {
-      if (line.indexOf(claim) > -1) {
-        failures.push({
-          tier: 1,
-          message: 'line ' + (index + 1) + ' asserts ' + JSON.stringify(claim) +
-            ', but this run linked no captured corpus, so no measured response ' +
-            'can be cited. State the requirement prospectively, or supply the ' +
-            'evidence. Offending line: ' + line.slice(0, 160)
-        });
-      }
-    });
-  });
+  var evidence = model.evidence;
 
   lines.forEach(function (line, index) {
+    var named = scenariosNamedIn(line);
+
+    FALSE_EVIDENCE_CLAIMS.forEach(function (claim) {
+      if (line.indexOf(claim.phrase) === -1) {
+        return;
+      }
+      // A claim on a row that names its scenario is judged against THAT
+      // scenario. A claim in prose that names none is judged against the
+      // document-wide state, which is the only thing it can be about.
+      var backed = named.length > 0
+        ? named.every(function (id) {
+          return claimBackedByScenario(evidence, id, claim.requires);
+        })
+        : (claim.requires === 'baseline'
+          ? baselineEvidenceAvailable(evidence)
+          : runtimeEvidenceAvailable(model));
+      if (backed) {
+        return;
+      }
+      failures.push({
+        tier: 1,
+        message: 'line ' + (index + 1) + ' asserts ' + JSON.stringify(claim.phrase) +
+          ', which claims a ' + (claim.requires === 'baseline'
+            ? 'CAPTURED BASELINE'
+            : 'CONFIRMED TARGET RESULT') + ' that ' +
+          (named.length > 0
+            ? 'scenario(s) ' + named.map(function (id) {
+              return '`' + id + '` (' + evidenceStateOf(evidence, id) + ')';
+            }).join(', ') + ' do not carry'
+            : 'this run has no evidence for') +
+          '. State the requirement prospectively, or supply the evidence. ' +
+          'Offending line: ' + line.slice(0, 160)
+      });
+    });
+
     if (line.indexOf('| [x] |') !== 0) {
       return;
     }
 
-    if (/reply chain \(builder-returned\)/.test(line) || /\| stream site/.test(line)) {
+    var measured = MEASURED_ROW_KINDS.some(function (kind) {
+      return line.indexOf(kind) > -1;
+    }) || named.length > 0;
+    if (!measured) {
+      return;
+    }
+
+    var confirming = named.filter(function (id) {
+      return evidenceStateOf(evidence, id) === EVIDENCE.RECORDED;
+    });
+    if (confirming.length > 0) {
+      return;
+    }
+    failures.push({
+      tier: 1,
+      message: 'line ' + (index + 1) + ' ticks a row whose target is a MEASUREMENT rather ' +
+        'than a construction, and ' + (named.length === 0
+          ? 'the row names no scenario, so there is nothing it could have measured'
+          : 'none of the scenarios it names (' + named.map(function (id) {
+            return '`' + id + '` (' + evidenceStateOf(evidence, id) + ')';
+          }).join(', ') + ') carries a confirming replay verdict') +
+        '. Source shape cannot close it: the source does not say what the measurement was. ' +
+        'Offending line: ' + line.slice(0, 160)
+    });
+  });
+
+  if (failures.length > 0) {
+    throw selfCheckError(formatFailures({ failures: failures }));
+  }
+}
+
+// The two halves of a self-contradicting instruction, matched literally in one
+// rendered target cell. The left column says the site keeps the shape it has;
+// the right column tells an implementer to replace that shape with an `await`.
+// A cell holding one of each is not ambiguous prose -- it is two opposite
+// instructions in the authoritative checklist, and an implementer following
+// either one can be said to have followed the document.
+var PRESERVE_INSTRUCTIONS = Object.freeze([
+  'LEAVE THE INTERFACE AS IT STANDS',
+  'LEAVE AS IT STANDS',
+  'PRESERVE AS IT STANDS'
+]);
+
+var CONVERT_INSTRUCTIONS = Object.freeze([
+  'take the `await` at this call site',
+  'Create the `await` AT THIS CALL SITE',
+  'await the promise form'
+]);
+
+/**
+ * Refuses to write a document in which one row gives two opposite actions.
+ *
+ * Checked on the RENDERED rows rather than on the composition inputs, for the
+ * same reason the evidence audit is: the defect was produced by composing two
+ * separately-correct fragments, so only the composed string shows it. Nine
+ * callback rows carried "LEAVE THE INTERFACE AS IT STANDS ... Do not promisify
+ * the callee to create an `await` here" and then "GOVERNING ACTION -- take the
+ * `await` at this call site", because the kept-boundary disposition was passed
+ * as the `lead` in front of a governing action written for an unconverted
+ * site. governingAction()'s `whenKept` variant is the fix; this is what keeps
+ * it fixed.
+ *
+ * @param {string} document the rendered markdown
+ * @returns {undefined}
+ * @throws {Error} with the self-check exit code, so nothing is written
+ */
+function auditRenderedInstructions(document) {
+  var failures = [];
+
+  document.split('\n').forEach(function (line, index) {
+    if (line.indexOf('| [') !== 0) {
+      return;
+    }
+    var preserve = PRESERVE_INSTRUCTIONS.filter(function (phrase) {
+      return line.indexOf(phrase) > -1;
+    });
+    var convert = CONVERT_INSTRUCTIONS.filter(function (phrase) {
+      return line.indexOf(phrase) > -1;
+    });
+    if (preserve.length > 0 && convert.length > 0) {
       failures.push({
         tier: 1,
-        message: 'line ' + (index + 1) + ' ticks a row whose target is a ' +
-          'MEASUREMENT rather than a construction, while no runtime evidence ' +
-          'is linked. Source shape cannot close it: the source does not say ' +
-          'what the measurement was. Offending line: ' + line.slice(0, 160)
+        message: 'line ' + (index + 1) + ' gives two opposite actions for one site: it says ' +
+          JSON.stringify(preserve[0]) + ' and also ' + JSON.stringify(convert[0]) +
+          '. A row states exactly one action. Offending line: ' + line.slice(0, 200)
       });
     }
   });
@@ -8005,9 +9979,9 @@ function writeDocumentAtomically(out, document) {
  * TWO RULES, both of them about a document this tool WRITES. No option is
  * repeatable, so a second `--out` is a usage error rather than a
  * last-one-wins - a caller who named two paths has to be told which one would
- * have been used. And a value beginning with a dash is a missing value: `--out
- * --verbose` used to write the checklist to a file called "--verbose" and then
- * run without the summary it was asked for, reporting neither.
+ * have been used. And a value beginning with a dash is a missing value:
+ * otherwise `--out --verbose` writes the checklist to a file called
+ * "--verbose" and runs without the summary it was asked for, reporting neither.
  *
  * @param {string[]} argv
  * @returns {Object} the resolved options
@@ -8018,6 +9992,7 @@ function parseArgs(argv) {
   var options = {
     app: repoRoot,
     out: null,
+    replay: null,
     check: false,
     verbose: false,
     help: false,
@@ -8057,6 +10032,10 @@ function parseArgs(argv) {
         break;
       case '--out':
         options.out = path.resolve(value('--out', i));
+        i++;
+        break;
+      case '--replay':
+        options.replay = path.resolve(value('--replay', i));
         i++;
         break;
       case '--check':
@@ -8233,7 +10212,10 @@ function main(argv) {
     throw usageError('--app must be a directory, got: ' + options.app);
   }
 
-  var model = analyseTree(options.app);
+  // Read before the analysis, so a malformed artifact fails as a usage error
+  // rather than half-way through a join.
+  var replayArtifact = options.replay ? loadReplayArtifact(options.replay) : null;
+  var model = analyseTree(options.app, replayArtifact);
   // The provenance block reports the command that produced the document, so
   // the invocation is recorded where the analysis cannot invent it.
   model.provenance.invocation = describeInvocation(options);
@@ -8274,12 +10256,15 @@ function main(argv) {
 
   // The evidence audit, run on the RENDERED document and before anything is
   // written. The self-checks above audit the analysis; this audits the prose,
-  // because the defect it exists to catch lived in the prose: a
-  // runtime-evidence row was ticked and its target asserted that a captured
-  // response existed while every baseline in the corpus was null. A generator
+  // where the defect it catches lives: a ticked runtime-evidence row whose
+  // target asserts a captured response the corpus does not hold. A generator
   // that can emit a claim its own policy forbids will emit it again, so the
   // policy is a check rather than a sentence.
   auditRenderedEvidence(document, model);
+
+  // The instruction audit, for the other way a composed cell goes wrong: not a
+  // claim about evidence, but two opposite actions for one site.
+  auditRenderedInstructions(document);
 
   if (options.check) {
     return checkDocument(options, document);
@@ -8350,13 +10335,20 @@ module.exports = {
   findUnreturnedBareReplies: findUnreturnedBareReplies,
   deriveStreamSites: deriveStreamSites,
   findNamedPreHandlers: findNamedPreHandlers,
+  findExportReferences: findExportReferences,
   findRouteDeclarations: findRouteDeclarations,
   findInlinePreHandlers: findInlinePreHandlers,
   findPreHandlerReferences: findPreHandlerReferences,
   assembleRouteExpression: assembleRouteExpression,
   analyseTree: analyseTree,
+  loadReplayArtifact: loadReplayArtifact,
+  joinReplayEvidence: joinReplayEvidence,
+  measuredRowLedger: measuredRowLedger,
+  chainDeliveryCensus: chainDeliveryCensus,
   runSelfChecks: runSelfChecks,
   renderDocument: renderDocument,
+  auditRenderedEvidence: auditRenderedEvidence,
+  auditRenderedInstructions: auditRenderedInstructions,
   parseArgs: parseArgs,
   main: main
 };

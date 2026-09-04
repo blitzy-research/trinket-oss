@@ -172,8 +172,10 @@
 //   PARITY_MODEL_FAULT_LOG    Optional evidence file. Every intercepted call is
 //                             appended as one JSON line - faulted or not - so
 //                             "the fault landed on the auth-scheme lookup" is a
-//                             claim backed by an artifact. A strict no-op when
-//                             unset.
+//                             claim backed by an artifact. Each line carries
+//                             the record's POSITION in this process rather than
+//                             an instant, so the artifact is reproducible; see
+//                             `nextSequence`. A strict no-op when unset.
 //
 // ===========================================================================
 // THE ARMING DOCUMENT
@@ -217,6 +219,10 @@
 //     is recorded in `status().diagnostic` instead.
 //   No `url.parse` and nothing else that emits a deprecation warning: this
 //     process's stderr is the stream AAP §0.9.3's zero-warning gate inspects.
+//   No clock read into anything that is persisted. The evidence log is RETAINED
+//     parity evidence, so two runs of one tree have to produce the same bytes
+//     for the same behaviour; see `nextSequence`, which is what a record
+//     carries instead of an instant.
 
 var fs   = require('fs');
 var path = require('path');
@@ -257,6 +263,9 @@ var state = {
   target     : null,
   originals  : {},
   calls      : [],
+  // Records in process order, and the only ordering channel a record carries.
+  // Never cleared by `reset()` - see `nextSequence`.
+  sequence   : 0,
   armToken   : null,
   used       : 0,
   armDiagnostic : null,
@@ -268,8 +277,46 @@ var state = {
 // ---------------------------------------------------------------------------
 
 /**
+ * Mints the ordering stamp a record carries.
+ *
+ * A WALL-CLOCK INSTANT CANNOT BE PERSISTED HERE, and that is the whole reason
+ * this function exists. Every record this fixture writes lands in the file at
+ * PARITY_MODEL_FAULT_LOG, and that file is RETAINED parity evidence: the
+ * drivers are separate processes, so `collectEvidence` in capture.js and
+ * replay.js parses that log as its only view of what this fixture did, and
+ * replay reconciles a scenario's armed steps against the `faulted` records it
+ * holds. An earlier revision stamped `new Date().toISOString()` on every
+ * record, which meant two runs of an identical tree produced different
+ * evidence BYTES for identical behaviour - so a reviewer comparing two runs
+ * read a difference that says nothing, and no byte comparison of the artifact
+ * could mean anything. The same reasoning that keeps the arming counter in
+ * this process rather than in the arming file applies to the log: "no writes
+ * and no clock".
+ *
+ * A monotonic per-process counter carries what the consumers actually need.
+ * Records are appended in order, so identity plus order is the whole contract,
+ * and the counter supplies the order without reading anything outside the
+ * process. It is NOT reset by `reset()`: a flush after a reset still writes
+ * every record it still holds, and a re-used log file cannot end up with two
+ * records claiming the same position.
+ *
+ * @returns {number} The next position, counting from 0 within this process.
+ */
+function nextSequence() {
+  var position = state.sequence;
+
+  state.sequence = state.sequence + 1;
+
+  return position;
+}
+
+/**
  * Appends one record to the in-memory log and, when a log path is configured,
  * to the file.
+ *
+ * The caller's fields are copied rather than used in place, and the copy is
+ * stamped with its position from `nextSequence` - which is the record's only
+ * ordering field, and deliberately not an instant.
  *
  * The directory is NOT created here, for the reason fixtures/http.js gives: a
  * recursive mkdir is not a safe operation to run blind from inside a request,
@@ -290,7 +337,7 @@ function record(record_) {
     }
   }
 
-  entry.at = new Date().toISOString();
+  entry.sequence = nextSequence();
   state.calls.push(entry);
 
   target = process.env.PARITY_MODEL_FAULT_LOG;
@@ -302,10 +349,14 @@ function record(record_) {
     fs.appendFileSync(target, JSON.stringify(entry) + '\n');
   }
   catch (e) {
+    // Pushed straight onto the in-memory record rather than passed back
+    // through `record`, which would attempt the append that just failed and
+    // re-enter this catch. It is stamped the same way so the two paths produce
+    // one shape, and `flush` can write this record out with the rest.
     state.calls.push({
-      event : 'log-append-failed',
-      error : e && e.message ? e.message : String(e),
-      at    : new Date().toISOString()
+      event    : 'log-append-failed',
+      error    : e && e.message ? e.message : String(e),
+      sequence : nextSequence()
     });
   }
 }
@@ -323,6 +374,12 @@ function note(event, detail) {
 
 /**
  * Rewrites the evidence log from the in-memory record.
+ *
+ * The records are re-encoded exactly as they are held, so a rewritten log
+ * carries the same shape - and, for one behaviour, the same bytes - as the
+ * appended one: nothing is stamped at flush time that was not stamped when the
+ * record was made, which is what keeps the artifact reproducible whichever way
+ * it was written.
  *
  * @returns {(string|null)} The path written, or null when none is configured.
  */
@@ -343,9 +400,9 @@ function flush() {
   }
   catch (e) {
     state.calls.push({
-      event : 'log-flush-failed',
-      error : e && e.message ? e.message : String(e),
-      at    : new Date().toISOString()
+      event    : 'log-flush-failed',
+      error    : e && e.message ? e.message : String(e),
+      sequence : nextSequence()
     });
     return null;
   }
@@ -956,6 +1013,10 @@ module.exports = {
     });
   },
   reset : function() {
+    // Clears the in-memory record and the once-per-cause arming diagnostic.
+    // The record counter is deliberately left running: it is the position a
+    // record occupies in THIS PROCESS, so resetting it would let two records
+    // in one run - and two lines in one log file - claim the same position.
     state.calls = [];
     state.armDiagnostic = null;
     return null;

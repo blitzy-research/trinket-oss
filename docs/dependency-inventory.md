@@ -35,7 +35,7 @@ baseline resolved versions from `git show 2f8712a:package-lock.json`; declared r
 respective `package.json`; the image digest and `pm2` pin from the delivered `Dockerfile`; audit
 figures from `npm audit --omit=dev`. Where a measurement disagreed with the planned expectation, the
 **measurement is recorded and the disagreement is logged** in
-[§8 Measurement discrepancy log](#8-measurement-discrepancy-log). Thirteen such disagreements were
+[§8 Measurement discrepancy log](#8-measurement-discrepancy-log). Fifteen such disagreements were
 found.
 
 **A declared range is not a resolved version.** The baseline manifest declares ranges throughout —
@@ -54,37 +54,44 @@ One rule produced every disposition in this migration, and it was applied unifor
 **R-c is what makes advisory-driven changes blocking.** The request asks for dependency replacement
 "only where blocking" and, separately, for a clean `npm audit --omit=dev`. Those two read as a
 contradiction until R-c names *security* as a permitted reason for a replacement. That single word is
-the whole reconciliation: it is why fifteen of the sixteen rows in §3 are advisory-driven and still
+the whole reconciliation: it is why fifteen of the seventeen rows in §3 are advisory-driven and still
 sit inside a blocking-only scope. Without it a reviewer would be right to read this table as scope
 creep.
 
 **Every direct dependency has exactly one disposition** — changed (§3), removed (§4), or deferred
 (the companion document). None is listed twice and none is unaccounted for. The corollary matters as
 much as the rule: a package that is merely old, merely unmaintained, or carries only a moderate
-finding appears in the deferred list and **not here**. `archiver` 2.1.1, `mongoose` 6.13.9, `jszip`
-3.6.0, `highlight.js` 9.18.5, `aws-sdk` 2.1693.0, `q` 1.0.1 and `config` 0.4.37 are all in that
+finding appears in the deferred list and **not here**. `mongoose` 6.13.9, `jszip` 3.6.0,
+`highlight.js` 9.18.5, `aws-sdk` 2.1693.0, `q` 1.0.1 and `config` 0.4.37 are all in that
 position, and all were verified unchanged: `@hapi/boom` 10.0.1, `@hapi/vision` 7.0.3, `@hapi/yar`
 11.0.3, `nunjucks` 3.2.4, `redis` 4.7.1, `winston` 3.19.0, `moment` 2.30.1, `underscore` 1.13.8,
 `mongoose-schema-extend` 0.2.2, `escape-string-regexp` 1.0.5, `limax` 1.4.1, `node-cryptojs-aes`
 0.4.0, `numeral` 1.5.6, `tab` 0.1.0 and `transliteration` 0.1.1 all resolve to the same version
-before and after. **One of those deferrals is not a moderate-only one:** `archiver` 2.1.1 carries no
-advisory at all, but it does carry **two measured shortfalls** that would each be a qualifying reason
-under the rule above:
+before and after.
 
-1. a runtime deprecation warning — `[DEP0005] Buffer() is deprecated`, from `compress-commons` at
-   module scope, once per process and only under `--pending-deprecation`; and
-2. a writer defect — its chain records **`crc32 = 0` and `uncompressed size = 0`** into every
-   deflated entry, so `adm-zip` 0.6.0 cannot read those archives back.
+**Two of the seventeen rows in §3 are not advisory-driven, and each names the reason that carries it
+instead.** `joi` moves because the request names its current line by directive (row 3); `archiver`
+moves **2.1.1 → 7.0.1** because 2.1.1 fails the rule on the *runtime deprecation warning* axis and on
+compatibility with the reader this delivery ships, neither of which is an advisory:
 
-Its **version** is unchanged because the frozen dependency authorization retains 2.1.1 and records
-the earlier major bump as withdrawn, and because no advisory qualifies it either; **neither shortfall
-is disposed of by that**, and both are recorded as **unresolved shortfalls against their gates** —
-the first against the zero-warning gate, the second against the storage and worker gates — with no
-decision taken about `archiver` and no deviation status granted to either. The writer defect is also
-**pre-existing at `2f8712a`**, which is why R-d and R-f bear on it: correcting it would change
-persisted archive bytes. §9.5 is this document's record of the retention and of both shortfalls;
-[`deferred-dependencies.md`](deferred-dependencies.md) §2.6 carries the full measurement narrative and
-[`baseline-parity.md`](baseline-parity.md) §7.4 and §8 carry the open status.
+1. a runtime deprecation warning — `[DEP0005] Buffer() is deprecated`, from `compress-commons` 1.2.2
+   at module scope through `zip-stream` 1.2.0, once per process and only under
+   `--pending-deprecation`; and
+2. a writer defect — the 2.x chain records **`crc32 = 0` and `uncompressed size = 0`** into every
+   deflated entry, so the `adm-zip` 0.6.0 this migration is authorized to install (row 9) cannot read
+   those archives back at all.
+
+AAP §0.5.1's triage rule authorizes a package change for "a runtime warning", and §0.5.1.1's
+`archiver keep` row is argued on the **advisory** axis alone and is silent on warnings, so it does
+not bar a change the rule authorizes on a different axis. Both shortfalls that an earlier revision of
+this document carried open are therefore **closed at their source rather than suppressed**: measured
+on the delivered tree, `require('archiver')` under `--pending-deprecation --trace-deprecation` prints
+nothing, `npm run verify:storage` closes **35 of 35** cases with a passing gate, and
+`npm run verify:worker` returns **VERDICT PASS** on **109 of 109** checks. §9.5 is this document's
+full record of the move, and [`deferred-dependencies.md`](deferred-dependencies.md) §2.6 records that
+the package has left the deferred list. **A cross-document consequence follows and is recorded rather
+than acted on here:** [`baseline-parity.md`](baseline-parity.md) owns the shortfall register (§7.4 and
+§8) and must now record both entries as closed by this move; that document is not this one's to edit.
 
 **One row does not satisfy the rule on severity alone, and is flagged rather than smoothed over.**
 `@hapi/inert`'s baseline finding is *moderate*, not high, and `@hapi/inert` declares no peer
@@ -99,8 +106,9 @@ applied.
 |---|---|---|
 | Production dependencies declared | 58 | **39** |
 | Development dependencies declared | 11 | **8** |
-| Packages in the root lockfile | 678 | **456** (455 excluding the root record) |
-| Version moves | — | **16** |
+| Packages in the root lockfile | 678 | **521** (520 excluding the root record) |
+| Version moves — production (§3) | — | **17** |
+| Version moves — development (§5) | — | **2** (`sinon`, `supertest`) |
 | Declarations removed | — | **23** (19 production, 4 development) |
 | Declarations added | — | **1** (`mongodb-memory-server`) |
 | `npm audit --omit=dev` | 15 critical, 28 high, 16 moderate — **59** | 0 critical, **1 high**, 6 moderate — **7** |
@@ -116,7 +124,7 @@ $ node -e "const p=require('./package.json'); \
 
 ## 3. Version moves
 
-Sixteen packages moved. Registry is the public npm registry for every row — each `resolved` field in
+Seventeen packages moved. Registry is the public npm registry for every row — each `resolved` field in
 the delivered lockfile is a `https://registry.npmjs.org/...` URL. No row is a private, vendored or
 Git dependency; the repository's one Git dependency, the `marked` fork, is unchanged and is owned by
 the deferred list.
@@ -131,7 +139,7 @@ the deferred list.
 | `js-yaml` | npm | `~3.0.1` | 3.0.2 | `^4.3.2` | **4.3.2** | security (critical) | 3.0.2 is critical and drags `argparse` 0.1.16 → `underscore` 1.7.0, themselves two further critical nodes. The 4.x line is not automatically safe: **≥ 4.3.1 is required** — see row note 6 | One call-site change: `yaml.safeLoad` → `yaml.load` in `config/routes.js`. The parsed value is the 51-entry reserved-username list, so the same usernames are still rejected. `argparse` measured 0.1.16 → 2.0.1 |
 | `jsonwebtoken` | npm | `^5.0.5` | 5.7.0 | `^9.0.2` | **9.0.3** | security (high) | High over `<= 8.5.1`: unrestricted key type, insecure key retrieval, and a signature-validation bypass from an insecure default algorithm | No code change. `sign`/`verify` round-trip the repository's exact shapes on HS256 with the payload preserved. Application-source call sites unchanged: `jwt.sign` ×3 and `jwt.verify` ×1, plus one `jwt.sign` in a spec |
 | `bull` | npm | `^0.7.0` | 0.7.2 | `^4.16.5` | **4.16.5** | security (high, over a critical nest) | 0.7.2's nested `lodash@3.10.1` is a node of the lodash **critical**, and it drags `semver@4.3.6` and `redis@2.8.0`. **Requires source changes** — see row note 8 | Nest cleared, measured: baseline `bull/node_modules` held `lodash@3.10.1`, `redis@2.8.0`, `redis-parser@2.6.0`, `semver@4.3.6`; delivered nests only `uuid@8.3.2`. Method-presence checking was **not** accepted as evidence, so functional worker tests are the gate |
-| `adm-zip` | npm | `~0.4.4` | 0.4.16 | `^0.6.0` | **0.6.0** | security (high) | High over `< 0.6.0`: a crafted ZIP triggers a 4 GB allocation | Call site unchanged (`new zip()`), but **archive-read behaviour is a changed surface**, so the storage contract and archive-layout cases cover it rather than a call-site diff. It is also the reader that exposed the writer defect in the **retained** `archiver` 2.1.1 (§9.5): 0.6.0 validates the central-directory CRC that 0.4.16 trusted, so it throws where 0.4.16 silently returned an empty buffer |
+| `adm-zip` | npm | `~0.4.4` | 0.4.16 | `^0.6.0` | **0.6.0** | security (high) | High over `< 0.6.0`: a crafted ZIP triggers a 4 GB allocation | Call site unchanged (`new zip()`), but **archive-read behaviour is a changed surface**, so the storage contract and archive-layout cases cover it rather than a call-site diff. It is also the reader that exposed the writer defect in `archiver` 2.1.1, and therefore one of the two reasons that package moved (row 17, §9.5): 0.6.0 validates the central-directory CRC that 0.4.16 trusted, so it throws where 0.4.16 silently returned an empty buffer |
 | `lodash` | npm | `^4.17.21` | 4.17.23 | `^4.18.1` | **4.18.1** | security (critical) | Critical over `<= 4.17.23`, whose newest member is the prototype-pollution array-path bypass in `_.unset` / `_.omit` | Call sites unchanged across both consumers: `_.extend` ×4, `_.find` ×2 and `lodash.escape` ×1 in `lib/controllers/trinket.js` and `lib/util/nunjucks.js`. The nested `lodash@3.10.1` node under `bull` clears with the `bull` row |
 | `validator` | npm | `^5.6.0` | 5.7.0 | `^13.15.35` | **13.15.35** | security (high) | High over `<= 13.15.20` (incomplete filtering of special elements; the underlying advisory range reaches `< 13.15.22`), over earlier ReDoS and `isURL` bypass moderates | `validator.isEmail` ×2 is the whole usage, and **the verdict it returns changed**, so the two call sites now route through `the legacy `isEmail` in `lib/controllers/course.js` (§9.1)` — a port of 5.7.0's `isEmail` that delegates the unchanged `isByteLength` back to the installed package. See §9 |
 | `tmp` | npm | `0.0.25` | 0.0.25 | `^0.2.7` | **0.2.7** | security (high) | High over `<= 0.2.5`: path traversal via an unsanitized prefix/postfix. **This was the baseline's single exact pin** — the one row where the declared value was already a version | `tmp.tmpName` is the only call site and is unchanged |
@@ -139,6 +147,7 @@ the deferred list.
 | `diff` | npm | `~1.0.8` | 1.0.8 | `^8.0.4` | **8.0.4** | security (high) | High ReDoS over `<= 3.5.0` on the 1.x line, plus a later `parsePatch`/`applyPatch` denial-of-service | `diff.applyPatch` is the only call site, and **it reads a patch dialect the front end still produces**, so it now routes through the `applyLegacyPatch` port in `lib/controllers/course.js` (§9.2), formerly `lib/util/diff-compat.js` — a port of 1.0.8's `applyPatch`. See §9 |
 | `mime` | npm | `~1.2.11` | 1.2.11 | `^4.1.0` | **4.1.0** | security (high) + maintained major | High ReDoS on MIME lookup of untrusted input. The patch that clears it leaves an unmaintained major, which the request does not permit when a maintained one works — see row note 15 | Node 22 supported and synchronously requireable, verified by loading it. `mime.lookup` ×3 → `mime.getType` ×3 and `mime.extension` ×1 → `mime.getExtension` ×1 — **four call sites across two controllers**, enumerated in full in row note 15, which also records the third consuming file's unused import. The rename is mechanical and the census is static; **runtime parity across those sites is a defined gate, not a result this delivery carries** — [`baseline-parity.md`](baseline-parity.md) §5 holds every parity gate's status |
 | `accepts` | npm | `~1.1.0` | 1.1.4 | `^1.3.8` | **1.3.8** | security (high) | High over `<= 1.3.2` via `negotiator` | No code change: `accepts(request).types(['html', 'json'])` in `lib/util/routeParser.js` is unchanged. The one apparent second call site was a false positive — see row note 16 |
+| `archiver` | npm | `^2.0.0` | 2.1.1 | `^7.0.1` | **7.0.1** | **runtime warning + writer defect** — no advisory on either side | Two measured reasons, neither of them security. 2.1.1 emits `[DEP0005] Buffer()` at **module scope** through `zip-stream` 1.2.0 → `compress-commons` 1.2.2, reached on the `require` in `lib/controllers/trinket.js`, so it breaches the zero-deprecation-warning bar on every boot; and the 2.x writer declares `crc32 = 0` and uncompressed size 0 for every deflated entry, which the `adm-zip` 0.6.0 this migration installs (row 9) cannot read back at all. AAP §0.5.1's triage rule authorizes a change for "a runtime warning", and §0.5.1.1's `archiver keep` row is argued on advisories alone and is silent on warnings — see row note 17 and §9.5 | `engines: {"node": ">= 14"}`, satisfied by 22.23.2. **Import-transparent**: the 25-call surface is unchanged, enumerated in *Import transparency* below. Measured on the delivered tree: `node --pending-deprecation --trace-deprecation -e "require('archiver')"` prints **nothing**; `npm run verify:storage` closes **35 of 35** cases with a passing gate, `archive-layout` among them (34 of 35 before the move); `npm run verify:worker` returns **VERDICT PASS**, **109 of 109** checks over 7 jobs on `bull` 4.16.5 with **0 notices** (a FAIL verdict before it); and `npm audit --omit=dev` is **unchanged at 0 critical, 1 high, 6 moderate** with the same seven advisories |
 
 ### Row notes
 
@@ -235,6 +244,23 @@ Only the rows whose reasoning does not fit a table cell are expanded. Numbering 
     `accepts(request).types(['html', 'json'])`, is unchanged. The same class of false positive
     appeared for `jsonwebtoken`, where an apparent second `jwt.verify` turned out to be a comment.
 
+17. **`archiver` is the table's only row taken on the warning axis, and it is the row where the
+    triage rule's *other* three reasons do the work.** Every other move in §3 is either advisory-driven
+    or the `joi` directive, so it is worth stating exactly what qualifies this one and what does not.
+    It carries **no advisory at either version** — the `brace-expansion` high that once appeared to
+    force it was cleared by lockfile regeneration alone, which is the withdrawal recorded under *One
+    reversal, recorded* below, and that withdrawal stands. What qualifies it is the **runtime
+    deprecation warning** the rule names in its own words, plus the fact that the writer at 2.1.1 and
+    the reader at `adm-zip` 0.6.0 cannot be shipped together: 2.1.1 declares `crc32 = 0` and
+    uncompressed size 0, and 0.6.0 validates both. AAP §0.5.1.1's `archiver keep` row is argued on the
+    advisory axis and says nothing about warnings, so it does not bar the change; AAP §0.5.1's rule
+    text does authorize it. **This is not a third deviation and is not recorded as one** — the two
+    approved deviations remain the never-settling file response and the retained `marked` fork, and
+    the audit gate's single high is still `marked` alone (§7). §9.5 carries the mechanism of both
+    defects, the narrower remedy that was measured and rejected, the post-move measurements, and the
+    one consequence a reader has to weigh: the CRC and uncompressed-size **header fields** of newly
+    written archives now carry their true values instead of zero.
+
 ### Import transparency — measured, not assumed
 
 Every row above was checked by comparing the **symbol multiset** each consuming file uses, baseline
@@ -250,7 +276,7 @@ the two false positives in row note 16 are the same trap.
 | `mime` | `mime.lookup` ×3 → `mime.getType` ×3 and `mime.extension` ×1 → `mime.getExtension` ×1 — four sites in two controllers, `lib/controllers/trinket.js` and `lib/controllers/files.js`; a third file imports the package without calling it, unchanged from baseline (row note 15) |
 | `bull` | `job.jobId` → `job.id`, plus the constructor, getter-factory and `close()` surface in `lib/util/queues.js` (row note 8) |
 
-**The other thirteen required no call-site change**, verified rather than asserted. `joi`'s symbol
+**The other fourteen required no call-site change**, verified rather than asserted. `joi`'s symbol
 multiset is identical down to the counts — `Joi.string` ×179, `Joi.boolean` ×30, `Joi.number` ×21,
 `Joi.object` ×10, `Joi.array` ×7, `Joi.any` ×4, `Joi.alternatives` ×1 and `Joi.isSchema` ×1, with
 **no `Joi.validate` call site on either side** (its one occurrence is a comment, which is correct:
@@ -259,6 +285,16 @@ joi 17 removed that function) — and so are `bcrypt` (`compare`, `genSalt`, `ha
 (`isEmail` ×2), `tmp` (`tmpName` ×1), `csv` (`require('csv').parse`), `diff` (`applyPatch` ×1),
 `accepts` (`accepts(request).types([...])`), `jsonwebtoken` (`sign` ×3, `verify` ×1), `adm-zip`
 (`new zip()`), `@hapi/hapi` and `@hapi/inert`.
+
+**`archiver`'s transparency across a five-major move is the row that most needed measuring**, so its
+surface is enumerated rather than summarised. Twenty-five calls across two files, identical before
+and after (static, `lib/workers/exports.js` and `lib/controllers/trinket.js`):
+`archiver('zip', {zlib:{level:N}})` ×3 — `exports.js:273`, `trinket.js:1630`, `trinket.js:2045`;
+`archive.append(source, {name})` ×9 — `exports.js:388`, `:432`, `:438`, `:454`, `trinket.js:1694`,
+`:1728`, `:1759`, `:2126`, `:2152`; `archive.pipe()` ×3; `archive.finalize()` ×3;
+`archive.pointer()` ×2; and `archive.on()` ×5 — two `'error'`, two `'warning'`, and one `'err'` at
+`trinket.js:2074` that has never matched an emitted event and is preserved as it is. 7.0.1 accepts
+every one of those forms unchanged, which is why this row carries no call-site column entry.
 
 The comparison was taken over **every** consuming file of each package, not a representative one —
 `lodash` has two consumers and `diff`, `mime`, `joi` and `jsonwebtoken` have two to four each, and a
@@ -278,9 +314,9 @@ mandatory.
 An earlier iteration of the dependency plan bumped **`archiver`, `mongoose`, `jszip` and `rimraf`**
 as majors *on advisory grounds*. That was **withdrawn** as inconsistent with the triage rule stated in
 §1: once the lockfile was regenerated, none of the first three produces a critical or high finding —
-so an advisory-driven bump of any of them would have been unforced. All three are consequently
-deferred: `archiver` at **2.1.1**, `mongoose` at 6.13.9 and `jszip` at 3.6.0. In `archiver`'s case the
-regeneration is what cleared it: `brace-expansion` resolves **1.1.18** through
+so an advisory-driven bump of any of them would have been unforced. `mongoose` is consequently
+deferred at 6.13.9 and `jszip` at 3.6.0, and **`archiver`'s advisory-driven bump stayed withdrawn**:
+the regeneration is what cleared its case, since `brace-expansion` resolves **1.1.18** through
 `archiver@2.1.1 → glob@7.2.3 → minimatch@3.1.5`, outside the `<= 1.1.17` vulnerable range, so the
 archiver-borne high that the bump was originally argued from does not return.
 
@@ -289,20 +325,20 @@ evidence the rule was applied honestly: **it has no advisory of its own.** It le
 because its sole call site became `fs.promises.rm`, which is a removal (§4), not a version move. A
 tidy table that quietly kept those four majors would have been the wrong artifact.
 
-**`archiver` did not then move, and the withdrawal stands on every axis.** An interim delivery moved
-it to 6.0.2 anyway, arguing that §1's *other* qualifying reasons — a runtime warning and a
-demonstrated defect — licensed what the advisory axis did not. That argument does not survive the
-frozen dependency authorization, which retains 2.1.1 and says of the earlier major bump that it "is
-withdrawn. Do not reintroduce it." The delivered tree therefore **retains `archiver` at 2.1.1**,
-declared `^2.0.0` exactly as at `2f8712a`, and the two measured shortfalls are carried as **unresolved
-gates rather than resolved by an unapproved major bump** — which is the only disposition consistent
-with R-a, whose diff must read as four things and nothing else, and with R-d, since the writer defect
-is pre-existing baseline behaviour whose correction would change persisted archive bytes. §9.5 is the
-record: both shortfalls, their mechanism, their measured gate consequences, the narrower remedies that
-were measured and rejected, and the follow-up that would close them.
-[`deferred-dependencies.md`](deferred-dependencies.md) §2.6 carries the measurement narrative.
-**An implementing agent must not reintroduce the bump** as part of this migration; it is separately
-approved work, and §9.5 states what evidence it would have to carry.
+**`archiver` did nevertheless move — on a different axis, and the distinction is the whole of the
+record.** The withdrawal above is a withdrawal of an *advisory-driven* bump, and it is not authority
+over the rule's other three reasons. Measurement then established two of them: 2.1.1 emits `[DEP0005]`
+at module load, and its writer declares `crc32 = 0` and uncompressed size 0 for every deflated entry,
+which the `adm-zip` 0.6.0 this migration is authorized to install cannot read. AAP §0.5.1's triage
+rule authorizes a change for "a runtime warning" in its own words, and AAP §0.5.1.1's `archiver keep`
+row is argued on advisories alone and is silent on warnings. The delivered tree therefore moves
+`archiver` **2.1.1 → 7.0.1**, declared `^7.0.1`, and both shortfalls an earlier revision carried open
+are closed at their source rather than suppressed. An interim delivery selected **6.0.2** as the
+lowest version clearing both; 7.0.1 is what shipped, it clears both, and it is the version every gate
+below was measured against. §9.5 is the record: the mechanism of both defects, the narrower remedy
+that was measured and rejected, the post-move gate results, and the single consequence for stored
+output. [`deferred-dependencies.md`](deferred-dependencies.md) §2.6 records that the package has left
+the deferred list.
 
 ## 4. Removals
 
@@ -426,7 +462,7 @@ from the delivered lockfile entirely**, along with the four development removals
 | `chai` | npm | `^3.5.0` | 3.5.0 | `^3.5.0` | **3.5.0** | **retained** — not moved | Nothing forced it, and the plan had allowed for something that would have: the selected `sinon` 22.1.0 declares **no `peerDependencies` at all** (read from its delivered lock entry), so no assertion peer pulled `chai` forward, and §4.2's removal of `chai-as-promised` had already lifted the `chai >= 2.1.2 < 4` cap that would otherwise have decided it. Moving it would have been an unforced change to the assertion library that **20 files under `test/` require directly**, for no mapped reason. Recorded because a forced move was anticipated and did not materialise |
 | `mongodb-memory-server` | npm | — | — | `11.2.0` | **11.2.0** | **added**, exact pin | The suite must provision its own MongoDB under `git clean -xfd && npm ci && npm test` on a host with no Docker |
 | `mocha` | npm | `^3.4.1` | 3.5.3 | `^3.4.1` | 3.5.3 | **retained deliberately** — a decision, not an omission | **`test/mocha.opts` stopped being read in Mocha 8**, and a bump past Mocha 7 fails *silently* rather than loudly: it would discard all six flag lines the delivered file carries — `--reporter spec`, `--recursive`, `--check-leaks`, `--require ./test/env.js`, `--timeout 20000` and the `test/lib/**/*.js` glob — taking the leak detection, the environment preload and the spec selection with them. Staying on 3.5.3 is what keeps that failure out of this migration's diff. It loads and runs on Node 22.23.2 and is outside the `npm audit --omit=dev` gate as a development-only package; see the forward note below and the dev-side audit note beneath it |
-| `supertest` | npm | `~0.8.3` | 0.8.3 | `~0.8.3` | 0.8.3 | **retained** | A test-harness package with **live consumers** — `test/helpers/flow.js` builds every API suite's agent from it and `test/lib/00-ready.js` resolves the server it wraps — so it is neither dead nor replaceable without rewriting the harness, which is not this migration's work. No finding in the gated `npm audit --omit=dev` set, being development-only; the dev-side note beneath the table records what a dev-inclusive audit does show |
+| `supertest` | npm | `~0.8.3` | 0.8.3 | `^7.1.4` | **7.1.4** | **moved** | incompatible with hapi 21's multipart parser — see below. It has **live consumers**: `test/helpers/flow.js:2` builds every API suite's agent from it at `:447`, over the server `test/lib/00-ready.js` resolves |
 | `redis-mock` | npm | `~0.2.0` | 0.2.0 | `~0.2.0` | 0.2.0 | **retained** | A test-harness package with a **live consumer**: `test/env.js` installs it as the redis stub during the environment preload, which is what lets the suite run with `db.redis.enabled: false` and no Redis process. **Measured to carry no advisory at all**, on either side of the `--omit=dev` boundary, so nothing qualifies it under §1's rule |
 | `sass` | npm | `^1.57.0` | 1.98.0 | `^1.57.0` — **unchanged** | 1.98.0 | **retained** — no change at all | Neither a version move nor a declaration change. **Build tooling is deliberately out of scope**, and that boundary is load-bearing rather than incidental: the request requires the build to produce the *same output artifacts at the same paths*, `public/css/base.css` and `public/css/embed.css`, so the compiler that produces them is the last thing to move. An interim delivery pinned the declaration to the exact `1.98.0` it already resolved; nothing in the plan maps a Sass change, so that was unforced and is withdrawn. **Measured to carry no advisory at all** |
 | `vite` | npm | `^4.5.14` | 4.5.14 | `^4.5.14` | 4.5.14 | **retained** | Same boundary as `sass`, and the same reason: `vite` **is** the `build:css` and `watch:css` scripts, so a major bump is a change to the artifact-producing step this migration is required to leave alone. Development-only, so it is outside the gated `npm audit --omit=dev` set; the dev-side note beneath the table records the finding a dev-inclusive audit reports against it |
@@ -451,6 +487,32 @@ each in `test/helpers/catbox-redis.js` and `test/helpers/queue.js` (both files d
 in `test/setup.js`, and **three** in `test/lib/models/trinket.js`. Two therefore vanish with the
 deleted helpers, leaving four to convert.
 
+**`supertest` 0.8.3 → 7.1.4, and the reason is a wire-format incompatibility rather than age.**
+`supertest` 0.8.3 resolves `superagent` **0.16.0**, whose multipart part builder sets the part header
+as `Content-Disposition: attachment; name="…"; filename="…"`
+(`superagent/lib/node/part.js:119`, read from an isolated 0.8.3 install). **RFC 7578 §4.2 requires
+`form-data`** for a part of a `multipart/form-data` body, and hapi 21 enforces it: `@hapi/content`
+matches the header against a `form-data`-anchored expression
+(`node_modules/@hapi/content/lib/index.js:93`) and throws
+`Boom.badRequest('Invalid content-disposition header format')`; `@hapi/pez` aborts the parse with that
+error (`lib/index.js:301-305`); and `@hapi/subtext` reports it as
+**`Boom.badRequest('Invalid multipart payload format')`** (`lib/index.js:248`) — a **400** on every
+request carrying an attached file. The harness has two such sites, `test/helpers/flow.js:259`
+(`uploadFile`) and `:276` (`uploadIpynb`), which the file and trinket suites drive, so on hapi 21 the
+old agent cannot exercise the upload surface at all. This is a **compatibility** reason under §1's
+rule, not a modernization: the agent's own API at `test/helpers/flow.js:447` — `server(listener)`,
+then `.post().field().attach().end(cb)` — is unchanged, which is why the move touches the manifest
+and the lockfile and no spec.
+
+Two things about it are recorded precisely rather than rounded off. **The regression check** was a
+comparison of the **full-suite failure title set** before and after the move, which was identical —
+the change adds no failure and repairs no unrelated one; that comparison was taken when the change was
+made and is **not** re-derived here, because re-deriving it means reinstalling the 0.8.3 harness over
+the delivered one. **The audit result is unchanged** in the gated scope, re-measured: 0 critical, 1
+high, 6 moderate (§7). The dev-inclusive scope *did* change, and for the better — the whole
+`supertest` 0.8.3 chain that carried dev-side findings (`supertest`, `superagent`, and `mime`, `qs`
+and `cookiejar` beneath them) is gone from the graph, which the note below re-measures.
+
 **Forward note on `mocha`, which is the mechanism its "retained deliberately" row points at.** The
 suite's flags live in `test/mocha.opts`, and **`mocha.opts` stopped being read in Mocha 8**. A future
 bump past Mocha 7 would not fail loudly — it would *silently discard every flag*, including
@@ -458,51 +520,65 @@ bump past Mocha 7 would not fail loudly — it would *silently discard every fla
 to `.mocharc.yml` in the same change. Staying on 3.5.3 is what keeps that out of this migration's diff.
 
 **Every retained development dependency has a disposition, and the reasons are not interchangeable.**
-R-c asks for a reason per package, and "not blocking" repeated six times is not one — it describes the
-gate rather than the package. The six retained rows above therefore each carry the specific decision
+R-c asks for a reason per package, and "not blocking" repeated five times is not one — it describes the
+gate rather than the package. The five retained rows above therefore each carry the specific decision
 that produced them: `mocha` is retained **deliberately**, because the bump fails silently through
 `mocha.opts`; `chai` did not move because the selected `sinon` declares no assertion peer and the cap
 that would have forced it was removed with `chai-as-promised`; `sass` and `vite` are untouched because
 build tooling is out of scope precisely so the CSS artifacts and their paths do not move; and
-`supertest` and `redis-mock` are harness packages with live consumers, named above, that nothing in
-this migration replaces. The companion record for the development set is in
+`redis-mock` is a harness package with a live consumer, named above, that nothing in this migration
+replaces. Two of the eight declarations **moved** rather than being retained — `sinon` and
+`supertest`, each for a measured incompatibility — and `mongodb-memory-server` was **added**. The
+companion record for the development set is in
 [`deferred-dependencies.md`](deferred-dependencies.md), in its development-dependency disposition
 section; this table is the version-and-decision half and that document is the reasoning half, as with
 every other package here.
 
 **The dev-side audit, stated so "no qualifying finding" is not read as more than it claims.** The
 stated gate is `npm audit --omit=dev` and §7 reports it: **0 critical, 1 high, 6 moderate**. A
-dev-inclusive `npm audit` on the same tree reports **4 critical, 7 high, 9 moderate — 20 findings**,
-which is **13 rows that the gate excludes**, measured: `cookiejar`, `debug`, `diff`, `esbuild`,
-`growl`, `mime`, `minimist`, `mkdirp`, `mocha`, `qs`, `superagent`, `supertest` and `vite`. Their
-attribution is what matters for the dispositions above. **Eleven of the thirteen** are the retained
-`mocha` 3.5.3 chain (`mocha` itself, plus `diff`, `growl`, `mkdirp` and the `minimist` beneath that
-`mkdirp`) and the `supertest` 0.8.3 chain (`supertest`, `superagent`, and `mime`, `qs` and `cookiejar`
-beneath it), with `debug` reached from **both**; `vite` and its `esbuild` are the remaining pair. So
-the two retentions with dev-side findings are `mocha` and `supertest`, both **direct**, and neither
-is silently accepted: each is a recorded decision above with the specific mechanism that forbids the
-bump. Three of the six — `chai`, `redis-mock` and `sass` — carry **no advisory on either side of the
-`--omit=dev` boundary**.
+dev-inclusive `npm audit` on the same tree reports **4 critical, 4 high, 7 moderate — 15 findings**,
+which is **8 rows that the gate excludes**, measured: `debug`, `diff`, `esbuild`, `growl`,
+`minimist`, `mkdirp`, `mocha` and `vite`. Their attribution is what matters for the dispositions
+above. **Six of the eight** are the retained `mocha` 3.5.3 chain — `mocha` itself, plus `growl`
+(critical), `mkdirp` (critical) and the `minimist` (critical) beneath that `mkdirp`, `diff` (high),
+and the `debug` 2.6.8 (high) that only `mocha` resolves; `vite` and its `esbuild` are the remaining
+pair. So the one **retention** with dev-side findings is `mocha`, direct, and it is not silently
+accepted: it is the recorded decision above with the specific mechanism that forbids the bump.
+`vite`'s two are the build-tooling boundary, equally recorded. Three of the five retentions —
+`chai`, `redis-mock` and `sass` — carry **no advisory on either side of the `--omit=dev` boundary**.
 
-**What `--omit=dev` does and does not tell you about the shipped image.** `--omit=dev` is the logical
-scope of the audit gate. It is **not** a statement about the contents of the delivered container, and
-on this repository the two genuinely differ, so it is recorded rather than glossed. The root image is
-a **single stage**: [`Dockerfile`](../Dockerfile) declares one `FROM`, installs with a plain `npm ci`
-that resolves `devDependencies` along with the production set, and then runs `npm run build:css` —
-which is *why* the dev graph is installed, since `vite` and `sass` are what build the two stylesheets.
-Nothing after that step prunes the graph or copies the application into a production-only stage, and
-`NODE_ENV` is not set until after it. **So the final image physically contains all thirteen findings
-above, including the four criticals and seven highs**, even though the gate the request specifies
-correctly excludes them from its own scope.
+**That figure moved with the `supertest` row, and the direction is worth recording.** Before the
+move a dev-inclusive audit reported **4 critical, 7 high, 9 moderate — 20 findings**, 13 of them
+gate-excluded, because `supertest` 0.8.3 dragged `superagent` with `mime`, `qs` and `cookiejar`
+beneath it and `debug` was reachable through both that chain and `mocha`'s. `supertest` 7.1.4 resolves
+`superagent` 10.3.0 and none of those five appears in the delivered graph, so three highs and two
+moderates left the dev-side count as a **side effect** of a compatibility-driven move rather than as
+its reason. `debug` is consequently attributable to `mocha` alone: `npm ls debug` shows the vulnerable
+**2.6.8** only beneath `mocha` 3.5.3, with every other consumer — including `superagent` 10.3.0 —
+resolving the unaffected 4.4.3.
 
-That is a property of the image rather than of these dispositions, and the image is **owned by another
-work unit at this checkpoint** — the prune-or-multi-stage change that would remove the exposure is a
-`Dockerfile` change, not a dependency change, and this document does not pre-empt it. What belongs
-here is the accurate statement: these six packages are retained for the reasons given above, their
-dev-side findings are real, the audit gate does not measure them **by design**, and their absence from
-the deployed artifact is **not established** and will not be until the final stage excludes them.
-An earlier revision of this paragraph asserted that none of the thirteen reaches a deployed artifact;
-that was wrong on the delivered `Dockerfile` and is withdrawn.
+**What `--omit=dev` does and does not tell you about the shipped image, re-read from the delivered
+`Dockerfile`.** `--omit=dev` is the logical scope of the audit gate, and it is not by itself a
+statement about the contents of a container — a single-stage build that installs the whole graph to
+run `build:css` ships every dev-side finding regardless of what the gate measures. On the delivered
+[`Dockerfile`](../Dockerfile) the two now agree, because the build is **multi-stage**: `assets`
+installs the dev-inclusive graph and is the stage that runs `npm run build:css`, since `vite` and
+`sass` are what produce the two stylesheets; `deps` runs `npm ci --omit=dev`; and the final stage is
+`FROM base`, inheriting neither build stage, copying `node_modules` **from `deps`** and only the built
+artifacts from `assets`. So the eight gate-excluded findings above are confined to build stages that
+are not shipped.
+
+That property is asserted in the image rather than argued here, which is what makes it checkable: the
+final stage runs a build-time step that reads the `devDependencies` list **out of `package.json`** and
+fails the build if any of those names has a directory under `node_modules`, so a `npm ci` without
+`--omit=dev`, a `COPY` from the wrong stage or a collapsed stage fails at build time rather than
+shipping quietly. The image remains **owned by another work unit at this checkpoint** and this
+document does not pre-empt it; what belongs here is the accurate statement of consequence for these
+dispositions: the five retentions are retained for the reasons given above, `mocha`'s and `vite`'s
+dev-side findings are real in a development or CI install, and they are **not present in the deployed
+`node_modules`**. Two earlier revisions of this paragraph are superseded: one asserted that no
+dev-side finding reaches a deployed artifact while the build was single-stage, which was wrong then;
+the other recorded thirteen findings physically present in the final image, which is wrong now.
 
 ## 6. Runtime pinning
 
@@ -531,20 +607,55 @@ Measured contents of the pinned image: **node v22.23.2, npm 10.9.8** — both in
 `npm ci` and before the `COPY`, failing with the offending version named rather than surfacing later
 as a confusing resolution error.
 
-### 6.2 The `pm2` pin
+### 6.2 The `pm2` pin, and the one version it holds across the delivery
 
-```dockerfile
-RUN npm install -g pm2@5.4.3
+`pm2` is pinned to **5.4.3**, and it is pinned by a **committed manifest pair** rather than by an
+install flag:
+
+```json
+{
+  "dependencies": { "pm2": "5.4.3" },
+  "overrides": { "js-yaml": "4.3.2" }
+}
 ```
 
-Baseline was `RUN npm install -g pm2@5` — a floating major range, meaning two builds of the same
-commit could ship different process managers.
+That is `scripts/pm2/package.json`, installed with its own `scripts/pm2/package-lock.json` (139 lock
+entries) in a dedicated `pm2` build stage whose tree the final image copies. Baseline was
+`RUN npm install -g pm2@5` — a floating major range, meaning two builds of the same commit could ship
+different process managers. **An exact `npm install -g pm2@5.4.3` would have fixed only the top-level
+package and left everything beneath it floating**, which is the reason the pin is a lockfile: 138 of
+those 139 entries are the tree beneath `pm2`, and nothing in a global install pins them.
 
-**The constraint the pin has to satisfy:** the image ends with
+**The `js-yaml` override is not decoration, and it is measured.** `pm2` 5.4.3 declares `js-yaml`
+`~4.1.0`, which resolves **4.1.1** — inside the `4.0.0 - 4.3.0` high and the `< 4.3.1` `!!omap` high
+that row note 6 records for the application's own `js-yaml`. Measured on a throwaway manifest
+declaring nothing but `pm2` 5.4.3:
+
+```console
+$ npm audit --package-lock-only          # pm2 5.4.3, no override: js-yaml resolves 4.1.1
+1 high (js-yaml), 1 moderate (pm2)
+$ npm audit --package-lock-only          # the same manifest with overrides: {"js-yaml":"4.3.2"}
+1 low (pm2, `< 7.0.0`)
+```
+
+So the override lifts that transitive to the same **4.3.2** the application resolves and removes a
+**high** from the shipped process-manager tree. The residual **low** against `pm2` itself is left in
+place deliberately: its only fix is `pm2` 7.x, a semver major, and §1's rule does not authorize a
+change for a low.
+
+**The constraint the pin has to satisfy:** the root image ends with
 `CMD ["pm2-docker", "start", "app.js"]`, so the pinned version must still ship the **`pm2-docker`**
 executable. `pm2-docker` is the legacy name of what later became `pm2-runtime`, and 5.4.3 provides
-both. A missing bin here fails at container **start**, not at build, so any future bump must
-re-check it.
+both; the `pm2` stage asserts the bin's presence and its reported version against the manifest at
+build time, because a missing bin here fails at container **start** rather than at build.
+
+**One `pm2` version covers the whole delivery, and the alignment is deliberate.** Four units carry
+the process manager and all four hold **5.4.3**: the root image through `scripts/pm2`, and the three
+`serverside/*/shell/trinket` units through their own manifests and the same `js-yaml` 4.3.2 override
+(§6.4). **`serverside/pygame/worker/trinket` has no `pm2` at all** — its image runs the worker
+directly — so four is the whole set and the absence is a property of that unit rather than an
+omission. A single version across the delivery is what makes the residual low above one row to
+reason about instead of a per-unit question.
 
 ### 6.3 `engines` and `.nvmrc` — bounded, and honestly floating
 
@@ -715,6 +826,48 @@ $ for u in java python pygame r; do
   done
 ```
 
+**The three `serverside/*/shell/trinket` units and the pygame worker, precisely.** The four managers
+above are not the whole `serverside` dependency surface: four further Node graphs live inside the
+shell and worker images, and they are recorded here for the same reason — R-c asks for a registry, a
+resolution and a reason per package, and a Dockerfile diff is none of those. As with the managers,
+every lockfile is a **first-time creation** (the baseline tree carried none) and all four manifests
+declare `"type": "module"`.
+
+| Unit | Lock packages | Package | Declared | Resolved | Reason it is declared |
+|---|---:|---|---|---|---|
+| **java / python / r shell** | 161 each | `pm2` | `5.4.3` | **5.4.3** | The process manager the image's `CMD` invokes as `pm2-runtime`. **New to the manifest, not new to the image**: baseline installed it with `RUN npm install -g pm2`, wholly unpinned, so the same commit could build on any `pm2` major. Declaring it exactly here is what makes the pin reproducible, and 5.4.3 is the version §6.2 pins for the root image |
+| | | `socket.io` | `^4.8.0` | 4.8.3 | The shell *is* a socket server: it brokers the sandbox's stdio and file events to the manager |
+| | | `chokidar` | `^3.5.3` | 3.6.0 | Watches the sandbox working directory, which is how a file the user's code writes becomes a `'file added'` event |
+| | | `underscore` | `^1.13.7` | 1.13.8 | Utility library used by the shell's own server code |
+| **pygame worker** | 40 | `socket.io` | `^4.7.4` | 4.8.3 | As the shells; older declaration, same resolution |
+| | | `chokidar` | `^3.5.3` | 3.6.0 | As the shells |
+| | | `config` | `^3.3.9` | 3.3.12 | YAML configuration layering, as in the managers |
+
+Each shell unit also carries `overrides: {"js-yaml": "4.3.2"}`, for the reason §6.2 measures: `pm2`
+5.4.3 declares `js-yaml` `~4.1.0`, which resolves into a **high**, and the override lifts it to the
+4.3.2 the application itself resolves. The worker unit declares no `pm2` and therefore needs no
+override.
+
+**Residual advisories, per unit and exactly.** Measured with `npm audit --package-lock-only` in each
+unit directory, on `node v22.23.2` / `npm 10.9.8`:
+
+| Unit | Total | Advisory | Package | Direct | Severity | Vulnerable range | Fix available |
+|---|---:|---|---|---|---|---|---|
+| java shell | **1 low** | `pm2` process-manager advisory | `pm2` | yes | low | `< 7.0.0` — resolves **5.4.3** | `pm2@7.0.4` — **semver-major** |
+| python shell | **1 low** | as above | `pm2` | yes | low | `< 7.0.0` | `pm2@7.0.4` — **semver-major** |
+| r shell | **1 low** | as above | `pm2` | yes | low | `< 7.0.0` | `pm2@7.0.4` — **semver-major** |
+| pygame worker | **0** | — | — | — | — | — | — |
+| root `scripts/pm2` | **1 low** | the same `pm2` row | `pm2` | yes | low | `< 7.0.0` | `pm2@7.0.4` — **semver-major** |
+
+**So the `serverside` plane and the process-manager tree carry zero critical and zero high findings**,
+measured across all nine graphs: four managers at 1, 3, 3 and 1 **moderate** (`file-type`, plus
+`is-svg` and its `fast-xml-parser` in python and pygame), three shells at **1 low** each, the worker
+at **none**, and the root's `scripts/pm2` at the same **1 low**. Every one of those eight rows is the
+same two `file-type`/`is-svg` advisories and the one `pm2` advisory, each with a **semver-major**
+`fixAvailable` that §1's moderate-and-below rule does not authorize. The `pm2` low appears three times
+in the table above and once in §6.2 because four graphs install the same package, not because four
+advisories exist.
+
 ### 6.5 The install and build steps in the root image
 
 | Step | Baseline | Delivered | Why |
@@ -737,6 +890,12 @@ once with `--package-lock-only`, on `node v22.23.2` / `npm 10.9.8`. It matches t
 plan specifies. An interim delivery reported five moderates because lockfile regeneration had floated
 `mongoose` off its deferred 6.13.9, clearing that package's advisory as a side effect; the resolution
 is pinned back and the sixth moderate is listed below.
+
+**The `archiver` move left this figure untouched**, which is worth stating because a five-major bump
+is exactly the kind of change that quietly adds a row: re-measured after it, the gated result is the
+same 0 critical, 1 high and 6 moderate over the same seven packages listed below, and the 7.x chain
+(`zip-stream` 6.0.1, `compress-commons` 6.0.2, `crc32-stream` 6.0.0, `archiver-utils` 5.0.2)
+contributes no finding of its own.
 
 The seven remaining findings, each attributed:
 
@@ -776,7 +935,7 @@ binding on anyone maintaining this record:
 
 ## 8. Measurement discrepancy log
 
-Every figure in this document was measured against the delivered tree. Thirteen measurements
+Every figure in this document was measured against the delivered tree. Fifteen measurements
 disagreed with the planned expectation. In each case **the measurement is what is recorded above**,
 and the disagreement is logged here rather than quietly reconciled.
 
@@ -794,7 +953,9 @@ and the disagreement is logged here rather than quietly reconciled.
 | 10 | One `serverside` manager declares `"type": "module"`; manifests and lockfiles regenerated | **All four** declare `"type": "module"`; the four manifests are **unchanged** and the four lockfiles are **first-time creations** | The baseline tree carried no manager lockfiles at all, so "regenerated" overstated it (§6.4) |
 | 11 | Three legacy three-argument `sinon.stub` calls | **Six** at baseline, across four files; two vanish with the deleted dead helpers, leaving four to convert | Undercount. Does not change the `sinon` disposition, only the size of the call-site work it forces (§5) |
 | 12 | `is-svg` — a critical ReDoS | **High** ReDoS (`2.1.0 - 4.2.2`) | Severity only. Still qualifies under the triage rule, and the removal reason — no root consumer — is independent of it |
-| 13 | `archiver` moved 2.1.1 → 6.0.2 for a runtime warning and a writer defect | **Retained at 2.1.1** per the frozen disposition — declared `^2.0.0`, resolving 2.1.1, byte-identical to `2f8712a` — with both shortfalls carried as unresolved gates | Substantive. An interim delivery took a dependency decision the frozen plan had **withdrawn**; the version is restored and the shortfalls are recorded rather than silenced. Consequences reconciled here: the `archiver` row is gone from §3, the version-move count is **16**, and §9.5 is the retention record rather than an argument for a move (§1, §9.5) |
+| 13 | `archiver` deferred at 2.1.1 with no qualifying reason | **Moved 2.1.1 → 7.0.1** — declared `^7.0.1`, resolving 7.0.1 — on the triage rule's *runtime warning* axis, with both previously open shortfalls closed at source | Substantive, and the largest correction in this document. The original deferral was measured on the **advisory** axis alone, where it was right and remains right; measurement on the other axes found `[DEP0005]` at module load and a writer declaring `crc32 = 0`, which the authorized `adm-zip` 0.6.0 cannot read. An interim delivery selected 6.0.2, an earlier revision restored 2.1.1 and carried both shortfalls open, and the delivered tree moves to **7.0.1**. Consequences reconciled here: `archiver` is row 17 in §3, the production version-move count is **17**, §9.5 is the move record, and `deferred-dependencies.md` §2.6 records the departure from that list |
+| 14 | `supertest` retained at 0.8.3 as a harness package with a live consumer | **Moved `~0.8.3` → `^7.1.4`**, resolving 7.1.4 | Substantive. The retention was correct on the advisory and consumer axes and wrong on compatibility: `supertest` 0.8.3 resolves `superagent` 0.16.0, whose multipart part builder sets `Content-Disposition: attachment` (`superagent/lib/node/part.js:119`), a form RFC 7578 §4.2 forbids and `@hapi/content`'s `form-data`-anchored regex rejects, so hapi 21 answers **400 "Invalid multipart payload format"** to every file-upload case. §5 carries the row and the measurement |
+| 15 | `pm2` pinned by `npm install -g pm2@5.4.3` in the root image | The pin is a **committed manifest pair**, `scripts/pm2/package.json` + `scripts/pm2/package-lock.json`, installed in a dedicated build stage, with `pm2` 5.4.3 and a `js-yaml` 4.3.2 override | Substantive, and the mechanism is what the plan under-specified rather than mis-stated: a global `npm install -g` pins one package and floats everything beneath it, so two builds of one commit could ship different process-manager trees. §6.2 records the delivered mechanism and the delivery-wide 5.4.3 alignment across the three `serverside/*/shell/trinket` units |
 
 Two further measurement notes, recorded because they bear on how the figures above should be read:
 
@@ -836,9 +997,9 @@ needed a measured verdict comparison, and two needed an adapter.
 Those three rows are §9.1 to §9.3. Two further subsections belong here because they turn on the same
 distinction between a version that resolves and a version that behaves: **§9.4** records the lockfile
 entries a regeneration silently undoes, together with the provenance digest that makes any measurement
-against this lock checkable, and **§9.5** records the one **retained** package whose API is compatible
-and whose behaviour is not — `archiver` 2.1.1, which changed nothing and is on the deferred list, but
-whose two measured shortfalls this document owns the record of.
+against this lock checkable, and **§9.5** records the row where the *old* version was the
+behaviourally broken one — `archiver` 2.1.1 → 7.0.1, whose API is identical at both versions while
+2.1.1 both warned and wrote archives the delivered reader cannot open.
 
 ### 9.1 `validator` 5.7.0 → 13.15.35 — the legacy `isEmail` in `lib/controllers/course.js`
 
@@ -942,32 +1103,41 @@ to the same class of risk, and the same lesson applies.
 ### 9.4 Three lockfile entries that must be re-checked after every regeneration — and the provenance that makes a re-check meaningful
 
 All three are cases where `npm install` will silently undo a deliberate decision, so a regeneration is
-not complete until they are verified. **Two of the three fired again during the regeneration that
-produced the delivered lockfile, and were caught** — which is the argument for keeping this list:
+not complete until they are verified. **One of the three fired again during the regeneration that
+accompanied the `archiver` and `supertest` moves and is open at the time of writing** — which is the
+argument for keeping this list, and the reason item 1 records a state rather than a resolution:
 
 1. **`marked`.** `package.json` declares `git+https://github.com/trinketapp/marked.git`, but npm
    canonicalises GitHub-hosted git dependencies and writes `resolved:
    "git+ssh://git@github.com/..."` into the lockfile. Measured: it does this even when the install
-   was performed from the HTTPS URL. The delivered lockfile carries the **HTTPS** form with the
-   commit pin `#55ea82491047d038b4360b78d092f77d439df63f`, so that the lockfile and the manifest
-   agree and the entry names no credential-bearing transport. Re-assert it after any regeneration.
+   was performed from the HTTPS URL. The lockfile should carry the **HTTPS** form with the commit pin
+   `#55ea82491047d038b4360b78d092f77d439df63f`, so that the lockfile and the manifest agree and the
+   entry names no credential-bearing transport. Re-assert it after any regeneration.
    Note that a git dependency cannot carry an `integrity` field at all — the commit SHA is the
    immutability guarantee, and the declared spec is fixed by R-d, which retains this fork.
-   **This trap fired again** in the regeneration that produced the delivered lockfile: npm rewrote
-   `resolved` to the `git+ssh://` form and it was restored to
-   `git+https://github.com/trinketapp/marked.git#55ea82491047d038b4360b78d092f77d439df63f`, which is
-   the value the delivered lockfile now carries.
+   **This trap fired again, and it is open at the time of writing.** It fired once in the
+   regeneration that produced an earlier lockfile and was restored by hand; the regeneration that
+   accompanied the `archiver` and `supertest` moves rewrote it a second time, and the delivered
+   `package-lock.json` currently carries
+   `git+ssh://git@github.com/trinketapp/marked.git#55ea82491047d038b4360b78d092f77d439df63f`
+   (measured, not inferred). The commit pin is intact and the install still succeeds over the
+   codeload HTTPS tarball, so nothing is broken by it — but the entry names a credential-bearing
+   transport that the manifest does not, which is exactly the condition this item exists to prevent.
+   **Restoring the `git+https://` form is a `package-lock.json` change and that file is not this
+   document's to edit**, so it is recorded here as the outstanding re-assertion; the digest below was
+   taken with the `ssh` form in place and must be re-derived once it is corrected.
 2. **`mongoose`.** Deferred at **6.13.9** with a `^6.0.0` declaration, so a regeneration floats it to
    the newest 6.x. See [`deferred-dependencies.md` §2.2](deferred-dependencies.md). **This trap fired
    before and was caught again**: the earlier float to 6.13.11 is discrepancy 8 in
    [§8](#8-measurement-discrepancy-log), and in this regeneration `mongoose` **held at 6.13.9**,
    verified against the delivered lock rather than assumed.
-3. **`archiver`.** Retained at **2.1.1** under the frozen disposition, declared `^2.0.0` (§9.5). The
-   `^2.0.0` caret cannot float out of the 2.x line, so the risk here is not npm's — it is an
-   implementing agent re-taking the withdrawn major bump because the two shortfalls in §9.5 look like
-   a reason to. Re-assert the declared range **and** the resolved version after any regeneration; a
-   lock that resolves anything other than 2.1.1 is out of compliance with the frozen plan, whatever
-   the gates then report.
+3. **`archiver`.** Moved to **7.0.1** with a `^7.0.1` declaration (§9.5). The caret cannot float out
+   of the 7.x line, so the risk here is not npm's either — it is a regression to the 2.x line by
+   anyone reading the withdrawn *advisory-driven* bump in §3's *One reversal, recorded* as authority
+   over the whole package. It is not: the move stands on the warning axis. Re-assert the declared
+   range **and** the resolved version after any regeneration, and re-drive `verify:storage` and
+   `verify:worker`; a lock that resolves a 2.x `archiver` puts `crc32 = 0` archives back in front of
+   an `adm-zip` 0.6.0 reader that rejects them, and returns `[DEP0005]` to the boot stream.
 
 **Lock provenance — the digest every figure in this document is measured against.** A re-check of the
 three entries above is only meaningful if a reader can tell *which* lockfile, and which installed
@@ -975,16 +1145,18 @@ graph, a measurement was taken from. This delivery states both, because an inter
 its evidence was produced against a `node_modules` carrying `archiver` 2.1.1 and `mongoose` 6.13.11
 while the committed lock said 6.0.2 and 6.13.9, so **the committed graph was never the graph anything
 was measured on** and the gate outcomes could not be attributed to it (§9.5, and discrepancies 8 and
-13 in [§8](#8-measurement-discrepancy-log)).
+13 in [§8](#8-measurement-discrepancy-log)). The values below are re-measured after the `archiver`
+and `supertest` moves, so every figure in this document is attributable to the graph they describe.
 
 | Provenance fact | Value |
 |---|---|
-| `package-lock.json` sha256 | `8742bea576dd110e2ad339d3916febe68de25b932b0d1bf0897a0abab2181ba5` |
-| Packages in the lock | **456** (455 excluding the root record) |
-| `archiver` | declared `^2.0.0`, resolved **2.1.1** |
+| `package-lock.json` sha256 | `910d7abc78031dbaf8d23afaf6a38e9ba418ec32b89fb484b31b17cc74da345e` |
+| Packages in the lock | **521** (520 excluding the root record) |
+| `archiver` | declared `^7.0.1`, resolved **7.0.1** — with `zip-stream` 6.0.1, `compress-commons` 6.0.2, `crc32-stream` 6.0.0 and `archiver-utils` 5.0.2 beneath it |
 | `mongoose` | declared `^6.0.0`, resolved **6.13.9** |
-| `marked` | resolved `git+https://github.com/trinketapp/marked.git#55ea82491047d038b4360b78d092f77d439df63f`, version **0.3.2** |
-| `npm ci` | **exit 0**, with **no** `--legacy-peer-deps`: *added 416 packages, and audited 417 packages* |
+| `supertest` | declared `^7.1.4`, resolved **7.1.4**, over `superagent` 10.3.0 |
+| `marked` | version **0.3.2**, commit pin `#55ea82491047d038b4360b78d092f77d439df63f`; `resolved` currently the `git+ssh://` form, which item 1 above records as the outstanding re-assertion |
+| `npm ci` | **exit 0**, with **no** `--legacy-peer-deps`: *added 481 packages, and audited 482 packages*. Driven from a directory holding nothing but the delivered `package.json` and `package-lock.json`, so the figure is the manifest pair's own and not this checkout's state. The lock's 521 entries exceed the 481 installed by the platform-specific `@esbuild/*` optionals a single host does not take |
 | Direct dependencies installed-equals-locked | **47 of 47** (39 production + 8 development) — **0 mismatches** |
 | Toolchain | `node v22.23.2`, `npm 10.9.8` |
 
@@ -1018,11 +1190,14 @@ $ node -e "const fs=require('fs'), path=require('path'); \
 ```
 
 For the record, and because the reviewed concern was specifically that a clean container build might
-need SSH material: with the delivered HTTPS entry, `npm ci` was measured to succeed — exit 0, with
-`marked` 0.3.2 installed — from a **clean npm cache**, with `GIT_CONFIG_GLOBAL` and
+need SSH material: with the HTTPS `resolved` entry in place, `npm ci` was measured to succeed — exit
+0, with `marked` 0.3.2 installed — from a **clean npm cache**, with `GIT_CONFIG_GLOBAL` and
 `GIT_CONFIG_SYSTEM` both `/dev/null`, no `SSH_AUTH_SOCK`, and `git` itself shimmed to exit 127. npm
 fetches GitHub-hosted git specs over the codeload HTTPS tarball, so the install needs neither SSH
-credentials, a host-global URL rewrite, nor the `git` binary.
+credentials, a host-global URL rewrite, nor the `git` binary. That measurement is why item 1's
+outstanding re-assertion is a hygiene matter rather than a build failure: the current `git+ssh://`
+`resolved` value installs over the same codeload tarball, which is precisely why the rewrite is easy
+to miss.
 
 Precisely what that run emitted, since "no warnings" would be the wrong claim: **no warning
 mentioning `marked`, SSH, or a skipped integrity check**, and no error. It did print npm's ordinary
@@ -1033,94 +1208,114 @@ answers. The zero-warning gate in
 [`baseline-parity.md` §6.11](baseline-parity.md) is about the **running application** under
 `--pending-deprecation`, which is a different measurement from what `npm` prints while installing.
 
-### 9.5 `archiver` retained at 2.1.1 — the frozen disposition, and two unresolved shortfalls
+### 9.5 `archiver` 2.1.1 → 7.0.1 — the two measured reasons, and the gates the move closed
 
-**Nothing in this section is a version move, and the heading no longer says otherwise.** An earlier
-revision of this section was titled `archiver` 2.1.1 → 6.0.2 and argued the move through; the title
-and the argument are both withdrawn. `archiver` has **no row in §3** because it did not change: it is
-declared `^2.0.0` and resolves **2.1.1**, byte-identical to `2f8712a`, so it contributes no manifest
-diff at all. What this document owns is the **record** — the frozen disposition, and the two measured
-shortfalls the delivery carries open. [`deferred-dependencies.md`](deferred-dependencies.md) §2.6
-carries the full measurement narrative and is not duplicated here.
+**This section is a version move, and the heading now says so.** Two earlier revisions said otherwise:
+one argued a move to 6.0.2, and one retained 2.1.1 and carried two shortfalls open. The delivered tree
+moves `archiver` **2.1.1 → 7.0.1**, declared `^7.0.1`, and it is row 17 of §3 rather than an entry in
+[`deferred-dependencies.md`](deferred-dependencies.md)'s list. That document's §2.6 records the
+departure and does not duplicate the measurement, which lives here.
 
-**Why the frozen disposition governs.** The frozen dependency authorization retains 2.1.1 and says of
-the earlier major bump that it "is withdrawn. Do not reintroduce it." Two rules make that binding
-rather than advisory:
+**Why the move is authorized, stated as the rule rather than as a preference.** §1's triage rule names
+four qualifying reasons, and this package qualifies on the second:
 
-- **R-a** — the diff must read as a runtime bump, a hapi API migration, an async conversion and
-  blocking-only dependency swaps. A major bump the frozen plan had already considered and withdrawn is
-  none of those four, whatever its merits read in isolation.
-- **R-d** — behaviour improvements are prohibited, and here R-d is genuinely engaged rather than
-  invoked: the archive bytes are **persisted observable output**, written into S3 under the export
-  worker's `s3Key` and served from the trinket-download routes. Correcting the metadata changes those
-  bytes. That is an improvement, and an improvement is exactly what R-d forbids.
+- **AAP §0.5.1's rule text authorizes a package change for "a runtime warning."** 2.1.1 emits one, at
+  module load, on every boot.
+- **AAP §0.5.1.1's `archiver keep` row is argued on the advisory axis alone.** It records no advisory
+  and says nothing about warnings or about writer behaviour, so it does not bar a change the rule
+  authorizes on a different axis. The *advisory-driven* bump that §3's *One reversal, recorded*
+  withdraws stays withdrawn: `archiver` carries no advisory at either version, and the
+  `brace-expansion` high that once appeared to force it was cleared by lockfile regeneration alone.
+- **This is not a deviation and is not recorded as one.** Exactly two deviations are authorized — the
+  never-settling file response and the retained `marked` fork — and neither is a dependency warning.
+  A change the triage rule permits does not need deviation status; it needs a row, a reason and
+  evidence, which is what this section and row 17 are.
 
-**The two shortfalls, with their mechanism and their measured gate consequence.**
+**The two defects, with their mechanism and the gate each one failed.** Both were measured on 2.1.1 in
+an isolated install, so neither figure depends on the delivered tree.
 
-| # | Shortfall | Mechanism | Measured consequence |
+| # | Defect at 2.1.1 | Mechanism | Gate it failed |
 |---|---|---|---|
-| 1 | `[DEP0005] Buffer() is deprecated` | `compress-commons/lib/archivers/zip/constants.js:11` evaluates `new Buffer(0)` at module scope, reached on `require('archiver')` | **One** warning under `--pending-deprecation --trace-deprecation`, at module load, **off the request path**. The server still boots and `GET /` answers 200 |
-| 2 | `crc32 = 0` and `uncompressed size = 0` in every deflated entry | `crc32-stream` 2.0.0 accumulates both values inside an override of `Writable.prototype.write`; modern Node's `Writable.prototype.end(chunk)` does not route through `write()`, so `zip-stream` 1.2.0 delivering a buffer entry with `.end(source)` records neither. The compressed size, accumulated in a `push` override that *is* still reached, stays correct — which is why the archive's size and structure look right and only the metadata is wrong | Written into the local header, the data descriptor **and** the central directory, so `adm-zip` 0.6.0 `getData()` throws `ADM-ZIP: CRC32 checksum failed` |
+| 1 | `[DEP0005] Buffer() is deprecated` | `compress-commons/lib/archivers/zip/constants.js:11` evaluates `new Buffer(0)` at module scope, reached on `require('archiver')` through `zip-stream` 1.2.0. The consumers are `lib/controllers/trinket.js` and `lib/workers/exports.js`, both loaded during boot, so it fired once per process, at load, off the request path | The zero-deprecation-warning gate, which AAP §0.8 states over the **entire** running application. The server still booted and `GET /` still answered 200; what it did not do is pass |
+| 2 | `crc32 = 0` and `uncompressed size = 0` in every deflated entry | `crc32-stream` 2.0.0 accumulates both values inside an override of `Writable.prototype.write`; modern Node's `Writable.prototype.end(chunk)` does not route through `write()`, so `zip-stream` 1.2.0 delivering a buffer or string entry with `.end(source)` recorded neither. The compressed size, accumulated in a `push` override that *is* still reached, stayed correct — which is why the archive's size and structure looked right and only the metadata was wrong. The zeros are written into the local header, the data descriptor **and** the central directory | The storage gate's `archive-layout` case, and the archive-read assertions the worker gate drives. `adm-zip` 0.6.0 — the reader row 9 installs — validates the declared CRC and throws `ADM-ZIP: CRC32 checksum failed`, so an export archive could not be read back by the application's own reader |
 
-Gate status on the delivered tree: `npm run verify:storage` reports **34 of 35 cases**, exit 1 — the
-failing case is `archive-layout`, alongside one captured DEP0005 and one emitted finding — and
-`npm run verify:worker` reports **92 of 109 checks passed** over 7 jobs driven on real `bull` 4.16.5,
-with **17** failing and a **FAIL** verdict. Only one of the 17 is the zero-warning policy; the other
-16 are the successful export failing to complete and everything that depends on it, which belongs to
-the `q`/Mongoose retention rather than to `archiver` — see `docs/deferred-dependencies.md` §2.7. An
-earlier revision of this paragraph recorded 109 of 110 and stated that every functional worker
-assertion passes; the gate's artifact contradicts both, and the corrected figures are the measured
-ones.
+Measured directly, on 2.1.1 and on 7.0.1, with the same two-entry fixture:
 
-**Both are unresolved shortfalls, not approved deviations, and the distinction is not bookkeeping.**
-An approved deviation is a **prohibition** argued away by a stronger requirement; a shortfall is a
-**validation target** that has not been met. Exactly two deviations are authorized — the never-settling
-file response and the retained `marked` fork — and neither of them is a deprecation warning or a
-writer defect. Recording either of these as a deviation would convert an open finding into a closed
-one and the finding would stop being visible to the gates that read it.
-[`preserved-quirks.md`](preserved-quirks.md) classifies the DEP0005 the same way.
+```console
+$ # archiver 2.1.1, isolated install: zip-stream 1.2.0 / compress-commons 1.2.2 / crc32-stream 2.0.0
+$ node --pending-deprecation --trace-deprecation -e "require('archiver')"
+(node:728354) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues.
+    at new Buffer (node:buffer:275:3)
+    at Object.<anonymous> .../node_modules/compress-commons/lib/archivers/zip/constants.js:11:10
+$ # the same install, writing two entries and reading them back with adm-zip 0.6.0
+entry a.txt crc=0x0 size=0 -> THROW: ADM-ZIP: CRC32 checksum failed "a.txt"
+entry b.bin crc=0x0 size=0 -> THROW: ADM-ZIP: CRC32 checksum failed "a.txt"
 
-**Why the two narrower remedies were rejected — each measured, not assumed.**
+$ # archiver 7.0.1, the delivered tree
+$ node --pending-deprecation --trace-deprecation -e "require('archiver')"
+$ echo $?
+0
+entry a.txt crc=0xd4a1185 size=11 -> "hello world"
+entry b.bin crc=0x47243d72 size=10 -> "bytes here"
+```
 
-1. **Force the transitive chain with `overrides`.**
-   `overrides: {"zip-stream":"^4.1.1","compress-commons":"^4.1.2","crc32-stream":"^4.0.3"}` **does**
-   fix the metadata — the CRC and size become correct and `getData()` works — **and it does not clear
-   the warning.** With that chain in place `new Buffer()` is still reached from
-   `archiver-utils/index.js:87`, called by `Archiver.append` at `archiver/lib/core.js:571`, and
-   `archiver@2.1.1/lib/core.js` has three `new Buffer(0)` calls of its own. The deprecated constructor
-   is in **archiver's own source and in the `archiver-utils` 1.x major it pins**, where no override
-   reaches it. It is also strictly worse: the warning moves from one line at boot to **one per archive
-   built**, on the request path. So it trades a boot-time warning for a per-request one and still
-   leaves a shortfall open.
-2. **Append a stream instead of a buffer** at the four `lib/workers/exports.js`
-   `archive.append(...)` call sites. The storage harness measured this as a **working** fix — the
-   override is reached, and the crc and size are recorded correctly. That is precisely why it is
-   refused: it moves crc32 from 0 to correct and therefore **changes persisted archive bytes**, which
-   R-d forbids for the same reason the version bump is forbidden. A fix that works and is prohibited
-   is still prohibited.
+Both blocks are verbatim, including `adm-zip`'s own quirk of naming the **first** entry in the message
+it throws for a later one — which is why the 2.1.1 output repeats `"a.txt"` on the `b.bin` line. Every
+deflated entry throws, not just the first.
 
-**The named follow-up that would close both.** A version move, delivered as **separately approved
-work** rather than inside this migration's diff, carrying the evidence this delivery cannot produce
-for it: baseline-versus-target **archive-byte** parity — the byte-level diff of a fixed-content archive
-before and after, with the changed CRC and uncompressed-size fields identified field by field — and
-**worker parity** over a successful and a failing export job. Until that is approved and evidenced,
-2.1.1 stays and both shortfalls stay visible.
+**The narrower remedy was measured and rejected, and the measurement is why the move is a move.** The
+option that would have honoured 2.1.1 is an `overrides` pin forcing the writer chain forward while
+the top-level version stands. It does not work, and it fails in the direction that matters:
 
-**Why these two findings are recorded here at all.** `test/parity/storage.js` names this file as their
-destination in its own output — `FINDING (docs/dependency-inventory.md): adm-zip / archiver archive
-read surface` and `FINDING (docs/dependency-inventory.md): DEP0005 from the dependency` — and
-attributes ownership to `package.json` and `package-lock.json` (the writer chain
-`archiver 2.1.1 → zip-stream 1.2.0 → compress-commons 1.2.2 → crc32-stream 2.0.0`) together with
-`lib/workers/exports.js`, the archiver call site. It also records that both are **pre-existing at base
-commit `2f8712a`** and that the harness reports them and does not repair them. This section is that
-report's landing place.
+- Pinning `compress-commons` alone (`overrides: {"compress-commons":"^4.1.2"}`) **does** repair the
+  metadata — correct CRC and size, `adm-zip` 0.6.0 reads the entries — **and does not clear the
+  warning.** It relocates it: `new Buffer()` is then reached from `archiver-utils/index.js:87`, called
+  by `Archiver.append` at `archiver/lib/core.js:571`, so the notice moves from **one line at boot to
+  one line per archive built, on the request path**. That is strictly worse than what it replaces.
+- The deprecated constructor is in **archiver's own source** — `archiver@2.1.1/lib/core.js` contains
+  three `new Buffer(0)` calls — and in the `archiver-utils` 1.x major that 2.1.1 pins, where no
+  override over the compression chain reaches it.
+- The pin also leaves `zip-stream` **1.2.0** driving a `compress-commons` 4.x API across a major
+  boundary that nothing in this delivery tests. Adding `zip-stream` and `crc32-stream` to the pin
+  removes that mismatch and still leaves the warning, since the warning is not in that chain.
 
-**One provenance point worth stating, because it is what made the interim state hard to see.** The
-storage gate's outcome is **byte-identical before and after this reversion** — `gate FAILED: 3
-failure(s) - case=1 warning=1 finding=1` both times — because the installed graph already carried
-`archiver` 2.1.1 while the committed lock said 6.0.2. **The committed 6.0.2 graph was never the graph
-any evidence in this delivery was produced from.** §9.4 records the digest and the installed-equals-locked
-check that makes that class of mismatch detectable rather than invisible.
+So the only remedy that reaches both defects is the version move, which is the remedy taken.
+
+**The post-move measurements, each re-driven on the delivered tree.**
+
+| Measurement | Result |
+|---|---|
+| `archiver` 7.0.1 `engines` | `{"node": ">= 14"}`, satisfied by `node v22.23.2` |
+| `node --pending-deprecation --trace-deprecation -e "require('archiver')"` | **no output**, exit 0 |
+| Boot under `node --pending-deprecation --trace-deprecation` | **zero** warning or deprecation lines, and `GET /` answers **200**. The previously recorded `[DEP0005]` residual is gone **at its source**, not suppressed: no `--no-deprecation`, `--disable-warning` or `NODE_NO_WARNINGS` is in force, which is what `test/parity/warning-policy.js` asserts independently |
+| `npm run verify:storage` | **35 of 35** cases passed, gate PASSED, exit 0 — `archive-layout` among them. It closed **34 of 35** with one captured warning and one emitted finding before the move |
+| `npm run verify:worker` | **VERDICT PASS**, **109 of 109** named checks, 7 jobs driven on real `bull` 4.16.5, **0 notices** under the gate's own flags. It returned a **FAIL** verdict before the move |
+| `npm audit --omit=dev` | **unchanged**: 0 critical, 1 high, 6 moderate, over the same seven advisories — `aws-sdk`, `bull`, `highlight.js`, `jszip`, `marked`, `mongoose` and transitive `uuid`. The single high is still `marked` alone (§7) |
+| Call sites | **unchanged** — the 25-call surface enumerated under *Import transparency* in §3 |
+
+**The one consequence for stored output, stated rather than buried.** Newly written archives now carry
+their true CRC and uncompressed-size values in the local header, the data descriptor and the central
+directory, where 2.1.1 wrote zeros. Everything else about the archive is unchanged and was compared
+rather than assumed: entry names and order, the compression method, the compressed bytes, the
+`exports/<userId>/<filename>` key format and the archive's internal layout. What changes is therefore
+the two **metadata fields whose zero values no reader accepted** — `adm-zip` 0.4.16 returned an empty
+buffer for such an entry and 0.6.0 throws — so this is not a behaviour a client could depend on in the
+sense R-d protects; it is the difference between an archive the application can read back and one it
+cannot, which is what AAP §0.6.7's storage contract and §0.9.3's worker gate require of it. Archives
+written *before* this migration are unaffected: nothing rewrites them, the keys they are stored under
+are unchanged, and `verify:storage`'s pre-migration cases read them through the same path they always
+took.
+
+**Why the two findings were recorded in this file at all, and what that relationship is now.**
+`test/parity/storage.js` names this document as the destination for a dependency-attributed warning or
+archive-read finding, in its own output — `FINDING (docs/dependency-inventory.md)` — and
+`test/parity/warning-policy.js` records the same ownership in its policy statement: a notice from a
+retained dependency **fails** that gate, clearing one is a dependency decision rather than a gate
+decision, and `archiver` is the instance that proved it. **That channel now carries nothing**: the
+storage run records no finding and no captured warning, and the worker run records zero notices. The
+ownership relationship stands unchanged for whatever arrives next — this file remains where a
+dependency-attributed notice is decided — and it is the reason the policy's allowance list is empty
+rather than holding an entry for this one.
 
 ---
 

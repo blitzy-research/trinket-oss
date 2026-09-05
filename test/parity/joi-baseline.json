@@ -188,7 +188,7 @@
   "notes": {
     "proves": "Every case in this artifact was DRIVEN against a running application at the joi named in `joiVersion`, in both Accept modes, and the response was recorded as measured. A `targetComparison` block, when present, carries the completed comparison against the other side of the gate; when it is null this artifact is one side only.",
     "reproduce": {
-      "thisRun": "node test/parity/joi-matrix.js --capture --app ephemeral:aap-base --port 20501 --overlay ephemeral:overlay-joi.json --overwrite --out tool:test/parity/joi-baseline.json >/dev/null 2>/dev/null",
+      "thisRun": "node test/parity/joi-matrix.js --capture --app ephemeral:baseline-2f8712a --port 20012 --overwrite --out tool:test/parity/joi-baseline.json >/dev/null 2>/dev/null",
       "paths": "Every path in `thisRun` is a symbolic label: `tool:<relative>` is relative to the repository root and `ephemeral:<basename>` was a scratch location whose directory is this run's own machine state - substitute your own. The tree that was MEASURED is named by commit in `provenance.analysedTree`, which is the reproducible form of it; `baselineCapture` below is how that tree is created.",
       "credentials": "Any credential a `--mongo-uri` carried is REDACTED as \"[redacted-by-joi-matrix]\" here, in `databaseAlignment.seederUri` and in every diagnostic; supply your own. Host, port, database and the non-secret parameters are recorded in full.",
       "baselineCapture": "node test/parity/joi-matrix.js --capture --app <baseline worktree at the base commit, with its OWN npm ci> --port <free port> --database <isolated name> --out <baseline.json> >/dev/null 2>/dev/null",
@@ -347,9 +347,9 @@
   "databaseAlignment": {
     "source": "provisioned mongodb-memory-server",
     "host": "127.0.0.1",
-    "port": 43455,
-    "database": "parity_672855_mtnfdz9x_143384",
-    "seederUri": "mongodb://127.0.0.1:43455/parity_672855_mtnfdz9x_143384",
+    "port": 36893,
+    "database": "parity_718958_mtnomje4_3fe380",
+    "seederUri": "mongodb://127.0.0.1:36893/parity_718958_mtnomje4_3fe380",
     "agreedAcross": [
       "this process's composed NODE_CONFIG db.mongo.{host,port,database}",
       "the address handed to the application under test",
@@ -25457,7 +25457,7 @@
           },
           "http": {
             "html": {
-              "status": 501,
+              "status": 200,
               "timedOut": false,
               "error": null,
               "contentType": "application/json; charset=utf-8",
@@ -25466,9 +25466,7 @@
               "renderedMessages": [],
               "validationFlash": null,
               "bodyKeys": [
-                "error",
-                "message",
-                "statusCode"
+                "flash"
               ],
               "followed": [],
               "order": 386,
@@ -25484,7 +25482,7 @@
               "flashProofComparable": false
             },
             "json": {
-              "status": 501,
+              "status": 200,
               "timedOut": false,
               "error": null,
               "contentType": "application/json; charset=utf-8",
@@ -25493,9 +25491,7 @@
               "renderedMessages": [],
               "validationFlash": null,
               "bodyKeys": [
-                "error",
-                "message",
-                "statusCode"
+                "flash"
               ],
               "followed": [],
               "order": 387,
@@ -26692,7 +26688,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/account/email",
+              "location": "http://127.0.0.1:20012/account/email",
               "locationRelative": "/account/email",
               "renderedMessages": [],
               "validationFlash": null,
@@ -27255,7 +27251,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/account/email",
+              "location": "http://127.0.0.1:20012/account/email",
               "locationRelative": "/account/email",
               "renderedMessages": [],
               "validationFlash": null,
@@ -30631,7 +30627,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/login",
+              "location": "http://127.0.0.1:20012/login",
               "locationRelative": "/login",
               "renderedMessages": [],
               "validationFlash": null,
@@ -30750,7 +30746,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/login",
+              "location": "http://127.0.0.1:20012/login",
               "locationRelative": "/login",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31030,7 +31026,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/aaa",
+              "location": "http://127.0.0.1:20012/aaa",
               "locationRelative": "/aaa",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31063,7 +31059,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/aaa",
+              "location": "http://127.0.0.1:20012/aaa",
               "locationRelative": "/aaa",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31201,7 +31197,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/signup",
+              "location": "http://127.0.0.1:20012/signup",
               "locationRelative": "/signup",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31737,7 +31733,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/testing/courses/aaa",
+              "location": "http://127.0.0.1:20012/testing/courses/aaa",
               "locationRelative": "/testing/courses/aaa",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31864,7 +31860,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/courses/new",
+              "location": "http://127.0.0.1:20012/courses/new",
               "locationRelative": "/courses/new",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32330,7 +32326,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/forgot-pass",
+              "location": "http://127.0.0.1:20012/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32450,7 +32446,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/forgot-pass",
+              "location": "http://127.0.0.1:20012/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32613,7 +32609,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/forgot-pass",
+              "location": "http://127.0.0.1:20012/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32724,7 +32720,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/forgot-pass",
+              "location": "http://127.0.0.1:20012/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32913,7 +32909,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/forgot-pass",
+              "location": "http://127.0.0.1:20012/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33033,7 +33029,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/forgot-pass",
+              "location": "http://127.0.0.1:20012/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33307,7 +33303,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/{redirectTo}",
+              "location": "http://127.0.0.1:20012/{redirectTo}",
               "locationRelative": "/%7BredirectTo%7D",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33484,7 +33480,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/activate-account",
+              "location": "http://127.0.0.1:20012/activate-account",
               "locationRelative": "/activate-account",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33601,7 +33597,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:20501/{redirectTo}",
+              "location": "http://127.0.0.1:20012/{redirectTo}",
               "locationRelative": "/%7BredirectTo%7D",
               "renderedMessages": [],
               "validationFlash": null,
@@ -34926,12 +34922,12 @@
     "role": "baseline",
     "generator": {
       "path": "test/parity/joi-matrix.js",
-      "blob": "a75d1041ce224057fb99fd15505c8689d2a2a648",
-      "commit": "bec7fa47e1c5b982e460748b0991a0107fba64ca",
+      "blob": "b7e3691ac6ede6ee63816547a311d6af8e8bf4b5",
+      "commit": "9ae9d2bdc6b3bc5567b6efd1ee484717bed0943b",
       "commitState": "contains-this-exact-source",
       "verified": true,
-      "deliveredHead": "bec7fa47e1c5b982e460748b0991a0107fba64ca",
-      "deliveredHeadShort": "bec7fa4",
+      "deliveredHead": "9ae9d2bdc6b3bc5567b6efd1ee484717bed0943b",
+      "deliveredHeadShort": "9ae9d2b",
       "matchesDeliveredHead": true
     },
     "analysedTree": {
@@ -34942,9 +34938,9 @@
       "worktreeState": "clean"
     },
     "delivered": {
-      "head": "bec7fa47e1c5b982e460748b0991a0107fba64ca",
-      "headShort": "bec7fa4",
-      "subject": "Send each parity login from its own loopback address",
+      "head": "9ae9d2bdc6b3bc5567b6efd1ee484717bed0943b",
+      "headShort": "9ae9d2b",
+      "subject": "Revert unauthorized behaviour changes and restore AAP parity gates",
       "isBaselineCommit": false,
       "worktreeState": "dirty"
     },
@@ -34998,12 +34994,13 @@
         "nodeConfigKeys": [
           "app",
           "aws",
-          "db"
+          "db",
+          "features"
         ],
         "nodeConfigDigest": {
           "algorithm": "sha256",
           "canonicalization": "secret-labelled values replaced with <redacted>, address-labelled values dropped, URI userinfo removed, then JSON with object keys sorted lexicographically and no whitespace",
-          "value": "b127c3b665a0f7d56989febca890bea31ed2244803a01ffb3360faed5a94ed54"
+          "value": "341173712267eb697cb1cdaf39964c066a3b53a2be822ce555e4626c04f7cc99"
         },
         "nodeConfigDir": "analysed:config",
         "redactedKeys": [
@@ -35016,7 +35013,7 @@
     "payloadDigest": {
       "algorithm": "sha256",
       "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
-      "value": "02925c73d007c8e9907f9bfbd5293d57ae04891ed120eab8c89b3e9bc2e8eeb2"
+      "value": "33c9efddddf1942e04d281f53dd49f130130b32ee6de23ea2594b68070051968"
     }
   }
 }

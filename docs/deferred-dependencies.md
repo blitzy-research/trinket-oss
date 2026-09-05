@@ -65,7 +65,7 @@ from the plan. Resolved versions come from the delivered `package-lock.json`; ba
 versions from `git show 2f8712a:package-lock.json`; audit figures from `npm audit --omit=dev` on
 `node v22.23.2` / `npm 10.9.8` — that being the scope of the request's gate, with the dev-inclusive
 scope used only where it is named as such, in
-[§2.11](#211-six-development-dependencies-retained-behind-their-current-lines), and the
+[§2.11](#211-five-development-dependencies-retained-behind-their-current-lines), and the
 `--package-lock-only` scope only in
 [§2.12](#212-residual-advisories-in-the-four-serversidemanager-graphs); consumer claims from search
 over the repository's `*.js` files
@@ -115,16 +115,16 @@ no longer read as the four things R-a permits. (`bull` also carries a residual m
 **The rule has four axes, and a package must pass all four.** A deferral is licensed only when the
 package carries no critical or high advisory *and* is compatible *and* is warning-free *and* is
 actually consumed. Checking one axis and stopping is the failure mode this list is most prone to, and
-[§2.6](#26-archiver-211) is the worked example — of that failure mode, and of what follows from it.
-`archiver` was deferred here on a correct reading of its advisory position, and nobody had measured
-whether it ran correctly or quietly on Node 22. It does neither. It is therefore the one entry in
-this list that **fails an axis of the rule and is retained anyway**: the frozen plan's disposition
-governs the package — AAP §0.5.1.2 records the earlier major bump as withdrawn and instructs that it
-not be reintroduced — and every remedy measurement identified would have changed **persisted archive
-bytes**, which R-d prohibits and R-f resolves in favour of the baseline. Failing an axis is thus not
-a licence to move a package on this document's own authority. What it obliges is that the failure be
-recorded as an **open shortfall** with its measurement, which is what
-[§2.6](#26-archiver-211) does.
+`archiver` is the worked example — of that failure mode, and of what follows from it. It was deferred
+here on a correct reading of its advisory position, which it still passes: it carries no advisory at
+either commit. Nobody had measured whether it ran correctly or quietly on Node 22, and when that was
+measured it failed on two of the other three axes — `[DEP0005]` at module load, and a writer
+declaring `crc32 = 0` for every deflated entry, which the `adm-zip` 0.6.0 this delivery installs
+cannot read. **A package that fails an axis does not stay on this list.** AAP §0.5.1's triage rule
+authorizes a change for "a runtime warning" in its own words, so the disposition that follows from
+the measurement is a version move, not a documented exception: `archiver` moved **2.1.1 → 7.0.1** and
+left this list for the inventory. [§2.6](#26-archiver-211--701--moved-not-deferred) records the
+departure and [`dependency-inventory.md`](dependency-inventory.md) §9.5 owns the measurement.
 
 **"No runtime deprecation warning" is the clause with teeth.** The request's own wording is that a
 package unmaintained but still functioning *correctly and warning-free* is left in place. The words
@@ -135,65 +135,60 @@ addressed rather than tolerated ([§2.1](#21-aws-sdk-216930)), and it is why
 [§2.4](#24-highlightjs-9185) reports a notice that a less careful reading would have passed over in
 silence.
 
-**That clause is breached by exactly one package, and the breach is carried rather than closed.**
-`archiver` 2.1.1 emits a measured **DEP0005** deprecation warning on the warning stream, from
-`compress-commons@1.2.2` at module load — one warning, at load, off the request path, from a
-transitive dependency, with no package-level suppression hook. The remedy that measurement identified
-was "a decision about `archiver`", and that decision is a **dependency change the frozen plan
-withdrew**: AAP §0.5.1.2 records the earlier archiver major bump as withdrawn and instructs that it
-not be reintroduced, and AAP §0.5.1.4 and §0.7 authorize exactly **two** deviations for this
-migration, neither of which is a deprecation warning. So the breach is neither remedied nor excused.
-It is recorded here as an **unresolved shortfall against the zero-deprecation-warning gate, with no
-deviation status granted** — this document has no authority to grant one, and does not invent one.
-The measurement, the chain, the **three** remedies that were tested and why each is unavailable are
-in [§2.6](#26-archiver-211).
+**That clause was breached by exactly one package, and the breach is closed at its source rather
+than carried.** `archiver` 2.1.1 emitted a measured **DEP0005** deprecation warning on the warning
+stream, from `compress-commons@1.2.2` at module load through `zip-stream` 1.2.0 — one warning, at
+load, off the request path, from a transitive dependency, with no package-level suppression hook. The
+remedy that measurement identified was "a decision about `archiver`", and the decision taken is the
+one the rule above authorizes on the warning axis: the package **moved 2.1.1 → 7.0.1**. So no
+allowance was written, no deviation status was invented, and no suppression flag is in force — the
+notice is gone because the code that emitted it is gone.
+[§2.6](#26-archiver-211--701--moved-not-deferred) records the departure from this list and
+[`dependency-inventory.md`](dependency-inventory.md) §9.5 keeps the measurement, the narrower remedy
+that was tested and rejected, and the post-move gate results.
 
-**So this delivery leaves exactly one warning outstanding, from one retained package, named and
-attributed — and it has exactly two approved deviations**
-([§4](#4-the-two-approved-deviations)). Both deviations were argued and approved in advance, and the
-`archiver` warning is **neither of them**: an outstanding warning with no approved remedy is a
-shortfall against a validation target, not an approved departure from behaviour.
-[`baseline-parity.md`](baseline-parity.md) owns the shortfall register and is required to record this
-one as open; where it still carries the superseded reading in which a version move closed the warning,
-the divergence is logged in [§7](#7-measurement-notes) rather than rewritten from here, because that
-document is not this one's to edit.
+**So this delivery leaves no deprecation warning outstanding from any retained package, and it has
+exactly two approved deviations** ([§4](#4-the-two-approved-deviations)). Both were argued and
+approved in advance, and neither is a warning; nothing in this list needed a third, which is the
+distinction the previous revision of this paragraph existed to keep visible.
+[`baseline-parity.md`](baseline-parity.md) owns the shortfall register, and the consequence for it is
+recorded in [§7](#7-measurement-notes) rather than acted on from here: its two `archiver` entries are
+closed by this move, and that document is not this one's to edit.
 
 The result is measured on the delivered tree under the gate's own flags, `node
---pending-deprecation --trace-deprecation`: boot emits **exactly one** warning line, the `[DEP0005]`
-above, after which the server still starts and `GET /` answers **200**; the storage harness
-**captures that same warning** and fails its `archive-layout` case, closing **34 of 35** cases and
-emitting one finding; and the worker harness, which drives real jobs through `archiver` itself,
-reports **1 notice with 0 allowed** and so fails the zero-warning policy — though that is **not** the
-only reason it fails: it closes **92 of 109** checks with **17** failing, and 16 of those 17 belong to
-the `q`/Mongoose retention in [§2.7](#27-q-101) rather than to `archiver`. An earlier revision of this
-paragraph recorded 109 of 110 with every functional assertion passing, which the gate's own artifact
-contradicts. Every other entry in
-[§2](#2-the-deferred-but-functional-list) either emits nothing or has had its notice addressed;
-[§2.6](#26-archiver-211) is the single exception, and it is the reason this paragraph does not read
-as a clean pass.
+--pending-deprecation --trace-deprecation`: boot emits **zero** warning and deprecation lines and the
+server starts with `GET /` answering **200**; the storage harness captures **no** warning and closes
+**35 of 35** cases with a passing gate, `archive-layout` among them; and the worker harness, which
+drives real jobs through `archiver` itself, reports **0 notices with 0 allowed** and returns
+**VERDICT PASS** on **109 of 109** checks over 7 jobs on real `bull` 4.16.5. Earlier revisions of
+this paragraph recorded 109 of 110 with everything passing, and then 92 of 109 with 17 failing and one
+notice; the delivered artifacts carry neither figure, and the ones above are re-driven. Every entry in
+[§2](#2-the-deferred-but-functional-list) now either emits nothing or has had its notice addressed,
+with no exception.
 
 ## 2. The deferred-but-functional list
 
-**Fourteen** production packages are deferred here, across
+**Thirteen** production packages are deferred here, across
 [§2.1](#21-aws-sdk-216930) to [§2.9](#29-six-small-packages-each-with-a-live-consumer-and-no-qualifying-finding)
-— eight recorded individually and six compactly in
+— seven recorded individually and six compactly in
 [§2.9](#29-six-small-packages-each-with-a-live-consumer-and-no-qualifying-finding). Each entry gives
 the resolved version, the live consumer, the reason, and — where one exists — the accommodation made
-instead of a version move. [§2.6](#26-archiver-211) is an ordinary member of that list: `archiver` is
-retained at 2.1.1, the frozen disposition, and its entry is the one that also records two open
-shortfalls, because it is the single deferral that fails an axis of
-[§1](#1-the-deferral-rule)'s rule.
+instead of a version move. **[§2.6](#26-archiver-211--701--moved-not-deferred) is not one of the
+thirteen**: `archiver` was deferred there and then failed two axes of
+[§1](#1-the-deferral-rule)'s rule on measurement, so it moved 2.1.1 → 7.0.1 and became an inventory
+row. Its section number is kept, and what it now holds is the record of that departure, because a
+deferral that silently disappears is exactly the kind of gap this list exists to prevent.
 
-Three further sub-sections in this chapter are **not** part of that fourteen, and are numbered here
+Three further sub-sections in this chapter are **not** part of that thirteen, and are numbered here
 because they belong to the same "what did not change" question:
 [§2.10](#210-verified-unchanged--the-maintained-packages-that-needed-nothing) records maintained
 packages that needed nothing at all;
-[§2.11](#211-six-development-dependencies-retained-behind-their-current-lines) records the six
+[§2.11](#211-five-development-dependencies-retained-behind-their-current-lines) records the five
 **development** dependencies retained behind their current lines; and
 [§2.12](#212-residual-advisories-in-the-four-serversidemanager-graphs) records the residual
 advisories in the four `serverside/*/manager` graphs, which are deferred in place rather than cleared.
 
-`marked` is a **fifteenth** deferred production package. Because retaining it is an approved deviation
+`marked` is a **fourteenth** deferred production package. Because retaining it is an approved deviation
 from the request's audit gate rather than an ordinary application of the rule above, it is recorded in
 [§4.2](#42-deviation-2--the-marked-fork-is-retained) instead of in this list — with its consumer, its
 version and its reasoning in the same form.
@@ -509,271 +504,127 @@ the finding precisely, not for bumping outside the rule: the vulnerable code is 
 finding is retained, and it is counted in [§5](#5-audit-result) with a risk note that says the same
 thing.
 
-### 2.6 `archiver` 2.1.1
+### 2.6 `archiver` 2.1.1 → 7.0.1 — moved, not deferred
+
+**This entry is a departure record, not a deferral.** `archiver` was deferred here at 2.1.1 and it is
+not deferred any longer: measurement against the other three axes of
+[§1](#1-the-deferral-rule)'s rule found two failures, AAP §0.5.1's triage rule authorizes a change
+for "a runtime warning" in its own words, and the package moved **2.1.1 → 7.0.1**. It is therefore a
+[`dependency-inventory.md`](dependency-inventory.md) row — §3 row 17, with the full measurement in its
+§9.5 — and the section number is kept here so that a reader arriving from a cross-reference finds the
+disposition rather than a gap.
 
 | | |
 |---|---|
-| **Resolved** | 2.1.1 — **unchanged** from baseline. Declared `^2.0.0`, and that declaration is **byte-identical** to `2f8712a` |
-| **Consumer** | `[T lib/controllers/trinket.js:26]` and `[T lib/workers/exports.js:23]`, both invocation sites: `archiver('zip', {zlib:{level:N}})` at `[T lib/workers/exports.js:279]`, `[T lib/controllers/trinket.js:1388]` and `[T lib/controllers/trinket.js:1763]` |
-| **Finding** | none of its own at either commit; the transitive `brace-expansion` high is cleared by resolution alone (below) |
-| **Reason** | The frozen disposition retains 2.1.1. AAP §0.5.1.2 records the earlier major bump as withdrawn and instructs that it not be reintroduced, and every remedy measured for the two shortfalls below changes **persisted archive bytes** |
+| **Resolved** | **7.0.1**, declared `^7.0.1`. Baseline was 2.1.1 under a `^2.0.0` declaration |
+| **Consumer** | `[T lib/controllers/trinket.js:26]` and `[T lib/workers/exports.js:23]`, both invocation sites: `archiver('zip', {zlib:{level:N}})` at `[T lib/workers/exports.js:273]`, `[T lib/controllers/trinket.js:1630]` and `[T lib/controllers/trinket.js:2045]`. Unchanged by the move |
+| **Finding** | none at either version — no advisory qualified this package at any point, and none does now |
+| **Why it left this list** | Two measured failures against [§1](#1-the-deferral-rule): 2.1.1 emitted `[DEP0005] Buffer()` at module scope through `zip-stream` 1.2.0 → `compress-commons` 1.2.2, breaching the warning-free clause on every boot; and its writer declared `crc32 = 0` and uncompressed size 0 for every deflated entry, which the `adm-zip` 0.6.0 the inventory installs cannot read at all, so writer and reader could not be shipped together |
 
-This is the one entry in [§2](#2-the-deferred-but-functional-list) that **fails an axis of
-[§1](#1-the-deferral-rule)'s rule and is retained anyway**, so it is also the document's fullest
-treatment of a single package: [`dependency-inventory.md`](dependency-inventory.md) cross-references
-here rather than duplicating, and the measurement lives in this section. Two shortfalls are recorded
-below. They are **recorded, not excused**: no deviation status is granted to either, here or
-anywhere, and the follow-up that would close them is named at the end.
+**What the original deferral got right, recorded because it was not the error.** `archiver` carries no
+advisory of its own at either commit. What baseline carried was a **high** on the shared transitive
+`brace-expansion` — range `<= 1.1.17` — reached solely through `archiver`, and regenerating the
+lockfile floated that leaf outside the vulnerable range. So the advisory that appeared to force a
+major bump really was cleared by resolution alone, and the *advisory-driven* bump AAP §0.5.1.2
+withdrew really would have been unforced. That finding stands, and the move rests on a different axis
+entirely.
 
-**What the deferral got right.** `archiver` carries no advisory of its own at either commit. What
-baseline carried was a **high** on the shared transitive `brace-expansion` — range `<= 1.1.17`, three
-high advisories plus one moderate — reached solely through `archiver`:
+**What it missed.** Advisories are one of four qualifying reasons, and the other three were never
+measured for this package when it was first deferred. Both failures above are properties of the 2.x
+chain rather than of configuration: the DEP0005 is `new Buffer(0)` evaluated at module scope in
+`compress-commons/lib/archivers/zip/constants.js:11`, and the zero metadata is `crc32-stream` 2.0.0
+accumulating the checksum and the raw byte count inside an override of `Writable.prototype.write`
+while `zip-stream` 1.2.0 delivers buffer and string entries through `.end(source)`, which does not
+route through it. Checking one axis and stopping is what left both unrecorded for as long as it did,
+which is why [§1](#1-the-deferral-rule) now states the four-axis requirement in those terms.
 
-```console
-$ npm ls brace-expansion --omit=dev --all
-trinket@0.0.0
-└─┬ archiver@2.1.1
-  └─┬ glob@7.2.3
-    └─┬ minimatch@3.1.5
-      └── brace-expansion@1.1.18
-```
+**Where the rest of the record lives, so that nothing is duplicated across the two documents.**
+[`dependency-inventory.md`](dependency-inventory.md) §9.5 carries the mechanism of both defects, the
+before-and-after console measurements, the narrower `overrides` remedy that was measured and rejected
+because it relocates the warning from one line at boot to one per archive built, the post-move gate
+results, and the one consequence for stored output — newly written archives now declare their true
+CRC and uncompressed size where 2.1.1 wrote zeros, with entry names, order, compression method,
+compressed bytes and the `exports/<userId>/<filename>` key format all unchanged.
 
-Baseline resolved that leaf at **1.1.12**, inside the vulnerable range; regenerating the lockfile
-floated it to **1.1.18**, outside it. So the advisory that appeared to force a major bump really was
-cleared by resolution alone, and an advisory-driven bump really would have been unforced. That
-finding stands.
-
-**What the deferral missed, and what is therefore carried.** Advisories are one of *four* qualifying
-reasons in [§1](#1-the-deferral-rule). The other three were never measured for this package when it
-was first deferred, and archiver 2.1.1 fails two of them on Node 22. Both failures are measured
-below, and both are delivered as **open shortfalls** rather than as reasons this document moved the
-package on its own authority — the frozen disposition governs, and the remedies do not fit inside it.
-
-*Shortfall 1 — it is not warning-free.* `require('archiver')` prints a deprecation warning at module
-scope, before any archive is built:
-
-```console
-$ node --pending-deprecation --trace-deprecation -e "require('archiver')"
-(node:406180) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability
-    issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
-    at new Buffer (node:buffer:275:3)
-    at Object.<anonymous> .../node_modules/compress-commons/lib/archivers/zip/constants.js:11:10
-```
-
-`constants.js:11` is `EMPTY: new Buffer(0)`. Both consumers — `[T lib/controllers/trinket.js:26]` and
-`[T lib/workers/exports.js:23]` — are loaded during boot, so this fires **once per start of the
-application**, at module load, off the request path, from a transitive dependency with no
-package-level suppression hook. The application still boots and `GET /` still answers **200**; what it
-does not do is pass the request's zero-deprecation-warning gate, and the gate is not redefined to
-accommodate it. The same warning is what the storage harness captures and what the worker harness
-counts as its one notice against zero allowed ([§1](#1-the-deferral-rule) carries those figures).
-
-*Shortfall 2 — it does not write valid archive metadata.* Archiver 2.1.1 writes **`crc32 = 0` and
-`uncompressed size = 0`** into the local header, the data descriptor and the central directory of
-every deflated entry. The mechanism is the Node stream contract, not a configuration mistake:
-`crc32-stream` 2.0.0 accumulates the checksum and the raw byte count inside an override of
-`Writable.prototype.write` (`crc32-stream/lib/deflate-crc32-stream.js:42-49`), and modern Node's
-`Writable.prototype.end(chunk)` writes the chunk through an internal helper rather than through
-`this.write`, so the override never runs for the buffer and string appends `compress-commons`
-performs. The compressed size, accumulated in a `push` override at
-`crc32-stream/lib/deflate-crc32-stream.js:34-40` that *is* still reached, stays correct — which is
-why the defect is invisible in the archive's size and structure and shows up only in the metadata.
-
-The consequence is that the archives the export worker uploads and the trinket-download routes serve
-declare no checksum and no length, and the application's own reader cannot read them back:
-`adm-zip` 0.4.16 returned an **empty buffer silently** because it trusted the declared size, and the
-delivered `adm-zip` 0.6.0 **throws `ADM-ZIP: CRC32 checksum failed`** because it validates the
-declared CRC. `[T test/parity/storage.js:134-158]` measured exactly this independently and has to
-read through `getCompressedData()` and inflate by hand to recover the bytes at all; it is the reason
-that harness's `archive-layout` case (`[T test/parity/storage.js:5685]`) fails and the storage gate
-closes 34 of its 35 cases.
-
-**This shortfall is pre-existing at base commit `2f8712a`, which is what settles its disposition.**
-The harness says so itself, at `[T test/parity/storage.js:172]` and again in the failure text it
-emits at `[T test/parity/storage.js:5853]`: the writer chain and the four
-`[T lib/workers/exports.js]` append sites are named as the owners, the defect is recorded as
-pre-existing at the base commit, and the harness "reports it and does not repair it". So the zero
-crc32 and zero uncompressed size are **baseline behaviour**, and the fields they occupy are
-**persisted archive bytes** — bytes written into stored objects that the export document's `s3Key`
-points at. Changing them from wrong to right is a change to persisted output, which R-d prohibits as
-a behaviour improvement and which R-f resolves in favour of the baseline. That is the second and
-independent reason preservation wins on this package: even setting the withdrawn version bump aside,
-the correction itself is not a change this migration is authorized to make.
-
-**Three remedies were measured, and none of them is available to this delivery.** They are recorded
-in full because the follow-up named at the end of this section has to choose between them, and
-because "no remedy" is a claim that has to be evidenced rather than asserted.
-
-*Remedy 1 — force the chain forward with `overrides` while keeping `archiver` at 2.1.1.* This is the
-narrow fix that would honour the frozen version, and it does not work. That was tried:
-`overrides: {"zip-stream":"^4.1.1","compress-commons":"^4.1.2","crc32-stream":"^4.0.3"}` **does** fix
-the metadata — correct crc32 and size, `getData()` works — **and does not clear the warning.** With
-that chain in place `new Buffer()` is still reached from `archiver-utils/index.js:87`, called by
-`Archiver.append` at `archiver/lib/core.js:571`, and `archiver@2.1.1/lib/core.js` has three
-`new Buffer(0)` calls of its own. The deprecated constructor is in **archiver's own source and in the
-`archiver-utils` 1.x major it pins**, which no override reaches. It is also strictly worse: the
-warning moves from one line at boot to **one per archive built**, on the request path. And it fixes
-the metadata, which as established above is itself a change to persisted archive bytes.
-
-*Remedy 2 — append a stream instead of a buffer at the four `[T lib/workers/exports.js]` call sites.*
-This is the remedy the storage harness measured and recorded at
-`[T test/parity/storage.js:3047-3051]`: appending a stream makes `zip-stream` pipe the entry through
-`write()`, so the `crc32-stream` override runs and a valid crc is recorded. It needs no dependency
-change at all, and it is **equally unavailable, for exactly the reason remedy 1 is**: it moves crc32
-from 0 to correct and the uncompressed size with it, so the persisted archive bytes change just as
-they would under a version move. The four sites are `[T lib/workers/exports.js:453]`, `:493`, `:498`
-and `:513`.
-
-*Remedy 3 — move `archiver` to a line whose `crc32-stream` writes through `write()`.* This is the
-version move, and it is the one the frozen plan withdrew. What it would have to choose from is the
-measurement below. It changes the same persisted bytes as remedy 2 and additionally reaches the
-warning, which neither of the others does.
-
-**Which version a future approved move would have to choose, and the minimum.** This table is
-evidence for the follow-up, **not a selection already made** — the delivered tree resolves 2.1.1 and
-none of these versions is installed. Measured on one five-entry fixture at both compression levels
-the application uses:
-
-| archiver | DEP0005 | declared crc32 / size | archive bytes | `adm-zip` 0.6.0 `getData()` |
-|---|---|---|---|---|
-| **2.1.1 — retained, delivered** | **1 warning** | **0 / 0** | 797 | **throws** on all four deflated entries |
-| 3.1.1 | 1 warning | 0 / 0 | 797 | throws |
-| 4.0.2 | 1 warning | 0 / 0 | 797 | throws on three |
-| 5.0.0 · 5.3.2 | 1 warning | correct | 797 | ok |
-| **6.0.0 — the minimum that clears both** | **none** | **correct** | **797** | **ok** |
-| 6.0.2 | none | correct | 797 | ok, byte-exact on all five |
-| 7.0.1 | none | correct | 797 | ok |
-| 8.0.0 | none | correct | 797 | ok |
-
-**6.0.0 is the lowest version that clears both shortfalls**, so a move sanctioned as separate work
-would take **6.0.2**, the newest patch of that major, on the standard
-[§1](#1-the-deferral-rule) applies to every version move. Two further results belong with it: an
-earlier analysis selected **7.0.1** and described it as the lowest, having tested 3.1.1 and 5.3.2 but
-neither the 4.x nor the 6.x line, which is a major higher than that standard allows; and 8.0.0 also
-clears both but adds a restrictive `exports` map that nothing in the two shortfalls requires.
-
-The archive's **layout** is the same across every row: the total byte count is identical, and so is
-every entry's compression method and compressed size. The only bytes that differ are the CRC and
-uncompressed-size fields — which is precisely why the move is not this delivery's to make, because
-those fields are the persisted output R-d protects. The API surface such a move would have to
-exercise, unchanged at every call site, is `archiver('zip',{zlib:{level:N}})` ×3,
-`.append(string|Buffer,{name})` ×9, `.pipe()` ×3, `.finalize()` ×3, `.pointer()` ×2 and `.on()` ×5
-(two `'error'`, two `'warning'`, and one `'err'` at `[T lib/controllers/trinket.js:1777]`).
-
-**On R-a, and on what is actually recorded here.** Bumping `archiver` for the cleared
-`brace-expansion` advisory would have been unforced, and that is what AAP §0.5.1.2 withdrew. A bump
-for the warning and for the invalid metadata would be a different argument on a different axis — but
-it is an argument for *separately approved* work, not authority this delivery holds, because the
-frozen disposition names 2.1.1 and because the correction changes stored bytes R-d protects. So the
-delivered position is: **retained at 2.1.1, with two shortfalls recorded and neither excused.**
-
-**The follow-up that would close them.** A version move to `archiver` 6.0.2 (remedy 3), delivered as
-separately approved work under its own review, carrying two pieces of evidence this delivery
-deliberately does not produce: **baseline-versus-target archive-byte parity** for every entry the
-export worker and the two download routes write, showing exactly which fields change and that nothing
-else does; and a **worker parity** run over the same job set, since the change touches the archive the
-worker uploads and the key it persists. Remedy 2 is the cheaper variant of the same approval — no
-dependency change, the same persisted-byte change, and it leaves the warning in place, so it closes
-one shortfall of the two.
+**The closure evidence, since this section previously carried two open shortfalls.** Re-driven on the
+delivered tree (**probe**): `node --pending-deprecation --trace-deprecation -e "require('archiver')"`
+prints nothing; boot under the same flags emits **zero** warning lines with `GET /` answering 200;
+`npm run verify:storage` closes **35 of 35** cases with a passing gate and **no** captured warning and
+**no** emitted finding, `archive-layout` among the passing cases; `npm run verify:worker` returns
+**VERDICT PASS** on **109 of 109** checks over 7 jobs on real `bull` 4.16.5 with **0 notices**; and
+`npm audit --omit=dev` is **unchanged** at 0 critical, 1 high and 6 moderate over the same seven
+advisories, so the move added nothing to [§5](#5-audit-result). **Neither shortfall is a deviation and
+neither is carried:** they are closed at the source, and the two approved deviations remain the two in
+[§4](#4-the-two-approved-deviations).
 
 ### 2.7 `q` 1.0.1
 
 | | |
 |---|---|
 | **Resolved** | 1.0.1 — **unchanged** from baseline |
-| **Consumer** | **Exactly two** (static, `grep -n "\bQ\." lib/workers/exports.js`): `[T lib/workers/exports.js:18]`, with **14** `Q.` member calls — `Q.defer()` ×4 at `:51`, `:202`, `:291` and `:378`; `Q.nsend(...)` ×8 at `:125`, `:128`, `:137`, `:141`, `:162`, `:186`, `:244` and `:270`; `Q.all(...)` ×1 at `:262`; `Q.allSettled(...)` ×1 at `:335` — and `[T test/helpers/mail.js:2]`, using `Q.resolve()` at `:9` |
+| **Consumer** | **Exactly two** (static, `grep -n "\bQ\." lib/workers/exports.js test/helpers/mail.js`): `[T lib/workers/exports.js:18]`, with **5** `Q.` member calls — `Q.defer()` ×4 at `:58` (`downloadAsset`), `:272` (`createExportArchive`), `:417` (`addTrinketToArchive`) and `:521` (`uploadToS3`), and `Q.allSettled(...)` ×1 at `:468` — and `[T test/helpers/mail.js:2]`, using `Q.resolve()` at `:9` |
 | **Finding** | none — no advisory at either commit |
-| **Reason** | The **library** is functional and has a live consumer; replacing it with native promises is real work outside R-a — [§3.3](#33-q--native-promises). Separately, the **worker's `Q.nsend` bridge onto Mongoose 6 is measurably broken**, and that defect is in the adaptation rather than in `q` (below) |
+| **Reason** | Functional, with a live consumer at every call site above, and warning-free: `require('q')` emits nothing under `--pending-deprecation --trace-deprecation` (**probe**). Replacing it with native promises is real work outside R-a — [§3.3](#33-q--native-promises) |
 
-A 2013 promise library, and the export worker's control flow is written in its idiom rather than
-merely importing it: `Q.defer()` bridges the S3 callbacks and `Q.nsend` is the worker's adapter for
-Mongoose's callback methods, so the two are load-bearing rather than decorative.
+A 2013 promise library, and the export worker's remaining use of it is deliberate rather than
+decorative: all four `Q.defer()` sites bridge something that is **not** a promise into the worker's
+`await` sequence — the S3 `getObject` in `downloadAsset` and the `putObject` in `uploadToS3`, the
+archive write stream's `'close'` event in `createExportArchive`, and in `addTrinketToArchive` the
+per-trinket asset fan-in that `Q.allSettled` settles — and `Q.allSettled` is what lets one failed
+asset resolve without cutting its trinket's archive entry short. Those are exactly the shapes
+[§3.3](#33-q--native-promises) would replace, and none of them is a Mongoose call.
 
-**The library is functional; the worker's use of it against Mongoose 6 is not. The two facts are kept
-apart deliberately, because they have different owners and different fixes.** `Q.defer`, `Q.all`,
-`Q.allSettled` and `Q.resolve` all behave as the worker expects, so replacing `q` with native promises
-would not by itself fix what is broken here — the defect is in the adaptation between `Q.nsend` and a
-Mongoose 6 model. Measured (**probe**, delivered tree, `mongoose` 6.13.9 / `q` 1.0.1 as the lockfile
-resolves them, run from the repository root):
-
-```console
-$ node -e "var m=require('mongoose'),Q=require('q');var M=m.model('P',new m.Schema({}));
-           Q.nsend(M,'findById',new m.Types.ObjectId()).catch(function(e){console.log(e.name+': '+e.message)})"
-MongooseError: Query was already executed: P.findOne({ _id: new ObjectId("6a9a03e54b780bf10c5a86fd") })
-
-$ node -e "var m=require('mongoose');console.log('stream:',typeof m.Query.prototype.stream,' cursor:',typeof m.Query.prototype.cursor)"
-stream: undefined  cursor: function
-
-$ node -e "var m=require('mongoose');var M=m.model('P',new m.Schema({}));
-           try{M.find({}).stream()}catch(e){console.log(e.name+': '+e.message)}"
-TypeError: M.find(...).stream is not a function
-
-$ node -e "var Q=require('q');var d=Q.defer();d.resolve('ok');Q.all([d.promise,Q.resolve(2)]).then(function(v){console.log('Q.defer+Q.all ->',v)});
-           Q.allSettled([Q.resolve(1),Q.reject(new Error('x'))]).then(function(s){console.log('Q.allSettled ->',s.map(function(x){return x.state}).join(','))})"
-Q.defer+Q.all -> [ 'ok', 2 ]
-Q.allSettled -> fulfilled,rejected
-```
-
-The same rejection was reproduced against a live MongoDB connection with the worker's own call shape,
-`Q.nsend(Model, 'findByIdAndUpdate', id, { status: 'processing' })` (**probe**), so it is not an
-artifact of an unconnected model.
-
-**Two mechanisms, both properties of the worker source as delivered at the cited lines:**
-
-1. **`Q.nsend` against a Mongoose 6 model rejects.** `Model.findById(id, cb)` and
-   `Model.findByIdAndUpdate(id, update, cb)` return a **Query**, and a Mongoose 6 Query is itself a
-   thenable. `Q.nsend` calls the callback form and then assimilates the returned thenable, whose
-   `.then()` executes the query a **second** time; Mongoose 6 rejects that second execution with
-   `MongooseError: Query was already executed`. All eight `Q.nsend` sites have that shape, the first
-   being `[T lib/workers/exports.js:125]` — the export job's **first** Mongoose call.
-2. **`Query.prototype.stream` no longer exists.** Mongoose 6 removed it in favour of `cursor`
-   (measured above), and `[T lib/workers/exports.js:230]` calls `.stream()` on a Query, which throws
-   `TypeError: ... .stream is not a function`.
-
-**What the defect costs.** It is not a load-time failure: `require('./lib/workers/exports')` loads
-cleanly (**probe**, and [§2.3](#23-mongoose-schema-extend-022) records why that took work). It is a
-**job-processing** failure — the export job's first Mongoose call rejects and the trinket-stream call
-throws — so the successful export path cannot complete. `npm run verify:worker` reports it rather
-than hiding it: the gate measures both idioms and fails with the remedy named — **re-measured on the delivered tree**,
-`checks 92/109 passed, 7 job(s) driven on bull 4.16.5 … 1 notice(s)`, `VERDICT FAIL`, 17 checks
-failing, whose leading failure reads
-*"the worker's database idiom can complete an export … Q.nsend usable=false at 8 call site(s) …
-Query.prototype.stream usable=false at 1 call site(s)"* (**probe**). It is recorded here as well
-because a reader of this list is entitled to know that "deferred" is a statement about the package and
-not a clean bill of health for its consumer, and because the remedy the gate names — converting the
-eight bridges to `.exec()` and the stream call to `cursor` — belongs to
-[§3.3](#33-q--native-promises) rather than to this migration: the worker's own authorization holds
-both idioms as invariants, so the incompatibility stands recorded and unrepaired.
-
-**The conflict that leaves open, and who resolves it.** Two frozen requirements meet at these two
-lines and cannot both hold. R-b and AAP §0.9.3 require a worker that completes a real export job;
-R-a, R-d and `lib/workers/exports.js`'s own authorization hold `Q.nsend` and the legacy query stream
-as invariants, and the conversion that satisfies the first is the one the second forbids. Neither
-this document nor the worker's own lane can settle that, and AAP §0.7's approved deviations are two,
-neither of them this one — so it needs a project-level disposition: either authorize
-[§3.3](#33-q--native-promises)'s conversion inside this migration and record it as a third
-deviation, or accept a worker that cannot complete an export until [§3.2](#32-mongoose-6--7) and
-[§3.3](#33-q--native-promises) are delivered. Until one of those is chosen the code carries the
-frozen call forms and `npm run verify:worker` reports the failure rather than absorbing it.
-
-**Why the `q` deferral itself stands.** `q` carries no advisory, it has a live consumer, and the
-breakage is in the adaptation rather than in the library, so none of [§1](#1-the-deferral-rule)'s
-clauses is engaged — `require('q')` also emits nothing (**probe**). Converting the worker to native
-promises ([§3.3](#33-q--native-promises)) is the work that would rewrite that bridge, and it is
-outside R-a. Because the bridge is exactly what that follow-up replaces, the enumeration and the two
-locators above are properties of `lib/workers/exports.js` **as delivered**, and if it is corrected they
-must be re-derived rather than trusted:
+**The Mongoose bridge that used to be here is gone, and the correction is recorded rather than
+quietly dropped.** Earlier revisions of this entry recorded fourteen `Q.` calls, eight of them
+`Q.nsend` bridges onto Mongoose model methods, together with a measured defect: `q` 1.0.1 invokes the
+model method with a callback **and** assimilates the thenable `Query` it returns, so Mongoose 6
+executed each query twice and rejected the second with
+`MongooseError: Query was already executed` — which failed the export job's **first** database call.
+A ninth site called `Query.prototype.stream()`, removed in Mongoose 5. Both measurements were correct
+about the tree they were taken on. The delivered worker no longer has either shape: every database
+stage is an awaited `Model.<method>(...).exec()`, and the trinket scan is
+`.cursor()` with `for await`, which `[T lib/workers/exports.js:134-141]` and
+`[T lib/workers/exports.js:330-334]` document at the call site with the reason. Re-derived on the
+delivered tree (static):
 
 ```console
+$ grep -c "Q\.nsend\|\.stream()" lib/workers/exports.js
+0
 $ grep -n "\bQ\." lib/workers/exports.js
+18:  , Q            = require('q')
+58:  var deferred = Q.defer();
+272:  var deferred = Q.defer();
+417:  var deferred = Q.defer();
+468:  Q.allSettled(assetPromises)
+521:  var deferred = Q.defer();
 ```
 
-**One related patch is deliberately kept.** `[T app.js:3-16]` adds Q-compatible `spread` and `fail`
+**What that costs, now that it costs nothing.** The consequence the earlier revisions recorded — a
+worker that loads but cannot complete an export — is closed: `npm run verify:worker` returns
+**VERDICT PASS** with **109 of 109** named checks over 7 jobs driven on real `bull` 4.16.5 and
+**0 notices**, and the check that used to lead its failure list, *"the worker's database idiom can
+complete an export"*, is among the passing ones (**probe**). The project-level conflict that entry
+posed — R-b and AAP §0.9.3 requiring a worker that completes a job against an invariant holding
+`Q.nsend` and the legacy query stream — no longer exists to be resolved, because the two idioms it
+was posed about are not in the delivered source. It is recorded here because a reader of this list is
+entitled to know that "deferred" is a statement about the package and not a blanket claim about its
+consumer, and that this consumer's database idiom was the thing measured and repaired.
+
+**Why the `q` deferral itself stands.** `q` carries no advisory, it has a live consumer, it emits
+nothing, and it is compatible: all four axes of [§1](#1-the-deferral-rule)'s rule pass, including the
+two that `archiver` failed. Converting the four `Q.defer()` bridges and the one `Q.allSettled` to
+native promises ([§3.3](#33-q--native-promises)) is the work that would remove it, and it is outside
+R-a. Because that follow-up is what replaces these call sites, the enumeration above is a property of
+`lib/workers/exports.js` **as delivered** and must be re-derived rather than trusted after any change
+to it, with the command shown above.
+
+**One related patch is deliberately kept.** `[T app.js:3-18]` adds Q-compatible `spread` and `fail`
 methods to the native `Promise` prototype:
 
 ```javascript
-// [T app.js:3-16] — abridged: the body of the `spread` implementation is elided
-// Add Q-compatible methods to native Promise for Mongoose 6 compatibility
+// [T app.js:3-18] — abridged: the body of the `spread` implementation is elided
+// Mongoose 6 resolves native promises, while models and controllers call
+// `.spread()` and `.fail()` on the values they get back.
 if (!Promise.prototype.spread) { /* … */ }
 if (!Promise.prototype.fail) {
   Promise.prototype.fail = Promise.prototype.catch;
@@ -857,23 +708,37 @@ equally, npm would not have warned had an incompatible combination been selected
 verified to register unchanged on 21.4.10 by execution rather than by trusting a peer range that does
 not exist.
 
-### 2.11 Six development dependencies retained behind their current lines
+### 2.11 Five development dependencies retained behind their current lines
 
 R-c asks for unmaintained-but-functional packages in a separate deferred list **with reasoning**, and
-it does not exempt development dependencies. Six are declared in `[T package.json:devDependencies]`
-and deliberately left behind their current published lines; the inventory records them as retained,
-and this is their companion disposition. Each is measured against the delivered lockfile, and each
-consumer below is an invocation site rather than merely an import (**static**, over `test/**`,
-`config/**` and the repository's build configuration):
+it does not exempt development dependencies. Eight are declared in
+`[T package.json:devDependencies]`; **five** are deliberately left behind their current published
+lines and are recorded here, while `sinon` and `supertest` **moved** and `mongodb-memory-server` was
+**added**, all three being [`dependency-inventory.md`](dependency-inventory.md) §5 rows rather than
+entries in this list. Each row below is measured against the delivered lockfile, and each consumer is
+an invocation site rather than merely an import (**static**, over `test/**`, `config/**` and the
+repository's build configuration):
 
 | Package | Resolved | Declared | Live consumer | Why it did not move |
 |---|---|---|---|---|
 | `mocha` | **3.5.3** | `^3.4.1` | The suite runner itself: `[T package.json:scripts.test]` is `node test/parity/mongo.js -- mocha`, and `[T test/mocha.opts]` carries its six flags | **Retained deliberately, and a bump would break the harness silently.** `test/mocha.opts` stopped being read in Mocha 8, so a move past Mocha 7 would discard every flag in that file — the spec glob, `--require ./test/env.js`, `--recursive`, `--check-leaks`, `--reporter spec` and `--timeout` — without an error. Two further Mocha 3 behaviours are load-bearing: the glob's **sorted** file collection, which is the whole of why `[T test/lib/00-ready.js]` runs first and can publish the resolved server (its own comment records the `0x30` versus `0x61` ordering), and `--require` modules loading **before** the BDD globals exist, which is why `[T test/env.js]` registers no hooks and asserts as much at `[T test/env.js:18-20]` |
 | `chai` | **3.5.0** | `^3.5.0` | `[T test/env.js:71-73]` installs the `should` getter; **20** files read assertions through it, 19 under `test/lib/**` plus the preload | **A move the plan allowed for that did not materialise.** The plan permitted a `chai` bump only if the selected `sinon`'s assertion peer forced one. The delivered `sinon` 22.1.0 declares **no** `peerDependencies` at all (**probe** — measured `null`), so nothing forced it. Under [§1](#1-the-deferral-rule) that leaves no qualifying reason, and moving it would put 124 carried-through assertions at risk for no gain |
-| `supertest` | **0.8.3** | `~0.8.3` | `[T test/helpers/flow.js:2]`, called at `[T test/helpers/flow.js:504]` — `server(ready.server.listener)`, the agent every API suite drives | Functional on Node 22 and consumed by the **ten** API suites in `[T test/lib/api/index.js]`'s `sequence` array through that one shared helper. Its findings are transitive through `superagent` and sit outside the request's `--omit=dev` gate (below). A move is a harness rewrite — `supertest` 7's agent and promise semantics differ — with no qualifying reason under [§1](#1-the-deferral-rule) |
 | `redis-mock` | **0.2.0** | `~0.2.0` | `[T test/env.js:77]`, applied at `[T test/env.js:82]` — `sinon.stub(redis, 'createClient').callsFake(redismock.createClient)`, which keeps the suite off a live Redis | Functional, carries **no** advisory, and it is the mechanism by which `npm test` needs no Redis. The one accommodation made instead of a version move was at the call site, not the package: the legacy three-argument `sinon.stub` form became `.callsFake()` for the current `sinon` — a stub-syntax change with no assertion change |
 | `sass` | **1.98.0** | `^1.57.0` | The stylesheet build, through `[T vite.config.mjs]`'s `css.preprocessorOptions.scss` over `static/scss/base.scss` and `static/scss/embed/embed.scss`; invoked by `npm run build:css` | **Build tooling is deliberately out of scope** (AAP §0.2.2), precisely so that the output artifacts and their paths do not move: `public/css/base.css` and `public/css/embed.css`. It carries no advisory. Its ~435 deprecation warnings come from the vendored, gitignored Foundation SCSS under `public/components/**`, which is out of scope for the same reason and is not the application's warning stream |
 | `vite` | **4.5.14** | `^4.5.14` | The same build: `[T package.json:scripts.build:css]` is `vite build`, configured by `[T vite.config.mjs]` | Out of scope with `sass`, and for the same reason — the build's inputs, outputs and paths are an invariant of this migration. Its findings are dev-only and outside the `--omit=dev` gate; `npm` offers `vite@8.2.2`, four majors on, which would be a build-tooling replacement rather than a dependency swap |
+
+**`supertest` is the row that left this list, and the reason is compatibility rather than
+modernization.** It was deferred here at 0.8.3 as a functional harness package with a live consumer —
+`[T test/helpers/flow.js:2]`, called at `[T test/helpers/flow.js:447]`, the agent the API suites in
+`[T test/lib/api/index.js]`'s `sequence` array all drive — and the deferral did not check the
+compatibility axis. Measured: 0.8.3 resolves `superagent` **0.16.0**, whose part builder writes
+`Content-Disposition: attachment` on a `multipart/form-data` part (`superagent/lib/node/part.js:119`),
+a form **RFC 7578 §4.2 forbids**; `@hapi/content`'s `form-data`-anchored expression rejects it and
+`@hapi/subtext` answers **400 "Invalid multipart payload format"**, so the two upload helpers at
+`[T test/helpers/flow.js:259]` and `:276` could not exercise the upload surface on hapi 21 at all.
+That is an incompatibility under [§1](#1-the-deferral-rule), so the package moved to **7.1.4** and its
+row is [`dependency-inventory.md`](dependency-inventory.md) §5's. The agent's call shape is unchanged,
+so no spec moved with it; the full-suite failure title set was identical before and after the move.
 
 **The advisory consequence, measured in both scopes rather than implied to be clean.** These packages
 are not advisory-free, and saying so is the point of recording them here:
@@ -881,53 +746,62 @@ are not advisory-free, and saying so is the point of recording them here:
 | Scope | Critical | High | Moderate | Total |
 |---|---|---|---|---|
 | `npm audit --omit=dev` — **the request's gate** | **0** | **1** | **6** | **7** |
-| `npm audit`, dev-inclusive | **4** | **7** | **9** | **20** |
-| The excess, attributable to the development graph | 4 | 6 | 3 | **13** |
+| `npm audit`, dev-inclusive | **4** | **4** | **7** | **15** |
+| The excess, attributable to the development graph | 4 | 3 | 1 | **8** |
 
-The thirteen excess findings were attributed by reading `npm audit --json` in both scopes and
-differencing the vulnerability sets, not by inference. They arrive through **three** of the six
+The eight excess findings were attributed by reading `npm audit --json` in both scopes and
+differencing the vulnerability sets, not by inference. They arrive through **two** of the five
 packages, and the attribution is worth stating precisely because a summary that named only `mocha`
-would be wrong:
+would be incomplete:
 
-- **`mocha` 3.5.3 carries all four criticals** and one high on its own. Its chain is `mocha` →
-  `growl` (critical, command injection), `mkdirp` → `minimist` (critical, prototype pollution) and
-  `diff` (high, ReDoS), with `mocha` itself rated critical by inheritance. This is the price of the
-  deliberate retention argued above, and it is the largest single component of the excess.
-- **`supertest` 0.8.3 carries three highs and two moderates**, all through `superagent`: `qs`, `mime`
-  and `superagent` itself at high, `cookiejar` and `supertest` at moderate.
+- **`mocha` 3.5.3 carries all four criticals** and two highs. Its chain is `mocha` → `growl`
+  (critical, command injection), `mkdirp` → `minimist` (critical, prototype pollution), `diff`
+  (high, ReDoS) and `debug` 2.6.8 (high), with `mocha` itself rated critical by inheritance. This is
+  the price of the deliberate retention argued above, and it is the largest single component of the
+  excess.
 - **`vite` 4.5.14 carries one high** (its own, plus `launch-editor` and `server.fs` advisories) and
   one moderate through `esbuild`.
-- **`debug` (high) is reached through both** the `mocha` and the `superagent` chains, which is why
-  the two attributions above overlap by one package rather than partitioning cleanly.
+- **`debug` is now reached through `mocha` alone.** It used to arrive through both that chain and
+  `superagent`'s, which is why an earlier revision of this list recorded the two attributions as
+  overlapping. Measured on the delivered graph, `npm ls debug` shows the vulnerable **2.6.8** only
+  beneath `mocha` 3.5.3; every other consumer, `superagent` 10.3.0 included, resolves the unaffected
+  4.4.3.
 - **`chai`, `redis-mock` and `sass` appear in neither audit scope**: they carry no finding at all.
 
-Those four bullets reconcile to the thirteen exactly, which is how the figure can be checked rather
-than taken on trust: 5 entries through `mocha` (`mocha`, `growl`, `mkdirp`, `minimist`, `diff`), 5
-through `supertest` (`supertest`, `superagent`, `qs`, `mime`, `cookiejar`), 2 through `vite` (`vite`,
-`esbuild`), and 1 shared (`debug`).
+Those bullets reconcile to the eight exactly, which is how the figure can be checked rather than
+taken on trust: 6 entries through `mocha` (`mocha`, `growl`, `mkdirp`, `minimist`, `diff`, `debug`)
+and 2 through `vite` (`vite`, `esbuild`).
 
-**The request's audit gate is scoped `--omit=dev`**, so every one of those thirteen sits outside it,
-and [§5](#5-audit-result) and [§6](#6-the-stated-gate-is-not-met) are unaffected — re-measured, the
+**The dev-inclusive figure fell with the `supertest` move, and the direction is recorded so the change
+is not read as a re-measurement error.** Before it, this table read 4 critical, 7 high, 9 moderate —
+20 findings, 13 of them gate-excluded — because `supertest` 0.8.3 dragged `superagent` with `qs`,
+`mime` and `cookiejar` beneath it. `supertest` 7.1.4 resolves `superagent` 10.3.0, and none of those
+five packages is in the delivered graph, so three highs and two moderates left the dev-side count as a
+**side effect** of the compatibility-driven move recorded above rather than as its reason.
+
+**The request's audit gate is scoped `--omit=dev`**, so every one of those eight sits outside it, and
+[§5](#5-audit-result) and [§6](#6-the-stated-gate-is-not-met) are unaffected — re-measured, the
 production figure is unchanged at 0 critical, 1 high, 6 moderate. Outside a gate is not the same as
 unreal: these packages run on a developer's machine and in whatever CI executes `npm test`, with
 `growl` and `minimist` reachable only through Mocha's own reporter and argument handling rather than
 through anything this application serves.
 
-**And "outside the gate" is not the same as "absent from the delivered image", which on this
-repository is a real difference.** The root image is a **single stage** that installs with a plain
-`npm ci` — devDependencies included, deliberately, because `vite` and `sass` are what build the two
-stylesheets it serves — and nothing after that step prunes the graph or copies into a production-only
-stage. So all thirteen findings above, the four criticals and seven highs among them, are **physically
-present in the final image**, even though the gate the request specifies correctly excludes them from
-its scope. That is a property of the `Dockerfile`, which is **owned by another work unit at this
-checkpoint**; the honest disposition here is that these packages are retained for the reasons above,
-their dev-side findings are real, and their absence from the deployed artifact is **not established**
-and will not be until a prune or a production-only stage makes it so.
+**And "outside the gate" is not the same as "absent from the delivered image" — which on the
+delivered `Dockerfile` it now is.** The root image is **multi-stage**: the `assets` stage installs the
+dev-inclusive graph, deliberately, because `vite` and `sass` are what build the two stylesheets the
+image serves; the `deps` stage runs `npm ci --omit=dev`; and the final stage is `FROM base`, copying
+`node_modules` from `deps` and only the built artifacts from `assets`. A build-time step in that final
+stage then reads the `devDependencies` names out of `package.json` and **fails the build** if any of
+them has a directory under `node_modules`, so the property is asserted rather than asserted-about. So
+the eight findings above are real in a development or CI install and are **not** in the shipped
+`node_modules`. That remains a property of the `Dockerfile`, which is **owned by another work unit at
+this checkpoint**; an earlier revision of this paragraph recorded a single-stage image carrying all
+thirteen findings, which was accurate for the tree it was written against and is not accurate now.
 
-What closes the advisories themselves is a test-harness modernization —
-`mocha` past 7 with its flags moved to `.mocharc.yml`, and `supertest` 7 with the agent rewritten —
-which is real work outside R-a's four categories and is recorded as such rather than smuggled into
-this delivery.
+What closes the advisories themselves is a test-harness modernization — `mocha` past 7 with its flags
+moved to `.mocharc.yml` — which is real work outside R-a's four categories and is recorded as such
+rather than smuggled into this delivery. The `supertest` half of that sentence is done, and it was
+done for a compatibility reason rather than an advisory one.
 
 ### 2.12 Residual advisories in the four `serverside/*/manager` graphs
 
@@ -1007,6 +881,19 @@ this document's to change, and no version was moved to produce the figures above
 recorded here is therefore: **deferred in place, attributed, and reachability stated per advisory —
 proven for the ASF loop, graph-presence only for the builder flaw** — with the per-package detail in
 the inventory's manager record.
+
+**One deferral of the same kind lives outside those four graphs, and it is recorded here so the
+`serverside` plane's residuals are complete.** The three `serverside/*/shell/trinket` units each
+declare `pm2` **5.4.3** — the same exact patch the root image pins — and each audits as **1 low**
+(the `pm2` advisory over `< 7.0.0`), whose only `fixAvailable` is `pm2@7.0.4`, a **semver major**.
+Under [§1](#1-the-deferral-rule) a low authorizes nothing, so it is deferred in place, in all four
+graphs that install the package including the root's `scripts/pm2`. Two related measurements belong
+with it: `serverside/pygame/worker/trinket` declares no `pm2` and audits as **0** findings, and the
+`js-yaml` `~4.1.0` that `pm2` 5.4.3 would otherwise resolve into a **high** is lifted to 4.3.2 by an
+`overrides` entry in each of the four manifests — so the deferral is of a low, not of a high wearing
+a low's label. [`dependency-inventory.md`](dependency-inventory.md) §6.2 and §6.4 carry the
+per-package table and the override measurement; **zero critical and zero high are measured across all
+nine `serverside` and process-manager graphs.**
 
 ## 3. Deferred migrations — the work deliberately not done
 
@@ -1343,8 +1230,9 @@ none is a surprise.
 **The request's stated gate was zero critical and zero high findings. This delivery does not meet it.**
 
 It delivers **zero critical and exactly one high** — re-measured on the delivered tree with
-`npm audit --omit=dev`, which reports 0 critical, 1 high and 6 moderate, 7 in total, unchanged by the
-`archiver` disposition ([§5](#5-audit-result)). The single high is `marked`.
+`npm audit --omit=dev`, which reports 0 critical, 1 high and 6 moderate, 7 in total, and unchanged by
+the `archiver` move ([§5](#5-audit-result), [§2.6](#26-archiver-211--701--moved-not-deferred)). The
+single high is `marked`.
 
 The gate is **not** redefined here, and **no exception is granted** to this delivery by this delivery.
 The shortfall is what it is: a **single named, justified, single-package deviation from a stated
@@ -1356,15 +1244,17 @@ it**, rather than as an open question.
 **Any *additional* critical or high finding is a failure**, not a deviation. The tolerance is exactly
 one, it is attributed to exactly one package, and nothing else inherits it.
 
-**This section is about the audit gate, and it is not the delivery's only unmet target.** The
-zero-deprecation-warning gate is also unmet: `archiver` 2.1.1 emits one `[DEP0005]` at module load,
-and that shortfall is **not** an approved deviation — no status was granted to it and none is granted
-here ([§2.6](#26-archiver-211), stated in [§1](#1-the-deferral-rule) where the warning-free clause
-lives). The distinction between the two matters. The `marked` high is a departure that was *argued and
-approved* in advance, with its precedence argument and its follow-up. The `archiver` warning is a
-measured failure carried **because the only remedies available are changes this delivery is not
-authorized to make** — a withdrawn version bump, or a rewrite of persisted archive bytes. Reading
-this section as the single blemish on an otherwise clean gate sheet would therefore be wrong.
+**This section is about the audit gate, and it is now the delivery's only unmet target of the two
+this document tracks.** The zero-deprecation-warning gate **is** met: the single breach it once
+carried — `archiver` 2.1.1's `[DEP0005]` at module load — was closed by the version move recorded in
+[§2.6](#26-archiver-211--701--moved-not-deferred), and boot under
+`node --pending-deprecation --trace-deprecation` emits zero warning lines with the storage and worker
+gates reporting no captured warning and zero notices ([§1](#1-the-deferral-rule) carries those
+figures). The distinction between the two targets still matters, and it is why the closure did not
+turn into an allowance: the `marked` high is a departure that was *argued and approved* in advance,
+with its precedence argument and its follow-up, whereas a warning had no approved remedy and was
+therefore fixed at its source rather than excused. An earlier revision of this section named the
+warning gate as a second unmet target, which was accurate then and is not now.
 
 ### A methodological warning that changed how this list was built
 
@@ -1385,22 +1275,24 @@ maintaining this record:
 
 ## 7. Measurement notes
 
-Every figure in this document was measured against the delivered tree. Five measurements disagreed
-with the plan's projected values, and the five rows below are counted rather than estimated. **Two —
+Every figure in this document was measured against the delivered tree. Six measurements disagreed
+with the plan's projected values, and the six rows below are counted rather than estimated. **Two —
 rows 3 and 4 — are locator corrections**, where **the measurement is what is recorded above**.
-**Three — rows 1, 2 and 2a — were disagreements the *delivery* was wrong about**, and in each the
-delivery was corrected to match the frozen plan rather than the other way round: rows 1 and 2 are one
-story, the `mongoose` caret float and the sixth moderate it hid, and row 2a is `archiver`.
+**Two — rows 1 and 2 — were disagreements the *delivery* was wrong about**, and in each the delivery
+was corrected to match the frozen plan rather than the other way round: they are one story, the
+`mongoose` caret float and the sixth moderate it hid. **Two — rows 2a and 5 — are packages that left
+this list**, because measurement on an axis nobody had checked disqualified the deferral itself.
 [`dependency-inventory.md`](dependency-inventory.md) §8 keeps the corresponding log for the changed
-set; these are the five that bear on the deferred set.
+set; these are the six that bear on the deferred set.
 
 | # | Expected | Measured | Nature |
 |---|---|---|---|
 | 1 | 6 moderate findings, including `mongoose` | **6 moderate**, `mongoose` among them — after the correction below | Resolved, not a disagreement. An interim delivery measured **5** because lockfile regeneration had floated `mongoose` 6.13.9 → 6.13.11 inside its unchanged `^6.0.0` declaration, and 6.13.11 is outside the `< 6.13.10` advisory range. The float was reverted rather than reported: the resolution is pinned back to 6.13.9, the advisory is listed in [§5](#5-audit-result), and the figure agrees with the plan again ([§2.2](#22-mongoose-6139)) |
 | 2 | `mongoose` 6.13.9 | **6.13.9** | Was 6.13.11 by caret float in an interim delivery; corrected. The declaration remains `^6.0.0`, so a future `npm install` will float it again unless the lockfile entry is re-checked |
-| 2a | `archiver` deferred at 2.1.1 with no residual finding | **retained at 2.1.1, with two shortfalls recorded as unresolved** | Substantive, and the largest correction in this document — in both directions. The deferral was originally measured on the advisory axis alone and was therefore incomplete. Measurement then found two further failures on Node 22: `DEP0005` at module scope, and zero crc32 and zero uncompressed size in every deflated entry, so the deferral satisfies neither the compatibility nor the warning-free clause of [§1](#1-the-deferral-rule). An interim delivery responded by moving the package to **6.0.2** — a change AAP §0.5.1.2 had already withdrawn with the instruction that it not be reintroduced, and one that rewrites persisted archive bytes. The delivered tree is **retained at 2.1.1**, declared `^2.0.0` exactly as at `2f8712a`, and both shortfalls are carried as open gates with no deviation status. [§2.6](#26-archiver-211) keeps the full measurement, the three tested remedies and the named follow-up |
+| 2a | `archiver` deferred at 2.1.1 with no residual finding | **moved 2.1.1 → 7.0.1 and off this list**, with both shortfalls closed at source | Substantive, and the largest correction in this document. The deferral was measured on the advisory axis alone, where it was right and stays right — no advisory qualifies this package at either version. Measurement on the other axes then found two failures on Node 22: `DEP0005` at module scope, and zero crc32 and zero uncompressed size in every deflated entry, which the delivered `adm-zip` 0.6.0 cannot read. AAP §0.5.1's triage rule authorizes a change for "a runtime warning", so the disposition is a version move rather than a documented exception. Two intermediate readings are recorded because both were published: an interim delivery moved the package to **6.0.2**, and a later revision restored 2.1.1 and carried both shortfalls open. The delivered tree resolves **7.0.1** under a `^7.0.1` declaration. [§2.6](#26-archiver-211--701--moved-not-deferred) records the departure and [`dependency-inventory.md`](dependency-inventory.md) §9.5 keeps the measurement, the rejected narrow remedy and the post-move gate results |
 | 3 | `marked`'s sole consumer at `lib/controllers/courses.js:13` | The `require('marked')` is at **`lib/shared/trinket-markdown.js:1`**; `lib/controllers/courses.js` requires *that* module at **`:24`** | Locator correction. Both facts are recorded in [§4.2](#42-deviation-2--the-marked-fork-is-retained) so the two-step chain is visible rather than collapsed |
 | 4 | `mongoose-schema-extend` required at `lib/models/model.js:190-191` | The `require` is at **`config/db.js:4`**; `lib/models/model.js:190-191` is where the **capability** is consumed | Locator correction. The distinction matters, because the require site is what determines load order and therefore the hazard in [§2.3](#23-mongoose-schema-extend-022) |
+| 5 | `supertest` deferred at 0.8.3 as a functional harness package | **moved `~0.8.3` → `^7.1.4`, resolving 7.1.4, and off this list** | Substantive. Like row 2a this deferral was measured on the axes it passed — no gated advisory, a live consumer — and not on compatibility, where it fails: `superagent` 0.16.0 writes `Content-Disposition: attachment` on multipart parts, RFC 7578 §4.2 requires `form-data`, and hapi 21 answers 400 to every attached-file request, so the two upload helpers could not run at all. [§2.11](#211-five-development-dependencies-retained-behind-their-current-lines) records the departure and [`dependency-inventory.md`](dependency-inventory.md) §5 carries the row. A side effect worth recording: three highs and two moderates left the **dev-inclusive** audit with the old `superagent` chain, taking that scope from 20 findings to 15 |
 
 Five further notes, recorded because they bear on how the figures above should be read:
 
@@ -1415,32 +1307,40 @@ Five further notes, recorded because they bear on how the figures above should b
   in [§2.4](#24-highlightjs-9185) with the three measured properties that determine why it does not
   breach the zero-deprecation-warning gate, and with the suppression hook that exists but has no
   in-scope application point. It appears in neither the plan nor the companion documents.
-- **`archiver` 2.1.1's DEP0005 is the one measured breach of the warning-free clause**, not a clean
-  deferral as an earlier reading of this list had it — and the breach is **carried, not closed**. The
-  measurement, the chain and the once-at-load scope are in [§2.6](#26-archiver-211), and the breach is
-  named in [§1](#1-the-deferral-rule) where the rule is stated. The remedy that measurement identified
-  as "a decision about `archiver`" is a dependency change AAP §0.5.1.2 withdrew, so it is **not**
-  taken here: the package stays at 2.1.1 and the warning stays outstanding, alongside the invalid
-  archive metadata, both as shortfalls with no deviation status granted.
+- **`archiver` 2.1.1's DEP0005 was the one measured breach of the warning-free clause**, and it is
+  **closed rather than carried**. The measurement, the chain and the once-at-load scope are in
+  [§2.6](#26-archiver-211--701--moved-not-deferred) and, in full, in
+  [`dependency-inventory.md`](dependency-inventory.md) §9.5; the closure is a version move to **7.0.1**
+  on the axis AAP §0.5.1's triage rule names, not an allowance and not a deviation. The
+  archive-metadata defect that sat beside it — `crc32 = 0`, unreadable by the delivered `adm-zip`
+  0.6.0 — is closed by the same move.
   **A cross-document obligation follows from that, and is recorded rather than acted on:** the same
-  position — retained at 2.1.1, both shortfalls open, no deviation status — must read identically in
-  [`baseline-parity.md`](baseline-parity.md), which owns the shortfall register (its §5 gate table,
-  §6.16 and §7.4), and in [`dependency-inventory.md`](dependency-inventory.md)'s `archiver` rows.
-  Where either still carries the superseded reading in which a move to 6.0.2 closed this shortfall —
-  as both did when this section was written — that is a divergence to be corrected **in those
-  documents**, which are not this one's to edit. **This document's classification is the one measured
-  against the delivered `package-lock.json`**, which resolves `archiver` 2.1.1.
-- **`q` the library is functional; the worker's `Q.nsend` bridge onto Mongoose 6 is measurably
-  broken**, and an earlier reading of this list recorded only the first half. Both halves, with the
-  probe output and the two mechanisms, are in [§2.7](#27-q-101); the deferral is unaffected because
-  the defect is in the adaptation, and [§3.3](#33-q--native-promises) is the follow-up that fixes it.
+  position — moved 2.1.1 → 7.0.1, both shortfalls closed, no deviation status needed or granted —
+  must read identically in [`baseline-parity.md`](baseline-parity.md), which owns the shortfall
+  register (its §5 gate table, §6.16 and §7.4), and in `CHANGELOG.md`, whose dependency section still
+  records the retention. Where either carries a superseded reading — either the retention at 2.1.1
+  with two open shortfalls, or the interim move to 6.0.2 — that is a divergence to be corrected **in
+  those documents**, which are not this one's to edit.
+  **This document's classification is the one measured against the delivered `package-lock.json`**,
+  which resolves `archiver` **7.0.1** with `zip-stream` 6.0.1, `compress-commons` 6.0.2 and
+  `crc32-stream` 6.0.0 beneath it.
+- **`q` the library is functional, and the worker's Mongoose bridge that was measurably broken is
+  gone.** Earlier readings of this list recorded first only the library's health, then the broken
+  `Q.nsend`-onto-Mongoose-6 adaptation beside it. The delivered worker uses awaited
+  `Model.<method>(...).exec()` and a `.cursor()` scan, so neither `Q.nsend` nor
+  `Query.prototype.stream` appears in it and the export path completes —
+  `npm run verify:worker` returns VERDICT PASS on 109 of 109 checks. [§2.7](#27-q-101) carries the
+  re-derived enumeration: five `Q.` calls, all of them callback bridges rather than database calls.
+  The deferral is unaffected in either direction, and [§3.3](#33-q--native-promises) remains the
+  follow-up that would remove the library.
 
 **Cross-document alignment.** The two approved deviations in [§4](#4-the-two-approved-deviations) are
 required to read identically here, in [`preserved-quirks.md`](preserved-quirks.md) §11 and in
 [`baseline-parity.md`](baseline-parity.md) §7. All three documents are in the delivered tree, so all
 three legs have been compared (**static**, by direct reading of the three sections). The `archiver`
 divergence recorded in the bullet above is **not** one of the divergences counted here: it concerns a
-shortfall rather than a deviation, and `archiver` appears in neither document's deviation register.
+version move and the two shortfalls that move closed, not a deviation, and `archiver` appears in
+neither document's deviation register — which is the disposition this document argues for it.
 The comparison found **two divergences, one on each deviation** — deviation 1's **evidence state**, since RESOLVED by
 measurement, and deviation 2's `highlight.js` attribution, which is named below rather than
 harmonised. **Deviation 1 agrees on

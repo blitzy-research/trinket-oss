@@ -65,7 +65,7 @@ from the plan. Resolved versions come from the delivered `package-lock.json`; ba
 versions from `git show 2f8712a:package-lock.json`; audit figures from `npm audit --omit=dev` on
 `node v22.23.2` / `npm 10.9.8` — that being the scope of the request's gate, with the dev-inclusive
 scope used only where it is named as such, in
-[§2.11](#211-five-development-dependencies-retained-behind-their-current-lines), and the
+[§2.11](#211-six-development-dependencies-retained-behind-their-current-lines), and the
 `--package-lock-only` scope only in
 [§2.12](#212-residual-advisories-in-the-four-serversidemanager-graphs); consumer claims from search
 over the repository's `*.js` files
@@ -183,7 +183,7 @@ Three further sub-sections in this chapter are **not** part of that thirteen, an
 because they belong to the same "what did not change" question:
 [§2.10](#210-verified-unchanged--the-maintained-packages-that-needed-nothing) records maintained
 packages that needed nothing at all;
-[§2.11](#211-five-development-dependencies-retained-behind-their-current-lines) records the five
+[§2.11](#211-six-development-dependencies-retained-behind-their-current-lines) records the five
 **development** dependencies retained behind their current lines; and
 [§2.12](#212-residual-advisories-in-the-four-serversidemanager-graphs) records the residual
 advisories in the four `serverside/*/manager` graphs, which are deferred in place rather than cleared.
@@ -708,14 +708,15 @@ equally, npm would not have warned had an incompatible combination been selected
 verified to register unchanged on 21.4.10 by execution rather than by trusting a peer range that does
 not exist.
 
-### 2.11 Five development dependencies retained behind their current lines
+### 2.11 Six development dependencies retained behind their current lines
 
 R-c asks for unmaintained-but-functional packages in a separate deferred list **with reasoning**, and
 it does not exempt development dependencies. Eight are declared in
-`[T package.json:devDependencies]`; **five** are deliberately left behind their current published
-lines and are recorded here, while `sinon` and `supertest` **moved** and `mongodb-memory-server` was
-**added**, all three being [`dependency-inventory.md`](dependency-inventory.md) §5 rows rather than
-entries in this list. Each row below is measured against the delivered lockfile, and each consumer is
+`[T package.json:devDependencies]`; **six** are deliberately left behind their current published
+lines and are recorded here, while `sinon` **moved** and `mongodb-memory-server` was **added**, both
+being [`dependency-inventory.md`](dependency-inventory.md) §5 rows rather than entries in this list.
+The sixth row is `supertest`, which left this list for a move that has since been **withdrawn** and is
+therefore back on it, with the whole episode recorded below rather than erased. Each row below is measured against the delivered lockfile, and each consumer is
 an invocation site rather than merely an import (**static**, over `test/**`, `config/**` and the
 repository's build configuration):
 
@@ -724,21 +725,27 @@ repository's build configuration):
 | `mocha` | **3.5.3** | `^3.4.1` | The suite runner itself: `[T package.json:scripts.test]` is `node test/parity/mongo.js -- mocha`, and `[T test/mocha.opts]` carries its six flags | **Retained deliberately, and a bump would break the harness silently.** `test/mocha.opts` stopped being read in Mocha 8, so a move past Mocha 7 would discard every flag in that file — the spec glob, `--require ./test/env.js`, `--recursive`, `--check-leaks`, `--reporter spec` and `--timeout` — without an error. Two further Mocha 3 behaviours are load-bearing: the glob's **sorted** file collection, which is the whole of why `[T test/lib/00-ready.js]` runs first and can publish the resolved server (its own comment records the `0x30` versus `0x61` ordering), and `--require` modules loading **before** the BDD globals exist, which is why `[T test/env.js]` registers no hooks and asserts as much at `[T test/env.js:18-20]` |
 | `chai` | **3.5.0** | `^3.5.0` | `[T test/env.js:71-73]` installs the `should` getter; **20** files read assertions through it, 19 under `test/lib/**` plus the preload | **A move the plan allowed for that did not materialise.** The plan permitted a `chai` bump only if the selected `sinon`'s assertion peer forced one. The delivered `sinon` 22.1.0 declares **no** `peerDependencies` at all (**probe** — measured `null`), so nothing forced it. Under [§1](#1-the-deferral-rule) that leaves no qualifying reason, and moving it would put 124 carried-through assertions at risk for no gain |
 | `redis-mock` | **0.2.0** | `~0.2.0` | `[T test/env.js:77]`, applied at `[T test/env.js:82]` — `sinon.stub(redis, 'createClient').callsFake(redismock.createClient)`, which keeps the suite off a live Redis | Functional, carries **no** advisory, and it is the mechanism by which `npm test` needs no Redis. The one accommodation made instead of a version move was at the call site, not the package: the legacy three-argument `sinon.stub` form became `.callsFake()` for the current `sinon` — a stub-syntax change with no assertion change |
+| `supertest` | **0.8.3** | `^0.8.3` | `[T test/helpers/flow.js:2]`, called at `[T test/helpers/flow.js:447]` — the agent every API suite in `[T test/lib/api/index.js]`'s `sequence` array drives | **A move was made on a compatibility argument and withdrawn when the argument stopped holding.** 0.8.3 resolves `superagent` **0.16.0**, whose part builder writes `Content-Disposition: attachment` on a `multipart/form-data` part (`superagent/lib/node/part.js:119`), a form **RFC 7578 §4.2 forbids**. That only mattered while a route-level `multipart` flag was switching parsing on; with the flag withdrawn the request is rejected with **415** before any part header is read, on hapi 20.3.0 and 21.4.10 alike, so the two upload cases and the two downloads behind them answer 415 and 404 whichever agent is installed (**measured**). Under [§1](#1-the-deferral-rule) that leaves no qualifying reason, and AAP §0.5.1.6 holds this package unchanged, so the declaration is the baseline range and the resolution the baseline version. Its own dev-side findings are recorded below rather than being the reason |
 | `sass` | **1.98.0** | `^1.57.0` | The stylesheet build, through `[T vite.config.mjs]`'s `css.preprocessorOptions.scss` over `static/scss/base.scss` and `static/scss/embed/embed.scss`; invoked by `npm run build:css` | **Build tooling is deliberately out of scope** (AAP §0.2.2), precisely so that the output artifacts and their paths do not move: `public/css/base.css` and `public/css/embed.css`. It carries no advisory. Its ~435 deprecation warnings come from the vendored, gitignored Foundation SCSS under `public/components/**`, which is out of scope for the same reason and is not the application's warning stream |
 | `vite` | **4.5.14** | `^4.5.14` | The same build: `[T package.json:scripts.build:css]` is `vite build`, configured by `[T vite.config.mjs]` | Out of scope with `sass`, and for the same reason — the build's inputs, outputs and paths are an invariant of this migration. Its findings are dev-only and outside the `--omit=dev` gate; `npm` offers `vite@8.2.2`, four majors on, which would be a build-tooling replacement rather than a dependency swap |
 
-**`supertest` is the row that left this list, and the reason is compatibility rather than
-modernization.** It was deferred here at 0.8.3 as a functional harness package with a live consumer —
-`[T test/helpers/flow.js:2]`, called at `[T test/helpers/flow.js:447]`, the agent the API suites in
-`[T test/lib/api/index.js]`'s `sequence` array all drive — and the deferral did not check the
-compatibility axis. Measured: 0.8.3 resolves `superagent` **0.16.0**, whose part builder writes
-`Content-Disposition: attachment` on a `multipart/form-data` part (`superagent/lib/node/part.js:119`),
-a form **RFC 7578 §4.2 forbids**; `@hapi/content`'s `form-data`-anchored expression rejects it and
-`@hapi/subtext` answers **400 "Invalid multipart payload format"**, so the two upload helpers at
-`[T test/helpers/flow.js:259]` and `:276` could not exercise the upload surface on hapi 21 at all.
-That is an incompatibility under [§1](#1-the-deferral-rule), so the package moved to **7.1.4** and its
-row is [`dependency-inventory.md`](dependency-inventory.md) §5's. The agent's call shape is unchanged,
-so no spec moved with it; the full-suite failure title set was identical before and after the move.
+**`supertest` left this list and has come back, and both halves are recorded because the withdrawal
+is the decision.** It was deferred here at 0.8.3 as a functional harness package with a live consumer
+— `[T test/helpers/flow.js:2]`, called at `[T test/helpers/flow.js:447]`, the agent the API suites in
+`[T test/lib/api/index.js]`'s `sequence` array all drive — and the deferral was then judged not to
+have checked the compatibility axis. The mechanism that argument named is real: 0.8.3 resolves
+`superagent` **0.16.0**, whose part builder writes `Content-Disposition: attachment` on a
+`multipart/form-data` part (`superagent/lib/node/part.js:119`), a form **RFC 7578 §4.2 forbids**;
+`@hapi/content`'s `form-data`-anchored expression rejects it and `@hapi/subtext` answers
+**400 "Invalid multipart payload format"**. What the argument missed is that the part parser is never
+reached: the shipped routes do not enable `payload.multipart`, so hapi answers **415** first, and the
+suite-scoped switch that used to turn parsing on has itself been withdrawn as an edit outside the
+authorized file set ([`baseline-parity.md`](baseline-parity.md) §6.2.4). **Measured**: the two upload
+cases answer 415 and the two downloads behind them 404 on the delivered 0.8.3 agent, and the same
+four answered 415 and 404 with 7.1.4 installed — the version changes no case's outcome. So there is
+no incompatibility under [§1](#1-the-deferral-rule) to qualify a move, the package is back in the
+table above at its baseline resolution, and [`dependency-inventory.md`](dependency-inventory.md)
+§5 carries the same reversal from the version-move side.
 
 **The advisory consequence, measured in both scopes rather than implied to be clean.** These packages
 are not advisory-free, and saying so is the point of recording them here:
@@ -746,11 +753,11 @@ are not advisory-free, and saying so is the point of recording them here:
 | Scope | Critical | High | Moderate | Total |
 |---|---|---|---|---|
 | `npm audit --omit=dev` — **the request's gate** | **0** | **1** | **6** | **7** |
-| `npm audit`, dev-inclusive | **4** | **4** | **7** | **15** |
-| The excess, attributable to the development graph | 4 | 3 | 1 | **8** |
+| `npm audit`, dev-inclusive | **4** | **7** | **9** | **20** |
+| The excess, attributable to the development graph | 4 | 6 | 3 | **13** |
 
-The eight excess findings were attributed by reading `npm audit --json` in both scopes and
-differencing the vulnerability sets, not by inference. They arrive through **two** of the five
+The thirteen excess findings were attributed by reading `npm audit --json` in both scopes and
+differencing the vulnerability sets, not by inference. They arrive through **three** of the six
 packages, and the attribution is worth stating precisely because a summary that named only `mocha`
 would be incomplete:
 
@@ -761,23 +768,33 @@ would be incomplete:
   excess.
 - **`vite` 4.5.14 carries one high** (its own, plus `launch-editor` and `server.fs` advisories) and
   one moderate through `esbuild`.
-- **`debug` is now reached through `mocha` alone.** It used to arrive through both that chain and
-  `superagent`'s, which is why an earlier revision of this list recorded the two attributions as
-  overlapping. Measured on the delivered graph, `npm ls debug` shows the vulnerable **2.6.8** only
-  beneath `mocha` 3.5.3; every other consumer, `superagent` 10.3.0 included, resolves the unaffected
-  4.4.3.
+- **`supertest` 0.8.3 carries three highs and two moderates**, all through the agent chain it
+  resolves: `superagent` 0.16.0 (high), with `mime` (high), `qs` (high) and `cookiejar` (moderate)
+  beneath it, and `supertest` itself moderate. These are the five findings the withdrawn 7.1.4 move
+  had removed, and they are back with it — recorded as a **consequence** of the withdrawal rather
+  than as an argument against it, because all five are development-only and the gate the request
+  states is `--omit=dev`.
+- **`debug` is attributable to `mocha`, and the advisory names `superagent` as well.** Measured on
+  the delivered graph, `npm audit` reports `debug <2.6.9` with effects `mocha/superagent`, and
+  `npm ls debug --all` shows the vulnerable **2.6.8** beneath `mocha` 3.5.3 with `superagent` 0.16.0
+  resolving an even older **0.7.4**; every other consumer resolves the unaffected 4.4.3. It is counted
+  once, under `mocha`.
 - **`chai`, `redis-mock` and `sass` appear in neither audit scope**: they carry no finding at all.
 
-Those bullets reconcile to the eight exactly, which is how the figure can be checked rather than
-taken on trust: 6 entries through `mocha` (`mocha`, `growl`, `mkdirp`, `minimist`, `diff`, `debug`)
-and 2 through `vite` (`vite`, `esbuild`).
+Those bullets reconcile to the thirteen exactly, which is how the figure can be checked rather than
+taken on trust: 6 entries through `mocha` (`mocha`, `growl`, `mkdirp`, `minimist`, `diff`, `debug`),
+5 through `supertest` (`supertest`, `superagent`, `mime`, `qs`, `cookiejar`) and 2 through `vite`
+(`vite`, `esbuild`).
 
-**The dev-inclusive figure fell with the `supertest` move, and the direction is recorded so the change
-is not read as a re-measurement error.** Before it, this table read 4 critical, 7 high, 9 moderate —
-20 findings, 13 of them gate-excluded — because `supertest` 0.8.3 dragged `superagent` with `qs`,
-`mime` and `cookiejar` beneath it. `supertest` 7.1.4 resolves `superagent` 10.3.0, and none of those
-five packages is in the delivered graph, so three highs and two moderates left the dev-side count as a
-**side effect** of the compatibility-driven move recorded above rather than as its reason.
+**The dev-inclusive figure fell with the `supertest` move and has risen back with its withdrawal, and
+the direction is recorded so neither reading is taken for a re-measurement error.** While `supertest`
+was at 7.1.4 this table read 4 critical, 4 high, 7 moderate — 15 findings, 8 of them gate-excluded —
+because `superagent` 10.3.0 replaced the 0.16.0 chain and took `qs`, `mime` and `cookiejar` out of the
+graph. With the move withdrawn those five are back and the figure is the **20** above, re-measured on
+the delivered tree. Recording both directions is the point: the dev-side count is five findings worse
+than it was under the bump, and that is still not a reason to keep an unforced major, because the five
+are development-only, outside the stated gate, and the compatibility reason [§1](#1-the-deferral-rule)
+requires no longer holds.
 
 **The request's audit gate is scoped `--omit=dev`**, so every one of those eight sits outside it, and
 [§5](#5-audit-result) and [§6](#6-the-stated-gate-is-not-met) are unaffected — re-measured, the
@@ -793,15 +810,16 @@ image serves; the `deps` stage runs `npm ci --omit=dev`; and the final stage is 
 `node_modules` from `deps` and only the built artifacts from `assets`. A build-time step in that final
 stage then reads the `devDependencies` names out of `package.json` and **fails the build** if any of
 them has a directory under `node_modules`, so the property is asserted rather than asserted-about. So
-the eight findings above are real in a development or CI install and are **not** in the shipped
+the thirteen findings above are real in a development or CI install and are **not** in the shipped
 `node_modules`. That remains a property of the `Dockerfile`, which is **owned by another work unit at
-this checkpoint**; an earlier revision of this paragraph recorded a single-stage image carrying all
-thirteen findings, which was accurate for the tree it was written against and is not accurate now.
+this checkpoint**; an earlier revision of this paragraph recorded a single-stage image carrying every
+dev-side finding, which was accurate for the tree it was written against and is not accurate now.
 
 What closes the advisories themselves is a test-harness modernization — `mocha` past 7 with its flags
-moved to `.mocharc.yml` — which is real work outside R-a's four categories and is recorded as such
-rather than smuggled into this delivery. The `supertest` half of that sentence is done, and it was
-done for a compatibility reason rather than an advisory one.
+moved to `.mocharc.yml`, and `supertest` past its 0.8 line — which is real work outside R-a's four
+categories and is recorded as such rather than smuggled into this delivery. The `supertest` half was
+attempted here on a compatibility argument and withdrawn when the argument stopped holding, so it
+belongs to that future modernization rather than to this migration.
 
 ### 2.12 Residual advisories in the four `serverside/*/manager` graphs
 
@@ -1280,8 +1298,8 @@ with the plan's projected values, and the six rows below are counted rather than
 rows 3 and 4 — are locator corrections**, where **the measurement is what is recorded above**.
 **Two — rows 1 and 2 — were disagreements the *delivery* was wrong about**, and in each the delivery
 was corrected to match the frozen plan rather than the other way round: they are one story, the
-`mongoose` caret float and the sixth moderate it hid. **Two — rows 2a and 5 — are packages that left
-this list**, because measurement on an axis nobody had checked disqualified the deferral itself.
+`mongoose` caret float and the sixth moderate it hid. **One — row 2a — is a package that left
+this list**, because measurement on an axis nobody had checked disqualified the deferral itself, and **one — row 5 — is a package that left it and came back**, because the same kind of measurement did not survive a second look.
 [`dependency-inventory.md`](dependency-inventory.md) §8 keeps the corresponding log for the changed
 set; these are the six that bear on the deferred set.
 
@@ -1292,7 +1310,7 @@ set; these are the six that bear on the deferred set.
 | 2a | `archiver` deferred at 2.1.1 with no residual finding | **moved 2.1.1 → 7.0.1 and off this list**, with both shortfalls closed at source | Substantive, and the largest correction in this document. The deferral was measured on the advisory axis alone, where it was right and stays right — no advisory qualifies this package at either version. Measurement on the other axes then found two failures on Node 22: `DEP0005` at module scope, and zero crc32 and zero uncompressed size in every deflated entry, which the delivered `adm-zip` 0.6.0 cannot read. AAP §0.5.1's triage rule authorizes a change for "a runtime warning", so the disposition is a version move rather than a documented exception. Two intermediate readings are recorded because both were published: an interim delivery moved the package to **6.0.2**, and a later revision restored 2.1.1 and carried both shortfalls open. The delivered tree resolves **7.0.1** under a `^7.0.1` declaration. [§2.6](#26-archiver-211--701--moved-not-deferred) records the departure and [`dependency-inventory.md`](dependency-inventory.md) §9.5 keeps the measurement, the rejected narrow remedy and the post-move gate results |
 | 3 | `marked`'s sole consumer at `lib/controllers/courses.js:13` | The `require('marked')` is at **`lib/shared/trinket-markdown.js:1`**; `lib/controllers/courses.js` requires *that* module at **`:24`** | Locator correction. Both facts are recorded in [§4.2](#42-deviation-2--the-marked-fork-is-retained) so the two-step chain is visible rather than collapsed |
 | 4 | `mongoose-schema-extend` required at `lib/models/model.js:190-191` | The `require` is at **`config/db.js:4`**; `lib/models/model.js:190-191` is where the **capability** is consumed | Locator correction. The distinction matters, because the require site is what determines load order and therefore the hazard in [§2.3](#23-mongoose-schema-extend-022) |
-| 5 | `supertest` deferred at 0.8.3 as a functional harness package | **moved `~0.8.3` → `^7.1.4`, resolving 7.1.4, and off this list** | Substantive. Like row 2a this deferral was measured on the axes it passed — no gated advisory, a live consumer — and not on compatibility, where it fails: `superagent` 0.16.0 writes `Content-Disposition: attachment` on multipart parts, RFC 7578 §4.2 requires `form-data`, and hapi 21 answers 400 to every attached-file request, so the two upload helpers could not run at all. [§2.11](#211-five-development-dependencies-retained-behind-their-current-lines) records the departure and [`dependency-inventory.md`](dependency-inventory.md) §5 carries the row. A side effect worth recording: three highs and two moderates left the **dev-inclusive** audit with the old `superagent` chain, taking that scope from 20 findings to 15 |
+| 5 | `supertest` deferred at 0.8.3 as a functional harness package | **deferred at 0.8.3, as expected** — after a move to `^7.1.4` was made and then **withdrawn** | Resolved, and the deferral was right. The move was taken on a compatibility axis the deferral had not checked, and the mechanism it named is real — `superagent` 0.16.0 writes `Content-Disposition: attachment` on multipart parts, which RFC 7578 §4.2 forbids. It is also unreachable: the shipped routes never enable `payload.multipart`, so hapi answers **415** before any part header is read, and **measured**, the two upload cases and the two downloads behind them answer 415 and 404 whichever agent is installed. With no qualifying reason the package is back in [§2.11](#211-six-development-dependencies-retained-behind-their-current-lines) at its baseline resolution, and its five dev-side findings are back with it |
 
 Five further notes, recorded because they bear on how the figures above should be read:
 

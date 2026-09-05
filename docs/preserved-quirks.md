@@ -145,7 +145,7 @@ and summarised, never reproduced:
 | [10.6](#106-serving-the-approved-image-response-serves-script-capable-legacy-content-inline) | The approved image response serves script-capable legacy content inline | 200 with the document's own `mime`, no CSP or `nosniff` — **open, no gate closes it** | None — stated in §10.6 |
 | [10.7](#107-the-zipcode-branch-that-took-the-process-down-and-the-bounds-that-now-hold-it) | The `zipCode` branch that terminated the process, and the bounds that hold it | Bounded rejection replaces the process exit; the one field of the response that costs | `POST …/zip` + archive corpus |
 | [10.8](#108-the-search-response-seam-the-client-reads-a-key-the-server-does-not-send) | The search response omits a key the client reads | Client reads an absent key; server shape unchanged | Search corpus |
-| [10.9](#109-what-archiver-211-normalises-in-an-entry-name-and-what-it-passes-through) | What `archiver` 2.1.1 normalises in an entry name, and what it passes through | Measured truth table the controller control matches | Storage + worker gates |
+| [10.9](#109-what-archiver-normalises-in-an-entry-name-and-what-it-passes-through) | What `archiver` normalises in an entry name, and what it passes through | Measured truth table the controller control matches, re-measured on the delivered 7.0.1 | Storage + worker gates |
 | [10.10](#1010-the-four-outputfile-upload-routes-answer-415-to-multipartform-data) | The four `output:'file'` upload routes refuse `multipart/form-data` | **415** on all four, on hapi 20.3.0 and 21.4.10 alike | Route-sweep scenarios + the two per-major listener probes |
 | [10.11](#1011-requestfailerr-with-an-error-argument-terminates-the-process) | `request.fail(err)` with an `Error` is refused by the toolkit and the process dies | Connection severed, no response, **no process** | `route.post.api-admin-user-userId.json`, which records the baseline's own socket hang up |
 | [11](#11-the-two-approved-deviations) | **Approved deviations** — not preserved, and the register is **closed at two** | Stream response served; `marked` fork retained | Deviation allowlist in replay; audit |
@@ -1538,7 +1538,7 @@ of them silently in a source file would be the drift §11.1 was corrected for.
 
 Three of them — [§10.7](#107-the-zipcode-branch-that-took-the-process-down-and-the-bounds-that-now-hold-it),
 [§10.8](#108-the-search-response-seam-the-client-reads-a-key-the-server-does-not-send) and
-[§10.9](#109-what-archiver-211-normalises-in-an-entry-name-and-what-it-passes-through) — were added
+[§10.9](#109-what-archiver-normalises-in-an-entry-name-and-what-it-passes-through) — were added
 after a code review of the delivered tree rather than during the conversion. §10.7 is the one a reader
 should not skim: it is the place in this catalogue where an outcome is deliberately **not** preserved
 without being a numbered deviation, and it says exactly which field of which response that costs.
@@ -2216,7 +2216,7 @@ unapproved difference, in either direction. Aligning the two keys is a product d
 course-editor typeahead, and it belongs with whoever takes that decision rather than with this
 migration.
 
-### 10.9 What `archiver` 2.1.1 normalises in an entry name, and what it passes through
+### 10.9 What `archiver` normalises in an entry name, and what it passes through
 
 Recorded here because it is the measurement a security control in
 `[T lib/controllers/trinket.js]` was built against, and because the control has to keep matching it: a
@@ -2226,9 +2226,13 @@ containment. Both matter — the first keeps a legitimate archive byte-identical
 
 The trinket controller builds archives from names the caller supplies, unauthenticated in
 `downloadPostedZip` `[T lib/controllers/trinket.js:1629]`, and hands them to `archive.append`. Measured
-by building real archives through the **installed** archiver 2.1.1:
+by building real archives through the **installed** archiver — **7.0.1** in the delivered tree — and
+reading the entry names back with the installed `adm-zip` 0.6.0. The table was first measured on the
+baseline's `archiver` 2.1.1 and **re-measured on 7.0.1 after the version move** (§9.5 of
+[`dependency-inventory.md`](dependency-inventory.md)): **every row is identical on both**, including
+the empty-name fault, so nothing in the control below depends on which of the two is installed:
 
-| Input name | archiver 2.1.1 emits | Class |
+| Input name | archiver emits | Class |
 |---|---|---|
 | `main.py` | `main.py` | identity |
 | `a//b.py` | `a/b.py` | normalised — repeated separators collapsed |
@@ -2242,7 +2246,7 @@ by building real archives through the **installed** archiver 2.1.1:
 | `a\0b.py` | `a\0b.py` | **passed through — NUL survives** |
 | `a\tb.py` | `a\tb.py` | **passed through — control characters survive** |
 | `./a.py`, `dir/./x.py`, `.hidden`, `a b/c.py`, `é.py` | unchanged | identity |
-| `` (empty) | an `'error'` **event** carrying `entry name must be a non-empty string value` `[node_modules/archiver/lib/core.js:561-563]`, not a synchronous throw | fault |
+| `` (empty) | an `'error'` **event** carrying `entry name must be a non-empty string value` — emitted at `[node_modules/archiver/lib/core.js:567]` on the installed 7.0.1, with the message text at `[node_modules/archiver/lib/error.js:15]`; the same event at `[node_modules/archiver/lib/core.js:561-563]` on 2.1.1 — not a synchronous throw | fault |
 
 Three consequences the control is shaped by. **The `..` and `.` rows are the vulnerability** — archiver
 does not resolve them, so an attacker-chosen name reaches the archive as a relative path that escapes
@@ -2252,10 +2256,13 @@ is registered on the misspelled `'err'` `[T lib/controllers/trinket.js:2074]` so
 at all — which is why a canonicalised name must never come out empty and falls back to the fixed
 `ARCHIVE_FALLBACK_ENTRY_NAME` `[T lib/controllers/trinket.js:244]`, a constant rather than anything
 random or time-derived so an archive built from the same input stays reproducible. **And none of the
-containment is delegated to the library**: `package.json` declares `archiver ^6.0.2` while 2.1.1 is what
-resolves, so a control resting on the library's own normalisation would be version-dependent by
-construction. `archiveEntryName` reproduces every "normalised" row byte for byte, resolves the
-passed-through rows away, and strips control characters.
+containment is delegated to the library**, which is what makes the control survive the version move:
+`package.json` declares `archiver ^7.0.1` and **7.0.1** is what resolves (`zip-stream` 6.0.1,
+`compress-commons` 6.0.2), where the baseline declared `^2.0.0` and resolved 2.1.1 — and an interim
+delivery declared `^6.0.2`. A control resting on the library's own normalisation would have moved with
+each of those; `archiveEntryName` instead reproduces every "normalised" row byte for byte, resolves
+the passed-through rows away, and strips control characters, so the only thing the version change
+required of this section was re-measuring the table above and finding it unchanged.
 
 **Disposition, and what it costs.** A hostile name is canonicalised and its entry is **kept**, never
 rejected, so status, content-type and entry count are unaffected — measured live on
@@ -2574,7 +2581,7 @@ classification, and how each was actually settled, remain readable.
 
 | Item | What it is | Correct classification | Where it belongs |
 |---|---|---|---|
-| `[DEP0005]` `new Buffer()` from `compress-commons`, reached through retained `archiver` 2.1.1 | A residual deprecation warning under `--pending-deprecation`, emitted once at module load | **Unresolved shortfall** against the zero-warning target of AAP §0.8. It was discovered by measurement, not argued and approved in advance, and no decision has been recorded against it | [`baseline-parity.md`](baseline-parity.md) §7.4 and §8, which already state this |
+| `[DEP0005]` `new Buffer()` from `compress-commons` 1.2.2, reached through the then-retained `archiver` 2.1.1 | A residual deprecation warning under `--pending-deprecation`, emitted once at module load | **Unresolved shortfall** against the zero-warning target of AAP §0.8 — it was discovered by measurement, not argued and approved in advance, and no decision was ever recorded against it. **No longer arises**: the declared graph moved to `archiver` 7.0.1 with `compress-commons` 6.0.2, and boot under `--pending-deprecation --trace-deprecation` emits no warning line at all | [`baseline-parity.md`](baseline-parity.md) §7.4 and §8, which already state this |
 | `FSEventWrap` handles from the test-mode template watcher | An open-handle inventory that would prevent self-exit; unclosable by a caller, so it can only be prevented ([§10.3](#103-the-test-mode-template-watcher-runs-on-an-optional-peer-the-root-no-longer-declares)) | **Unresolved shortfall** against the clean-teardown expectation whenever it arises — unexpected, unallowed, failing, with a measured reason and a named remedy. It does not arise in the worker gate, which withholds the watch option before the first application require and measures an empty inventory; what remains recorded is the application's own test-mode reliance | §10.3 here, and the worker harness's handle inventory |
 | This process's own stdout/stderr `PipeWrap` handles | Not a leak and not an application observation — which of them exist depends only on how the process was invoked | **Invocation plumbing.** Correctly partitioned out of the assertion; it was never a deviation and stays classified as it is | The harness's `stdio` partition |
 
@@ -2591,7 +2598,7 @@ prevention, not an exception, and the classification above is what it defers to.
 
 **Where each is recorded, cited exactly, because the earlier text over-cited this.** The
 `compress-commons` warning is recorded on two axes and they must not be conflated: the **dependency**
-axis — that the declared graph moved from `archiver` 2.1.1 to 6.0.2, and whether that move is
+axis — that the declared graph moved from `archiver` 2.1.1 to 7.0.1, and whether that move is
 authorized — belongs to [`deferred-dependencies.md`](deferred-dependencies.md) §2.6, which states the
 move and carries its approval status; the **gate** axis belongs to
 [`baseline-parity.md`](baseline-parity.md) §7.4 and §8. This section carries neither: its business is

@@ -21,9 +21,14 @@
 //
 // The suite has no storage backend of its own: lib/util/file.js builds a real
 // aws-sdk v2 client (`new aws.S3()` per call, from config/aws) and nothing in
-// test/helpers/** replaces it, so with the asset feature on
-// (config/test.yaml's `features.assets`) `POST /file` would dial S3 with the
-// empty credentials config/default.yaml ships. test/parity/fixtures/aws.js is
+// test/helpers/** replaces it, so with the asset feature on `POST /file` would
+// dial S3 with the empty credentials config/default.yaml ships. That feature is
+// OFF under NODE_ENV=test -- config/default.yaml's `features.assets: false` is
+// now its only definition, the test-only override having been withdrawn as
+// unauthorized scope -- so this interceptor is a guard rather than a
+// precondition: it keeps any future asset-bearing case off the network.
+//
+// test/parity/fixtures/aws.js is
 // exactly the missing piece - a filesystem-backed putObject / getObject /
 // deleteObject / headObject written for the parity harness - and it is reused
 // here rather than duplicated, so the suite and the corpus exercise one

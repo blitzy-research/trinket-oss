@@ -409,8 +409,10 @@ lockfile resolved `archiver` 6.0.2 with `compress-commons` 5.0.3, while the `nod
 executed against held `archiver` 2.1.1 with `compress-commons` 1.2.2 and `zip-stream` 1.2.0. **The
 delivered tree resolves neither of those states.** It declares and installs `archiver` **7.0.1** with
 `compress-commons` 6.0.2 and `zip-stream` 6.0.1, and the install agrees with the manifest
-(**measured**: `package.json` declares `"archiver": "^7.0.1"`; `package-lock.json` and
-`node_modules/.package-lock.json` carry 7.0.1 across the same 520 package entries; and
+(**measured**: `package.json` declares `"archiver": "^7.0.1"`; both `package-lock.json` and
+`node_modules/.package-lock.json` carry 7.0.1, over **509** lock entries excluding the root record
+and **470** installed here — every installed entry is present in the lock and no version differs, the
+gap being the optional and platform-restricted records a single host does not take; and
 `node_modules/archiver/package.json` reports 7.0.1). Under both flags the module now emits nothing
 (**measured**: `node --pending-deprecation --trace-deprecation -e "require('archiver')"` → no output,
 exit 0), so the notice that produced `warning=1 warning-gate=2` has no source left in this graph.
@@ -1052,10 +1054,15 @@ scenario is either.** One group of *outcomes* is:
 
 | Entry | Kind | Stated reason |
 |---|---|---|
-| reCAPTCHA outcomes 3–6 | Outcomes, not routes | Unreachable over HTTP: under `NODE_ENV=test` the verify helper short-circuits on its `isTest` flag before any HTTP happens, so the 200, non-200, transport-failure and malformed-JSON branches cannot be reached through a route however the fixture is configured. Adding a secret does not help — the short-circuit is on the environment. `fixtures/http.js` **defines** each as a named profile and states the only route to them — a direct require of `lib/util/recaptcha.js` without `config/app.config` — but **no delivered harness performs that invocation**, so they are defined and **unexercised** ([§2.5](#25-the-isolation-architecture--interception-at-the-module-boundary), [§8](#8-what-remains-unproven)). An earlier revision of this row said they were exercised by direct module-level invocation; that read the intended mechanism as a report of a run |
+| reCAPTCHA outcomes 3–6 | Outcomes, not routes | Unreachable **over HTTP**, and that is the whole of the entry: under `NODE_ENV=test` the verify helper short-circuits on its `isTest` flag before any HTTP happens, so the 200, non-200, transport-failure and malformed-JSON branches cannot be reached through a route however the fixture is configured. Adding a secret does not help — the short-circuit is on the environment. **They are nevertheless exercised, by direct module-level invocation rather than by a scenario.** `test/parity/fixtures/http.js` carries both the recorded responses and the driver that consumes them: `recaptchaCases()` requires `lib/util/recaptcha.js` and calls `verify()` against them, having arranged the two preconditions those outcomes need — a present `config.app.recaptcha.secretkey` and a falsy `config.isTest`, both restored afterwards. **Measured**: `node test/parity/fixtures/http.js` exits **0** with `PASS: 86 passed, 0 failed, 23 of 23 profiles driven`, including its own `coverage: all six reCAPTCHA outcomes were exercised` check. So what this row records is the absence of a **corpus scenario**, not the absence of evidence ([§2.5](#25-the-isolation-architecture--interception-at-the-module-boundary), and [`preserved-quirks.md`](preserved-quirks.md) §8.2, which states the same thing from the quirk's side) |
 
-That entry is a refusal to fake a measurement, which is the same discipline as
-[§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) applied at the level of a single case.
+That entry is a statement about what a route can reach, not a refusal — the same discipline as
+[§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) applied at the level of a
+single case, and the reason the coverage accounting counts scenarios rather than outcomes.
+**An earlier revision of this row said no delivered harness performed that invocation**, and that was
+wrong: it read the fixture's own notes about *why* the driver has to bypass HTTP as a statement that
+the driver did not exist. The run above is the correction, and
+[`preserved-quirks.md`](preserved-quirks.md) already recorded it from the other side.
 
 **`auth.outcome.lookup-error` used to be listed here, and it should not have been.** The row read:
 the fifth auth-scheme outcome needs the `User` lookup itself to fail, no HTTP request can cause
@@ -1544,11 +1551,11 @@ runs must have **both** streams discarded by the caller, for the reason in
 | **joi matrix, 102 targets** | Accept/reject/coercion outcomes identical across the `joi` bump, response shapes included | **PASS on the question this gate exists to answer** — 102 targets, 306 cases, **462 outcomes and 15 678 fields compared, 0 schema-level differences and 0 generated-input differences**. The committed baseline verifies against its sealed sidecar (role `baseline-capture`, joi 17.13.3, app HEAD `2f8712a112db`, digest matched), so the comparison consumes evidence rather than an unattributed file. Both custom language maps re-measured **inert** on 17.13.3 and 18.2.5 alike (**re-measured on the integrated tree**). The command's own **exit status** is a different claim from its comparison result and is kept apart from it: see the `verify:joi` row in the command table below, which records why it last exited 1 and why that status is not re-measured at this state | `joi-matrix.js --compare test/parity/joi-baseline.json --port … --out …` |
 | **Storage and archive contract** | The S3 key is a content hash, so a changed digest silently orphans every stored object; the cases assert the exact sha1 key, the suffix and extension branches, the content-type override, avatar gating, bucket selection, the export key and the archive's internal layout | **PASS — 35 of 35 cases passed**, exit 0, against an isolated in-memory MongoDB and the filesystem S3 fixture (**re-measured on the integrated tree after the archive-dependency move**). Everything the row exists to protect passes, including the three pre-migration cases that prove a changed digest surfaces as a lookup failure: the exact sha1 keys, the suffix and extension branches, the content-type override, avatar gating, bucket selection and the export key. **The thirty-fifth case is `archive-layout`**, read through `adm-zip`'s own `getData()`, and it is the single failure this row previously reported: `archiver` 2.1.1 wrote `crc32` 0 and uncompressed size 0, which the AAP-authorized `adm-zip` 0.6.0 refuses outright. `archiver` 7.0.1 writes both fields correctly and the entry reads back, so the gate carries no residual and no captured `[DEP0005]` — the four other failures this row used to list were the same retention seen from four angles ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)). Three cases were also **realigned back**: an interim delivery added a `removeTemporaryFile` cleanup on the avatar reject path and those cases asserted the leak's removal; the cleanup was withdrawn, because `lib/util/file.js` is provisionally excluded by AAP §0.2.2 and §0.9.2 conditions any change to it on naming the test that forced it, and no test forces this one. They now assert the preserved baseline leak as the leak it is, and the assertion carries that reasoning at its own site (`test/parity/storage.js`, the `PRESERVED BASELINE LEAK` comment on the reject-path case) | `npm run verify:storage` |
 | **Export worker** | Bull 4's changed semantics — processor promise completion, `job.id` in the `failed` handler, `job.remove()` on `completed`, retry and stalled behaviour — plus status and error persistence, the archive layout, the notification mail and cleanup on both paths | **PASS — `VERDICT PASS`, 109 of 109 named checks, 0 notices under `--pending-deprecation --trace-deprecation`, exit 0** (re-measured on the integrated tree after the archive-dependency move). 7 jobs are driven on real `bull` 4.16.5 inside a per-run Bull key prefix. The Bull 4 adaptations hold — the queue is a real Bull queue, it exposes the Bull 4 surface, and it is namespaced — and so now does the export the jobs exist to complete: the gate's own first check, *"the worker's database idiom can complete an export"*, passes, and with it the 11 checks that depend on the success job reaching `completed` (the status sequence, the progress updates, the trinket count, the `filename`/`s3Key`/`downloadUrl` strings, the `expiresAt` horizon, the stored object, the `userassets` asset fetch, the archive layout and the single `export-ready` mail), the `missing-user` message, and the late-failure job's dereference, upload-before-throw ordering and failure mail. **What the earlier FAIL verdict recorded, and what moved:** that revision — 17 of the 109 named checks failing — measured a worker carrying 8 `Q.nsend` bridges and a `Query.prototype.stream` call this Mongoose line no longer provides, so the successful job never completed and 16 of its 17 failures followed from that one cause; the seventeenth was the zero-warning policy failing on the retained-`archiver` `[DEP0005]`. The delivered module carries **0 `Q.nsend` bridges, 0 `.stream(` calls, 1 `.cursor(` and 11 `.exec(`** (**measured**: `grep -c` over `lib/workers/exports.js`) against `mongoose` 6.13.9, and the notice's source is gone with `archiver` 7.0.1 ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)). **Where the evidence is:** `${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/worker-result.json` plus its `.provenance.json` sidecar, neither committed — the authorized file set declares no worker artifact. Its provenance records `commitState: contains-this-exact-source`, so the artifact is evidence about a known tree. **Precondition, declared rather than assumed:** a Redis that **answers PING**, `PARITY_REDIS` (default `127.0.0.1:6379`), because `lib/util/queues.js`'s in-memory queue emits no events and Bull's completion, failure, retry and stalled semantics cannot be asserted against it; nothing in this repository provisions one. The endpoint is sent an inline `PING` and must answer `+PONG` or a RESP error such as `-NOAUTH`, so a silent TCP listener or a TLS-only endpoint is refused in under a second, by name. Note that `verify:worker`'s exit status gates `verify:corpus`'s chain, so the worker artifact must pre-exist for the replay to run | `npm run verify:worker` — that is `worker.js --redis "$PARITY_REDIS" --out "$PARITY_OUT"/worker-result.json` followed by `worker.js --verify "$PARITY_OUT"/worker-result.json` |
-| **Existing suite** | The 124 baseline assertions unweakened, plus the 6 new page-surface cases | **FAIL — 130 registered / 129 executed / 95 passing / 36 failing** (re-measured on the integrated tree). The registered-case gate asserts registered = executed = passing = 130, so it is unmet by 1 on execution and 35 on passing. The 36 have two causes and neither is the framework or runtime move. **27** are base-commit bodies asserting expectations that production code held byte-identical to `2f8712a` has never satisfied, and they are **left failing rather than realigned** — 0 assertion lines were changed, so the failure is the record ([§6.2.1](#621-the-baseline-correction-exception-register)). The other **9**, plus the 1 case that never executes, share one cause: the API client sends the base commit's own `?outline=yes` for a parameter the route validates as a boolean, so the response carries a validation flash and no `data`, a `before all` hook in `test/lib/api/course.js` is left without the course it was to create, and the cases depending on it throw. Both the client value and the spec bodies are held byte-identical to `2f8712a` deliberately, so closing this is a decision about which of the two to move, not a repair. An earlier revision of this row recorded **234 passing, 0 failing, exit 0**; that figure counted suites this delivery does not ship — the `email-compat` and `diff-compat` ports and their specs were removed as outside the authorized file set | `CI=true npm test` |
-| **Zero deprecation warnings** | The whole running application, not a subset, under `--pending-deprecation --trace-deprecation` | **PASS on every drive run at the delivered head; `not run` for the full-route pass.** Three parts, kept apart because they are not the same claim. **(1) Measured on a graph that agreed with the manifest, which is the only kind of warning figure worth recording.** `npm ci` was run first, because `node_modules` had been left holding `archiver` 2.1.1 while the manifest and the lockfile declared a different version. Boot under `node --pending-deprecation --trace-deprecation app.js` through to `Server started on port` emits **0 lines on stderr**; a **15-route unauthenticated drive** emits **0 deprecation or warning lines**, its stderr carrying only hapi's own `Debug: auth…` and `Debug: handler, error` lines, which are the preserved per-request debug logging and not warnings. Those two were taken on the 410-package graph that preceded the archive-dependency move; the two below were re-taken on the delivered graph, which resolves `archiver` 7.0.1 across 520 lockfile entries: `verify:worker` reports **0 notices, 0 allowed** under both flags while driving seven real jobs to `VERDICT PASS` over 109 of 109 checks, and `verify:storage` captures none across 35 of 35 cases. **(2) The one module-load residual this row used to carry is cleared at its source** by the archive-dependency move to `archiver` 7.0.1, measured rather than inferred from the version change ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)). **(3) The full 233-route, five-identity pass is UNPROVEN at this head**, and it is the part the corpus row above carries. The committed replay evidence records **this very check failing in both cookie passes**: `gates.failedChecks` names `non-secure: zero warnings from the application` and `secure: zero warnings from the application` under both `verification.selfConsistency` and `verification.againstTheMigratedTree`, with `4 warning line(s) on the application's stderr` for the self-consistency drive and `1 warning line(s)` against the migrated tree, recorded at `verification.applicationHead.recorded = 0716cd2811…` — the graph **before** the archive-dependency move (**artifact**: `test/parity/corpus.json.provenance.json`). That drive has not been repeated since, and neither has the 233-route two-identity sweep recorded in [§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application). So the honest state of this row is a pass over boot and the four named drives and **no result at all** over the route surface at the delivered graph | `node --pending-deprecation --trace-deprecation app.js`, then the drives in [§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application); the full-route pass needs `replay.js --annotations` driven under both flags, whose report carries this same named check, and its secure half needs the capture [§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) records as blocked |
+| **Existing suite** | The 124 baseline assertions unweakened, plus the 6 new page-surface cases | **FAIL — 130 registered / 130 executed / 103 passing / 28 failing** (re-measured on the delivered tree; `CI=true npm test` exits 28). The registered-case gate asserts registered = executed = passing = 130, so registration and execution are both met and only **passing** is short, by 27. The 28 reported failures are those **27 cases plus the suite-total gate assertion itself**, which the root `after` hook raises because passing does not equal 130. None of the 27 is a route, validation, storage or worker parity difference — those four gates compare clean. Measured grouping: **11** base-commit bodies asserting expectations that production code held byte-identical to `2f8712a` has never satisfied (6 in the roles plugin, 5 in `test/lib/models/trinket.js`), **4** logged-out `/api/` course cases answering 401 as JSON where the body expects a 302, **4** file cases — two multipart uploads at 415 and the two downloads that depend on them at 404 ([§6.2.4](#624-post-file-answers-415-to-a-multipart-upload-and-that-is-baseline)) — **1** user-profile case that throws building its own expected value from a `config.cloud` namespace no committed configuration defines, **1** re-enabled course-download case that requests a URL matching no route, and **6** course-creation, course-editing and registration cases including the TST-70 stale-alias case ([§6.2.3](#623-tst-70--the-one-collision-that-cannot-be-resolved-three-ways)). They are **left failing rather than realigned** — 0 assertion lines were changed, so the failure is the record ([§6.2.1](#621-the-baseline-correction-exception-register)). Two superseded figures are named rather than dropped: an earlier revision recorded **130 / 129 / 95 / 36**, taken while `test/helpers/flow.js` still sent the base commit's `?outline=yes` for a boolean parameter — a `before all` hook then failed and suppressed 9 cases and left 1 unexecuted, and the delivered helper sends `outline=true`, which is what closes that group and the execution shortfall with it; and an earlier revision before that recorded **234 passing, 0 failing, exit 0**, counting the `email-compat` and `diff-compat` ports and their specs, removed as outside the authorized file set | `CI=true npm test` |
+| **Zero deprecation warnings** | The whole running application, not a subset, under `--pending-deprecation --trace-deprecation` | **PASS on every drive run at the delivered head; `not run` for the full-route pass.** Three parts, kept apart because they are not the same claim. **(1) Measured on a graph that agreed with the manifest, which is the only kind of warning figure worth recording.** `npm ci` was run first, because `node_modules` had been left holding `archiver` 2.1.1 while the manifest and the lockfile declared a different version. Boot under `node --pending-deprecation --trace-deprecation app.js` through to `Server started on port` emits **0 lines on stderr**; a **15-route unauthenticated drive** emits **0 deprecation or warning lines**, its stderr carrying only hapi's own `Debug: auth…` and `Debug: handler, error` lines, which are the preserved per-request debug logging and not warnings. Those two were taken on the 410-package graph that preceded the archive-dependency move; the two below were re-taken on the delivered graph, which resolves `archiver` 7.0.1 — 509 lockfile entries excluding the root record, after the `supertest` withdrawal took the lock from 520 to 509: `verify:worker` reports **0 notices, 0 allowed** under both flags while driving seven real jobs to `VERDICT PASS` over 109 of 109 checks, and `verify:storage` captures none across 35 of 35 cases. **(2) The one module-load residual this row used to carry is cleared at its source** by the archive-dependency move to `archiver` 7.0.1, measured rather than inferred from the version change ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)). **(3) The full 233-route, five-identity pass is UNPROVEN at this head**, and it is the part the corpus row above carries. The committed replay evidence records **this very check failing in both cookie passes**: `gates.failedChecks` names `non-secure: zero warnings from the application` and `secure: zero warnings from the application` under both `verification.selfConsistency` and `verification.againstTheMigratedTree`, with `4 warning line(s) on the application's stderr` for the self-consistency drive and `1 warning line(s)` against the migrated tree, recorded at `verification.applicationHead.recorded = 0716cd2811…` — the graph **before** the archive-dependency move (**artifact**: `test/parity/corpus.json.provenance.json`). That drive has not been repeated since, and neither has the 233-route two-identity sweep recorded in [§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application). So the honest state of this row is a pass over boot and the four named drives and **no result at all** over the route surface at the delivered graph | `node --pending-deprecation --trace-deprecation app.js`, then the drives in [§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application); the full-route pass needs `replay.js --annotations` driven under both flags, whose report carries this same named check, and its secure half needs the capture [§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) records as blocked |
 | **Audit** | Zero critical and zero high findings | **0 critical / 1 high / 6 moderate, total 7** — **re-measured on the integrated tree**: the single high is direct `marked` ([§7.2](#72-deviation-2--the-marked-fork-is-retained)) and the moderates are `aws-sdk`, `bull`, `highlight.js`, `jszip`, `mongoose` and transitive `uuid`. That is exactly the delivery AAP §0.9.5 states — 0 / 1 / 6 — so the one-lower moderate count this row previously reported is reconciled: `mongoose` is the sixth | `npm audit --omit=dev --json` |
-| **Asset build from a clean tree** | The build's own input is gitignored and absent from a fresh checkout, so this proves the fetch-then-build sequence works on a host, and that both stylesheets land at the paths the templates reference | **PASS** — `npm ci` (**410 packages**, exit 0), then `npm run build`: the component bundle downloaded, **166 464 007 bytes, sha256 verified** against the digest in the script, then `public/css/base.css` **265 727 bytes** and `public/css/embed.css` **296 352 bytes**, exit 0. The fetch is idempotent as delivered — a second run verified 6 721 files and 543 directories against its recorded tree manifest in 494 ms and downloaded nothing (**re-measured on the integrated tree**). Sass emits legacy-JS-API deprecation notices from the vendored, gitignored Foundation SCSS; those are **build-time** and out of scope, and are not part of the running-application warning gate above | `npm ci && npm run build` |
-| **Root container image, and the stylesheets served from it** | R-b's no-old-runtime requirement for the image this application ships in, and the half of the build gate a host build cannot prove | **PASS** for the root image — built twice at the evidence commit, once from the working context and once from a **clean context** (`git archive HEAD \| docker build -`) so no host-built artifact could be inherited. Both builds: the digest-pinned `node:22-bookworm` base, the build-time `engines` assertion passing on node `v22.23.2` / npm `10.9.8`, `npm ci` resolving **410 packages inside the image with no SSH identity present** (re-measured on the delivered tree: the image was first built at `0716cd2`, where the same command resolved 416, and two later corrections to the dependency set moved it to 410 — the figure the host `npm ci` also reports, so image and host agree), the component fetch verified against its digest, and `npm run build:css` emitting both stylesheets at the same byte sizes as the host build. The image was then run and driven: `Server started`, `/` **200**, `/css/base.css` **200 `text/css` 265 727 bytes**, `/css/embed.css` **200 `text/css` 296 352 bytes** (**measured** at the evidence commit). The **eight `serverside/**` images and the four manager boots are not covered by this row** and remain open in [§8](#8-what-remains-unproven) | `docker build -t "$IMAGE_TAG" .`; `git archive HEAD \| docker build -`; then `docker run --network host` and `curl` |
+| **Asset build from a clean tree** | The build's own input is gitignored and absent from a fresh checkout, so this proves the fetch-then-build sequence works on a host, and that both stylesheets land at the paths the templates reference | **PASS** — `npm ci` (**410 packages** on the graph that preceded the archive-dependency move and the `supertest` withdrawal; the delivered pair installs **472**, exit 0 either way), then `npm run build`: the component bundle downloaded, **166 464 007 bytes, sha256 verified** against the digest in the script, then `public/css/base.css` **265 727 bytes** and `public/css/embed.css` **296 352 bytes**, exit 0. The fetch is idempotent as delivered — a second run verified 6 721 files and 543 directories against its recorded tree manifest in 494 ms and downloaded nothing (**re-measured on the integrated tree**). Sass emits legacy-JS-API deprecation notices from the vendored, gitignored Foundation SCSS; those are **build-time** and out of scope, and are not part of the running-application warning gate above | `npm ci && npm run build` |
+| **Root container image, and the stylesheets served from it** | R-b's no-old-runtime requirement for the image this application ships in, and the half of the build gate a host build cannot prove | **PASS** for the root image — built twice at the evidence commit, once from the working context and once from a **clean context** (`git archive HEAD \| docker build -`) so no host-built artifact could be inherited. Both builds: the digest-pinned `node:22-bookworm` base, the build-time `engines` assertion passing on node `v22.23.2` / npm `10.9.8`, `npm ci` resolving **410 packages inside the image with no SSH identity present** (re-measured on the delivered tree: the image was first built at `0716cd2`, where the same command resolved 416, and two later corrections to the dependency set moved it to 410 — the figure the host `npm ci` reported on that same graph, so image and host agreed then; the delivered manifest pair installs **472** on the host, and this image result is one of the ones [§8](#8-what-remains-unproven) records as measured at an earlier commit rather than re-authenticated here), the component fetch verified against its digest, and `npm run build:css` emitting both stylesheets at the same byte sizes as the host build. The image was then run and driven: `Server started`, `/` **200**, `/css/base.css` **200 `text/css` 265 727 bytes**, `/css/embed.css` **200 `text/css` 296 352 bytes** (**measured** at the evidence commit). The **eight `serverside/**` images and the four manager boots are not covered by this row** and remain open in [§8](#8-what-remains-unproven) | `docker build -t "$IMAGE_TAG" .`; `git archive HEAD \| docker build -`; then `docker run --network host` and `curl` |
 
 
 **Every gate above is reachable from an `npm` command, and each propagates its own exit status.** A
@@ -1625,7 +1632,7 @@ the same status as in the register above, repeated so the binding can be read wi
 | **Session and auth behaviour**, same cookie names and outcomes | The five independent auth-outcome assertions, [§4.7](#47-the-five-auth-scheme-outcomes-and-the-evidence-state-of-each), and the full `Set-Cookie` attribute comparison in both overlay passes, [§4.2](#42-the-exactly-compared-surface) / [§2.6](#26-the-server-overlay-and-why-one-was-needed) | All five outcomes are drivable and the gate fails while any is not asserted. The **baseline side of all five is recorded** (302 / 200 / 302 / 302, and a four-step `302` → `302 /login` → `401` → `200` for the lookup error), and outcome 5 is also **compared against the target** — a match with the injected faults confirmed ([§4.7.1](#471-the-fifth-outcome-and-how-it-is-reached)). The other four were driven in the replay and none appears among its attributed residual differences; the cookie-attribute assertion in **both** passes is what is still outstanding, and its secure half is blocked by the capture in [§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) |
 | **Client-visible page behaviour and asset URLs** | The HTML comparison in [§4.2](#42-the-exactly-compared-surface) — rendered text, form and input names and values, `id`/`class`, `data-`/ARIA, inline-script presence and `href`/`src`, with asset URLs compared rather than stripped and only the cache-prefix digits normalized | **Compared, not awaited.** Baseline recorded for 391 of the 392 scenarios and replayed against the delivered tree on both cookie passes: **367 of 391 match** non-secure, 355 secure. No difference is an HTML-surface regression — the 23 are the escalated security remediations, four baseline transport failures from the application's own mid-capture death, two asset paths the baseline cannot build, and one session-cookie emission. Note one harness rule the comparison depends on: capture and replay must use the same port, or absolute `href`/`src` and inline-script digests differ on the authority alone |
 | **Persisted data and file formats** | `test/parity/storage.js` and `test/parity/worker.js`, which assert the exact sha1 object key against pre-migration objects rather than freshly written ones — the only way a changed digest surfaces as a lookup failure instead of passing | **PASS on both. Storage — run, 35 of 35, exit 0**: every key, suffix, extension, content-type, avatar-gating, bucket-selection and export-key case passes against pre-migration objects, and so now does `archive-layout` — the single case that failed while `archiver` 2.1.1 wrote `crc32` 0. **Worker — run, 109 of 109 checks, 7 jobs driven on real `bull` 4.16.5, 0 notices, exit 0**: the object-key and persistence assertions this row exists for are now made against an export that actually completes. So the persisted-key contract is **verified** and the **archive byte format is verified too**. Two earlier revisions are superseded: one recorded both as PASS with the deferred-dependency blockers resolved before that was true, and one recorded a single storage failure and 17 failing worker checks while those blockers were live. Both are reachable as `npm run verify:storage` and `npm run verify:worker`, and through `npm run verify:parity` |
-| **Existing assertions** | The suite gate, which permits a reviewed **stub-syntax** change, and an **explicit, per-case, measured exception register** for anything that moves an expected value or the registered set, [§6.2.1](#621-the-baseline-correction-exception-register) | **PARTLY MET — 130 registered / 129 executed / 95 passing / 36 failing**, asserted by the run itself. **On the criterion this row states, the result is clean: no assertion was deleted, loosened or made vacuous**, and only stub syntax changed for the maintained `sinon`. **Zero of the 124 baseline cases carry a changed expectation** (**measured**: the only hunks under `test/lib/` are new files, the `sequence` and suite-total additions, one removed unused `require`, two comment fences and stub syntax). An earlier revision of this row claimed 18 changed cases replacing 29 assertion lines with 33; no such row exists in the tree, and [§6.2.1](#621-the-baseline-correction-exception-register) now records the one exception that does exist — the two removed comment fences, which change the registered set and not any assertion. What is unmet is the *passing* count, not the assertion contract: 27 base-commit expectations that byte-identical production code has never satisfied, plus 9 failing and 1 unexecuted case behind a single frozen request value — both sets accounted for at [§6.2.1](#621-the-baseline-correction-exception-register) and in the **Existing suite** row above |
+| **Existing assertions** | The suite gate, which permits a reviewed **stub-syntax** change, and an **explicit, per-case, measured exception register** for anything that moves an expected value or the registered set, [§6.2.1](#621-the-baseline-correction-exception-register) | **PARTLY MET — 130 registered / 130 executed / 103 passing / 28 failing**, asserted by the run itself. **On the criterion this row states, the result is clean: no assertion was deleted, loosened or made vacuous**, and only stub syntax changed for the maintained `sinon`. **Zero of the 124 baseline cases carry a changed expectation** (**measured**: the only hunks under `test/lib/` are new files, the `sequence` and suite-total additions, one removed unused `require`, two comment fences and stub syntax). An earlier revision of this row claimed 18 changed cases replacing 29 assertion lines with 33; no such row exists in the tree, and [§6.2.1](#621-the-baseline-correction-exception-register) now records the one exception that does exist — the two removed comment fences, which change the registered set and not any assertion. What is unmet is the *passing* count, not the assertion contract: **27** cases fail and the gate assertion itself is reported as the 28th failure, each group attributed in the **Existing suite** row above. An earlier revision of this row read **130 / 129 / 95 / 36**, measured before `test/helpers/flow.js` was corrected to send `outline=true`; the 9 failing and 1 unexecuted case that figure attributed to the frozen `?outline=yes` value are closed, and execution now equals registration |
 | **Error-to-response mappings** (R-e) | `docs/error-edge-inventory.md` plus the failure-path cases in [§4.6](#46-failure-paths-run-beside-the-success-sweep) | Inventory **regenerated from the delivered tree against a baseline worktree**: its authoritative verdict table now reads **372 rows — 295 closed, 57 open, 20 not compared**, the open set splitting 20 outcome-changed / 25 no-target-row / 12 new-in-the-target. **All 20 outcome-changed rows are adjudicated site by site against `git show 2f8712a:<file>` in [§6.20](#620-the-error-edge-inventorys-open-rows-adjudicated), and every one is a comparator artifact with zero observable wire change.** An earlier revision of this row recorded 332 rows and 245 closed, taken before the regeneration |
 
 The distinction in the "existing assertions" row is the one the gate is worded around, and it is worth
@@ -1791,30 +1798,48 @@ first-collected spec, the spec glob narrowed so helpers are no longer collected 
 helper's agent made lazy, and `sinon` moved to a maintained line with three legacy stub calls
 converted. `test/setup.js` was reduced to an inert signpost recording why its content moved.
 
-**And the outcome, measured in this delivery.** `CI=true npm test` → **130 registered, 129 executed,
-95 passing, 36 failing**, and the run asserts that contract mechanically: `EXPECTED_CASES = 130` in
-`test/lib/api/index.js`, whose root `after` hook walks the root suite and fails the run unless the
-number of cases **registered**, **executed** and **passing** all equal 130. Here they are 130, 129 and
-95, so the gate is unmet by 1 on execution and 35 on passing. That hook is what closes the gap a green
+**And the outcome, measured in this delivery.** `CI=true npm test` → **130 registered, 130 executed,
+103 passing, 28 failing** (exit 28), and the run asserts that contract mechanically:
+`EXPECTED_CASES = 130` in `test/lib/api/index.js`, whose root `after` hook walks the root suite and
+fails the run unless the number of cases **registered**, **executed** and **passing** all equal 130.
+Here they are 130, 130 and 103, so registration and execution are met and the gate is unmet by 27 on
+passing — and the hook's own failure is the 28th entry in the reporter's failure list, which is why
+the reported count is one above the number of failing cases. That hook is what closes the gap a green
 reporter line leaves open — an uninvoked spec file or a `before all` hook that suppresses the rest of
 its suite lowers the reported total without reporting a failure of its own — and in this tree it is
 doing exactly that job rather than merely confirming a pass. **Negative-tested** in both directions: an
 expectation one above the measured total fails while reporting `registered`, `executed` and `passed`
 all equal, and one deliberately broken case fails with `passed` one below `executed`.
 
-**The 36 failures have two causes, and neither is the runtime or framework move.** **27** are
-base-commit bodies whose expectations production code held byte-identical to `2f8712a` has never
-satisfied. They are **left failing rather than realigned**, which is the whole of the reason there is
-nothing for an exception register to hold: changing the expectation would have hidden the mismatch and
-changing production to satisfy it is the behaviour change the migration prohibits, so the failure
-itself is the record ([§6.2.1](#621-the-baseline-correction-exception-register)). The other **9**, together with the **1 case that never executes**,
-share a single cause: `test/helpers/flow.js` sends the base commit's own `?outline=yes` for a
-parameter the route validates as a boolean, so the response carries a validation flash and no `data`,
-the `before all` hook at `test/lib/api/course.js` is left without the course it was to create, and the
-cases that depend on it throw. Both halves are deliberately frozen — the client value to preserve
-base-commit request behaviour, the spec bodies to preserve the assertions — so closing this is a
-decision about which of the two to move, not a repair, and it is recorded here rather than resolved by
-editing whichever one is easier to reach.
+**The 27 failing cases fall into six measured groups, and none of them is the runtime or framework
+move.** The groups below are the run's own failure list, read from it rather than reasoned about —
+the first two are the same class of finding and are kept apart only because they sit in different
+suites:
+
+| # | Group | Measured symptom | Why it is left failing |
+|---|---|---|---|
+| **11** | Base-commit model bodies: 6 in `test/lib/models/plugins/roles.js`, 5 in `test/lib/models/trinket.js` | `expected false to be true` on `hasRole('trinket-code')`; `expected 'abcdefghijkl' to deeply equal 'abcdefghij'`; four `TypeError: cb is not a function` | Expectations production code held byte-identical to `2f8712a` has never satisfied. Changing the expectation hides the mismatch; changing production is the behaviour change R-d prohibits |
+| **6** | Course-creation, course-editing and registration cases | `expected '' to include '/testlibraryuser/courses/the-sampler/copy'`; the rendered course page not containing `test course`; `expected 500 to deeply equal 301` (TST-70, [§6.2.3](#623-tst-70--the-one-collision-that-cannot-be-resolved-three-ways)); `expected [] to not exist` ×2; `expected 500 to deeply equal 200` | Same class, one of them the three-way collision §6.2.3 records in full |
+| **4** | Logged-out `/api/` course cases | `expected 401 to deeply equal 302` | `app.js` classifies an `/api/` path as an API request and answers its 401 as JSON instead of redirecting — baseline behaviour of the delivered error mapper |
+| **4** | File cases: two multipart uploads and the two downloads that depend on them | `expected 415 to deeply equal 200` ×2, `expected 404 to deeply equal 200` ×2 | The shipped routes do not enable multipart parsing, and 415 is what baseline answers on hapi 20.3.0 and 21.4.10 alike ([§6.2.4](#624-post-file-answers-415-to-a-multipart-upload-and-that-is-baseline)) |
+| **1** | `test/lib/api/profile.js`'s avatar case | `TypeError: Cannot read properties of undefined (reading 'containers')` | The body builds its own expected value from `config.cloud.containers.userAvatars.host`, and **no** application file and no committed configuration file defines a `cloud` namespace — including `2f8712a`'s own `config/test.yaml` — so it throws before any request is made. Supplying the key would be inventing the value the assertion compares against ([§6.2.2](#622-preconditions-drivers-and-doubles-the-suite-had-to-supply-itself)) |
+| **1** | The re-enabled course-download case | `expected 404 to deeply equal 200` | Its frozen `before` hook requests `/…/courses/<slug>/download`, while the route declares `/{userSlug}/courses/{courseSlug}/download.zip` with a **required** `format` query, so the request matches no route (below) |
+
+**The `?outline=yes` group is closed, and the execution count is the proof.** An earlier revision of
+this section recorded **130 / 129 / 95 / 36** and attributed 9 failures plus the 1 unexecuted case to
+`test/helpers/flow.js` sending the base commit's own `?outline=yes` for a parameter the route
+validates as a boolean: the response carried a validation flash and no `data`, the `before all` hook
+at `test/lib/api/course.js` was left without the course it was to create, and the cases depending on
+it threw. The delivered helper sends **`outline=true`**, which is what the application's own client
+sends at all four of its call sites, so that hook completes and **execution equals registration** —
+which is the only mechanism that was ever suppressing a case, and is why no row in the table above is
+attributed to it. The two figures are **not** otherwise subtractable: 130 / 129 / 95 / 36 was measured
+on a tree that also carried `features.assets` and a `cloud` block in `config/test.yaml` and
+`supertest` at 7.1.4, all three since withdrawn
+([§6.2.5](#625-what-configtestyaml-diverges-from-2f8712a-by-and-what-it-no-longer-does) and
+[`dependency-inventory.md`](dependency-inventory.md) §5), so the difference
+between the two runs is a difference of trees rather than of one cause. The `outline` value is a
+**precondition** correction rather than an assertion change, and it is recorded as one in §6.2.2.
 
 **An earlier revision of this document recorded 234 passing / 0 failing and a gate asserting 234.**
 Both figures described a tree this delivery does not ship. The `email-compat` and `diff-compat`
@@ -1839,12 +1864,17 @@ that was disabled rather than deleted — so the correct response is to make it 
 the target around it. The fence removal that re-enables it is the single entry in
 [§6.2.1](#621-the-baseline-correction-exception-register).
 
-**It now passes, with its five assertions byte-identical to the ones written at base commit.** Only
-its request was ever wrong. The application declares
+**It registers and it fails, with its five assertions byte-identical to the ones written at base
+commit — and both halves of that are deliberate.** **Measured** in the delivered run:
+`expected 404 to deeply equal 200`, at `test/lib/api/course.js:272`. The cause is its own request,
+not the migration. The application declares
 `GET /{userSlug}/courses/{courseSlug}/download.zip` with a **required** `format` query of `md` or
-`html` (`config/routes.js:163-173`), while the URL the case's `before` hook built carried neither the
-`.zip` suffix nor the query, so it matched no route at all. Correcting the URL exposed a second,
-separate obstacle, and it is a **data** condition rather than a code one:
+`html` (`config/routes.js:163-173`), while the URL the case's frozen `before` hook builds carries
+neither the `.zip` suffix nor the query, so it matches no route at all — which is exactly why the
+body was fenced off at base commit rather than deleted.
+
+**What it would take to make it pass, and why that was withdrawn.** Correcting the URL was tried, and
+it exposed a second, separate obstacle that is a **data** condition rather than a code one:
 `courses.download` writes each material's body straight to disk with
 `fs.promises.writeFile(path, material.content)`, `test/helpers/defaults.js` declares a material as
 `{name, type}` with no `content`, and a material created through `flow.addNewMaterial` and never given
@@ -1852,13 +1882,14 @@ a body therefore holds `content: undefined`. **Measured**: that call rejects wit
 `ERR_INVALID_ARG_TYPE` — *The "data" argument must be of type string or an instance of Buffer,
 TypedArray, or DataView. Received undefined* — the chain's `.catch` answers
 `errors.badImplementation(err.message)`, and the route returns 500. The same rejection occurs at
-`2f8712a`, where the identical value was passed to `util.promisify(fs.writeFile)`, so this is not a
-conversion regression and no production change is warranted; the case supplies the missing bodies in
-its own `before` hook through the public model surface (`Lesson.findByIds`, `Material.findByIds`,
-`Material.findByIdAndUpdate`) and then requests the download. Without that step the route answers 500;
-with it, 200 with `Content-Disposition: attachment; filename=<slug>.zip` and
-`Content-Type: application/zip`, and `/tmp/<owner>` removed — which is what the case has always
-asserted.
+`2f8712a`, where the identical value was passed to `util.promisify(fs.writeFile)`, so it is not a
+conversion regression and no production change is warranted either way. Closing the case therefore
+needs **two edits inside a base-commit spec body** — a corrected request URL and a `before` hook that
+supplies the missing material bodies through the public model surface — and the delivered tree makes
+neither: `git diff 2f8712a -- test/lib/api/course.js` is the **two fence lines and nothing else**. The
+edits are recorded here as what a human would have to authorize, and the case is left in the failure
+list above rather than quietly repaired, because a spec-body edit outside the authorized file set is
+the thing this register exists to keep visible.
 
 The six new cases required `'pages'` to be inserted into the fixed `sequence` array in
 `test/lib/api/index.js`, without which a new file in that directory is never invoked.
@@ -1892,9 +1923,12 @@ executed and passing, and `test/lib/api/index.js` asserts that number mechanical
 (`EXPECTED_CASES = 130`). Restoring the fences would drop registration to **129** and fail that gate
 against the AAP's own figure. So the fence removal is the authorized reading: the AAP counts the 124
 bodies **present** at `2f8712a`, one of which was disabled rather than deleted, and the way to
-satisfy a frozen figure is to make that body pass rather than to renumber the target around it — which
-is what [§6.2](#62-npm-test-had-no-green-baseline) records having done, correcting only the request
-the case sends and the fixture data it needs.
+satisfy a frozen figure is to register that body rather than to renumber the target around it.
+**Registering it is as far as the delivered tree goes**: the case fails with a measured 404, and the
+two spec-body edits that would make it pass — a corrected request URL and a `before` hook supplying
+the missing material bodies — were tried and withdrawn as edits outside the authorized file set, so
+they are recorded in [§6.2](#62-npm-test-had-no-green-baseline) as authorization a human would have to
+give rather than as work already done.
 
 **An earlier revision of this section tabulated eighteen rows** — "eighteen of the 124 baseline cases
 carry a changed expectation", replacing 29 baseline assertion lines with 33, across four spec files —
@@ -1915,44 +1949,59 @@ These alter what a case **sends**, or what the environment **provides**, and nev
 They are listed in full because the line between a precondition and a weakened assertion is exactly
 where this kind of work goes wrong.
 
-- **`test/helpers/mail.js` stubs `mailer.isConfigured` alongside `mailer.send`**, because
-  `config/default.yaml` ships no SMTP host and every mail-sending handler short-circuits *before*
-  `send` with `request.fail`. Measured in the failing run as
-  `info: { message: 'Email is not configured. Password reset is not available.' }`. Unblocks the four
-  forgot-password cases and the trinket-share case.
-- **`config.features.assets` is enabled for the file suite only**, and
-  **`config.aws.buckets.useravatars.host` is replaced for the profile suite only** — each through
-  `Object.defineProperty` in that suite's own `before`, restored in its `after`. The scoping is not
-  incidental: an earlier draft set both in `config/test.yaml`, and that leaked into a sibling gate —
-  `verify:joi` reported **32** differences with the global flag and **28** without it, the four extra
-  rows all `POST /api/users/assetFromURL`, whose handler is gated on the same flag. `config/test.yaml`
-  is byte-identical to `2f8712a` in the delivered tree, verified by `git diff`. Plain assignment was
-  rejected because the `config` package persists it to `config/runtime.json`;
-  `Object.defineProperty` persists nothing, which is the technique `app.js` itself documents.
+- **`config/test.yaml` supplies an `app.mail` credential, and it is a recorded divergence rather than a
+  suite-local stub.** `test/helpers/mail.js` is **byte-identical to `2f8712a`** (verified by
+  `git diff`) and stubs `mailer.send` only, so nothing in the harness makes `mailer.isConfigured`
+  answer true. `config/default.yaml` ships `from` and `host` empty, every mail-sending handler
+  short-circuits *before* `send` with its own "not available" payload, and five baseline cases drive a
+  route **through** that send. **Measured on the delivered tree, both runs**: with the block present
+  the suite passes **103**; with it removed — `NODE_CONFIG='{"app":{"mail":{"from":"","host":""}}}'`,
+  which is what the file's absence leaves — it passes **98** and fails 33, and the five newly failing
+  cases are exactly the four in `test/lib/api/forgot_pass.js` plus the share-with-token case in
+  `test/lib/api/trinket.js`, with no other case moving in either direction (failure-title sets
+  diffed). The block is therefore load-bearing for five baseline assertions, and it is recorded in
+  [§6.2.5](#625-what-configtestyaml-diverges-from-2f8712a-by-and-what-it-no-longer-does) with the
+  other two divergences rather than presented as a stub.
+- **The asset and avatar setup is withdrawn, not suite-local.** An earlier revision of this bullet
+  said `config.features.assets` was enabled for the file suite only and
+  `config.aws.buckets.useravatars.host` replaced for the profile suite only, each through
+  `Object.defineProperty` in that suite's own `before`. **Neither mechanism exists**: `defineProperty`
+  appears nowhere under `test/` (**measured**: 0 occurrences). What existed was a `features.assets`
+  key and a `cloud.containers.userAvatars` block in `config/test.yaml`, and **both have been removed
+  as unauthorized scope** — see §6.2.5, which records what removing them costs, and the failure table
+  in [§6.2](#62-npm-test-had-no-green-baseline), where the one case it costs now sits. The reason the
+  scoping mattered is still worth keeping: while the flag was global, `verify:joi` reported **32**
+  differences against **28** without it, the four extra rows all `POST /api/users/assetFromURL`, whose
+  handler is gated on the same flag — which is why a test-configuration key is never a free change.
 - **`test/helpers/flow.js`'s outline driver sends `outline=true`** rather than `'yes'`, because
   `Joi.boolean()` rejects `'yes'`, `'1'`, `1` and `'on'` on joi **17.13.3 and 18.2.5 alike** —
   measured in two isolated installs, so this is not a consequence of the bump. The un-coerced value
   produced a validation flash and a `before all` hook failure that suppressed nine cases.
-- **The two upload drivers build an RFC 7578 conforming multipart body.** superagent 0.16.0, which
-  supertest 0.8.3 pins and which AAP §0.5.1.6 holds at that version, labels file parts
-  `Content-Disposition: attachment`, while `@hapi/content` requires the disposition type to be exactly
-  `form-data` and `@hapi/subtext` answers `Boom.badRequest('Invalid multipart payload format')`
-  otherwise. The driver preserves superagent's measured per-part content types.
-- **The file suite doubles `FileUtil.downloadMaterialFile`**, as the store helper already doubles Redis
-  and the mail helper SMTP: the real implementation pipes an S3 `getObject().createReadStream()`, which
-  no test host can serve.
-- **The material-patch case establishes the `test content` precondition its own patch context line
-  declares.** `diff` 1.0.8 did not require it for that input, because its index arithmetic does not
-  reject that hunk against an empty source — measured: `applyPatch('', patch)` returns fabricated
-  patched text on 1.0.8 and `false` on 8.0.4. It is a difference in *that* case only: 1.0.8 does
-  return `false` when a context line genuinely mismatches non-empty content, which is why the
-  delivered compatibility layer propagates `false` verbatim
-  ([§6.2.4](#624-post-file-answers-415-to-a-multipart-upload-and-that-is-baseline)).
-- **The download case supplies material bodies**, for the measured reason set out above.
-- **The file suite switches multipart parsing on for `POST /file`**, suite-scoped and restored, because
-  the shipped route answers 415 to every multipart body on hapi 20.3.0 and 21.4.10 alike. The route
-  declaration is deliberately **not** changed; the reasoning, the precedence argument and the
-  outstanding product decision are in [§6.2.4](#624-post-file-answers-415-to-a-multipart-upload-and-that-is-baseline).
+- **The S3 boundary is doubled once, for the whole run, in `test/lib/00-ready.js`.** The real
+  `lib/util/file.js` builds an `aws-sdk` v2 client per call and nothing under `test/helpers/**`
+  replaces it, so the readiness spec preloads `test/parity/fixtures/aws.js` — the same
+  filesystem-backed `putObject` / `getObject` / `deleteObject` / `headObject` the parity harness uses
+  — before `app.js` is required (`test/lib/00-ready.js:65`, `:93`). It is a **run-wide** preload, not
+  a suite-scoped double: one implementation of the storage contract serves the suite and the corpus.
+  An earlier revision of this bullet described the file suite doubling
+  `FileUtil.downloadMaterialFile` in its own hooks; `test/lib/api/files.js` is **byte-identical to
+  `2f8712a`** (**measured**: `git diff 2f8712a -- test/lib/api/files.js` is empty), so no such double
+  exists.
+- **Three further preconditions an earlier revision listed do not exist in the delivered tree, and
+  they are named rather than dropped because each was a real attempt.** A suite-scoped
+  `server.match('POST', '/file').settings.payload.multipart` switch, a `before` hook supplying
+  material bodies for the course-download case, and a `test content` precondition for the
+  material-patch case were all written and all **withdrawn** as edits to base-commit spec bodies
+  outside the authorized file set. **Measured**: `git diff 2f8712a -- test/lib/api/course.js` is the
+  two fence lines and nothing else, `test/lib/api/files.js` is unchanged, and `multipart` appears
+  nowhere under `test/`. The consequences are visible rather than hidden — the four file cases and the
+  course-download case are in the failure table in
+  [§6.2](#62-npm-test-had-no-green-baseline) — and the multipart reasoning, its precedence argument
+  and the outstanding product decision are in
+  [§6.2.4](#624-post-file-answers-415-to-a-multipart-upload-and-that-is-baseline). The material-patch
+  case needs no precondition and **passes**: the `applyLegacyPatch` port in `lib/controllers/course.js`
+  reproduces `diff` 1.0.8's arithmetic against an empty source, which is the behaviour §6.2.4's
+  closing paragraph records.
 
 #### 6.2.3 TST-70 — the one collision that cannot be resolved three ways
 
@@ -2002,8 +2051,10 @@ digest-derived path — and the route as shipped cannot produce one.
 upgrade** that predates this work: the route declaration was written when multipart was parsed by
 default, and nobody added the flag when the default flipped.
 
-**Resolution: the shipped route is left answering 415, and the parser is switched on in the harness
-for the duration of the file suite only.** The controlling requirement is **R-d**, and the precedence
+**Resolution: the shipped route is left answering 415, and the harness is left alone with it.** The
+parser is not switched on anywhere — not in the declaration and not in a suite hook — so the four
+file cases fail against base-commit expectations and are recorded as failing in
+[§6.2](#62-npm-test-had-no-green-baseline). The controlling requirement is **R-d**, and the precedence
 argument has to be stated because it runs the *opposite* way to the one AAP §0.7 makes for the
 never-settling file response — which is the closest-looking case in the whole migration.
 
@@ -2032,13 +2083,20 @@ is therefore absent from the delivered tree (**measured**: 0 occurrences of `mul
 `config/routes.js` and in `config/api_routes.js`), and `config/routes.js` differs from `2f8712a` by
 the `js-yaml` hunk and nothing else, verified by `git diff`.
 
-The harness switches the parser on through `server.match('POST', '/file').settings.payload.multipart`
-in the file suite's own `before`, restoring the original value in its `after`. Verified on 21.4.10 that
+**A harness-side switch was written and then withdrawn too, and that is the second half of the
+decision.** It read `server.match('POST', '/file').settings.payload.multipart` in the file suite's own
+`before` and restored the original value in its `after`, and it worked: verified on 21.4.10 that
 `settings.payload` is a plain, unfrozen object that `@hapi/subtext` reads at parse time, that a mutated
-route then answers 200, and that the restore is clean. That keeps four cases exercising real production
-code — the sha1 hashing, the extension whitelist, the mime resolution, the `File` document and the
-download handler — instead of trading them for an assertion about a framework default, while leaving
-the deployed route's behaviour exactly where baseline left it.
+route then answers 200, and that the restore is clean. It would have kept four cases exercising real
+production code — the sha1 hashing, the extension whitelist, the mime resolution, the `File` document
+and the download handler — rather than trading them for an assertion about a framework default. It was
+removed because it is an edit to a base-commit spec body outside the authorized file set, and because
+the same reasoning that forbids changing the route forbids arranging for the route to behave
+differently under test without recording it as a divergence. **Measured**: `multipart` appears nowhere
+under `test/`, and `test/lib/api/files.js` is byte-identical to `2f8712a`. The consequence — two
+uploads at 415 and the two dependent downloads at 404 — is carried openly in
+[§6.2](#62-npm-test-had-no-green-baseline)'s failure table, and the mechanism is kept here because
+whoever takes the product decision below will need it.
 
 **What a human must do.** Setting `payload.multipart: true` on `POST /file` and `POST /file/avatar` is
 almost certainly the correct product change — file upload is the feature those routes exist for — but
@@ -2102,6 +2160,41 @@ the corpus's recorded authority, with ~11 attributed residual differences and no
 ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). What remains is the
 **secure** half, which has no baseline of its own and cannot get one from `2f8712a`, and it is carried
 into [§8](#8-what-remains-unproven) as an open item rather than presented as a pass.
+
+#### 6.2.5 What `config/test.yaml` diverges from `2f8712a` by, and what it no longer does
+
+**The file is not byte-identical to base commit, and an earlier revision of this document said it
+was.** It diverges by exactly **three** things and nothing else, measured with
+`git diff 2f8712a -- config/test.yaml`, and each carries its own authority:
+
+| Divergence | Authority | Why it is there |
+|---|---|---|
+| `app.plugins.session.cookieOptions.password`, a fixed test-only secret | **AAP §0.4.1 authorizes it** | The bootstrap requires 32 characters and `config/default.yaml` ships an empty password. Fixed rather than generated so session cookie values are reproducible across a capture/replay pair ([§6.4](#64-a-clean-tree-cannot-boot)) |
+| `db.redis.enabled: false` | **AAP §0.4.1 authorizes it** | Committed configuration declares no `db.redis.enabled` key at all, so on a clean tree the value is `undefined` and any `!== false` gate treats Redis as available; the suite then constructs Bull against `localhost:6379` |
+| `app.mail: {from: 'test@localhost', host: '127.0.0.1'}` | **Not in §0.4.1's edit list — retained on a measured gate argument, and recorded here as a divergence** | `test/helpers/mail.js` is byte-identical to base commit and stubs `mailer.send` only, never `isConfigured`, so without this block every mail-sending handler short-circuits before the send. **Measured both ways on the delivered tree**: 103 passing with the block, **98 passing / 33 failing** without it, the five newly failing cases being exactly the four in `test/lib/api/forgot_pass.js` and the share-with-token case in `test/lib/api/trinket.js` (failure-title sets diffed; nothing else moves). AAP §0.9.2's "assertions unweakened" is a hard gate, so the alternative to this key is five weakened baseline assertions, which R-d and §0.9.2 both forbid. No SMTP connection is ever opened — the transport is stubbed — and `config/default.yaml` keeps its empty production defaults |
+
+**Two keys this file used to carry have been withdrawn as unauthorized scope, and the cost is
+measured rather than argued.** `features.assets: true` and the whole `cloud.containers.userAvatars`
+block are **gone**. Removing them costs exactly **one** case — *API tests User Profile As a logged in
+user should allow me to update my username, name and avatar* — and that case is not a migration
+casualty: it builds its own expected value from `config.cloud.containers.userAvatars.host`, and
+**no** config file in the repository defines a `cloud` namespace and **no** application file reads
+one (**measured**: 0 occurrences of a `cloud:` key across `config/*.yaml` and 0 of `config.cloud`
+under `lib/`), including at `2f8712a`, whose own `config/test.yaml` is eleven lines with no such key.
+So the case threw at base commit too and has never been green; supplying the key would have been
+inventing the value the assertion compares against. It sits in the failure table at
+[§6.2](#62-npm-test-had-no-green-baseline) where it belongs.
+
+**`test/mocha.opts`'s `--timeout 20000` is withdrawn on the same basis, and it cost nothing.** AAP
+§0.4.1 authorizes the glob narrowing and `--require ./test/env.js` alongside the three existing flags,
+and no sixth flag. The delivered file holds exactly five lines — `--reporter spec`, `--recursive`,
+`--check-leaks`, `--require ./test/env.js` and `test/lib/**/*.js` — and the suite still registers and
+executes all **130** cases without the timeout (**measured**: the run in
+[§6.2](#62-npm-test-had-no-green-baseline) reports `registered=130, executed=130`). One property of
+this file is worth recording next to that, because it is a trap rather than a preference: **Mocha 3
+whitespace-splits `mocha.opts` and has no comment syntax**, so a `#` line would be passed to Mocha as
+an argument. The file therefore carries **no `#` characters at all**, and an explanation of a flag
+belongs here rather than in it.
 
 ### 6.3 No database provisioning
 
@@ -2347,9 +2440,17 @@ deprecation or warning lines**, its stderr carrying only hapi's own `Debug: auth
 `verify:worker`, **0 notices with 0 allowed** under both flags across seven real jobs; and
 `verify:storage`, no captured warning across its cases. **The archive dependency moved again after
 those four drives**, to the delivered `archiver` **7.0.1**, which changed the resolved graph — the
-delivered lockfile and install agree at **520 package entries** (**measured**: `package-lock.json`
-against `node_modules/.package-lock.json`), so the 410-package figure quoted above and elsewhere in
-this file belongs to the graph that preceded the move and is not the delivered count. Two of the four
+delivered lockfile and install agree with each other (**measured**: `package-lock.json` against
+`node_modules/.package-lock.json` — **509** lock entries excluding the root record, **470**
+installed in this checkout, 0 installed entries absent from the lock and 0 version differences; a
+fresh `npm ci` from the same pair reports **472**, the two extra being the optional native
+`nodejieba` and its `nan`, which this checkout's install did not take), so the 410-package figure
+quoted above and
+elsewhere in this file belongs to the graph that preceded the move and is not the delivered count.
+A **520**-entry figure appeared here and in [§1.4](#14-tool-provenance-per-artifact) while `supertest`
+was at 7.1.4; the withdrawal of that move
+([`dependency-inventory.md`](dependency-inventory.md) §5) is what took the lock to 510 records, 509
+excluding the root. Two of the four
 drives **were** re-taken on the delivered graph and both are recorded in
 [§5](#5-the-gate-register-and-what-each-gate-proves): `verify:worker` reports 0 notices under both
 flags over 109 of 109 checks, and `verify:storage` reports no captured warning over 35 of 35 cases.
@@ -2464,6 +2565,29 @@ install rewrites. Two limits keep the measurement from being over-read. The unit
 Dockerfile row in [§8](#8-what-remains-unproven) stays open. And the configured `shells` and worker
 endpoints are unreachable outside the compose network, which is **preserved rather than fixed** as R-d
 and R-f require — acquisition is lazy, so `/health` answers regardless.
+
+#### One image's comments described access controls it does not implement, and they have been corrected
+
+**Measured.** `serverside/pygame/worker/Dockerfile` carried three comment blocks stating that its
+`entrypoint.sh` prepared access control at start time — a websockify token, an Origin allowlist and an
+RFB password written under `/run` — while `entrypoint.sh` itself records that it "deliberately
+prepares nothing" and writes no such artifact. The comments and the script therefore contradicted each
+other, and the comments were the wrong half: a reader would have taken a hardened container from a
+file that ships an unchanged one.
+
+**Resolution.** The three blocks now record what the image does: **access control is UNCHANGED from
+before the Node 22 move and is decided entirely by `supervisor/xvnc.conf` and
+`supervisor/novnc.conf`**, with the note that anything which gates access belongs in a separately
+authorized change covering the manager, the proxy, the compose topology and the browser client
+together. `entrypoint.sh` is **retained** — `ENTRYPOINT` needs a target to exec, and deleting the file
+would leave the container unable to start — and its own header already said so. The measured basis for
+"unchanged" is in that header: on the tightvncserver 1.3.10 this image installs, the committed
+`xvnc.conf` command advertises the same RFB security types, 1 (None) and 16 (Tight), whether or not
+`/home/trinket/.vnc/passwd` exists, so removing the empty password file changed nothing.
+**Measured after the correction**: `docker build --check` in that directory reports
+`Check complete, no warnings found.`, exit 0. This is a comment correction, not a behaviour change,
+and it is recorded here because a false comment about a security control is the kind of divergence a
+later reader acts on.
 
 **Resolution.** **Treat the four units' dependency resolution and boot on Node 22 as measured, and
 close the open item rather than carry it.** AAP §0.9.6 listed these units as unproven with "dependency
@@ -3096,7 +3220,7 @@ see that the rows left rather than being quietly dropped.
 |---|---|---|
 | **The request corpus replay** — identical normalized responses across the 233-route inventory | **The comparison is measured; the gate is not met, and the reason is a baseline defect.** The baseline side is captured through the delivered generator — 391 of 392 scenarios carry a recorded response, 233 of 233 routes are represented, and the embedded provenance verifies — and the replay runs: driven at the corpus's own recorded authority `127.0.0.1:20530`, the target answers **all 392 scenarios with no application death**, and the residual reduces to **~11 scenarios, every one attributed** — the approved deviation, the rows whose *baseline* side is a dead socket, and one asset route the baseline could not serve because its capture ran without built CSS ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). **What is not proven is the secure half, and it cannot be captured from `2f8712a`**: AAP §0.9.3 requires a `--secure-corpus` capture against a `--secure` server, and the baseline application crashes mid-capture — `Error: Cannot wrap an error` from `request.fail` at `lib/util/routeParser.js:510`, reached from `lib/controllers/admin.js:160` — which an independent recapture attempt reproduced, dying at case 276 of 392. The replay reports the shortfall itself as `NOT A GATE RUN: measured-secure-pass`. Two earlier revisions are superseded: one recorded **367 match / 23 differ** non-secure and **355 / 35** secure, taken before the security remediations were reverted, and one recorded the comparison as unproven because `replay.js` refused an artifact whose provenance named an unretrievable generator | A secure-side capture, which needs the baseline crash fixed or worked around first — it is the one gate in this table whose blocker is in the **baseline** rather than in this delivery |
 | **The zero-warning gate over the route surface** | Four named drives are clean — boot and a 15-route drive on the 410-package graph that preceded the archive-dependency move, and `verify:worker` (0 notices with 0 allowed over 109 of 109 checks) and `verify:storage` (none across 35 of 35 cases) re-driven on the delivered graph at `archiver` 7.0.1 ([§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application)). What is unproven is the drive the request's wording reaches furthest into: the **233-route, five-identity** pass. Its only recorded run **failed** this very check in both cookie passes — `gates.failedChecks` naming `non-secure: zero warnings from the application` and `secure: zero warnings from the application`, with `4 warning line(s) on the application's stderr` for the self-consistency drive and `1 warning line(s)` against the migrated tree — at `verification.applicationHead.recorded = 0716cd2811…`, **before** the archive-dependency move that removed the one module-load source those lines are attributable to, and it has not been re-driven since (**artifact**: `test/parity/corpus.json.provenance.json`). The 233-route two-identity sweep recorded in §6.11 was measured earlier in this delivery and was not re-driven on the delivered graph either | `replay.js --annotations` under `--pending-deprecation --trace-deprecation` over the full surface, with the `zero warnings from the application` check reported clean in **both** cookie passes — which needs the secure-side capture in [§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) for the second pass |
-| **The existing suite** | **Measured 130 registered / 129 executed / 95 passing / 36 failing**, with registered = executed = passing = 130 asserted by the run itself (`EXPECTED_CASES = 130`) and negative-tested in both directions. 130 = the 124 `it()` bodies present at `2f8712a` — 123 active plus the disabled download case, now active with its assertions byte-identical — plus the 6 new page-surface cases. **No case carries a changed expectation**: 0 assertion lines differ from `2f8712a`, and the single recorded exception is the fence removal that re-enables the 124th body ([§6.2.1](#621-the-baseline-correction-exception-register)). An earlier revision of this row claimed eighteen changed cases and 29 assertion lines replaced by 33, which the tree contradicts. The 36 failures are 27 base-commit expectations byte-identical production code has never satisfied, plus 9 failing and 1 unexecuted case behind one frozen request value. An earlier revision recorded 234 passing against a gate asserting 234, counting the `email-compat` and `diff-compat` suites this delivery removed | **Not met on the passing count**; met on the assertion contract |
+| **The existing suite** | **Measured 130 registered / 130 executed / 103 passing / 28 failing**, with registered = executed = passing = 130 asserted by the run itself (`EXPECTED_CASES = 130`) and negative-tested in both directions; the 28 reported failures are **27 cases plus the gate assertion itself**. 130 = the 124 `it()` bodies present at `2f8712a` — 123 active plus the disabled download case, now registered with its assertions byte-identical — plus the 6 new page-surface cases. **No case carries a changed expectation**: 0 assertion lines differ from `2f8712a`, and the single recorded exception is the fence removal that re-registers the 124th body ([§6.2.1](#621-the-baseline-correction-exception-register)). An earlier revision of this row claimed eighteen changed cases and 29 assertion lines replaced by 33, which the tree contradicts. The 27 failing cases are grouped and attributed in [§6.2](#62-npm-test-had-no-green-baseline): 11 base-commit model expectations byte-identical production code has never satisfied, 6 course and registration cases of the same class, 4 logged-out `/api/` cases answering 401 as JSON, 4 file cases at 415 and 404, 1 profile case that throws on a `config.cloud` namespace nothing defines, and the 1 re-registered download case whose frozen URL matches no route. Two superseded figures are named rather than dropped: **130 / 129 / 95 / 36**, measured before `test/helpers/flow.js` was corrected to `outline=true` and before the `config/test.yaml` and `supertest` reversions ([§6.2.5](#625-what-configtestyaml-diverges-from-2f8712a-by-and-what-it-no-longer-does)), and **234 passing against a gate asserting 234**, counting the `email-compat` and `diff-compat` suites this delivery removed | **Not met on the passing count**; met on the assertion contract |
 | **The private-field cookie patch on hapi 21** | It mutates a private field and its failure mode is **silence** ([§4.3](#43-why-the-cookie-expires-assertion-exists)). The 233-route sweep did not assert cookie attributes | The cookie-attribute comparison in **both** overlay passes, including the presence and whole-day horizon of `Expires` |
 | **The secure cookie pass** | **No secure-side baseline exists, and none can be captured from `2f8712a`.** An earlier revision recorded one — `test/parity/corpus.secure.json`, 382 of 383 scenarios — and it was removed as a path outside the authorized file set; the `--secure-corpus` argument that reads it **is** in the delivered `replay.js`, so the flag is not what is missing. What is missing is a capture, and the baseline crash above blocks taking one ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). So the secure pass **derives** its expected cookie attributes from the non-secure recording, which the tool reports as non-qualifying in its own words — `NOT A GATE RUN: measured-secure-pass` — rather than presenting as a measurement. Measured consequence, when that derived pass was last driven: the same differences as the non-secure pass plus **12** of a single shape — `header.set-cookie.count`, `cookies.count` and `cookie[session].present` each moving 1 → 0 — which is the derivation, not behaviour | Capture a corpus against a `--secure` server and pass `--secure-corpus "$CORPUS_SECURE"`, which requires the baseline crash to be fixed or routed around first |
 | **`joi` 18.2.5 parity across the 102 targets — closed on the comparison** | Both sides are measured. The baseline is the sealed capture at 17.13.3 ([§6.6](#66-native-hapi-validation-is-unreachable-here)) and `npm run verify:joi` compares 102 targets, 306 cases, 462 outcomes and 15 678 fields against it on the delivered tree with **0 schema-level differences** and **0 generated-input differences** — the parity question this row asks, answered. Differences outside it, in the `http` and `summary` scopes, are attributed to the baseline crash in [§6.6](#66-native-hapi-validation-is-unreachable-here) and are not validation verdicts. Its **exit status** is tracked separately and is not re-measured at this state ([§5](#5-the-gate-register-and-what-each-gate-proves)): it was 0 with `gate PASSED` before the security remediations, 1 on 60 non-verdict differences after them, and the command has not been re-driven since they were reverted | **Met on parity**; the command's exit status not re-measured |

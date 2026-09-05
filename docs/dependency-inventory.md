@@ -106,9 +106,9 @@ applied.
 |---|---|---|
 | Production dependencies declared | 58 | **39** |
 | Development dependencies declared | 11 | **8** |
-| Packages in the root lockfile | 678 | **521** (520 excluding the root record) |
+| Packages in the root lockfile | 678 | **510** (509 excluding the root record) |
 | Version moves — production (§3) | — | **17** |
-| Version moves — development (§5) | — | **2** (`sinon`, `supertest`) |
+| Version moves — development (§5) | — | **1** (`sinon`) |
 | Declarations removed | — | **23** (19 production, 4 development) |
 | Declarations added | — | **1** (`mongodb-memory-server`) |
 | `npm audit --omit=dev` | 15 critical, 28 high, 16 moderate — **59** | 0 critical, **1 high**, 6 moderate — **7** |
@@ -316,9 +316,14 @@ as majors *on advisory grounds*. That was **withdrawn** as inconsistent with the
 §1: once the lockfile was regenerated, none of the first three produces a critical or high finding —
 so an advisory-driven bump of any of them would have been unforced. `mongoose` is consequently
 deferred at 6.13.9 and `jszip` at 3.6.0, and **`archiver`'s advisory-driven bump stayed withdrawn**:
-the regeneration is what cleared its case, since `brace-expansion` resolves **1.1.18** through
+the regeneration is what cleared its case, since `brace-expansion` resolved **1.1.18** through
 `archiver@2.1.1 → glob@7.2.3 → minimatch@3.1.5`, outside the `<= 1.1.17` vulnerable range, so the
-archiver-borne high that the bump was originally argued from does not return.
+archiver-borne high that the bump was originally argued from does not return. That measurement was
+taken while 2.1.1 was still installed, and the delivered tree — where the package **did** move, on the
+warning axis (§9.5) — carries the same conclusion by a different path: `archiver` 7.0.1 resolves
+`brace-expansion` **2.1.4** beneath both `archiver-utils@5.0.2 → glob@10.5.0 → minimatch@9.0.9` and
+`readdir-glob@1.1.3 → minimatch@5.1.9`, and the only 1.1.18 copy left is `mocha`'s (**measured**:
+`npm ls brace-expansion --all`).
 
 `rimraf` was never a bump candidate at all, for a reason worth stating because it is the clearest
 evidence the rule was applied honestly: **it has no advisory of its own.** It left the manifest
@@ -445,7 +450,7 @@ as a contradiction:
 | Package | Delivered position | Pulled in by |
 |---|---|---|
 | `@hapi/hoek` | 11.0.7, production transitive | 28 `@hapi/*` packages and `joi` |
-| `debug` | 4.4.3, production transitive | `ioredis`, `mquery`, `https-proxy-agent`, and on the dev side `mocha`, `superagent`, `mongodb-memory-server-core`, `new-find-package-json` |
+| `debug` | 4.4.3, production transitive | `ioredis` and `mquery`, and on the dev side `mongodb-memory-server-core`, `https-proxy-agent` and `new-find-package-json`. Two **older** copies sit beside it and neither is the declaration: `mocha` 3.5.3 nests `debug@2.6.8` and `superagent` 0.16.0 nests `debug@0.7.4` (**measured**: `npm ls debug --all`) |
 | `chokidar` | 3.6.0, `optional: true`, `peer: true` | An optional peer of the build tooling; `sass` declares `chokidar ^4.0.0` and gets its own nested 4.0.3 |
 | `mkdirp` | 0.5.1, development transitive | `mocha` |
 | `minimist` | 0.0.8, development transitive | that `mkdirp` |
@@ -461,8 +466,8 @@ from the delivered lockfile entirely**, along with the four development removals
 | `sinon` | npm | `~1.7.3` | 1.7.3 | `^22.1.0` | **22.1.0** | moved | incompatible **and** warning-emitting — see below |
 | `chai` | npm | `^3.5.0` | 3.5.0 | `^3.5.0` | **3.5.0** | **retained** — not moved | Nothing forced it, and the plan had allowed for something that would have: the selected `sinon` 22.1.0 declares **no `peerDependencies` at all** (read from its delivered lock entry), so no assertion peer pulled `chai` forward, and §4.2's removal of `chai-as-promised` had already lifted the `chai >= 2.1.2 < 4` cap that would otherwise have decided it. Moving it would have been an unforced change to the assertion library that **20 files under `test/` require directly**, for no mapped reason. Recorded because a forced move was anticipated and did not materialise |
 | `mongodb-memory-server` | npm | — | — | `11.2.0` | **11.2.0** | **added**, exact pin | The suite must provision its own MongoDB under `git clean -xfd && npm ci && npm test` on a host with no Docker |
-| `mocha` | npm | `^3.4.1` | 3.5.3 | `^3.4.1` | 3.5.3 | **retained deliberately** — a decision, not an omission | **`test/mocha.opts` stopped being read in Mocha 8**, and a bump past Mocha 7 fails *silently* rather than loudly: it would discard all six flag lines the delivered file carries — `--reporter spec`, `--recursive`, `--check-leaks`, `--require ./test/env.js`, `--timeout 20000` and the `test/lib/**/*.js` glob — taking the leak detection, the environment preload and the spec selection with them. Staying on 3.5.3 is what keeps that failure out of this migration's diff. It loads and runs on Node 22.23.2 and is outside the `npm audit --omit=dev` gate as a development-only package; see the forward note below and the dev-side audit note beneath it |
-| `supertest` | npm | `~0.8.3` | 0.8.3 | `^7.1.4` | **7.1.4** | **moved** | incompatible with hapi 21's multipart parser — see below. It has **live consumers**: `test/helpers/flow.js:2` builds every API suite's agent from it at `:447`, over the server `test/lib/00-ready.js` resolves |
+| `mocha` | npm | `^3.4.1` | 3.5.3 | `^3.4.1` | 3.5.3 | **retained deliberately** — a decision, not an omission | **`test/mocha.opts` stopped being read in Mocha 8**, and a bump past Mocha 7 fails *silently* rather than loudly: it would discard all five flag lines the delivered file carries — `--reporter spec`, `--recursive`, `--check-leaks`, `--require ./test/env.js` and the `test/lib/**/*.js` glob — taking the leak detection, the environment preload and the spec selection with them. (An interim delivery carried a sixth, `--timeout 20000`; it is withdrawn as an unauthorized flag and the suite registers and executes all 130 cases without it — **measured**.) Staying on 3.5.3 is what keeps that failure out of this migration's diff. It loads and runs on Node 22.23.2 and is outside the `npm audit --omit=dev` gate as a development-only package; see the forward note below and the dev-side audit note beneath it |
+| `supertest` | npm | `~0.8.3` | 0.8.3 | `^0.8.3` | **0.8.3** | **retained** — a move was made and **withdrawn** | AAP §0.5.1.6 keeps this package unchanged, and the delivered tree keeps it at the baseline version: **0.8.3**, over `superagent` 0.16.0. The declared range reads `^0.8.3` where the baseline read `~0.8.3`, which on a `0.x` line is the **same range** — both are `>= 0.8.3 < 0.9.0` — so the resolution is the baseline resolution and no version moved. An interim delivery moved it to `^7.1.4` on a multipart-compatibility argument; that argument depended on a route-level `multipart` flag which was itself withdrawn, and with the flag gone the major buys nothing — see below. It has **live consumers**: `test/helpers/flow.js:2` builds every API suite's agent from it at `:447`, over the server `test/lib/00-ready.js` resolves |
 | `redis-mock` | npm | `~0.2.0` | 0.2.0 | `~0.2.0` | 0.2.0 | **retained** | A test-harness package with a **live consumer**: `test/env.js` installs it as the redis stub during the environment preload, which is what lets the suite run with `db.redis.enabled: false` and no Redis process. **Measured to carry no advisory at all**, on either side of the `--omit=dev` boundary, so nothing qualifies it under §1's rule |
 | `sass` | npm | `^1.57.0` | 1.98.0 | `^1.57.0` — **unchanged** | 1.98.0 | **retained** — no change at all | Neither a version move nor a declaration change. **Build tooling is deliberately out of scope**, and that boundary is load-bearing rather than incidental: the request requires the build to produce the *same output artifacts at the same paths*, `public/css/base.css` and `public/css/embed.css`, so the compiler that produces them is the last thing to move. An interim delivery pinned the declaration to the exact `1.98.0` it already resolved; nothing in the plan maps a Sass change, so that was unforced and is withdrawn. **Measured to carry no advisory at all** |
 | `vite` | npm | `^4.5.14` | 4.5.14 | `^4.5.14` | 4.5.14 | **retained** | Same boundary as `sass`, and the same reason: `vite` **is** the `build:css` and `watch:css` scripts, so a major bump is a change to the artifact-producing step this migration is required to leave alone. Development-only, so it is outside the gated `npm audit --omit=dev` set; the dev-side note beneath the table records the finding a dev-inclusive audit reports against it |
@@ -487,31 +492,35 @@ each in `test/helpers/catbox-redis.js` and `test/helpers/queue.js` (both files d
 in `test/setup.js`, and **three** in `test/lib/models/trinket.js`. Two therefore vanish with the
 deleted helpers, leaving four to convert.
 
-**`supertest` 0.8.3 → 7.1.4, and the reason is a wire-format incompatibility rather than age.**
+**`supertest` stays at 0.8.3, and the `^7.1.4` move is recorded as attempted and withdrawn.**
+The move was argued on a wire-format incompatibility, and the mechanism it named is real:
 `supertest` 0.8.3 resolves `superagent` **0.16.0**, whose multipart part builder sets the part header
 as `Content-Disposition: attachment; name="…"; filename="…"`
-(`superagent/lib/node/part.js:119`, read from an isolated 0.8.3 install). **RFC 7578 §4.2 requires
-`form-data`** for a part of a `multipart/form-data` body, and hapi 21 enforces it: `@hapi/content`
-matches the header against a `form-data`-anchored expression
-(`node_modules/@hapi/content/lib/index.js:93`) and throws
-`Boom.badRequest('Invalid content-disposition header format')`; `@hapi/pez` aborts the parse with that
-error (`lib/index.js:301-305`); and `@hapi/subtext` reports it as
-**`Boom.badRequest('Invalid multipart payload format')`** (`lib/index.js:248`) — a **400** on every
-request carrying an attached file. The harness has two such sites, `test/helpers/flow.js:259`
-(`uploadFile`) and `:276` (`uploadIpynb`), which the file and trinket suites drive, so on hapi 21 the
-old agent cannot exercise the upload surface at all. This is a **compatibility** reason under §1's
-rule, not a modernization: the agent's own API at `test/helpers/flow.js:447` — `server(listener)`,
-then `.post().field().attach().end(cb)` — is unchanged, which is why the move touches the manifest
-and the lockfile and no spec.
+(`superagent/lib/node/part.js:119`, read from an isolated 0.8.3 install), where **RFC 7578 §4.2
+requires `form-data`**. What made that a *reason* to move, though, was a second change that has since
+been withdrawn: a suite-scoped route-level `multipart` flag that switched multipart **parsing on** for
+`POST /file`, without which the request never reaches the part parser at all.
 
-Two things about it are recorded precisely rather than rounded off. **The regression check** was a
-comparison of the **full-suite failure title set** before and after the move, which was identical —
-the change adds no failure and repairs no unrelated one; that comparison was taken when the change was
-made and is **not** re-derived here, because re-deriving it means reinstalling the 0.8.3 harness over
-the delivered one. **The audit result is unchanged** in the gated scope, re-measured: 0 critical, 1
-high, 6 moderate (§7). The dev-inclusive scope *did* change, and for the better — the whole
-`supertest` 0.8.3 chain that carried dev-side findings (`supertest`, `superagent`, and `mime`, `qs`
-and `cookiejar` beneath them) is gone from the graph, which the note below re-measures.
+**Measured on the delivered tree, with the flag gone, the major buys nothing.** The four cases the
+move existed to serve — the two uploads in `test/lib/api/files.js` and the two downloads that depend
+on them — answer **415** and **404**, because the shipped route declarations do not enable multipart
+parsing and hapi answers 415 to a `multipart/form-data` body before any part header is read. That is
+baseline behaviour on hapi 20.3.0 and 21.4.10 alike
+([`baseline-parity.md` §6.2.4](baseline-parity.md)). **The same four answered 415 and 404 with the
+7.1.4 agent installed**, which is the state [`../CHANGELOG.md`](../CHANGELOG.md) recorded at the time
+— so the agent version is not what decides them. With no case whose outcome the agent changes, the
+compatibility reason §1's rule requires does not hold, and an unforced major bump to a harness package
+is exactly what R-a excludes — so the declaration is back at the baseline range and the resolution is
+back at the baseline version. **The whole episode is recorded rather than erased**: it is discrepancy
+14 in [§8](#8-measurement-discrepancy-log), and the mechanism above is kept because anyone re-opening
+the multipart question will need it.
+
+Two consequences are recorded precisely rather than rounded off. **The audit result in the gated
+scope is unaffected**, re-measured on the delivered tree: 0 critical, 1 high, 6 moderate (§7) —
+`supertest` and `superagent` are development-only and outside `--omit=dev` in either direction. The
+**dev-inclusive** scope did move, and back: the `supertest` 0.8.3 chain (`supertest`, `superagent`,
+and `mime`, `qs` and `cookiejar` beneath them) is in the graph again, which the note below
+re-measures rather than infers.
 
 **Forward note on `mocha`, which is the mechanism its "retained deliberately" row points at.** The
 suite's flags live in `test/mocha.opts`, and **`mocha.opts` stopped being read in Mocha 8**. A future
@@ -520,15 +529,18 @@ bump past Mocha 7 would not fail loudly — it would *silently discard every fla
 to `.mocharc.yml` in the same change. Staying on 3.5.3 is what keeps that out of this migration's diff.
 
 **Every retained development dependency has a disposition, and the reasons are not interchangeable.**
-R-c asks for a reason per package, and "not blocking" repeated five times is not one — it describes the
-gate rather than the package. The five retained rows above therefore each carry the specific decision
+R-c asks for a reason per package, and "not blocking" repeated six times is not one — it describes the
+gate rather than the package. The six retained rows above therefore each carry the specific decision
 that produced them: `mocha` is retained **deliberately**, because the bump fails silently through
 `mocha.opts`; `chai` did not move because the selected `sinon` declares no assertion peer and the cap
 that would have forced it was removed with `chai-as-promised`; `sass` and `vite` are untouched because
-build tooling is out of scope precisely so the CSS artifacts and their paths do not move; and
+build tooling is out of scope precisely so the CSS artifacts and their paths do not move;
 `redis-mock` is a harness package with a live consumer, named above, that nothing in this migration
-replaces. Two of the eight declarations **moved** rather than being retained — `sinon` and
-`supertest`, each for a measured incompatibility — and `mongodb-memory-server` was **added**. The
+replaces; and `supertest` stays at its baseline resolution because the incompatibility that argued for
+a move stopped being reachable when the route-level `multipart` flag was withdrawn — a move attempted
+and withdrawn rather than a package never examined. **One** of the eight declarations **moved** rather
+than being retained — `sinon`, for a measured incompatibility — and `mongodb-memory-server` was
+**added**. The
 companion record for the development set is in
 [`deferred-dependencies.md`](deferred-dependencies.md), in its development-dependency disposition
 section; this table is the version-and-decision half and that document is the reasoning half, as with
@@ -536,26 +548,35 @@ every other package here.
 
 **The dev-side audit, stated so "no qualifying finding" is not read as more than it claims.** The
 stated gate is `npm audit --omit=dev` and §7 reports it: **0 critical, 1 high, 6 moderate**. A
-dev-inclusive `npm audit` on the same tree reports **4 critical, 4 high, 7 moderate — 15 findings**,
-which is **8 rows that the gate excludes**, measured: `debug`, `diff`, `esbuild`, `growl`,
-`minimist`, `mkdirp`, `mocha` and `vite`. Their attribution is what matters for the dispositions
-above. **Six of the eight** are the retained `mocha` 3.5.3 chain — `mocha` itself, plus `growl`
+dev-inclusive `npm audit` on the same tree reports **4 critical, 7 high, 9 moderate — 20 findings**,
+which is **13 rows that the gate excludes**, measured: `cookiejar`, `debug`, `diff`, `esbuild`,
+`growl`, `mime`, `minimist`, `mkdirp`, `mocha`, `qs`, `superagent`, `supertest` and `vite`. Their
+attribution is what matters for the dispositions above, and all thirteen belong to three retained
+chains. **Six** are the retained `mocha` 3.5.3 chain — `mocha` itself (critical), plus `growl`
 (critical), `mkdirp` (critical) and the `minimist` (critical) beneath that `mkdirp`, `diff` (high),
-and the `debug` 2.6.8 (high) that only `mocha` resolves; `vite` and its `esbuild` are the remaining
-pair. So the one **retention** with dev-side findings is `mocha`, direct, and it is not silently
-accepted: it is the recorded decision above with the specific mechanism that forbids the bump.
-`vite`'s two are the build-tooling boundary, equally recorded. Three of the five retentions —
-`chai`, `redis-mock` and `sass` — carry **no advisory on either side of the `--omit=dev` boundary**.
+and `debug` 2.6.8 (high). **Five** are the retained `supertest` 0.8.3 chain — `supertest` (moderate)
+over `superagent` 0.16.0 (high), with `mime` (high), `qs` (high) and `cookiejar` (moderate) beneath
+it. The remaining **two** are `vite` (high) and its `esbuild` (moderate). So the **retentions** with
+dev-side findings are `mocha` and `supertest`, both direct, and neither is silently accepted: each is
+a recorded decision above with the specific mechanism behind it. `vite`'s two are the build-tooling
+boundary, equally recorded. Three of the six retentions — `chai`, `redis-mock` and `sass` — carry
+**no advisory on either side of the `--omit=dev` boundary**.
 
-**That figure moved with the `supertest` row, and the direction is worth recording.** Before the
-move a dev-inclusive audit reported **4 critical, 7 high, 9 moderate — 20 findings**, 13 of them
-gate-excluded, because `supertest` 0.8.3 dragged `superagent` with `mime`, `qs` and `cookiejar`
-beneath it and `debug` was reachable through both that chain and `mocha`'s. `supertest` 7.1.4 resolves
-`superagent` 10.3.0 and none of those five appears in the delivered graph, so three highs and two
-moderates left the dev-side count as a **side effect** of a compatibility-driven move rather than as
-its reason. `debug` is consequently attributable to `mocha` alone: `npm ls debug` shows the vulnerable
-**2.6.8** only beneath `mocha` 3.5.3, with every other consumer — including `superagent` 10.3.0 —
-resolving the unaffected 4.4.3.
+**That figure moved with the `supertest` row and has moved back with it, and the direction is worth
+recording because it is the clearest measure of what the withdrawn move actually bought.** With
+`supertest` at 7.1.4 the dev-inclusive audit reported **4 critical, 4 high, 7 moderate — 15
+findings**, 8 of them gate-excluded, because `superagent` 10.3.0 replaced the 0.16.0 chain and took
+`mime`, `qs` and `cookiejar` out of the graph with it. With the move withdrawn, the figure is the
+**20** above, re-measured on the delivered tree rather than inferred. Two things follow, and they are
+recorded together on purpose: the dev-side count is **five findings worse** than it was under the
+bump, and that is nevertheless not a reason to keep the bump, because those five are all
+development-only, all outside the stated `npm audit --omit=dev` gate, and the compatibility reason
+§1's rule requires no longer holds — an unforced major bump justified by a dev-side audit figure is
+precisely the modernization R-a excludes. `debug`'s vulnerable **2.6.8** is reached through `mocha`
+3.5.3 and its advisory also names `superagent` as an effect (**measured**: `npm audit` reports
+`debug <2.6.9` with effects `mocha/superagent`, and `npm ls debug --all` shows the 2.6.8 copy under
+`mocha` with `superagent` 0.16.0 resolving `debug@0.7.4`), so it belongs to the `mocha` chain either
+way and is not double-counted here.
 
 **What `--omit=dev` does and does not tell you about the shipped image, re-read from the delivered
 `Dockerfile`.** `--omit=dev` is the logical scope of the audit gate, and it is not by itself a
@@ -935,9 +956,11 @@ binding on anyone maintaining this record:
 
 ## 8. Measurement discrepancy log
 
-Every figure in this document was measured against the delivered tree. Fifteen measurements
-disagreed with the planned expectation. In each case **the measurement is what is recorded above**,
-and the disagreement is logged here rather than quietly reconciled.
+Every figure in this document was measured against the delivered tree. Fifteen measurements were
+checked against the planned expectation and are logged here; **fourteen disagreed**, and row 14
+agrees with the plan after an interim move was withdrawn — it is kept rather than deleted because the
+withdrawal is itself the record. In each case **the measurement is what is recorded above**, and the
+disagreement is logged here rather than quietly reconciled.
 
 | # | Expected | Measured | Nature |
 |---|---|---|---|
@@ -954,7 +977,7 @@ and the disagreement is logged here rather than quietly reconciled.
 | 11 | Three legacy three-argument `sinon.stub` calls | **Six** at baseline, across four files; two vanish with the deleted dead helpers, leaving four to convert | Undercount. Does not change the `sinon` disposition, only the size of the call-site work it forces (§5) |
 | 12 | `is-svg` — a critical ReDoS | **High** ReDoS (`2.1.0 - 4.2.2`) | Severity only. Still qualifies under the triage rule, and the removal reason — no root consumer — is independent of it |
 | 13 | `archiver` deferred at 2.1.1 with no qualifying reason | **Moved 2.1.1 → 7.0.1** — declared `^7.0.1`, resolving 7.0.1 — on the triage rule's *runtime warning* axis, with both previously open shortfalls closed at source | Substantive, and the largest correction in this document. The original deferral was measured on the **advisory** axis alone, where it was right and remains right; measurement on the other axes found `[DEP0005]` at module load and a writer declaring `crc32 = 0`, which the authorized `adm-zip` 0.6.0 cannot read. An interim delivery selected 6.0.2, an earlier revision restored 2.1.1 and carried both shortfalls open, and the delivered tree moves to **7.0.1**. Consequences reconciled here: `archiver` is row 17 in §3, the production version-move count is **17**, §9.5 is the move record, and `deferred-dependencies.md` §2.6 records the departure from that list |
-| 14 | `supertest` retained at 0.8.3 as a harness package with a live consumer | **Moved `~0.8.3` → `^7.1.4`**, resolving 7.1.4 | Substantive. The retention was correct on the advisory and consumer axes and wrong on compatibility: `supertest` 0.8.3 resolves `superagent` 0.16.0, whose multipart part builder sets `Content-Disposition: attachment` (`superagent/lib/node/part.js:119`), a form RFC 7578 §4.2 forbids and `@hapi/content`'s `form-data`-anchored regex rejects, so hapi 21 answers **400 "Invalid multipart payload format"** to every file-upload case. §5 carries the row and the measurement |
+| 14 | `supertest` retained at 0.8.3 as a harness package with a live consumer | **Retained at 0.8.3, as expected** — after a move to `^7.1.4` was made and then **withdrawn** | Resolved, and the expectation was right. The move was argued on compatibility: `supertest` 0.8.3 resolves `superagent` 0.16.0, whose multipart part builder sets `Content-Disposition: attachment` (`superagent/lib/node/part.js:119`), a form RFC 7578 §4.2 forbids and `@hapi/content`'s `form-data`-anchored regex rejects. That mechanism is real but unreachable in the delivered tree: the route-level `multipart` flag it depended on was itself withdrawn, and **measured**, the two upload cases answer **415** and the two downloads that depend on them **404** on either agent, so no case's outcome changes with the version. The delivered declaration is `^0.8.3` — the baseline `~0.8.3` range, identically bounded on a `0.x` line — resolving 0.8.3. §5 carries the row and the withdrawal record |
 | 15 | `pm2` pinned by `npm install -g pm2@5.4.3` in the root image | The pin is a **committed manifest pair**, `scripts/pm2/package.json` + `scripts/pm2/package-lock.json`, installed in a dedicated build stage, with `pm2` 5.4.3 and a `js-yaml` 4.3.2 override | Substantive, and the mechanism is what the plan under-specified rather than mis-stated: a global `npm install -g` pins one package and floats everything beneath it, so two builds of one commit could ship different process-manager trees. §6.2 records the delivered mechanism and the delivery-wide 5.4.3 alignment across the three `serverside/*/shell/trinket` units |
 
 Two further measurement notes, recorded because they bear on how the figures above should be read:
@@ -1103,9 +1126,10 @@ to the same class of risk, and the same lesson applies.
 ### 9.4 Three lockfile entries that must be re-checked after every regeneration — and the provenance that makes a re-check meaningful
 
 All three are cases where `npm install` will silently undo a deliberate decision, so a regeneration is
-not complete until they are verified. **One of the three fired again during the regeneration that
-accompanied the `archiver` and `supertest` moves and is open at the time of writing** — which is the
-argument for keeping this list, and the reason item 1 records a state rather than a resolution:
+not complete until they are verified. **Item 1 has now fired on three separate regenerations, most
+recently the one that accompanied the withdrawal of the `supertest` move** — which is the argument for
+keeping this list, and the reason item 1 records a state, a re-assertion step and both digests rather
+than a resolution:
 
 1. **`marked`.** `package.json` declares `git+https://github.com/trinketapp/marked.git`, but npm
    canonicalises GitHub-hosted git dependencies and writes `resolved:
@@ -1115,17 +1139,23 @@ argument for keeping this list, and the reason item 1 records a state rather tha
    entry names no credential-bearing transport. Re-assert it after any regeneration.
    Note that a git dependency cannot carry an `integrity` field at all — the commit SHA is the
    immutability guarantee, and the declared spec is fixed by R-d, which retains this fork.
-   **This trap fired again, and it is open at the time of writing.** It fired once in the
-   regeneration that produced an earlier lockfile and was restored by hand; the regeneration that
-   accompanied the `archiver` and `supertest` moves rewrote it a second time, and the delivered
-   `package-lock.json` currently carries
-   `git+ssh://git@github.com/trinketapp/marked.git#55ea82491047d038b4360b78d092f77d439df63f`
-   (measured, not inferred). The commit pin is intact and the install still succeeds over the
-   codeload HTTPS tarball, so nothing is broken by it — but the entry names a credential-bearing
-   transport that the manifest does not, which is exactly the condition this item exists to prevent.
-   **Restoring the `git+https://` form is a `package-lock.json` change and that file is not this
-   document's to edit**, so it is recorded here as the outstanding re-assertion; the digest below was
-   taken with the `ssh` form in place and must be re-derived once it is corrected.
+   **This trap has now fired three times, and its state is checkable from the lockfile digest
+   alone.** It fired in the regeneration that produced an earlier lockfile and was restored by hand;
+   it fired again in the regeneration that accompanied the `archiver` and `supertest` moves and was
+   restored again — commit `6c307dd`'s lockfile carries the `git+https://` form, verified with
+   `git show HEAD:package-lock.json`; and it fired a third time in the regeneration that accompanied
+   the **withdrawal** of the `supertest` move, which is the lockfile this document's provenance table
+   measures. Two digests therefore appear in that table, and **which one a reader measures says which
+   state the entry is in**: `a2d808b2…` is the lockfile with the `git+ssh://` normalisation present,
+   and `1bf9c5fe…` is the same 510-package lockfile with only that one field restored to
+   `git+https://github.com/trinketapp/marked.git#55ea82491047d038b4360b78d092f77d439df63f`. Nothing
+   else differs between them — the restoration is a single-field edit and every other byte is
+   identical, verified by substituting the field and re-hashing. The commit pin is intact and the
+   install succeeds over the codeload HTTPS tarball either way, so nothing is broken by the `ssh`
+   form; what it does is name a credential-bearing transport that `package.json:36` does not, which is
+   exactly the condition this item exists to prevent. **Restoring it is a `package-lock.json` change
+   and that file is not this document's to edit**, so it is recorded here as the mandatory
+   pre-commit re-assertion, owned by whoever holds the manifest pair.
 2. **`mongoose`.** Deferred at **6.13.9** with a `^6.0.0` declaration, so a regeneration floats it to
    the newest 6.x. See [`deferred-dependencies.md` §2.2](deferred-dependencies.md). **This trap fired
    before and was caught again**: the earlier float to 6.13.11 is discrepancy 8 in
@@ -1145,23 +1175,26 @@ graph, a measurement was taken from. This delivery states both, because an inter
 its evidence was produced against a `node_modules` carrying `archiver` 2.1.1 and `mongoose` 6.13.11
 while the committed lock said 6.0.2 and 6.13.9, so **the committed graph was never the graph anything
 was measured on** and the gate outcomes could not be attributed to it (§9.5, and discrepancies 8 and
-13 in [§8](#8-measurement-discrepancy-log)). The values below are re-measured after the `archiver`
-and `supertest` moves, so every figure in this document is attributable to the graph they describe.
+13 in [§8](#8-measurement-discrepancy-log)). The values below are re-measured on the lockfile that
+carries the `archiver` move **and** the withdrawal of the `supertest` move, so every figure in this
+document is attributable to the graph they describe.
 
 | Provenance fact | Value |
 |---|---|
-| `package-lock.json` sha256 | `910d7abc78031dbaf8d23afaf6a38e9ba418ec32b89fb484b31b17cc74da345e` |
-| Packages in the lock | **521** (520 excluding the root record) |
+| `package-lock.json` sha256 | `a2d808b28a430ffc88175bb2f04fa0646233deeb28813a421fab0c965989d335` as measured, which is the file with item 1's `git+ssh://` normalisation present; `1bf9c5fed06f98006b112c24125ae35575153c3bfd50551eaf339ad2abb2bfd7` once that single field is restored to the `git+https://` form. **Which digest a reader measures is the state check for item 1**, and nothing else differs between the two |
+| Packages in the lock | **510** (509 excluding the root record) |
 | `archiver` | declared `^7.0.1`, resolved **7.0.1** — with `zip-stream` 6.0.1, `compress-commons` 6.0.2, `crc32-stream` 6.0.0 and `archiver-utils` 5.0.2 beneath it |
 | `mongoose` | declared `^6.0.0`, resolved **6.13.9** |
-| `supertest` | declared `^7.1.4`, resolved **7.1.4**, over `superagent` 10.3.0 |
-| `marked` | version **0.3.2**, commit pin `#55ea82491047d038b4360b78d092f77d439df63f`; `resolved` currently the `git+ssh://` form, which item 1 above records as the outstanding re-assertion |
-| `npm ci` | **exit 0**, with **no** `--legacy-peer-deps`: *added 481 packages, and audited 482 packages*. Driven from a directory holding nothing but the delivered `package.json` and `package-lock.json`, so the figure is the manifest pair's own and not this checkout's state. The lock's 521 entries exceed the 481 installed by the platform-specific `@esbuild/*` optionals a single host does not take |
+| `supertest` | declared `^0.8.3`, resolved **0.8.3**, over `superagent` 0.16.0 — the baseline resolution, after the `^7.1.4` move was withdrawn (§5) |
+| `marked` | version **0.3.2**, commit pin `#55ea82491047d038b4360b78d092f77d439df63f`; `resolved` measured as the `git+ssh://` form, which item 1 above records with its re-assertion step and its digest |
+| `npm ci` | **exit 0**, with **no** `--legacy-peer-deps`: *added 472 packages, and audited 473 packages in 3s*. Driven from a directory holding nothing but the delivered `package.json` and `package-lock.json`, so the figure is the manifest pair's own and not this checkout's state. The lock's 510 entries exceed the 472 installed because 88 of its records carry an `optional`, `os` or `cpu` restriction a single host does not take — 22 of them `@esbuild/*`. A host that declines the optional native `nodejieba` build takes 470 instead, which is what this checkout's `node_modules/.package-lock.json` records; every entry it holds is in the lock and no version differs |
 | Direct dependencies installed-equals-locked | **47 of 47** (39 production + 8 development) — **0 mismatches** |
 | Toolchain | `node v22.23.2`, `npm 10.9.8` |
 
 **The rule that follows, and it is the one the interim delivery broke:** *any measurement taken
-against a `node_modules` that does not match this digest is not evidence about this lockfile.* A gate
+against a `node_modules` that does not match one of the two digests above — which differ only in
+item 1's single `resolved` field and therefore describe the same installed graph — is not evidence
+about this lockfile.* A gate
 result, an audit figure or a parity verdict is attributable to a dependency graph only if the graph it
 ran on is the committed one, so re-derive the digest and the installed-equals-locked comparison before
 producing evidence, and record the digest alongside the result.
@@ -1195,9 +1228,9 @@ need SSH material: with the HTTPS `resolved` entry in place, `npm ci` was measur
 `GIT_CONFIG_SYSTEM` both `/dev/null`, no `SSH_AUTH_SOCK`, and `git` itself shimmed to exit 127. npm
 fetches GitHub-hosted git specs over the codeload HTTPS tarball, so the install needs neither SSH
 credentials, a host-global URL rewrite, nor the `git` binary. That measurement is why item 1's
-outstanding re-assertion is a hygiene matter rather than a build failure: the current `git+ssh://`
-`resolved` value installs over the same codeload tarball, which is precisely why the rewrite is easy
-to miss.
+re-assertion is a hygiene matter rather than a build failure: the `git+ssh://` `resolved` value
+measured above installs over the same codeload tarball, which is precisely why the rewrite is easy
+to miss — and why item 1 pins the state to a digest rather than to a reading.
 
 Precisely what that run emitted, since "no warnings" would be the wrong claim: **no warning
 mentioning `marked`, SSH, or a skipped integrity check**, and no error. It did print npm's ordinary

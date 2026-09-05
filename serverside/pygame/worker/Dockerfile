@@ -72,18 +72,21 @@ RUN useradd -m -s /bin/bash trinket \
 
 # No VNC password artifact is built into the image. The empty one that used to
 # live at /home/trinket/.vnc/passwd made Xtightvnc advertise RFB security type 1
-# (None) - measured - so the desktop accepted any connection. Access control is
-# now decided at start time by entrypoint.sh: a websockify token, an Origin
-# allowlist, a loopback-only X server, and an RFB password only when
-# VNC_PASSWORD is supplied. It writes under /run so a read-only root filesystem
-# still works, which a build-time password file could not offer.
+# (None) - measured - so the desktop accepted any connection, and removing it
+# changes nothing: measured on the tightvncserver 1.3.10 this image installs,
+# the committed xvnc.conf command advertises the same security types, 1 (None)
+# and 16 (Tight), whether or not that file exists. Access control is therefore
+# UNCHANGED from before the Node 22 move and is decided entirely by
+# supervisor/xvnc.conf and supervisor/novnc.conf. Anything that gates access
+# belongs in a separately authorized change covering the manager, the proxy,
+# the compose topology and the browser client together, not in this image.
 
 # Copy supervisor configs
 COPY supervisor/ /etc/supervisor/conf.d/
 
-# Access controls are prepared before the process manager starts. The image CMD
-# below is passed to this entrypoint as "$@", so supervisord still runs the
-# container.
+# The entrypoint exists only so the ENTRYPOINT below has a target to exec: it
+# prepares nothing, as its own header records. The image CMD below is passed to
+# it as "$@", so supervisord still runs the container.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 
@@ -113,6 +116,6 @@ ENV NODE_CONFIG_DIR=/app/config
 EXPOSE 8010 6080
 
 # Start supervisor (manages Xvnc, noVNC, and can start shell.js) through the
-# entrypoint, which execs this command once the VNC access controls are written.
+# entrypoint, which does nothing but exec this command.
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]

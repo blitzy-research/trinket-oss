@@ -58,7 +58,7 @@
     "redis-mock": "~0.2.0",
     "sass": "^1.57.0",
     "sinon": "^22.1.0",
-    "supertest": "^7.1.4",
+    "supertest": "^0.8.3",
     "vite": "^4.5.14"
   },
   "scripts": {

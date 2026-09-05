@@ -1,40 +1,4 @@
-# The asset feature gates the file upload/download vertical behind a 501, and
-# the suite asserts that vertical. `lib/controllers/files.js:277` answers
-# `errors.notImplemented('File uploads are not enabled')` while the flag is
-# false, so `POST /file` returns 501 and no File document is ever created; the
-# two download cases then request `/api/files/undefined/download` and get 404.
-# MEASURED, this tree, before this key existed: test/lib/api/files.js:48 and :74
-# reported `expected 501 to deeply equal 200`, and :98 and :113 reported
-# `expected 404 to deeply equal 200` - four of the 36 baseline failures. The
-# assertions cannot be reached any other way, and AAP 0.9.2 forbids changing
-# them.
-#
-# Only `assets` is set: default.yaml (:1-17) supplies `courses`,
-# `accessibilityToggle` and the whole `trinkets` language map, and the config
-# deep merge preserves them. default.yaml keeps `assets: false`, so development
-# and production are untouched and only NODE_ENV=test sees this.
-#
-# WHAT ELSE THE FLAG OPENS, enumerated rather than assumed. Its readers are
-# lib/controllers/files.js:254 (`POST /file/avatar`) and :277 (`POST /file`),
-# lib/controllers/users.js:715 (`POST /api/users/assets`), :731
-# (`POST /api/users/assets/{fileId}`) and :810 (`POST /api/users/assetFromURL`),
-# and six templates that read `config.features.assets` to emit an
-# `assetsEnabled` flag or the account-page dropzone markup
-# (lib/views/embed/{base,html,glowscript-config,glowscript-blocks-config}.html
-# and lib/views/users/includes/profile.html). Measured: no spec in test/lib
-# drives any of the four other routes - `grep -rn "asset\|avatar\|dropzone"
-# test/lib test/helpers` finds only test/helpers/defaults.js's unrelated
-# `assets: []` and the avatar STRING in test/lib/api/profile.js - and the two
-# embed cases that render those templates
-# (test/lib/api/trinket.js:71 and :81) assert status and content-type only, not
-# markup. The full-suite before/after diff is the evidence that this is bounded.
-#
-# Storage is not real: test/lib/00-ready.js installs
-# test/parity/fixtures/aws.js, which replaces the S3 client at the module
-# boundary with a filesystem-backed store, so no request, credential or bucket
-# outside this host is involved.
-features:
-  assets: true
+
 app:
   usersubdomains: false
   start: false
@@ -52,8 +16,8 @@ app:
   # behaviour they assert.
   #
   # MEASURED, not argued (`node test/parity/mongo.js -- mocha`, this tree): with
-  # this block present the suite reports 102 passing / 29 failing; with the block
-  # removed it reports 97 passing / 34 failing, and the five newly failing cases
+  # this block present the suite reports 103 passing / 28 failing; with the block
+  # removed it reports 98 passing / 33 failing, and the five newly failing cases
   # are exactly the five named above - forgot_pass.js:47 (`Store.set.firstCall`
   # is null, because the short-circuit returns before the reset key is stored),
   # :65, :81 (302 where 200 is asserted), :111 (/forgot-pass where /reset-pass is
@@ -102,41 +66,3 @@ db:
   # bullqueues: [exports] and sandbox, which the deep merge keeps.
   redis:
     enabled: false
-# `cloud` is a key from an older configuration vocabulary that NO configuration
-# layer declares any more and that the APPLICATION NEVER READS. Measured, this
-# tree: `grep -rn "config\.cloud" lib/ config/*.js app.js` returns nothing, and
-# across the whole repository the only reader is test/lib/api/profile.js:34,
-# which builds the avatar it PUTs as
-# `config.cloud.containers.userAvatars.host + '/franz'`. With the key absent
-# that expression throws `TypeError: Cannot read properties of undefined
-# (reading 'containers')` inside the spec, before any request is made, so the
-# case fails without ever reaching a route - measured as failure 24 of 36 in the
-# baseline run.
-#
-# Supplying it is therefore pure test provisioning and cannot change any
-# application behaviour: no handler, helper, model, view or config module
-# dereferences `config.cloud`, so the value's only path through the system is
-# the one the spec gives it - into the `avatar` field of its own PUT payload,
-# through the `avatar: Joi.string().allow('').optional()` schema on
-# `PUT /api/users/{userId}` (config/routes.js:104), onto the user document, and
-# back out in the response the spec asserts on. It is the same shape as the
-# `app.mail` block above: a value the suite needs in order to reach the
-# behaviour it asserts, scoped to NODE_ENV=test alone, with default.yaml
-# untouched so development and production see nothing.
-#
-# The value itself is constrained by the application, not chosen freely, and
-# both constraints were measured rather than assumed. lib/models/user.js's
-# `normalizeAvatar` (:238-265) runs on every save from the `encryptPassword`
-# pre-save hook (:42) and rewrites the stored avatar: an avatar containing
-# 'example.com' is treated as a PLACEHOLDER and replaced with
-# '/img/avatar-default.svg', while one matching /^http/ is kept verbatim. A host
-# in default.yaml's `example.com` placeholder style therefore came back as
-# '/img/avatar-default.svg' and the spec's `user.avatar` assertion still failed
-# - measured. So the host is an absolute https URL under the RFC 2606 `.invalid`
-# reserved TLD, which is guaranteed never to resolve: nothing can dial it, and
-# it survives `normalizeAvatar` unchanged so the round trip the spec asserts is
-# the one it gets.
-cloud:
-  containers:
-    userAvatars:
-      host: 'https://test-user-avatars.invalid'

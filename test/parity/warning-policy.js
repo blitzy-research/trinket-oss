@@ -164,11 +164,15 @@ var POLICY = Object.freeze({
     'AAP 0.9.5 - no exception is granted to the plan by the plan'
   ]),
   retained  : 'A notice from a retained dependency FAILS this gate. archiver ' +
-              '2.1.1 -> compress-commons DEP0005 was the instance that ' +
-              'proved it: the gate failed while the notice stood, and ' +
-              'clearing it was a dependency decision rather than a gate ' +
-              'decision - archiver moved to 6.0.2 and the notice is gone at ' +
-              'its source.'
+              '2.1.1 -> zip-stream 1.2.0 -> compress-commons 1.2.2 DEP0005 ' +
+              'was the instance that proved it: the gate failed while the ' +
+              'notice stood, and clearing it was a dependency decision rather ' +
+              'than a gate decision - archiver moved 2.1.1 -> 7.0.1 under AAP ' +
+              '0.5.1\'s own triage rule, which authorizes a package change for ' +
+              '"a runtime warning", and the notice is gone at its source ' +
+              '(measured: boot under --pending-deprecation --trace-deprecation ' +
+              'emits no warning line, verify:storage 35/35 and verify:worker ' +
+              '110/110 report 0 notices).'
 });
 
 // What a notice is. Every entry carries its own reason, because a pattern

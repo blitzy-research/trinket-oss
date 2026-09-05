@@ -4386,16 +4386,19 @@ cases.push({
 
       // 'image/pngx' is in the list on purpose: that regexp is anchored at
       // both ends, so a trailing character must not sneak through.
-      // SEC-F34 (CWE-459/CWE-400): the reject path returns before
-      // `_fileToContainer`, which was the only site in the module that
-      // unlinked, so every rejected avatar left its multipart temp file
-      // behind - repeatable by any authenticated caller. `lib/util/file.js`
-      // now runs `removeTemporaryFile` on this terminal path, so the file is
-      // gone by the time the callback fires. Cleanup only: the callback's
-      // arity, its error and the absence of any upload are asserted above
-      // and are unchanged.
-      assert.strictEqual(fs.existsSync(source.path), false,
-        'the reject path removes the temporary file it was handed'
+      // PRESERVED BASELINE LEAK (CWE-459/CWE-400), asserted as the leak it
+      // is. The reject path returns before `_fileToContainer`, which is the
+      // only site in the module that unlinks, so every rejected avatar
+      // leaves its multipart temp file behind - repeatable by any
+      // authenticated caller. A `removeTemporaryFile` cleanup was added here
+      // and has been WITHDRAWN: `lib/util/file.js` is a module AAP 0.2.2
+      // excludes from conversion provisionally, 0.9.2 makes any change to it
+      // conditional on naming the test that forced it, and no test forces
+      // this one - so under R-d the 2013-era leak is preserved and recorded
+      // rather than fixed. Cleanup only: the callback's arity, its error and
+      // the absence of any upload are asserted above and are unchanged.
+      assert.strictEqual(fs.existsSync(source.path), true,
+        'the reject path leaves the temporary file it was handed (baseline)'
       );
     }
 
@@ -4705,15 +4708,16 @@ cases.push({
     assert.strictEqual(persisted.size, PAYLOADS.assetGif.length, 'persisted size');
     assert.strictEqual(String(persisted._owner), seed.ids.user, 'persisted owner');
 
-    // SEC-F34: all three of `uploadUserAsset`'s terminal paths - save error,
-    // upload failure and success - reached the callback without unlinking,
-    // so the temp directory grew one upload at a time. `lib/util/file.js`
-    // now destroys the stream and removes the file on each of them, and the
-    // removal completes before the callback fires, which is what makes this
-    // assertion deterministic. The stored key, the document and the callback
-    // shape are asserted above and are unchanged.
-    assert.strictEqual(fs.existsSync(source.path), false,
-      'uploadUserAsset removes the temporary file on its success path');
+    // PRESERVED BASELINE LEAK: all three of `uploadUserAsset`'s terminal
+    // paths - save error, upload failure and success - reach the callback
+    // without unlinking, so the temp directory grows one upload at a time.
+    // A stream-destroy-and-unlink was added here and has been WITHDRAWN for
+    // the reason recorded on the avatar-reject case above (AAP 0.2.2 excludes
+    // `lib/util/file.js` provisionally, 0.9.2 gates any change on a named
+    // forcing test, and R-d forbids the improvement). The stored key, the
+    // document and the callback shape are asserted above and are unchanged.
+    assert.strictEqual(fs.existsSync(source.path), true,
+      'uploadUserAsset leaves the temporary file on its success path (baseline)');
 
     measured(ctx, {
       bucket        : record.bucket,
@@ -4847,11 +4851,11 @@ cases.push({
       'the early return means NOTHING is uploaded: the document is saved ' +
       'first (:181), so a save failure leaves the store untouched'
     );
-    // SEC-F34, the save-error half of the same finding: the early return is
-    // still `return cb(err)` with nothing uploaded, and it now removes the
-    // temporary file on the way out.
-    assert.strictEqual(fs.existsSync(source.path), false,
-      'and the temporary file is removed on the early return');
+    // PRESERVED BASELINE LEAK, the save-error half: the early return is
+    // `return cb(err)` with nothing uploaded and nothing unlinked. The
+    // withdrawn cleanup is recorded on the avatar-reject case above.
+    assert.strictEqual(fs.existsSync(source.path), true,
+      'and the temporary file is left behind on the early return (baseline)');
 
     measured(ctx, {
       errorName       : outcome.err.name,

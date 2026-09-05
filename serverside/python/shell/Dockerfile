@@ -52,11 +52,12 @@ COPY ./trinket /home/trinket
 # RUN groupadd -r trinket && useradd -r -g trinket -m -c "trinket user" trinket
 # WORKDIR /trinket
 
-# The locked graph, including pm2: this unit's package-lock.json pins pm2 7.0.4,
-# which is exactly what the previous unpinned `npm install -g pm2` resolved, and
-# `npm ci` installs the committed lock instead of re-resolving the graph on every
-# build. The install output is no longer redirected to /dev/null either - an
-# install nobody can read cannot be audited.
+# The locked graph, including pm2: this unit's package-lock.json pins pm2 5.4.3,
+# the same exact patch scripts/pm2/package.json pins for the root image, so one
+# pm2 version covers the whole delivery. `npm ci` installs the committed lock
+# instead of re-resolving the graph on every build. The install output is no
+# longer redirected to /dev/null either - an install nobody can read cannot be
+# audited.
 RUN npm ci --omit=dev
 
 # cleanup, try to safeguard against certain exploits

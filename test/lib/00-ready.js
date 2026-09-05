@@ -16,6 +16,71 @@
 // before Mocha installs the BDD globals, so `before` does not exist there, and
 // CommonJS has no top-level `await`.
 
+// ---------------------------------------------------------------------------
+// The S3 interceptor, installed before the application loads.
+//
+// The suite has no storage backend of its own: lib/util/file.js builds a real
+// aws-sdk v2 client (`new aws.S3()` per call, from config/aws) and nothing in
+// test/helpers/** replaces it, so with the asset feature on
+// (config/test.yaml's `features.assets`) `POST /file` would dial S3 with the
+// empty credentials config/default.yaml ships. test/parity/fixtures/aws.js is
+// exactly the missing piece - a filesystem-backed putObject / getObject /
+// deleteObject / headObject written for the parity harness - and it is reused
+// here rather than duplicated, so the suite and the corpus exercise one
+// implementation of the storage contract AAP 0.6.7 defines.
+//
+// It belongs in this file rather than in the test/env.js preload for the reason
+// that preload states about itself: env.js carries environment only, and
+// fixtures and application loading live here. Its own contract supports both
+// forms - it installs on first require, is idempotent, and never throws out of
+// load - and the require sits above app.js's because the fixture is documented
+// as loading before the application. Ordering is belt and braces rather than
+// load-bearing: file.js constructs its client per call, so a patch applied at
+// any point before the first request would still be the one in force.
+//
+// It is also clear of the load-order trap described below: it requires only
+// node core and the application's config/aws, never config/db, a model or
+// lib/util/file.js, so `require('@hapi/hapi')` still succeeds after it -
+// verified by requiring the two in that order in a bare process.
+//
+// Three inherited PARITY_* variables are cleared first, because process.env is
+// copied into every child and this suite is not the process that allocated
+// them. An inherited PARITY_S3_ROOT would bind the store to another run's
+// directory, which the fixture would then treat as the caller's artifact and
+// leave behind; unset, it derives a private directory under os.tmpdir() that it
+// owns and removes on 'exit'. An inherited PARITY_S3_SEED is read once at load
+// and would silently place objects this run never asked for, and an inherited
+// PARITY_S3_LOG would append this run's call records to another run's evidence
+// file. PARITY_APP_ROOT is set rather than cleared: it selects the tree whose
+// config/aws gets patched, and deriving it from __dirname makes that this
+// checkout regardless of the working directory Mocha was started from, where
+// the fixture's own default (process.cwd()) would not.
+var path = require('path');
+
+process.env.PARITY_APP_ROOT = path.join(__dirname, '..', '..');
+delete process.env.PARITY_S3_ROOT;
+delete process.env.PARITY_S3_SEED;
+delete process.env.PARITY_S3_LOG;
+
+var s3 = require('../parity/fixtures/aws');
+var s3Status = s3.status();
+
+// Asserted, not assumed. The fixture reports its own failures instead of
+// throwing, so an unpatched namespace would otherwise surface much later as a
+// hung or 500-ing upload case with no indication that storage was real: the
+// aws-sdk would attempt a genuine PutObject with the empty credentials
+// config/default.yaml ships, `lib/util/file.js`'s `_upload` swallows that error
+// and calls back with a fully populated payload anyway, and the download that
+// follows would fail on a key that was never stored. Throwing here fails the
+// run at collection with the reason attached.
+if (!s3Status.installed || !s3Status.patched) {
+  throw new Error(
+    'test/parity/fixtures/aws.js did not patch ' + s3Status.awsPath + ': ' +
+    (s3Status.diagnostic || 'no diagnostic reported') +
+    '. The suite must not reach real S3, so the run is stopped here.'
+  );
+}
+
 // The require order here is load-bearing. test/helpers/db.js requires config/db
 // directly, and config/db requires mongoose-schema-extend, whose transitive
 // Proxy polyfill replaces the global `Object.getPrototypeOf`; once that has

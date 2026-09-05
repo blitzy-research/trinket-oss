@@ -6523,25 +6523,27 @@ var LOGIN_SOURCE_ADDRESS_COUNT = 254 * 16;
 /**
  * The loopback source address the next login is sent from.
  *
- * `lib/controllers/users.js` throttles `POST /login` per remote address -
- * `LOGIN_ADDRESS_LIMIT` attempts per quarter-hour bucket - and that counter is
- * deliberately NOT cleared by a successful login, because an address is not an
- * identity. This tool logs in FRESH for every authenticated drive (see the note
- * on `login` for why a shared session would corrupt the flash observation), and
- * a full matrix is several hundred drives, so a single source address exhausts
- * that allowance part-way through a run: measured, the application answered 100
- * logins and throttled the 101st, and every case after it would have recorded
- * an unauthenticated outcome - hundreds of differences produced by this
- * harness's own login pattern rather than by any validation behaviour.
+ * This tool logs in FRESH for every authenticated drive (see the note on
+ * `login` for why a shared session would corrupt the flash observation), and a
+ * full matrix is several hundred drives.
  *
- * So each login is sent from its own address in 127.0.0.0/8, every one of which
- * is local on Linux, which spreads the counter instead of defeating it: the
- * throttle is left exactly as the application implements it and each bucket
- * sees a handful of attempts. Nothing else about the request changes - the
- * target host, the Host header and therefore the cookie jar are unaffected -
- * and the application keys nothing but this counter on the remote address, so
- * no recorded outcome moves. The rotation is index-based rather than random so
- * two runs of the same matrix send the same sequence.
+ * The rotation was introduced because a per-remote-address login throttle had
+ * been added to `lib/controllers/users.js`: a single source address exhausted
+ * its allowance part-way through a run - measured, the application answered 100
+ * logins and throttled the 101st - and every case after it recorded an
+ * unauthenticated outcome, hundreds of differences produced by this harness's
+ * own login pattern rather than by any validation behaviour. That throttle was
+ * an unauthorized behaviour change (AAP 0.7 R-a/R-d) and has been WITHDRAWN, so
+ * `POST /login` again applies no rate limit of any kind and nothing in the
+ * application now keys anything on the remote address.
+ *
+ * The rotation is retained deliberately rather than removed: it changes nothing
+ * observable - the target host, the Host header and therefore the cookie jar
+ * are unaffected, only the local source address varies - and it keeps this
+ * harness independent of whether such a counter exists, which is the property
+ * that made a full matrix comparable in the first place. The rotation is
+ * index-based rather than random so two runs of the same matrix send the same
+ * sequence.
  *
  * @returns {string} An address in 127.0.0.0/8, never 127.0.0.1 itself.
  */

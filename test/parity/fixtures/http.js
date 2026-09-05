@@ -4404,14 +4404,17 @@ async function sourceCases(report, context) {
 
   await runCase(report, 'sources', 'lib/controllers/users.js still fetches the payload URL and reads its content type', async function() {
     var text = sourceOf('lib/controllers/users.js');
-    // The call site parses the payload URL into a WHATWG `URL` and fetches
-    // `target.href`, because it follows redirects itself under a hop budget
-    // fetch's own follower cannot be capped at. So the pin is in two parts: the
-    // target still comes from `request.payload.url`, and the request still goes
-    // out through it.
-    expect(/new URL\(\s*request\.payload\.url/.test(text),
+    // The call site hands `request.payload.url` to `fetchAssetResource`, which
+    // follows redirects itself under a hop budget fetch's own follower cannot be
+    // capped at, resolving each hop with `new URL(location, target)`. The URL
+    // the handler itself parses goes through `parseLegacy` instead, because AAP
+    // 0.4.2 requires this site's `url.parse` to keep `url.parse`'s partial-object
+    // and throwing behaviour rather than `new URL`'s. So the pin is in two
+    // parts: the target still comes from `request.payload.url`, and the request
+    // still goes out through it.
+    expect(/fetchAssetResource\(\s*request\.payload\.url/.test(text),
       'the asset upload must still take its target from request.payload.url');
-    expect(/globalThis\.fetch\(\s*target\.href/.test(text),
+    expect(/globalThis\.fetch\(\s*target\b/.test(text),
       'the fetch must still go to that target through globalThis.fetch, read at ' +
       'call time - a captured reference stops being interceptable and takes ' +
       'every parity scenario for this route with it');

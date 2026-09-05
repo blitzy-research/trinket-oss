@@ -146,7 +146,26 @@ var methods = {
   },
 
   getCourseWithOutline : function(id, cb) {
-    return this.get('/api/courses/' + id + '?outline=yes')
+    // `outline=true`, not `outline=yes`.
+    //
+    // `GET /api/courses/{courseId}` declares `outline : Joi.boolean().optional()`
+    // (config/api_routes.js:41), and the string 'yes' is not a boolean joi
+    // coerces: measured, joi 17.13.3 and joi 18.2.5 BOTH answer
+    // `"outline" must be a boolean`, so this helper never reached
+    // `course.getCourse` at all - the hand-rolled validation block answered
+    // instead, with a body carrying `flash.validation` and no `data`, which is
+    // why every case whose `before` hook calls this helper failed on
+    // `Cannot read properties of undefined`.
+    //
+    // `true` is what the application's own client sends, at all four of its
+    // call sites: public/js/classPage/app.js:57,
+    // public/js/courseEditor/controllers/root.js:147,
+    // public/js/courseEditor/controllers/materialControl.js:91 and
+    // public/js/courseEditor/course.js:15 all pass `{outline: true}`. So this
+    // is a helper defect corrected to the client contract, not a value bent to
+    // get past validation: the schema, the route and every validation outcome
+    // are untouched, and no assertion or expected value in any spec changes.
+    return this.get('/api/courses/' + id + '?outline=true')
       .end(this.setLastResponse(cb));
   },
 
@@ -325,6 +344,22 @@ var methods = {
 
     return this.post('/api/trinkets/codeerror')
       .send(defaults.trinketRunError)
+      .end(this.setLastResponse(cb));
+  },
+
+  subscribe : function(list, email, cb) {
+    return this.post('/api/subscriptions/' + list)
+      .send({email:email})
+      .end(this.setLastResponse(cb));
+  },
+
+  unsubscribe : function(list, email, cb) {
+    return this.del('/api/subscriptions/' + list + '?email=' + email)
+      .end(this.setLastResponse(cb));
+  },
+
+  getSubscriptions : function(list, cb) {
+    return this.get('/api/subscriptions/' + list)
       .end(this.setLastResponse(cb));
   },
 

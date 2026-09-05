@@ -35,16 +35,14 @@ COPY --chown=node:node config/ ./config/
 # Environment
 #
 # NODE_ENV=production stays: config/production.json is what supplies the
-# container-side workerUrl, genUrl and vncPath this image needs. What that file
-# also carried was `corsOrigins: true`, which Socket.IO accepted as "any
-# origin"; CORS_ORIGINS below overrides it with an explicit list, so the image
-# cannot activate a wildcard even when run standalone. The value is the
-# localhost set from config/default.json plus the nginx entry point in
-# serverside/docker-compose.yml. A deployment on other hostnames overrides this
-# variable; manager.js refuses to start on a wildcard or an empty list rather
-# than falling back to one.
+# container-side workerUrl, genUrl and vncPath this image needs, and its
+# `corsOrigins: true` is the value manager.js hands to Socket.IO, unchanged from
+# the base commit. An operator that wants an explicit allowlist instead sets
+# CORS_ORIGINS, which config/custom-environment-variables.json already maps onto
+# `manager.corsOrigins`; this image does not set it, because doing so would
+# change the unit's behaviour and serverside/** is in scope for runtime pinning
+# only.
 ENV NODE_ENV=production
-ENV CORS_ORIGINS=http://localhost:3000,http://localhost:3001,http://localhost:8080
 ENV NODE_CONFIG_DIR=/app/config
 
 # Expose port

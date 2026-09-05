@@ -1,58 +1,4 @@
-# Serverside execution plane.
-#
-# The shells and the pygame worker run untrusted user code, so the controls that
-# contain it are the committed default here rather than something a deployer is
-# expected to switch on later. Every service drops all Linux capabilities and
-# regains only the ones its process model provably needs, forbids privilege
-# escalation, carries memory/CPU/PID ceilings, sits on an internal network with
-# no route off the host, and runs on a read-only root filesystem with a tmpfs
-# for the paths it genuinely writes. nginx publishes the single port this file
-# opens.
 services:
-  # One-shot ownership migration for the generated volumes.
-  #
-  # The managers moved from root to uid 1000, and Docker seeds a volume's
-  # ownership from the image directory underneath only when the volume is new.
-  # An existing deployment therefore has root-owned generated volumes that the
-  # non-root manager cannot write - measured: `touch` in the volume fails with
-  # `Permission denied` after the upgrade. This runs before the managers, hands
-  # each volume to uid 1000 and exits; on a fresh deployment it is a no-op.
-  #
-  # It is the narrowest privileged thing that can do this: the nginx image
-  # (already built for this stack), no network at all, a read-only root
-  # filesystem, and CHOWN plus DAC_OVERRIDE as the only capabilities - CHOWN to
-  # change the owner, DAC_OVERRIDE to descend directories owned by the previous
-  # user. Every long-lived service still starts unprivileged.
-  generated-volume-init:
-    build: ./nginx
-    profiles: ["python3", "java", "r", "pygame"]
-    user: "0:0"
-    network_mode: "none"
-    read_only: true
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-    mem_limit: 64m
-    pids_limit: 16
-    restart: "no"
-    volumes:
-      - python-generated:/mnt/python-generated
-      - java-generated:/mnt/java-generated
-      - r-generated:/mnt/r-generated
-      - pygame-generated:/mnt/pygame-generated
-    command:
-      - chown
-      - -R
-      - "1000:1000"
-      - /mnt/python-generated
-      - /mnt/java-generated
-      - /mnt/r-generated
-      - /mnt/pygame-generated
-
   # Nginx reverse proxy - single entry point
   nginx:
     build: ./nginx
@@ -67,42 +13,6 @@ services:
       - pygame-generated:/var/www/generated/pygame:ro
       # Uncomment for SSL certificates:
       # - ./nginx/ssl:/etc/nginx/ssl:ro
-    networks:
-      # Browser traffic arrives on `edge`; `proxy` reaches the four managers.
-      # `pygame-exec` as well, because nginx.conf proxies /pygame-vnc/ straight
-      # to pygame-worker:6080 - that is the one execution container this proxy
-      # has to reach directly.
-      - edge
-      - proxy
-      - pygame-exec
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    # The master process starts as root, binds :80, then drops its workers to
-    # the nginx user and takes ownership of its cache directories. These five
-    # capabilities are what that startup sequence needs and nothing more.
-    cap_add:
-      - CHOWN
-      - SETGID
-      - SETUID
-      - DAC_OVERRIDE
-      - NET_BIND_SERVICE
-    mem_limit: 256m
-    cpus: 1.0
-    # Above the core count of any host this is likely to run on, because
-    # nginx/nginx.conf sets `worker_processes auto`: the master forks one worker
-    # per core, and on a large machine a ceiling near 100 stops it mid-startup
-    # (measured on a 112-core host: exactly 100 processes and
-    # `sendmsg() failed (9: Bad file descriptor)` in the error log). This is a
-    # fork-bomb bound for a process that runs no user code, not a sandbox.
-    pids_limit: 512
-    read_only: true
-    tmpfs:
-      # nginx writes its pid file and its proxy/client temp paths at startup;
-      # these two mounts are the whole of what it needs to write.
-      - /var/cache/nginx:size=64m
-      - /run:size=8m
     depends_on: []  # Will be populated by profiles
 
   # Python 3 - Manager 8100, Shell 8110
@@ -114,40 +24,15 @@ services:
       - "8010"
     volumes:
       - python-sessions:/tmp/sessions
-    networks:
-      # Only its own manager (and, for the pygame worker, the VNC proxy) is
-      # reachable from here: an untrusted shell has no peer on this network to
-      # move sideways to.
-      - python-exec
-    environment:
-      # pm2-runtime writes logs and pid files under PM2_HOME, which the image
-      # points into the tmpfs below because the root filesystem is read-only.
-      - PM2_HOME=/tmp/pm2
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    # This service keeps a privileged parent process by design, and these four
-    # capabilities are exactly that design rather than a shortcut: server.js
-    # chowns each session directory to 1000:1000 (trinket/server.js:102), spawns
-    # the untrusted interpreter with uid/gid 1000 (lines 218-219) and SIGKILLs it
-    # on timeout (line 430). The user's code itself therefore never runs as root,
-    # and no-new-privileges plus the dropped set bound what the parent can do.
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-      - KILL
-    mem_limit: 500m
-    mem_reservation: 375m
-    cpus: 1.0
-    cpu_shares: 512
-    pids_limit: 50
-    read_only: true
-    tmpfs:
-      # Session directories live in the named volume mounted deeper at
-      # /tmp/sessions, which stays writable; this bounds everything else.
-      - /tmp:size=100m
+    # Production security options (uncomment for hardened deployment):
+    # mem_limit: 500m
+    # mem_reservation: 375m
+    # cpus: 1.0
+    # cpu_shares: 512
+    # pids_limit: 50
+    # read_only: true
+    # tmpfs:
+    #   - /tmp:size=100m
 
   python3-manager:
     build: ./python/manager
@@ -157,32 +42,10 @@ services:
       - "8100"
     volumes:
       - python-generated:/tmp/python-generated
-    networks:
-      # `proxy` carries nginx to this manager; the language network carries this
-      # manager to its own shell and to nothing else.
-      - proxy
-      - python-exec
     depends_on:
-      python3-shell:
-        condition: service_started
-      # Ownership of the generated volume is settled before this manager,
-      # which runs as uid 1000, tries to write into it. The long form is
-      # required to express that condition, so the shell dependency above is
-      # spelled out with its own (default) condition rather than as a list.
-      generated-volume-init:
-        condition: service_completed_successfully
+      - python3-shell
     environment:
       - NODE_ENV=production
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    mem_limit: 300m
-    cpus: 0.5
-    pids_limit: 50
-    read_only: true
-    tmpfs:
-      - /tmp:size=100m
 
   # Java - Manager 8200, Shell 8210
   java-shell:
@@ -192,26 +55,12 @@ services:
       - "8010"
     volumes:
       - java-sessions:/tmp/sessions
-    networks:
-      # Only its own manager (and, for the pygame worker, the VNC proxy) is
-      # reachable from here: an untrusted shell has no peer on this network to
-      # move sideways to.
-      - java-exec
-    environment:
-      # pm2-runtime's writable home, inside the tmpfs below.
-      - PM2_HOME=/tmp/pm2
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    mem_limit: 500m
-    mem_reservation: 375m
-    cpus: 1.0
-    cpu_shares: 512
-    pids_limit: 50
-    read_only: true
-    tmpfs:
-      - /tmp:size=100m
+    # Production security options (uncomment for hardened deployment):
+    # mem_limit: 500m
+    # mem_reservation: 375m
+    # cpus: 1.0
+    # cpu_shares: 512
+    # pids_limit: 50
 
   java-manager:
     build: ./java/manager
@@ -220,32 +69,10 @@ services:
       - "8200"
     volumes:
       - java-generated:/tmp/java-generated
-    networks:
-      # `proxy` carries nginx to this manager; the language network carries this
-      # manager to its own shell and to nothing else.
-      - proxy
-      - java-exec
     depends_on:
-      java-shell:
-        condition: service_started
-      # Ownership of the generated volume is settled before this manager,
-      # which runs as uid 1000, tries to write into it. The long form is
-      # required to express that condition, so the shell dependency above is
-      # spelled out with its own (default) condition rather than as a list.
-      generated-volume-init:
-        condition: service_completed_successfully
+      - java-shell
     environment:
       - NODE_ENV=production
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    mem_limit: 300m
-    cpus: 0.5
-    pids_limit: 50
-    read_only: true
-    tmpfs:
-      - /tmp:size=100m
 
   # R - Manager 8300, Shell 8310
   r-shell:
@@ -255,26 +82,12 @@ services:
       - "8010"
     volumes:
       - r-sessions:/tmp/sessions
-    networks:
-      # Only its own manager (and, for the pygame worker, the VNC proxy) is
-      # reachable from here: an untrusted shell has no peer on this network to
-      # move sideways to.
-      - r-exec
-    environment:
-      # pm2-runtime's writable home, inside the tmpfs below.
-      - PM2_HOME=/tmp/pm2
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    mem_limit: 500m
-    mem_reservation: 375m
-    cpus: 1.0
-    cpu_shares: 512
-    pids_limit: 50
-    read_only: true
-    tmpfs:
-      - /tmp:size=100m
+    # Production security options (uncomment for hardened deployment):
+    # mem_limit: 500m
+    # mem_reservation: 375m
+    # cpus: 1.0
+    # cpu_shares: 512
+    # pids_limit: 50
 
   r-manager:
     build: ./r/manager
@@ -283,32 +96,10 @@ services:
       - "8300"
     volumes:
       - r-generated:/tmp/r-generated
-    networks:
-      # `proxy` carries nginx to this manager; the language network carries this
-      # manager to its own shell and to nothing else.
-      - proxy
-      - r-exec
     depends_on:
-      r-shell:
-        condition: service_started
-      # Ownership of the generated volume is settled before this manager,
-      # which runs as uid 1000, tries to write into it. The long form is
-      # required to express that condition, so the shell dependency above is
-      # spelled out with its own (default) condition rather than as a list.
-      generated-volume-init:
-        condition: service_completed_successfully
+      - r-shell
     environment:
       - NODE_ENV=production
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    mem_limit: 300m
-    cpus: 0.5
-    pids_limit: 50
-    read_only: true
-    tmpfs:
-      - /tmp:size=100m
 
   # Pygame - Manager 8400, Worker 8010 + VNC 6080
   pygame-worker:
@@ -319,67 +110,10 @@ services:
       - "6080"   # noVNC WebSocket
     volumes:
       - pygame-sessions:/tmp/pygame
-    networks:
-      # Only its own manager (and, for the pygame worker, the VNC proxy) is
-      # reachable from here: an untrusted shell has no peer on this network to
-      # move sideways to.
-      - pygame-exec
-    environment:
-      # Shared with pygame-manager. websockify accepts a VNC connection only
-      # when it carries this token, and no secret is committed: supply one per
-      # deployment with `export PYGAME_VNC_TOKEN=$$(openssl rand -hex 32)`.
-      #
-      # Passed through rather than demanded with `${VAR:?...}`, because Compose
-      # interpolates this whole file before it applies profiles - measured - so
-      # that form also stops `--profile python3`, `--profile java` and
-      # `--profile r`, none of which starts a pygame service. The requirement is
-      # enforced where it belongs instead, and still fails closed: unset, this
-      # worker generates a random per-container token it never prints, so the
-      # proxy refuses every connection, and pygame-manager refuses to start at
-      # all with a message naming this variable.
-      - PYGAME_VNC_TOKEN=${PYGAME_VNC_TOKEN:-}
-      # Comma-separated Origins websockify will complete a WebSocket handshake
-      # for. An Origin is the ORIGIN OF THE PAGE, not of the endpoint it dials,
-      # so this lists where the trinket application is served from: the root
-      # docker-compose.yml publishes it on 3000, pygame/manager/config/
-      # default.json names 3000 and 3001, and 8080 is this file's nginx entry
-      # point for a deployment that fronts the app with it. Replace the list
-      # with your own origins; a wildcard is refused.
-      - VNC_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,http://localhost:8080
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    # supervisord starts as root and drops each program it manages to
-    # user=trinket, so it keeps the capabilities that hand-off needs.
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-      - KILL
-    mem_limit: 1g
-    mem_reservation: 750m
-    cpus: 2.0
-    pids_limit: 200
-    read_only: true
-    tmpfs:
-      # Four mounts rather than one, because this image runs a process manager
-      # and an X server rather than a single Node process, and each of them
-      # writes outside the session volume: entrypoint.sh materializes the
-      # websockify token and the optional RFB password under /run/pygame,
-      # supervisord writes each program's stdout and stderr logs, and Xvnc and
-      # the pygame process write under the trinket account's home. The home
-      # mount carries uid/gid so it arrives owned by trinket (uid 1000) instead
-      # of root, which is what lets those two write there at all.
-      #
-      # Measured on this exact set: supervisord parses its three programs and
-      # xvnc, novnc and shell all reach RUNNING; the websockify gate answers
-      # 000/403/101 for absent/foreign-origin/valid connections and 405 for the
-      # noVNC UI; /etc is not writable.
-      - /run:size=8m
-      - /tmp:size=100m
-      - /var/log/supervisor:size=32m
-      - /home/trinket:size=32m,uid=1000,gid=1000
+    # Production security options (uncomment for hardened deployment):
+    # mem_limit: 1g
+    # mem_reservation: 750m
+    # cpus: 2.0
 
   pygame-manager:
     build: ./pygame/manager
@@ -388,101 +122,17 @@ services:
       - "8100"
     volumes:
       - pygame-generated:/tmp/pygame-generated
-    networks:
-      # `proxy` carries nginx to this manager; the language network carries this
-      # manager to its own shell and to nothing else.
-      - proxy
-      - pygame-exec
     depends_on:
-      pygame-worker:
-        condition: service_started
-      # Ownership of the generated volume is settled before this manager,
-      # which runs as uid 1000, tries to write into it. The long form is
-      # required to express that condition, so the shell dependency above is
-      # spelled out with its own (default) condition rather than as a list.
-      generated-volume-init:
-        condition: service_completed_successfully
+      - pygame-worker
     environment:
       - NODE_ENV=production
-      # config/production.json sets corsOrigins: true, which the manager refuses
-      # under NODE_ENV=production, so the committed deployment names the browser
-      # origins instead - the application's own origins (3000/3001 per
-      # config/default.json and the root docker-compose.yml) plus this file's
-      # nginx entry point. JSON array; replace it per deployment.
-      - 'CORS_ORIGINS=["http://localhost:3000","http://localhost:3001","http://localhost:8080"]'
-      # Same token as pygame-worker: the manager hands it to the browser so the
-      # VNC handshake can be authenticated end to end. manager.js refuses to
-      # start when it is unset, which is where the requirement is enforced (see
-      # the note on the worker above for why it is not demanded here).
-      - PYGAME_VNC_TOKEN=${PYGAME_VNC_TOKEN:-}
-    security_opt:
-      - "no-new-privileges:true"
-    cap_drop:
-      - ALL
-    mem_limit: 300m
-    cpus: 0.5
-    pids_limit: 50
-    read_only: true
-    tmpfs:
-      - /tmp:size=100m
-
-networks:
-  # One network per language rather than one shared execution network, so an
-  # untrusted shell's only reachable peer is the manager that drives it. A flat
-  # network let every shell reach every other language's manager, shell and
-  # worker; these do not.
-  #
-  # `internal: true` removes the gateway, so none of them can reach the internet
-  # (verified) - but note what that does NOT do: the bridge gateway is still the
-  # host, so a daemon listening on the host remains reachable from a container on
-  # an internal network. Denying that is a host firewall policy, and it is listed
-  # as a deployment prerequisite in README.md rather than claimed here.
-  python-exec:
-    internal: true
-  java-exec:
-    internal: true
-  r-exec:
-    internal: true
-  pygame-exec:
-    internal: true
-  # nginx to the four managers. No shell or worker is on it, so it cannot be used
-  # to cross between languages.
-  proxy:
-    internal: true
-  # Carries nginx's published 8080:80 and nothing else.
-  edge:
 
 volumes:
-  # Session volumes are tmpfs-backed with a hard ceiling. This is where the
-  # untrusted submission itself is written and executed (python/shell/trinket/
-  # server.js creates a directory per run under /tmp/sessions, and the java, r
-  # and pygame units follow the same model), and a plain named volume gives that
-  # code the whole host disk: it is mounted deeper than the container's
-  # `/tmp:size=100m` tmpfs, so the ceiling above it does not apply. These do
-  # apply - measured, a write past the size is refused - and the data is
-  # per-run scratch that the shells delete themselves, so nothing needs to
-  # survive a restart.
-  #
-  # The generated volumes are deliberately NOT tmpfs: each is written by a
-  # manager and read by nginx, and a tmpfs-backed named volume is a separate
-  # mount per container rather than shared storage (measured: the second
-  # container sees an empty filesystem), which would stop generated plots being
-  # served. They stay real volumes, bounded by the managers' cleanup scheduler
-  # and, for pygame, by the manual cleanup its section documents; a host-level
-  # quota is named as a deployment prerequisite in README.md.
   python-sessions:
-    driver: local
-    driver_opts: {type: tmpfs, device: tmpfs, o: "size=256m"}
   python-generated:
   java-sessions:
-    driver: local
-    driver_opts: {type: tmpfs, device: tmpfs, o: "size=256m"}
   java-generated:
   r-sessions:
-    driver: local
-    driver_opts: {type: tmpfs, device: tmpfs, o: "size=256m"}
   r-generated:
   pygame-sessions:
-    driver: local
-    driver_opts: {type: tmpfs, device: tmpfs, o: "size=256m"}
   pygame-generated:

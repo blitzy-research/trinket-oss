@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "config": "^3.3.9",
-    "file-type": "^22.0.2",
+    "file-type": "^19.0.0",
     "is-svg": "^5.0.0",
     "socket.io": "^4.7.4",
     "socket.io-client": "^4.7.4"

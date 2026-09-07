@@ -199,6 +199,41 @@ const init = async () => {
   // status outside those four (a 400, for instance) and every non-error
   // response do. Moving the assignments above the branches would change what
   // is sent on the error pages.
+  //
+  // WHAT THIS EXTENSION CANNOT DO ABOUT COOKIES ON A 500, recorded here
+  // because it looks like something this mapper forgot and is not.
+  //
+  // hapi 21 writes only cookie CLEARS when the response carries a 500 error:
+  // node_modules/@hapi/hapi/lib/headers.js `exports.state` gates the whole of
+  // `request._states` on `response._error?.output.statusCode === 500`, where
+  // hapi 20.3.0 pushed every entry unconditionally. The yar session commit IS
+  // such an entry, and the writer runs in the framework's marshal cycle
+  // (lib/route.js:335) - after this extension and after the cookie patch
+  // below - so on a 500 the session Set-Cookie is not on the wire, whether the
+  // handler threw, returned a Boom, or failed while marshalling. A 500 a later
+  // extension REPLACES carries no `_error`, which is why the 50x.html pages
+  // this mapper renders still send it.
+  //
+  // A marshal-time failure is worse than late: it is invisible from here. This
+  // extension runs exactly once for such a request and sees a response whose
+  // `isBoom` is false, and the 500 the client receives is built AFTERWARDS by
+  // `internals.fail` in node_modules/@hapi/hapi/lib/transmit.js, which re-runs
+  // the marshal cycle and not the request lifecycle. Measured: a header set
+  // here does not reach that response at all - which is how the seven
+  // /admin/* and /account/* view-render failures answer a 96-byte JSON 500
+  // carrying none of the Pragma or Expires stamped below, while a handler-time
+  // Boom 500 carries both. That pair is the on-wire discriminator between the
+  // two arrival paths.
+  //
+  // So the divergence is REGISTERED, not patched: docs/preserved-quirks.md
+  // section 12 carries the measurement, the AAP T-6 conflict argument and the
+  // decision, and test/parity/replay.js's `hapi21-500-clear-only-states` rule
+  // is the gate. No state is re-attached on 5xx here. Doing so would mean
+  // hand-sealing a yar cookie through `server.states.format` into
+  // `boom.output.headers` - authored behaviour no AAP requirement describes,
+  // outside R-a's four permitted diff categories, deliberately defeating an
+  // upstream security change - and it could not cover the marshal-time subset
+  // in any case.
   server.ext('onPreResponse', (request, h) => {
     const response = request.response;
     // Framing is denied only on the exact paths config.app.xframeDeny lists,
@@ -210,6 +245,32 @@ const init = async () => {
 
     if (response.isBoom) {
       const statusCode = response.output.statusCode;
+
+      // The diagnostic record for an internal failure that reached no other
+      // log. Before this, a 500 could be answered with NOTHING written
+      // anywhere: the Layer 1 catch-all in lib/util/routeParser.js wraps only
+      // the handler, so a throw in a PRE-handler never passes through it, and
+      // hapi's own internal-error signal goes to a `request` event channel this
+      // application does not subscribe to. Measured: one unauthenticated
+      // `POST /login` carrying `{"email":{"$ne":null}}` made
+      // lib/util/helpers.js:128 call `.trim()` on an object, and the client got
+      // a 500 while stdout and stderr stayed completely silent -- an operator
+      // with a trivially discoverable input and no record of it (QA finding
+      // obs-prehandler-500-logs-nothing).
+      //
+      // Three properties make this safe to add here. It runs BEFORE the four
+      // branches below and returns nothing, so no response, status, header or
+      // body changes -- the client still receives exactly the page or payload
+      // it did. It fires only for a 500, so the deliberate 501 from
+      // `Boom.notImplemented` on the feature-flagged asset routes is not
+      // reported as a fault. And it skips a Boom already marked by
+      // `markLogged` in lib/util/routeParser.js, so a handler throw -- which
+      // Layer 1 logs with its stack -- still produces exactly one line rather
+      // than two.
+      if (statusCode === 500 && response.trinketLogged !== true) {
+        log.error('unlogged 500 on ' + request.method.toUpperCase() + ' ' + request.path
+          + ': ' + (response.stack || response.message || String(response)));
+      }
 
       // An /api/ or /partials/ path, or an Accept naming JSON, is answered with
       // the Boom payload; anything else that will accept HTML gets a page.
@@ -267,7 +328,28 @@ const init = async () => {
   // route wrapper in lib/util/routeParser for a request that establishes a
   // session, but if the framework stops populating `_header` the guard simply
   // fails and the whole extension becomes a silent no-op: the cookie is still
-  // sent, just without the Expires this adds, and nothing reports it.
+  // sent, just without the Expires this adds, and nothing reports it. It is
+  // NOT a no-op on hapi 21.4.10: a login here emits
+  // `session=<sealed>; HttpOnly; SameSite=Lax; Path=/; Expires=<+1y>`,
+  // measured.
+  //
+  // On a 500 there is no Set-Cookie for this to rewrite, and that is upstream
+  // rather than local: hapi 21 writes only cookie CLEARS when the response
+  // carries a 500 error (see the mapper above for the headers.js branch and
+  // the marshal-cycle ordering). A 500 therefore loses no horizon that this
+  // extension had appended, because it never appended one there: `Expires` is
+  // added only where `request.cookie` is set, i.e. on the response that
+  // establishes the session, and hapi 20 repeated the cookie on a 500 with
+  // `HttpOnly; Path=/; SameSite=Lax` and no `Expires` or `Max-Age` at all.
+  // Measured in a real browser store, receiving that shape DOWNGRADES a
+  // persistent record to session-only while receiving no header leaves it
+  // exactly as held - so the suppression is the safer of the two shapes for a
+  // client, not a loss. The session id is unchanged either way, since yar
+  // re-sets the id it received, and the server-side store write happens in
+  // both. Registered, with its conflict argument, its measurements and its
+  // gate, at docs/preserved-quirks.md section 12; deliberately not repaired
+  // here, because re-attaching state on a 5xx is authored behaviour outside
+  // this migration's four permitted diff categories.
   const cookieIsSecure = config.app.plugins.session.cookieOptions.isSecure !== false;
   server.ext('onPreResponse', (request, h) => {
     if (request.cookie && request.response && typeof request.response._header === "function") {

@@ -3,10 +3,16 @@
 <head>
     <meta charset="utf-8">
     <title>Something went wrong</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/img/icons/favicon.ico" type="image/x-icon">
     <link href="//fonts.googleapis.com/css?family=Lato:300,900|Merriweather:300,400italic,900" rel="stylesheet" type="text/css">
     <style>
         html { padding: 40px 0; }
         body { text-align: center; font-family: "Merriweather", serif; }
+        /* This template ships its own complete stylesheet rather than extending
+           base.html, so the landmark wrapper's block layout is stated here to
+           keep the page's rendering self-contained. */
+        main { display: block; }
         h1, h2, h3 { font-family: "Lato", sans-serif; font-weight: 900; line-height: 1.4; margin: 0; }
         h1 { font-size: 2.75rem; }
         h1 span { color: #CCC; }
@@ -46,12 +52,22 @@
     </style>
 </head>
 <body>
-  <h1>Something went wrong <span>:(</span></h1>
-  <hr>
-  <p class="subheader">We encountered an unexpected error. Please try again later.</p>
-  {% if config.app.supportEmail %}
-  <p class="subheader">If this problem persists, please contact <a href="mailto:{{ config.app.supportEmail }}">{{ config.app.supportEmail }}</a>.</p>
-  {% endif %}
-  <a href="/" class="nav-link">Go to Homepage</a>
+  {# The page's single landmark. Assistive technology needs a content region to
+     enter, and this standalone template inherits none from base.html. The name
+     is carried by aria-label rather than aria-labelledby: the <h1> below is
+     asserted verbatim by test/lib/api/pages.js and must take no attribute. The
+     native <main> element already maps to role="main", so no explicit role is
+     declared. This template serves every 4xx-permission and 5xx response
+     (app.js renders it for 403 and for any status of 500 or above), so the name
+     matches its own heading rather than naming one status. #}
+  <main aria-label="Something went wrong">
+    <h1>Something went wrong <span>:(</span></h1>
+    <hr>
+    <p class="subheader">We encountered an unexpected error. Please try again later.</p>
+    {% if config.app.supportEmail %}
+    <p class="subheader">If this problem persists, please contact <a href="mailto:{{ config.app.supportEmail }}">{{ config.app.supportEmail }}</a>.</p>
+    {% endif %}
+    <a href="/" class="nav-link">Go to Homepage</a>
+  </main>
 </body>
 </html>

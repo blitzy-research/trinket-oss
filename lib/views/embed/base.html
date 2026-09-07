@@ -64,7 +64,10 @@
       data-assignment="{{ true if assignment else false }}"
       data-assignment-feedback="{{ true if assignmentFeedback else false }}"
       data-view-only="{{ true if viewOnly else false }}"
-      data-autofocus="{{ false if trinket and trinket.settings and not trinket.settings.autofocusEnabled else true }}"
+      {# Read-only surfaces (the view-only assignment variant, snapshots and
+         output-only embeds) are not there to be typed into, so they never take
+         focus into the editor on load regardless of the trinket's own setting. #}
+      data-autofocus="{{ false if viewOnly or snapshot or outputOnly or (trinket and trinket.settings and not trinket.settings.autofocusEnabled) else true }}"
       class="mode-{% if outputOnly %}output{% elif toggleCode or runMode == "calculator" %}toggle{% elif snapshot %}snapshot{% else %}standard{% endif %} {{'has-remix' if trinket.original else ''}} {{'anonymous' if not trinket.id else 'remixable'}}"
       {% if partner %}data-partner="true"{% endif %}
       {% block body_data %}{% endblock %} data-is-mobile="{{ true if isMobile else false }}">
@@ -91,13 +94,18 @@
   <div id="wrapper" class="{{ 'snapshot' if snapshot else 'off-canvas-wrap owner-view row' }}" data-offcanvas>
     <div class="trinket-wrapper {{ 'snapshot' if snapshot else 'inner-wrap' }}">
 
+      {# The editor chrome carries no visible heading by design. This one names
+         the document for assistive technology only: `show-for-sr` is the
+         framework's screen-reader-only utility, so nothing is rendered. #}
+      <h1 class="show-for-sr">{{ trinket.name if trinket.name else config.app.siteName }} — {{ lang }} code editor</h1>
+
       {# Single unified nav structure with conditional content #}
-      <nav id="menu" class="trinket-header {% if snapshot %}hide{% endif %}" data-interface="top-menu">
+      <nav id="menu" class="trinket-header {% if snapshot %}hide{% endif %}" data-interface="top-menu" aria-label="Trinket toolbar">
         {# Left menu toggle - different element types for outputOnly vs full #}
         {% if outputOnly and leftMenu %}
         <section class="left">
           <div class="icon-bar left-menu-toggle">
-            <a class="item menu-button left-off-canvas-toggle" data-action="menu.options">
+            <a class="item menu-button left-off-canvas-toggle" data-action="menu.options" aria-label="Open Menu" role="button">
               <i class="fa fa-bars"></i>
             </a>
           </div>
@@ -138,17 +146,17 @@
         </section>
 
         {# Mode toolbar - single block, conditional attributes and extra buttons #}
-        <section class="mode-toolbar left" data-mode="interact" {% if not outputOnly %}role="menubar"{% endif %}>
+        <section class="mode-toolbar left" data-mode="interact" {% if not outputOnly %}role="menubar" aria-label="Editor actions"{% endif %}>
           <div class="icon-bar label-right">
             {% block toolbar_options %}{% endblock %}
             {% if not outputOnly and sharingEnabled %}
-            <button class="show-for-medium-up button split item menu-button" data-action="sharing.social" data-dropdown="share-options" data-options="align:bottom" role="button" aria-label="Share Menu" aria-controls="share-options"><i class="fa fa-share-alt"></i><label id="share_button_label" class="show-for-large-up">Share</label><span data-dropdown="share-options" data-options="align:bottom" role="menu"></span></button>
+            <button class="show-for-medium-up button split item menu-button" data-action="sharing.social" data-dropdown="share-options" data-options="align:bottom" role="button" aria-label="Share Menu" aria-controls="share-options"><i class="fa fa-share-alt"></i><label id="share_button_label" class="show-for-large-up">Share</label><span class="highlight-on-focus" data-dropdown="share-options" data-options="align:bottom" role="button" tabindex="0" aria-label="More sharing options" aria-controls="share-options"></span></button>
             {% endif %}
             {% if not outputOnly and config.features.accessibilityToggle and lang in ['python', 'python3', 'pygame', 'java', 'R', 'glowscript', 'html'] %}
             <div id="editorToggleWrapper" style="display: inline-block; width: auto; padding: 0; margin-left: 10px">
               <img src="{{ '/img/accessibility.png' | cachePrefix }}" alt="Accessibility" title="Accessibility" style="float: left" />
               <fieldset id="editorToggleFieldset" class="switch small left highlight-on-focus" style="line-height: 12px; margin: 1px 4px 0 4px" title="Enable screen reader accessibility in code editor" aria-label="Enable screen reader accessibility in code editor" tabindex="0">
-                <input id="toolbarEditorToggle" type="checkbox" name="toolbarEditorToggle" />
+                <input id="toolbarEditorToggle" type="checkbox" name="toolbarEditorToggle" aria-label="Enable screen reader accessibility in code editor" />
                 <label class="highlight-on-focus" for="toolbarEditorToggle"></label>
               </fieldset>
             </div>
@@ -173,7 +181,7 @@
           <div class="icon-bar">
             <div class="item"><div id="draftMessage" class="hide draft-message"></div></div>
             {% if isMobile and lang == 'pygame' %}
-            <a class="item" data-action="keyboard.toggle" data-no-analytics="true" id="noVNC_keyboardbutton">
+            <a class="item" data-action="keyboard.toggle" data-no-analytics="true" id="noVNC_keyboardbutton" aria-label="Keyboard" role="button">
               <i class="fa fa-keyboard-o"></i> <label class="show-for-medium-up">Keyboard</label>
             </a>
             <textarea id="noVNC_keyboardinput" autocapitalize="off" autocomplete="off" spellcheck="false" tabindex="-1"></textarea>
@@ -182,42 +190,44 @@
             <!-- no user, remix if trinket.id, copy if inline -->
             <a title="{{ 'Remix this trinket.' if trinket.id else 'Save a copy of this trinket.' }}"
                class="save-it menu-button allow-original ui-option guest-option has-tip item right-off-canvas-toggle {% if user %} hide{% endif %}"
-               data-action="menu.user">
+               data-action="menu.user" aria-label="{{ 'Remix' if trinket.id else 'Copy' }}" role="button">
               <i class="fa fa-save"></i>
               <label class="show-for-medium-up">{{ 'Remix' if trinket.id else 'Copy' }}</label>
             </a>
             <!-- user, no trinket.id -->
             <a title="Save a copy of this trinket."
                class="save-it create-copy menu-button allow-original ui-option user-option owner-option has-tip item {{ 'disabled' if isOwner }} {% if not user or library %}hide{% endif %}"
-               data-action="{{ 'menu.upgrade' if upgradeNeeded else 'library.add' }}">
+               data-action="{{ 'menu.upgrade' if upgradeNeeded else 'library.add' }}" aria-label="Copy" role="button">
               <i class="fa fa-save"></i>
               <label class="show-for-medium-up">Copy</label>
             </a>
             <!-- user, trinket.id -->
             <a title="{{'Save changes.' if isOwner else 'Remix this trinket.'}}"
                class="save-it create-remix menu-button allow-original ui-option user-option owner-option has-tip item {% if isOwner %}disabled blue-highlight{% else %}green-highlight{% endif %} {% if not user or library %}hide{% endif %}"
-               data-action="{{ 'menu.upgrade' if upgradeNeeded else ('code.save' if isOwner else 'library.add') }}">
+               data-action="{{ 'menu.upgrade' if upgradeNeeded else ('code.save' if isOwner else 'library.add') }}" aria-label="{{'Save' if isOwner else 'Remix'}}" role="button">
               <i class="fa {{'fa-save' if isOwner else 'fa-code-fork'}}"></i>
               <label class="show-for-medium-up">{{'Save' if isOwner else 'Remix'}}</label>
             </a>
             <!-- user, has remix, viewing remix -->
             <a title="Save changes to your Remix."
                class="save-it save-remix menu-button allow-original ui-option user-option owner-option has-tip item blue-highlight {% if isOwner %}disabled{% endif %} {% if not user or library %}hide{% endif %}"
-               data-action="{{ 'menu.upgrade' if upgradeNeeded else 'library.add' }}">
+               data-action="{{ 'menu.upgrade' if upgradeNeeded else 'library.add' }}" aria-label="Save" role="button">
               <i class="fa fa-save"></i>
               <label class="show-for-medium-up">Save</label>
             </a>
             <!-- user, has remix, viewing original -->
             <a title="Revert your Remix to this Original."
                class="save-it revert-remix menu-button allow-original ui-option user-option owner-option has-tip item {{ 'disabled' if isOwner }} {% if not user or library %}hide{% endif %}"
-               data-action="{{ 'menu.upgrade' if upgradeNeeded else 'library.add' }}">
+               data-action="{{ 'menu.upgrade' if upgradeNeeded else 'library.add' }}" aria-label="Restore" role="button">
               <i class="fa fa-fast-backward"></i>
               <label class="show-for-medium-up">Restore</label>
             </a>
             {% endif %}
           </div>
           <div class="remix-switch item">
-            <input type="checkbox" name="remix-switch" class="remix-switch-checkbox" id="version-toggle" checked>
+            {# The visible label is a CSS-only switch with no text, so the
+               control is named on the input itself. #}
+            <input type="checkbox" name="remix-switch" class="remix-switch-checkbox" id="version-toggle" checked aria-label="Switch between your remix and the original trinket">
             <label class="remix-switch-label" for="version-toggle">
               <span class="remix-switch-inner"></span>
               <span class="remix-switch-switch"></span>
@@ -225,7 +235,11 @@
           </div>
           {% if config.app.embed.enableLogin %}
           <div class="icon-bar">
-            <a class="item right-menu-toggle right-off-canvas-toggle menu-button" data-action="menu.user">
+            <a class="item right-menu-toggle right-off-canvas-toggle menu-button highlight-on-focus"
+               data-action="menu.user"
+               role="button" tabindex="0"
+               aria-label="{{ 'Account menu' if user else 'Sign in' }}"
+               title="{{ 'Account menu' if user else 'Sign in' }}">
               <i class="fa fa-user ui-option owner-option user-option{% if not user %} hide{% endif %}"></i>
               <i class="fa fa-sign-in ui-option guest-option{% if user %} hide{% endif %}"></i>
             </a>
@@ -238,7 +252,7 @@
       {% include "embed/left-menu.html" %}
 
       {% if not outputOnly and not library %}
-      <aside class="right-off-canvas-menu" data-interface="user-menu" aria-hidden="true">
+      <aside class="right-off-canvas-menu" data-interface="user-menu" aria-hidden="true" aria-label="Account menu">
         <ul id="userMenu" class="off-canvas-list"></ul>
       </aside>
       {% endif %}
@@ -248,14 +262,16 @@
         <div id="flashMessage" class="container hide">
           <div id="flashContent"></div>
         </div>
-        <div class="trinket-content-wrapper {% if snapshot %}snapshot{% endif %}" {% if not outputOnly %}role="main"{% endif %}>
+        {# Named so the main region is distinguishable when this document is
+           embedded in a host page that has a main region of its own. #}
+        <div class="trinket-content-wrapper {% if snapshot %}snapshot{% endif %}" {% if not outputOnly %}role="main" aria-label="Code editor and output"{% endif %}>
           <div id="content-overlay" class="hide" data-interface="overlay"></div>
           {% block embed_content %}{% endblock %}
         </div>
       </section>
 
       {% if not outputOnly %}
-      <a class="exit-off-canvas"></a>
+      <a class="exit-off-canvas" aria-label="Close Menu" role="button"></a>
       {% endif %}
 
     </div>
@@ -297,16 +313,22 @@
   {% block settings_modal %}{% endblock %}
 
   <ul id="share-options" class="f-dropdown" data-dropdown-content role="menu">
-    {% if emailEnabled %}<li role="menuitem"><a class="menu-button" data-action="sharing.email" role="button"><i class="fa fa-envelope"></i>Email</a></li>{% endif %}
-    <li role="menuitem"><a class="menu-button" data-action="sharing.share" role="button"><i class="fa fa-link"></i>Link</a></li>
-    <li role="menuitem"><a class="menu-button" data-action="sharing.embed" role="button"><i class="fa fa-code"></i>Embed</a></li>
+    {% if emailEnabled %}<li role="presentation"><a class="menu-button" data-action="sharing.email" aria-label="Email" role="menuitem"><i class="fa fa-envelope"></i>Email</a></li>{% endif %}
+    <li role="presentation"><a class="menu-button" data-action="sharing.share" aria-label="Link" role="menuitem"><i class="fa fa-link"></i>Link</a></li>
+    <li role="presentation"><a class="menu-button" data-action="sharing.embed" aria-label="Embed" role="menuitem"><i class="fa fa-code"></i>Embed</a></li>
     {% if downloadable %}
-    <li><a class="menu-button" data-action="mode.download"><i class="fa fa-download"></i>Download</a></li>
+    <li role="presentation"><a class="menu-button" data-action="mode.download" aria-label="Download" role="menuitem"><i class="fa fa-download"></i>Download</a></li>
     {% endif %}
   </ul>
 
   {% block run_options %}{% endblock %}
 
+  {# Everything from here to the matching endraw is a CLIENT-side template,
+     rendered at runtime by public/js/util/template.js. That engine performs
+     placeholder substitution only and has no comment syntax, and Nunjucks does
+     not process this region at all, so a template comment placed inside it is
+     injected verbatim into the page and announced by assistive technology as
+     widget content. Explain these templates above the boundary, never inside. #}
   {% raw %}
   <script id="restoreOriginalModalTemplate" type="text/html">
     <div id="restoreOriginalModal" class="reveal-modal medium" data-reveal data-css-top="35">
@@ -389,11 +411,11 @@
 
   <script id="guestMenuTemplate" type="text/html">
     <li>
-      <form id="accountForm">
+      <form id="accountForm" aria-label="Sign in">
         <span class='message hide'></span>
-        <input name="email"    type='email'    placeholder="Email"    required>
-        <input name="password" type='password' placeholder="Password" required>
-        <a id="login"    name="login"    class='button secondary small' data-action="login">Log In</a>
+        <input name="email"    type='email'    placeholder="Email"    aria-label="Email"    autocomplete="email"            required>
+        <input name="password" type='password' placeholder="Password" aria-label="Password" autocomplete="current-password" required>
+        <a id="login"    name="login"    class='button secondary small highlight-on-focus' data-action="login" role="button" tabindex="0">Log In</a>
         <!--<a id="register" name="register" class='button primary small'   data-action="signup">Create Account</a>-->
       </form>
     </li>
@@ -405,20 +427,29 @@
 
   <script id="ownerMenuTemplate" type="text/html">
     <li><label>Options</label></li>
+{% endraw %}{# "Update Original" writes the buffer back over the stored trinket
+   (PUT /api/trinkets/{id}/code). The view-only assignment surface exists to
+   show a submission exactly as it was submitted, so the owner's write control
+   is not rendered there at all. `viewOnly` is the same context flag the body's
+   data-view-only and data-autofocus attributes use. The raw block has to be
+   closed around the condition because Nunjucks does not evaluate tags inside
+   it -- this is the same escape the include below already uses.
+#}{% if not viewOnly %}{% raw %}
     <li>
-      <a data-mode="interact" class="right-menu-link menu-button" data-action="code.save">
+      <a data-mode="interact" class="right-menu-link menu-button highlight-on-focus" data-action="code.save" role="button" tabindex="0">
         <i class="fa fa-save"></i>Update Original
       </a>
     </li>
+    {% endraw %}{% endif %}{% raw %}
     {% endraw %}{% include "includes/external_links.html" %}{% raw %}
   </script>
 
   <script id="draftTextTemplate" type="text/html">
-    <a class="menu-button" data-action="code.reset" title="Reset"><i class="fa fa-refresh"></i></a> {{draftText}}
+    <a class="menu-button" data-action="code.reset" title="Reset" aria-label="Reset" role="button"><i class="fa fa-refresh"></i></a> {{draftText}}
   </script>
 
   <script id="addInstructionsTemplate" type="text/html">
-    <p>Click the pencil icon to add instructions to your trinket. When anyone else views this trinket, they'll also be able to view them.</p>
+    <p>Use the "Edit instructions" (pencil) button to add instructions to your trinket. When anyone else views this trinket, they'll also be able to view them.</p>
   </script>
 
   <script id="editInstructionsTemplate" type="text/html">
@@ -429,15 +460,15 @@
     <div class="comment-wrapper">
       <div class="comment-heading-container">
         <div class="comment-avatar-container">
-          <img class="comment-avatar" src="{{avatar}}" width="40" height="40" />
+          <img class="comment-avatar" src="{{avatar}}" width="40" height="40" alt="" />
         </div>
         <span class="new-comment-container">
-          <textarea class="inline-comment-text"></textarea>
+          <textarea class="inline-comment-text" id="new-inline-comment-{{commentId}}" name="inline-comment-text" aria-label="Comment on this line"></textarea>
         </span>
       </div>
       <div class="new-comment-actions">
-        <a class="button tiny secondary save-inline-comment"><i class="fa fa-save"></i> Add Comment</a>
-        <a class="button tiny caution cancel-inline-comment">Cancel</a>
+        <a class="button tiny secondary save-inline-comment highlight-on-focus" role="button" tabindex="0"><i class="fa fa-save"></i> Add Comment</a>
+        <a class="button tiny caution cancel-inline-comment highlight-on-focus" role="button" tabindex="0">Cancel</a>
       </div>
     </div>
   </script>
@@ -446,7 +477,7 @@
     <div id="{{commentId}}" class="comment-wrapper">
       <div class="comment-heading-container">
         <div class="comment-avatar-container">
-          <img class="comment-avatar" src="{{avatar}}" width="40" height="40" />
+          <img class="comment-avatar" src="{{avatar}}" width="40" height="40" alt="" />
         </div>
         <div class="comment-info-container">
           <strong>{{username}}</strong>
@@ -457,42 +488,42 @@
         {{comment}}
       </div>
       <div id="edit-comment-container-{{commentId}}" class="edit-comment-container hide">
-        <textarea id="edit-inline-comment-{{commentId}}" class="inline-comment-text"></textarea>
+        <textarea id="edit-inline-comment-{{commentId}}" class="inline-comment-text" aria-label="Edit this comment"></textarea>
       </div>
     </div>
   </script>
 
   <script id="inlineCommentActions" type="text/html">
     <div class="comment-actions-wrapper">
-      <a class="comment-actions move-comment-up disabled" data-file-index="{{index}}" data-comment-id="{{commentId}}" title="Move comment up"><i class="fa fa-angle-up"></i></a>
-      <a class="comment-actions move-comment-down disabled" data-file-index="{{index}}" data-comment-id="{{commentId}}" title="Move comment down"><i class="fa fa-angle-down"></i></a>
-      <a class="comment-actions" data-dropdown="comment-actions-{{commentId}}" title="More options"><i class="fa fa-ellipsis-v"></i></a>
+      <a class="comment-actions move-comment-up disabled highlight-on-focus" data-file-index="{{index}}" data-comment-id="{{commentId}}" title="Move comment up" role="button" tabindex="0" aria-label="Move comment up"><i class="fa fa-angle-up"></i></a>
+      <a class="comment-actions move-comment-down disabled highlight-on-focus" data-file-index="{{index}}" data-comment-id="{{commentId}}" title="Move comment down" role="button" tabindex="0" aria-label="Move comment down"><i class="fa fa-angle-down"></i></a>
+      <a class="comment-actions highlight-on-focus" data-dropdown="comment-actions-{{commentId}}" title="More options" role="button" tabindex="0" aria-label="More comment options" aria-controls="comment-actions-{{commentId}}"><i class="fa fa-ellipsis-v"></i></a>
     </div>
     <ul id="comment-actions-{{commentId}}" class="f-dropdown" data-dropdown-content>
-      <li><a class="edit-inline-comment" data-comment-id="{{commentId}}"><i class="fa fa-pencil fa-fw"></i> Edit comment</a></li>
-      <li><a class="confirm-remove-inline-comment" data-comment-id="{{commentId}}"><i class="fa fa-trash-o alert fa-fw"></i> Remove comment</a></li>
+      <li><a class="edit-inline-comment highlight-on-focus" data-comment-id="{{commentId}}" role="button" tabindex="0"><i class="fa fa-pencil fa-fw"></i> Edit comment</a></li>
+      <li><a class="confirm-remove-inline-comment highlight-on-focus" data-comment-id="{{commentId}}" role="button" tabindex="0"><i class="fa fa-trash-o alert fa-fw"></i> Remove comment</a></li>
     </ul>
     <div class="confirm-remove-comment-container hide" id="confirm-remove-comment-container-{{commentId}}">
       <strong>Remove this comment?</strong><br /><br />
-      <a class="confirm-remove-comment button tiny danger" data-file-index="{{index}}" data-comment-id="{{commentId}}"><i class="fa fa-trash-o"></i> Remove</a>
-      <a class="cancel-remove-comment button tiny caution" data-comment-id="{{commentId}}">Cancel</a>
+      <a class="confirm-remove-comment button tiny danger highlight-on-focus" data-file-index="{{index}}" data-comment-id="{{commentId}}" role="button" tabindex="0"><i class="fa fa-trash-o"></i> Remove</a>
+      <a class="cancel-remove-comment button tiny caution highlight-on-focus" data-comment-id="{{commentId}}" role="button" tabindex="0">Cancel</a>
     </div>
     <div class="update-comment-container hide" id="update-comment-container-{{commentId}}">
-      <a class="update-comment button tiny secondary" data-file-index="{{index}}" data-comment-id="{{commentId}}"><i class="fa fa-save"></i> Update</a>
-      <a class="cancel-update-comment button tiny caution" data-comment-id="{{commentId}}">Cancel</a>
+      <a class="update-comment button tiny secondary highlight-on-focus" data-file-index="{{index}}" data-comment-id="{{commentId}}" role="button" tabindex="0"><i class="fa fa-save"></i> Update</a>
+      <a class="cancel-update-comment button tiny caution highlight-on-focus" data-comment-id="{{commentId}}" role="button" tabindex="0">Cancel</a>
     </div>
   </script>
   <script id="inlineCommentDismiss" type="text/html">
     <div class="comment-actions-wrapper">
-      <a class="comment-actions" data-dropdown="comment-actions-{{commentId}}"><i class="fa fa-ellipsis-v"></i></a>
+      <a class="comment-actions highlight-on-focus" data-dropdown="comment-actions-{{commentId}}" role="button" tabindex="0" aria-label="More comment options" aria-controls="comment-actions-{{commentId}}"><i class="fa fa-ellipsis-v"></i></a>
     </div>
     <ul id="comment-actions-{{commentId}}" class="f-dropdown" data-dropdown-content>
-      <li><a class="confirm-remove-inline-comment" data-comment-id="{{commentId}}"><i class="fa fa-trash-o alert fa-fw"></i> Remove comment</a></li>
+      <li><a class="confirm-remove-inline-comment highlight-on-focus" data-comment-id="{{commentId}}" role="button" tabindex="0"><i class="fa fa-trash-o alert fa-fw"></i> Remove comment</a></li>
     </ul>
     <div class="confirm-remove-comment-container hide" id="confirm-remove-comment-container-{{commentId}}">
       <strong>Remove this comment?</strong><br /><br />
-      <a class="confirm-remove-comment button tiny danger" data-file-index="{{index}}" data-comment-id="{{commentId}}"><i class="fa fa-trash-o"></i> Remove</a>
-      <a class="cancel-remove-comment button tiny caution" data-comment-id="{{commentId}}">Cancel</a>
+      <a class="confirm-remove-comment button tiny danger highlight-on-focus" data-file-index="{{index}}" data-comment-id="{{commentId}}" role="button" tabindex="0"><i class="fa fa-trash-o"></i> Remove</a>
+      <a class="cancel-remove-comment button tiny caution highlight-on-focus" data-comment-id="{{commentId}}" role="button" tabindex="0">Cancel</a>
     </div>
   </script>
   {% endraw %}

@@ -1,7 +1,15 @@
-<div id="profileError" data-alert class="alert-box alert hide-override">
+{#
+  Both banners are in the DOM from page load and are revealed by the handler
+  at the bottom of this file, so the role goes on the container that
+  persists - a live region has to be observable before its content changes.
+
+  `role="alert"` on the failure and `role="status"` on the confirmation:
+  a rejected save has to be heard now, a successful one must not interrupt.
+#}
+<div id="profileError" data-alert class="alert-box alert hide-override" role="alert" aria-atomic="true">
   <span id="message"></span>
 </div>
-<div id="profileSuccess" data-alert class="alert-box success hide-override">
+<div id="profileSuccess" data-alert class="alert-box success hide-override" role="status" aria-atomic="true">
   Success! Your profile has been updated.
 </div>
 
@@ -9,7 +17,7 @@
   <div class="small-8 columns {% if config.features.assets %}dropzone{% endif %}">
     <div id="avatar-dropzone" class="row">
       <div class="avatar-image medium-3 small-10 small-offset-1 columns">
-        <img id="user-avatar" src="{{ userAvatarSrc }}" class="avatar" />
+        <img id="user-avatar" src="{{ userAvatarSrc }}" alt="Photo of {{ user.name }}" class="avatar" />
       </div>
       {% if config.features.assets %}
       <div class="medium-6 small-10 small-offset-1 columns end">
@@ -43,7 +51,7 @@
           <label for="display-name" class="show-for-small-only">Display Name</label>
         </div>
         <div class="medium-6 small-10 small-offset-1 columns end">
-          <input type="text" id="display-name" name="name" value="{{ user.name }}" required />
+          <input type="text" id="display-name" name="name" value="{{ user.name }}" autocomplete="name" required />
         </div>
       </div>
 
@@ -53,7 +61,7 @@
           <label for="username" class="show-for-small-only">Username</label>
         </div>
         <div class="medium-6 small-10 small-offset-1 columns end">
-          <input type="text" id="username" name="username" value="{{ user.username }}" required />
+          <input type="text" id="username" name="username" value="{{ user.username }}" autocomplete="username" required />
         </div>
       </div>
     </div>
@@ -127,9 +135,49 @@ var avatarDropzone = new Dropzone("div#avatar-dropzone", {
 </script>
 {% endif %}
 <script type="text/javascript">
+/*
+ * The controller reports its uniqueness rejection as a form-level message
+ * with no field key. Compared against this constant rather than matched as
+ * a substring, so an unrecognised message never marks a control the server
+ * may not have rejected. Kept verbatim from lib/controllers/users.js.
+ */
+var USERNAME_TAKEN = 'Sorry, that username is already taken. Please try another.';
+
+/*
+ * Clear the invalid state from every control this form can mark. Called at
+ * the start of each submission so a field corrected on the second attempt
+ * does not keep the border and the `aria-invalid` of the first.
+ */
+function clearInvalidFields() {
+  $('#display-name, #username')
+    .removeClass('input-error')
+    .removeAttr('aria-invalid')
+    .removeAttr('aria-describedby');
+}
+
+/*
+ * Mark one control as the rejected one: show its message in the alert, tie
+ * the control to that message, and move focus there. `#message` is the
+ * `aria-describedby` target, so it must be populated before the attribute
+ * is set for the description to be available when focus arrives.
+ */
+function failField(selector, message) {
+  clearInvalidFields();
+  $('#message').text(message);
+  showAlert('#profileError');
+
+  $(selector).addClass('input-error').attr({
+      'aria-invalid'     : 'true'
+    , 'aria-describedby' : 'message'
+  });
+
+  $(selector).focus();
+}
+
 $('#update-profile').submit(function(event) {
   event.preventDefault();
   $('.alert-box').addClass('hide-override');
+  clearInvalidFields();
 
   $.ajax({
     url      : '/api/users/' + $(this).data('user-id'),
@@ -145,8 +193,34 @@ $('#update-profile').submit(function(event) {
       $('#userdata').text(result.user.username);
     }
     else if (result.flash && result.flash.validation && result.flash.validation.username) {
-      $('#message').text(result.flash.validation.username);
-      showAlert("#profileError");
+      /*
+       * Focus the field the user has to correct. The submit button keeps
+       * focus otherwise, which leaves a keyboard or screen-reader user with
+       * no indication of which control was rejected.
+       */
+      failField('#username', result.flash.validation.username);
+    }
+    else if (result.flash && result.flash.validation && result.flash.validation.name) {
+      /*
+       * Display-name validation. Without this branch it fell through to the
+       * generic `else`, which discarded the precise server message - the
+       * user was told "something went wrong" for a name that was simply too
+       * long - and left `#display-name` unmarked, undescribed and unfocused.
+       */
+      failField('#display-name', result.flash.validation.name);
+    }
+    else if (result.message === USERNAME_TAKEN) {
+      /*
+       * The uniqueness rejection identifies the username, but the server
+       * reports it as a form-level `message` with no field key (two code
+       * paths in the controller produce this same string, and the
+       * controller is frozen by the migration plan). The message text is
+       * therefore the only discriminator available in this layer, which is
+       * why it is compared against a named constant rather than a
+       * substring: an unrecognised message must not mark a field that the
+       * server may not have rejected.
+       */
+      failField('#username', result.message);
     }
     else if (result.message) {
       $('#message').text(result.message);
@@ -158,12 +232,55 @@ $('#update-profile').submit(function(event) {
     }
   }).fail(function(err) {
     $('#message').text('Something went wrong when trying to update your profile. Please try again.');
-    showAlert("#passwordError");
+    /*
+     * This page has no `#passwordError`; the selector named one, so a
+     * transport failure wrote the message into `#message` and then revealed
+     * nothing - the user was told nothing at all and there was nothing for
+     * the live region to announce. The banner on THIS page is
+     * `#profileError`.
+     */
+    showAlert("#profileError");
   });
 });
+/*
+ * Reveal one of this page's two banners.
+ *
+ * Two defects in the original single-line version were measurable once the
+ * banners became live regions and the invalid controls started pointing at
+ * `#message`:
+ *
+ *  - Every call scheduled its own uncancelled 5s timeout, so an older
+ *    submission's timer hid a newer submission's message. Measured: a
+ *    second profile error submitted ~4.6s after the first was visible for
+ *    400ms. The pending timer is now cancelled before another is scheduled,
+ *    so each message gets its own full interval.
+ *
+ *  - `hide-override` applies `display: none !important`. Auto-hiding an
+ *    ERROR therefore removed the `aria-describedby` target from the
+ *    accessibility tree while the control it described was still
+ *    `aria-invalid="true"` and still red - a control announced as invalid
+ *    with no available description of why. Errors are consequently no
+ *    longer auto-hidden: they persist until the next submission clears
+ *    them, which is also when the invalid state is cleared, so the two can
+ *    never disagree. Success banners keep the original 5s auto-hide, since
+ *    nothing describes itself with them.
+ */
+var alertHideTimer = null;
+
 function showAlert(alert) {
+  if (alertHideTimer) {
+    clearTimeout(alertHideTimer);
+    alertHideTimer = null;
+  }
+
   $(alert).removeClass("hide-override");
-  setTimeout(function() {
+
+  if (alert === '#profileError') {
+    return;
+  }
+
+  alertHideTimer = setTimeout(function() {
+    alertHideTimer = null;
     $(alert).addClass("hide-override");
   }, 5000);
 }

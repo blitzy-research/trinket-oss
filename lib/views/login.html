@@ -4,12 +4,18 @@
 <div class="auth-page-wrapper">
   <div class="row">
     <div class="medium-8 medium-offset-2 small-12 columns">
+      {#
+        The sign-in failure is a form-level error: it identifies neither
+        field on its own, so it carries `role="alert"` (announced the moment
+        it renders) and a stable id that both credential controls point at
+        with `aria-describedby` below.
+      #}
       {% if flash.failure.message %}
-        <small class="error">{{ flash.failure.message }}</small>
+        <small class="error" id="login-form-error" role="alert">{{ flash.failure.message }}</small>
       {% elif flash.info %}
       <div data-alert class="alert-box success radius text-center">
-        {{ flash.info }}
-        <a href="#" class="close">&times;</a>
+        <span role="status">{{ flash.info }}</span>
+        <a href="#" class="close" aria-label="Dismiss this message">&times;</a>
       </div>
       {% endif %}
       <h2 class="text-center">Log In</h2>
@@ -23,20 +29,61 @@
       <div class="medium-6 medium-offset-3 small-10 small-offset-1 columns">
         <label
           {% if flash.validation.email %}class="error"{% endif %}>Email address or username
-          <input type="text" name="email" value="{{ flash.payload.email }}" required />
+          {#
+            `autocomplete="username"` (not `email`) because the field
+            accepts either an address or a username, which is what its own
+            label says.
+
+            When the round trip came back with an error the control is
+            marked invalid, pointed at the message that explains it, given
+            the error border from static/scss/_forms.scss, and focused - so
+            the user lands on the field they have to correct and the
+            description is read there.
+          #}
+          <input type="text" name="email" id="login-email" value="{{ flash.payload.email }}" maxlength="254"
+                 autocomplete="username"
+                 {% if flash.validation.email %}class="input-error" aria-invalid="true" aria-describedby="login-email-error" autofocus{% elif flash.failure.message %}class="input-error" aria-invalid="true" aria-describedby="login-form-error" autofocus{% endif %}
+                 required />
         </label>
         {% if flash.validation.email %}
-          <small class="error">{{ flash.validation.email }}</small>
+          <small class="error" id="login-email-error" role="alert">{{ flash.validation.email }}</small>
         {% endif %}
       </div>
     </div>
 
     <div class="row">
       <div class="medium-6 medium-offset-3 small-10 small-offset-1 columns">
-        <label>Password
-          <input id="password-box" type="password" name="password" required />
+        <label
+          {% if flash.validation.password %}class="error"{% endif %}>Password
+          {#
+            Two different rejections reach this control and they need
+            different messages.
+
+            A per-field rejection comes back as `flash.validation.password`
+            - the server records `"password" is not allowed to be empty` for
+            a submitted-but-blank password, for instance. That has its own
+            message and its own `aria-describedby` target, exactly as the
+            email field does. Without this branch the page rendered no error
+            at all for that case: the message was in the flash, nothing
+            printed it, and the user was returned to an apparently unchanged
+            form with no alert, no marked control and focus on `body`.
+
+            A rejected sign-in, by contrast, invalidates the credential pair
+            rather than one half of it, so the password control is marked
+            invalid alongside the email control and describes itself with
+            the same form-level message. Without that the field the user
+            most likely mistyped renders identically to one that was
+            accepted.
+          #}
+          <input id="password-box" type="password" name="password"
+                 autocomplete="current-password"
+                 {% if flash.validation.password %}class="input-error" aria-invalid="true" aria-describedby="login-password-error"{% if not flash.validation.email %} autofocus{% endif %}{% elif flash.failure.message %}class="input-error" aria-invalid="true" aria-describedby="login-form-error"{% endif %}
+                 required />
           {% if emailEnabled %}<div id="forgot-label">Forgot your password? <a href="/forgot-pass">Get reset instructions.</a></div>{% endif %}
         </label>
+        {% if flash.validation.password %}
+          <small class="error" id="login-password-error" role="alert">{{ flash.validation.password }}</small>
+        {% endif %}
       </div>
     </div>
 

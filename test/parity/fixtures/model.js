@@ -1,8 +1,9 @@
 'use strict';
 
 // The model-boundary fault fixture - the one way a database failure is made to
-// happen on purpose, so that the auth scheme's fifth outcome can be observed
-// rather than asserted in prose.
+// happen on purpose, so that the auth scheme's fifth outcome and the folder
+// controller's unknown-write-failure branch can be observed rather than
+// asserted in prose.
 //
 // ===========================================================================
 // WHY THIS FILE EXISTS
@@ -25,6 +26,17 @@
 // the outcome as "unreachable" and pointed at a server-level gate that "can
 // inject the fault" - and no such gate existed anywhere in test/parity/. The
 // gap was reported as covered. This file is that gate, and it is a real one.
+//
+// A SECOND UNREACHABLE BRANCH needs the same gate, and it is why this fixture
+// faults instance methods as well as statics. `lib/controllers/folders.js`'s
+// `create` splits its save failure two ways: `err.code === 11000` answers 409,
+// and every other write failure answers 500 through that file's own error
+// mapping. The duplicate side reaches itself - a colliding name is all it takes
+// - but nothing a request can do makes a healthy database fail a folder write
+// for any OTHER reason, so the 500 side was reported as untested rather than as
+// working. Faulting `folder.save(callback)` is what closes that, and the shape
+// of the injected error matters as much as its existence: its `code` must NOT be
+// 11000, because that value is exactly what selects the other branch.
 //
 // ===========================================================================
 // WHY A PRELOAD, AND NOT A HOOK IN THE APPLICATION
@@ -54,7 +66,7 @@
 // ===========================================================================
 // WHY THE MODEL IS WRAPPED LAZILY - THIS IS THE LOAD-BEARING DETAIL
 // ===========================================================================
-// This file must NOT require the model it patches. AAP §0.6.5 Defect 2 is
+// This file must NOT require the models it patches. AAP §0.6.5 Defect 2 is
 // measured: `mongoose-schema-extend` installs a Proxy polyfill that REPLACES
 // the global `Object.getPrototypeOf`, after which requiring `@hapi/hapi` throws
 // `Error: Schema can only contain plain objects` - and the version bump to
@@ -63,19 +75,21 @@
 // application would die at startup with an error that looks nothing like its
 // cause. `config/app.config.js:3-7` documents the same ordering rule in code.
 //
-// So the model is not loaded here. It is wrapped when the application loads it
-// ITSELF, through the one line that publishes it:
+// So neither model is loaded here. Each is wrapped when the application loads
+// it ITSELF, through the one line that publishes it:
 //
-//   app.js  `User = require('./lib/models/user');`   (target :313, baseline :290)
+//   app.js  `User = require('./lib/models/user');`     (target :367, baseline :290)
+//   app.js  `Folder = require('./lib/models/folder');` (target :374)
 //
-// `User` is an UNDECLARED assignment, so that line writes a property on the
-// global object - which app.js confirms four lines later by naming it in
-// `gleak.ignore("User", ...)`. And the auth scheme reads the bare identifier,
-// `await User.findById(userId)`, so the global is exactly the binding under
-// test. This fixture therefore installs an accessor for `User` on the global
-// object, wraps the export IN PLACE when the application assigns it, and then
-// replaces the accessor with an ordinary writable property. Both trees assign
-// it at the same point in the same way, so one mechanism drives both.
+// Each is an UNDECLARED assignment, so the line writes a property on the global
+// object - which app.js confirms by naming both in `gleak.ignore("User", ...)`
+// and `gleak.ignore("Folder", ...)`. The consumers read the bare identifiers,
+// `await User.findById(userId)` in the auth scheme and `new Folder(...)` in
+// lib/controllers/folders.js, so the globals are exactly the bindings under
+// test. This fixture therefore installs an accessor for each watched global,
+// wraps the export IN PLACE when the application assigns it, and then replaces
+// the accessor with an ordinary writable property. Both trees assign them at the
+// same point in the same way, so one mechanism drives both.
 //
 // Wrapping in place rather than substituting an object matters: `require`
 // returns the same object to every consumer, so `lib/workers/exports.js`'s own
@@ -94,8 +108,8 @@
 // `test/parity/fixtures/model.js` as their call site. Those warnings belong to
 // retained dependencies and are what AAP §0.9.3's zero-warning gate reasons
 // about, so a fixture that rewrites their attribution actively degrades the
-// evidence it exists to produce. The accessor touches nothing but one property
-// on one object and appears in no stack at all.
+// evidence it exists to produce. The accessors touch nothing but one named
+// property each on one object - the global - and appear in no stack at all.
 //
 // ===========================================================================
 // WHY BOTH CALL SHAPES ARE FAULTED
@@ -117,6 +131,52 @@
 // and kill the application - the fixture would look like an application crash.
 // Attaching a handler marks it handled without changing what a caller that DOES
 // await it receives: still a rejection, still the same error.
+//
+// ===========================================================================
+// WHY AN INSTANCE METHOD IS WRAPPED SOMEWHERE ELSE, AND WHERE
+// ===========================================================================
+// `User.findById` is a STATIC: an own, enumerable property of the object the
+// module exports, so wrapping it is one assignment onto that object.
+// `folder.save(callback)` is not. `lib/models/folder.js` defines no `save` at
+// all - it is mongoose's `Model.prototype.save`, reached through the document's
+// prototype chain - so there is no property on the export to overwrite, and the
+// wrap has to be installed on the prototype the DOCUMENT inherits from.
+//
+// Which object that is took measuring rather than assuming, and the obvious
+// answer is wrong. `lib/models/folder.js:188` exports `Folder.publicModel`, and
+// `lib/models/model.js:180-182` defines that as a PLAIN FUNCTION:
+//
+//   Model = function(doc) { return new model(doc); };
+//
+// It is a factory that returns a document of the private mongoose model, so
+// `new Folder(payload)` yields an instance of THAT model, and the export's own
+// `.prototype` is an ordinary empty object which neither has nor inherits
+// `save`. MEASURED on this tree: `typeof require('lib/models/folder').prototype
+// .save === 'undefined'`, while `Object.getPrototypeOf(new Folder({})) ===
+// Folder.model.prototype` and `save` is present there by inheritance. A wrap
+// installed on the export's prototype would therefore be a silent no-op - the
+// fixture would report itself armed and nothing would ever fault.
+//
+// So the holder is RESOLVED, in this order, and which route was taken is
+// recorded in the evidence log and in `status()`:
+//
+//   1. the export's own `.prototype`, when the named method is reachable there -
+//      which is the shape of a model that exports its mongoose model directly;
+//   2. `exported.model.prototype`, the private model `lib/models/model.js:105-107`
+//      exposes as `.model` when NODE_ENV is 'test' or 'migration'. The parity
+//      launcher runs `NODE_ENV=test` (test/parity/server.js:167), so this is the
+//      route a parity run takes;
+//   3. failing both, the prototype of one throwaway document built through the
+//      export itself. Constructing a document runs schema defaults and no I/O,
+//      and it is the last resort precisely because it is the only route that
+//      needs the model to be instantiable.
+//
+// BECAUSE `save` IS INHERITED, THE WRAP CREATES AN OWN PROPERTY THAT SHADOWS
+// IT, and that is what `restore()` has to undo correctly: reassigning the
+// captured original would leave a permanent own `save` on that prototype for
+// every later consumer in the process, which is a behaviour change this fixture
+// is not allowed to make. So `state.originals` records whether the property was
+// own BEFORE the wrap, and `restore()` deletes it when it was not.
 //
 // ===========================================================================
 // WHY THE FAULT IS BOUNDED, AND HOW
@@ -182,13 +242,30 @@
 // ===========================================================================
 //   {
 //     "fault"     : "reject",      required; the only supported action
-//     "model"     : "user",        optional; only 'user' is wrapped today
+//     "model"     : "user",        optional; 'user' or 'folder', per WRAPPABLE
 //     "method"    : "findById",    optional; defaults to findById
 //     "id"        : "0000...0101", optional; when set, only this id faults
 //     "remaining" : 1,             optional; defaults to 1. -1 means unbounded
 //     "message"   : "...",         optional; the rejection's message
-//     "errorName" : "MongoError"   optional; the rejection's `name`
+//     "errorName" : "MongoError",  optional; the rejection's `name`
+//     "errorCode" : 121            optional; the rejection's `code`
 //   }
+//
+// `model` and `method` default to `user` and `findById`, so an arming that names
+// neither still means the auth-scheme lookup and nothing else. The folder
+// instance fault is therefore always explicit:
+//
+//   { "fault": "reject", "model": "folder", "method": "save", "remaining": 1 }
+//
+// `errorCode` exists because for one target the code IS the behaviour: the
+// branch under test in `lib/controllers/folders.js` is selected by
+// `err.code !== 11000`, and its sibling by `=== 11000`. Each wrappable method
+// carries its own default code (`faultCode` in the table below), so an arming
+// that omits the field still reaches the intended branch; setting it is how a
+// harness would deliberately drive the other one.
+//
+// `id` narrows a static call by its first argument and an instance call by the
+// document's own `_id`, which is the same question asked of the two shapes.
 //
 // Any other key is IGNORED for matching, which is what lets a harness stamp an
 // arming with a value of its own. `capture.js` and `replay.js` both add an
@@ -208,9 +285,12 @@
 //   No require of any application module. Honoured below: `fs` and `path` from
 //     Node core, and nothing else. The model is reached only through the object
 //     the application itself published.
-//   No interception on a path the whole application traverses. The accessor is
-//     on one property of one object; nothing here is in the call path of a
-//     require, a request, or a response, so no stack trace and no timing
+//   No interception on a path the whole application traverses. Each accessor is
+//     on one named property of the global object and each is replaced by a plain
+//     property as soon as the application assigns it; nothing here is in the call
+//     path of a require, and nothing is in the call path of a request or a
+//     response except the wrapped methods themselves, which are exactly the
+//     methods a fault has to be able to reach. No stack trace and no timing
 //     anywhere else in the process is altered by this file's presence.
 //   No write to the arming file, the application tree, or anything outside the
 //     evidence log the launcher hands it.
@@ -236,30 +316,68 @@ var path = require('path');
 // is the interception point - see WHY THE MODEL IS WRAPPED LAZILY above.
 // `relativePath` is provenance only: it is resolved (never loaded) so the
 // evidence log can say which file's export was wrapped.
+//
+// `methods` are STATICS, wrapped on the export object itself.
+// `prototypeMethods` are INSTANCE methods, wrapped on the prototype the
+// documents inherit from - a separate key rather than more entries in `methods`
+// because the two are found in different places, called with different argument
+// shapes, and restored differently. Keeping them apart is also what leaves the
+// `user`/`findById` path byte-for-byte as it was.
+//
+// `faultCode` is the `code` the injected error carries when an arming does not
+// name one. For `folder`/`save` that value is load-bearing rather than
+// cosmetic: `lib/controllers/folders.js` routes on `err.code === 11000`, so the
+// default is deliberately a different, real MongoDB write-error code - 121,
+// DocumentValidationFailure - which selects the unknown-failure branch. The
+// injected error also carries `parityInjected: true`, so its provenance is never
+// in doubt.
 // ---------------------------------------------------------------------------
 var WRAPPABLE = {
   user: {
     globalName    : 'User',
     relativePath  : 'lib/models/user',
-    methods       : ['findById']
+    methods       : ['findById'],
+    message       : 'parity fixture: injected data-store failure on ' +
+      'User.findById, so that the auth scheme reaches its lookup-error outcome'
+  },
+  folder: {
+    globalName       : 'Folder',
+    relativePath     : 'lib/models/folder',
+    methods          : [],
+    prototypeMethods : ['save'],
+    faultCode        : 121,
+    // A write that the server rejected, which is what a coded write error is;
+    // the module-wide default names a transport failure, and that shape does
+    // not carry a `code` at all.
+    errorName        : 'MongoServerError',
+    message          : 'parity fixture: injected write failure on ' +
+      'Folder.prototype.save with code 121 (not 11000), so that ' +
+      'folders.create reaches its unknown-failure branch rather than its ' +
+      'duplicate-name branch'
   }
 };
 
 var DEFAULT_MODEL   = 'user';
 var DEFAULT_METHOD  = 'findById';
-var DEFAULT_MESSAGE = 'parity fixture: injected data-store failure on ' +
-  'User.findById, so that the auth scheme reaches its lookup-error outcome';
+var DEFAULT_MESSAGE = WRAPPABLE[DEFAULT_MODEL].message;
 var DEFAULT_ERROR_NAME = 'MongoNetworkError';
 
 var state = {
   installed  : false,
-  // Whether the global accessor is currently in place, waiting for the
-  // application to publish the model.
-  waiting    : false,
-  // What the application assigned, held here while the accessor is in place so
-  // a read between the assignment and the replacement returns it unchanged.
-  published  : undefined,
-  wrapped    : false,
+  // Per-watched-model state, keyed by the WRAPPABLE key. Each entry holds:
+  //   waiting   - whether the global accessor is in place, waiting for the
+  //               application to publish this model;
+  //   published - what the application assigned, held while the accessor is in
+  //               place so a read between the assignment and the replacement
+  //               returns it unchanged;
+  //   wrapped   - whether anything on it is wrapped;
+  //   target    - the resolved model file, for provenance;
+  //   via       - how the prototype holder was found, when there is one.
+  // `status()`'s flat `waiting` and `wrapped` fields are computed over this map
+  // rather than stored, so there is one place a model's state lives and no
+  // second copy to fall out of step. `target` is stored, because it names the
+  // default model's file and that is what the auth-scheme evidence refers to.
+  models     : {},
   target     : null,
   originals  : {},
   calls      : [],
@@ -271,6 +389,29 @@ var state = {
   armDiagnostic : null,
   diagnostic : null
 };
+
+/**
+ * The per-model state entry, created on first use.
+ *
+ * One function rather than an initializer loop so that `restore()` can clear
+ * the map wholesale and every later reader still finds a well-formed entry.
+ *
+ * @param {string} model The key in WRAPPABLE.
+ * @returns {Object} The entry, held on `state.models`.
+ */
+function modelState(model) {
+  if (!state.models[model]) {
+    state.models[model] = {
+      waiting   : false,
+      wrapped   : false,
+      published : undefined,
+      target    : null,
+      via       : null
+    };
+  }
+
+  return state.models[model];
+}
 
 // ---------------------------------------------------------------------------
 // Evidence.
@@ -626,7 +767,36 @@ function decide(model, method, id) {
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the replacement for one model method.
+ * Builds the error one faulted call raises.
+ *
+ * The three shaping fields all fall back to the wrappable entry's own defaults
+ * before the module-wide ones, which is what lets `folder`/`save` carry a
+ * `code` that selects the branch it exists to reach without every arming having
+ * to name it. `parityInjected` marks provenance so an error read out of a log or
+ * a response can never be mistaken for a real driver error.
+ *
+ * @param {string} model The WRAPPABLE key.
+ * @param {Object} arming The arming document in force.
+ * @returns {Error}
+ */
+function injectedError(model, arming) {
+  var entry = WRAPPABLE[model] || {};
+  var error = new Error(arming.message || entry.message || DEFAULT_MESSAGE);
+  var code  = arming.errorCode === undefined ? entry.faultCode : arming.errorCode;
+
+  error.name = String(arming.errorName || entry.errorName || DEFAULT_ERROR_NAME);
+
+  if (code !== undefined && code !== null) {
+    error.code = code;
+  }
+
+  error.parityInjected = true;
+
+  return error;
+}
+
+/**
+ * Builds the replacement for one model STATIC.
  *
  * @param {string} model
  * @param {string} method
@@ -660,9 +830,7 @@ function faultingMethod(model, method, original) {
       return original.apply(this, arguments);
     }
 
-    error = new Error(decision.arming.message || DEFAULT_MESSAGE);
-    error.name = String(decision.arming.errorName || DEFAULT_ERROR_NAME);
-    error.parityInjected = true;
+    error = injectedError(model, decision.arming);
 
     record({
       event      : 'faulted',
@@ -702,15 +870,192 @@ function faultingMethod(model, method, original) {
 }
 
 /**
+ * Builds the replacement for one model INSTANCE method.
+ *
+ * Three things differ from the static wrapper, and each is forced by the shape
+ * of the call it intercepts rather than chosen:
+ *
+ *   The callback is the LAST argument and there may be only one of it -
+ *   `folder.save(cb)` - so it is found by testing that argument for a function
+ *   instead of by counting arguments. `save(options, cb)` and `save()` are
+ *   both covered by the same test.
+ *
+ *   The id keyed on is the DOCUMENT's `_id`, read off `this`, because an
+ *   instance method's first argument is not an identifier. That keeps
+ *   `arming.id` meaning the same thing for both shapes: which document the
+ *   fault is allowed to land on.
+ *
+ *   With a callback the return value is `undefined`, which is what mongoose's
+ *   real `save` returns in that shape: `Model.prototype.save`
+ *   (node_modules/mongoose/lib/model.js:500-525) hands off to
+ *   `promiseOrCallback`, whose callback branch returns the inner call's value
+ *   and never a promise. Returning a rejected promise here as well - which is
+ *   right for the static, whose two trees call it two ways - would hand the
+ *   caller a value the genuine method never produces. Without a callback a
+ *   rejected promise IS the genuine shape, and it carries the same no-op
+ *   `catch` as the static's for the same reason: `lib/controllers/folders.js`'s
+ *   `update` awaits it, but nothing may assume every caller does.
+ *
+ * @param {string} model
+ * @param {string} method
+ * @param {function} original
+ * @returns {function}
+ */
+function faultingPrototypeMethod(model, method, original) {
+  var replacement = function() {
+    var last     = arguments.length ? arguments[arguments.length - 1] : null;
+    var callback = typeof last === 'function' ? last : null;
+    var id       = this && this._id !== undefined && this._id !== null
+      ? String(this._id)
+      : undefined;
+    var decision = decide(model, method, id);
+    var error;
+    var rejected;
+
+    if (!decision.fault) {
+      if (decision.arming) {
+        record({
+          event  : 'passed-through',
+          model  : model,
+          method : method,
+          id     : id === undefined ? null : id,
+          reason : decision.reason
+        });
+      }
+
+      return original.apply(this, arguments);
+    }
+
+    error = injectedError(model, decision.arming);
+
+    record({
+      event      : 'faulted',
+      model      : model,
+      method     : method,
+      id         : id === undefined ? null : id,
+      shape      : callback ? 'callback' : 'promise',
+      errorName  : error.name,
+      errorCode  : error.code === undefined ? null : error.code,
+      message    : error.message,
+      usesSpent  : state.used
+    });
+
+    if (callback) {
+      // `nextTick` rather than a synchronous call: the real save never calls
+      // back before it returns, and a callback that ran first would see the
+      // caller's own bindings unassigned.
+      process.nextTick(function() {
+        callback(error);
+      });
+
+      return undefined;
+    }
+
+    rejected = Promise.reject(error);
+    rejected.catch(function() {});
+
+    return rejected;
+  };
+
+  replacement.parityFixture = true;
+
+  return replacement;
+}
+
+/**
+ * Finds the object that actually holds the instance methods of one model, and
+ * says how it was found.
+ *
+ * The three routes and why the first one is not enough on its own are set out
+ * in WHY AN INSTANCE METHOD IS WRAPPED SOMEWHERE ELSE at the top of this file:
+ * this repository's model exports are factory FUNCTIONS whose own `.prototype`
+ * carries nothing, so assuming route 1 would install a wrap that never runs.
+ *
+ * @param {string} model The key in WRAPPABLE.
+ * @param {Object} exported The module's exports.
+ * @param {Array.<string>} methods The instance methods that must be reachable.
+ * @returns {?{holder: Object, via: string}}
+ */
+function resolvePrototypeHolder(model, exported, methods) {
+  var candidates = [];
+  var probe;
+  var i;
+
+  function holds(candidate) {
+    var j;
+
+    if (!candidate) {
+      return false;
+    }
+
+    for (j = 0; j < methods.length; j++) {
+      if (typeof candidate[methods[j]] !== 'function') {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  candidates.push({ holder: exported.prototype, via: 'export-prototype' });
+
+  if (typeof exported.model === 'function') {
+    candidates.push({
+      holder : exported.model.prototype,
+      via    : 'private-model-prototype'
+    });
+  }
+
+  for (i = 0; i < candidates.length; i++) {
+    if (holds(candidates[i].holder)) {
+      return candidates[i];
+    }
+  }
+
+  // Last resort: one throwaway document, built through the export itself. This
+  // runs schema defaults and performs no I/O, and it is last precisely because
+  // it is the only route that requires the model to be instantiable.
+  try {
+    probe = new exported({});
+  }
+  catch (e) {
+    note('prototype-probe-failed', {
+      model : model,
+      error : e && e.message ? e.message : String(e)
+    });
+    return null;
+  }
+
+  if (probe && holds(Object.getPrototypeOf(probe))) {
+    return {
+      holder : Object.getPrototypeOf(probe),
+      via    : 'instance-prototype'
+    };
+  }
+
+  return null;
+}
+
+/**
  * Wraps the methods of one freshly required model export.
+ *
+ * Statics are wrapped on the export object; instance methods are wrapped on the
+ * prototype the documents inherit from, resolved by `resolvePrototypeHolder`.
+ * Every wrap records, alongside the original, whether the property was the
+ * holder's OWN before the wrap - because an inherited method is shadowed rather
+ * than replaced, and `restore` has to delete the shadow instead of reassigning
+ * it.
  *
  * @param {string} model The key in WRAPPABLE.
  * @param {Object} exported The module's exports, as the application received it.
  * @returns {boolean} Whether anything was wrapped.
  */
 function wrapModel(model, exported) {
-  var methods = WRAPPABLE[model].methods;
+  var entry = WRAPPABLE[model];
+  var methods = entry.methods || [];
+  var prototypeMethods = entry.prototypeMethods || [];
   var wrappedAny = false;
+  var resolved;
   var i;
   var name;
   var original;
@@ -735,9 +1080,63 @@ function wrapModel(model, exported) {
       continue;
     }
 
-    state.originals[model + '.' + name] = { holder: exported, original: original };
+    state.originals[model + '.' + name] = {
+      holder   : exported,
+      method   : name,
+      original : original,
+      wasOwn   : Object.prototype.hasOwnProperty.call(exported, name),
+      kind     : 'static'
+    };
     exported[name] = faultingMethod(model, name, original);
     wrappedAny = true;
+  }
+
+  if (prototypeMethods.length) {
+    resolved = resolvePrototypeHolder(model, exported, prototypeMethods);
+
+    if (!resolved) {
+      note('prototype-holder-unresolved', {
+        model   : model,
+        methods : prototypeMethods
+      });
+    }
+    else {
+      modelState(model).via = resolved.via;
+
+      for (i = 0; i < prototypeMethods.length; i++) {
+        name     = prototypeMethods[i];
+        original = resolved.holder[name];
+
+        if (typeof original !== 'function') {
+          note('model-method-absent', {
+            model  : model,
+            method : name,
+            kind   : 'prototype'
+          });
+          continue;
+        }
+
+        if (original.parityFixture) {
+          wrappedAny = true;
+          continue;
+        }
+
+        state.originals[model + '.prototype.' + name] = {
+          holder   : resolved.holder,
+          method   : name,
+          original : original,
+          // False for a mongoose `save`, which is inherited from
+          // Model.prototype: the wrap below creates an own property that
+          // shadows it, and `restore` deletes that property rather than
+          // leaving a permanent own copy behind.
+          wasOwn   : Object.prototype.hasOwnProperty.call(resolved.holder, name),
+          kind     : 'prototype',
+          via      : resolved.via
+        };
+        resolved.holder[name] = faultingPrototypeMethod(model, name, original);
+        wrappedAny = true;
+      }
+    }
   }
 
   return wrappedAny;
@@ -775,12 +1174,13 @@ function resolveModel(appRoot, model) {
 }
 
 /**
- * Installs the global accessor that wraps the model when the application
- * publishes it.
+ * Installs the global accessor that wraps one model when the application
+ * publishes it. Called once per WRAPPABLE entry, each keeping its own state.
  *
- * `app.js` assigns the undeclared `User`, which writes a property on the global
- * object. The setter wraps the assigned export IN PLACE - so every consumer of
- * `require('lib/models/user')` sees the wrap, not just the global - and then
+ * `app.js` assigns the undeclared `User` and `Folder`, each of which writes a
+ * property on the global object. The setter wraps the assigned export IN PLACE -
+ * so every consumer of `require('lib/models/user')` or
+ * `require('lib/models/folder')` sees the wrap, not just the global - and then
  * REPLACES ITSELF with an ordinary writable property, leaving the global in
  * exactly the shape the plain assignment would have produced.
  *
@@ -791,10 +1191,11 @@ function resolveModel(appRoot, model) {
  * @returns {boolean} Whether the accessor is in place, or the wrap already done.
  */
 function watchGlobal(model) {
-  var name = WRAPPABLE[model].globalName;
+  var name  = WRAPPABLE[model].globalName;
+  var entry = modelState(model);
   var existing;
 
-  if (state.waiting || state.wrapped) {
+  if (entry.waiting || entry.wrapped) {
     return true;
   }
 
@@ -804,15 +1205,16 @@ function watchGlobal(model) {
   // that has already happened.
   existing = globalThis[name];
   if (existing) {
-    state.wrapped = wrapModel(model, existing);
-    if (state.wrapped) {
+    entry.wrapped = wrapModel(model, existing);
+    if (entry.wrapped) {
       note('model-wrapped', {
         model : model,
         via   : 'already-published',
-        file  : state.target
+        how   : entry.via,
+        file  : entry.target
       });
     }
-    return state.wrapped;
+    return entry.wrapped;
   }
 
   try {
@@ -820,20 +1222,20 @@ function watchGlobal(model) {
       configurable : true,
       enumerable   : true,
       get : function() {
-        return state.published;
+        return entry.published;
       },
       set : function(value) {
-        state.published = value;
+        entry.published = value;
 
         try {
-          state.wrapped = wrapModel(model, value);
+          entry.wrapped = wrapModel(model, value);
         }
         catch (e) {
           note('wrap-failed', {
             model : model,
             error : e && e.message ? e.message : String(e)
           });
-          state.wrapped = false;
+          entry.wrapped = false;
         }
 
         // Put the global back to a plain property whatever happened, so a
@@ -844,13 +1246,14 @@ function watchGlobal(model) {
           enumerable   : true,
           configurable : true
         });
-        state.waiting = false;
+        entry.waiting = false;
 
-        if (state.wrapped) {
+        if (entry.wrapped) {
           note('model-wrapped', {
             model : model,
             via   : 'global-assignment',
-            file  : state.target
+            how   : entry.via,
+            file  : entry.target
           });
         }
       }
@@ -863,30 +1266,59 @@ function watchGlobal(model) {
     return false;
   }
 
-  state.waiting = true;
+  entry.waiting = true;
   return true;
 }
 
 /**
  * Installs the fixture. Idempotent, and never throws.
  *
+ * Every entry in WRAPPABLE is watched, not just the default one: an arming
+ * names its model, and a model nobody watched could not be faulted however the
+ * arming was written. `installed` is true when at least one global is watched
+ * or already wrapped, which is the condition under which a fault can still be
+ * injected in this process.
+ *
  * @returns {Object} The same document `status()` returns.
  */
 function install() {
   var appRoot;
+  var models;
+  var active = false;
+  var i;
+  var model;
+  var entry;
 
   if (state.installed) {
     return status();
   }
 
-  appRoot      = process.env.PARITY_APP_ROOT || process.cwd();
-  state.target = resolveModel(appRoot, DEFAULT_MODEL);
+  appRoot = process.env.PARITY_APP_ROOT || process.cwd();
+  models  = Object.keys(WRAPPABLE);
 
-  if (!state.target) {
-    note('model-path-unresolved', state.diagnostic);
+  for (i = 0; i < models.length; i++) {
+    model = models[i];
+    entry = modelState(model);
+
+    entry.target = resolveModel(appRoot, model);
+
+    if (!entry.target) {
+      note('model-path-unresolved', state.diagnostic);
+    }
+
+    if (watchGlobal(model)) {
+      active = true;
+    }
+    else {
+      note('model-watch-inactive', { model: model, detail: state.diagnostic });
+    }
   }
 
-  state.installed = watchGlobal(DEFAULT_MODEL);
+  // Kept for the reporting the flat fields have always carried: `target` names
+  // the default model's file, which is the one the auth-scheme evidence refers
+  // to, and the per-model files are in `status().models`.
+  state.target    = modelState(DEFAULT_MODEL).target;
+  state.installed = active;
 
   if (!state.installed) {
     note('install-inactive', state.diagnostic);
@@ -896,39 +1328,66 @@ function install() {
 }
 
 /**
- * Puts the genuine model methods back and removes the global accessor.
+ * Puts the genuine model methods back and removes every global accessor.
+ *
+ * A wrapped STATIC was an own property of the export, so putting the original
+ * back is an assignment. A wrapped INSTANCE method was inherited - mongoose's
+ * `save` lives on `Model.prototype` - so the wrap created an own property that
+ * SHADOWS it, and the assignment would leave that own property in place
+ * forever, permanently changing the prototype for every later consumer in the
+ * process. `wasOwn`, recorded at wrap time, is what distinguishes the two, and
+ * a shadow is deleted rather than reassigned.
  *
  * @returns {Object} The same document `status()` returns.
  */
 function restore() {
-  var keys = Object.keys(state.originals);
-  var name = WRAPPABLE[DEFAULT_MODEL].globalName;
+  var keys   = Object.keys(state.originals);
+  var models = Object.keys(WRAPPABLE);
   var i;
   var entry;
-  var method;
+  var name;
 
   for (i = 0; i < keys.length; i++) {
-    entry  = state.originals[keys[i]];
-    method = keys[i].slice(keys[i].indexOf('.') + 1);
-    entry.holder[method] = entry.original;
+    entry = state.originals[keys[i]];
+
+    if (entry.wasOwn) {
+      entry.holder[entry.method] = entry.original;
+    }
+    else {
+      try {
+        delete entry.holder[entry.method];
+      }
+      catch (e) {
+        // A non-configurable property cannot be deleted, and leaving the wrap
+        // in place would be worse than leaving the original own copy: fall
+        // back to the assignment and record that the prototype is no longer
+        // exactly as it was found.
+        entry.holder[entry.method] = entry.original;
+        state.diagnostic = keys[i] + ' could not be deleted (' +
+          (e && e.message ? e.message : String(e)) + '), so the original was ' +
+          'reassigned and now stands as an own property of its holder';
+      }
+    }
   }
 
-  if (state.waiting) {
-    // Leave the global as an ordinary, unset property rather than an accessor
-    // this fixture no longer backs.
-    try {
-      delete globalThis[name];
-    }
-    catch (e) {
-      state.diagnostic = 'the global ' + name + ' accessor could not be ' +
-        'removed: ' + (e && e.message ? e.message : String(e));
+  for (i = 0; i < models.length; i++) {
+    name = WRAPPABLE[models[i]].globalName;
+
+    if (modelState(models[i]).waiting) {
+      // Leave the global as an ordinary, unset property rather than an accessor
+      // this fixture no longer backs.
+      try {
+        delete globalThis[name];
+      }
+      catch (e) {
+        state.diagnostic = 'the global ' + name + ' accessor could not be ' +
+          'removed: ' + (e && e.message ? e.message : String(e));
+      }
     }
   }
 
   state.originals = {};
-  state.published = undefined;
-  state.waiting   = false;
-  state.wrapped   = false;
+  state.models    = {};
   state.installed = false;
   state.armToken  = null;
   state.used      = 0;
@@ -939,18 +1398,49 @@ function restore() {
 /**
  * What is wrapped, what is armed, and why not when it is not.
  *
+ * The flat `waiting`, `wrapped` and `target` fields are retained with the
+ * meanings they have always had, generalized over the watched set: `waiting` is
+ * true while ANY watched global is still expecting its assignment, `wrapped` is
+ * true once ANY watched model has been wrapped, and `target` names the default
+ * model's file. `models` carries the same three per model, plus `via` - which
+ * route `resolvePrototypeHolder` took - so a reviewer can tell a fixture that
+ * wrapped one model from one that wrapped both.
+ *
  * @returns {Object}
  */
 function status() {
-  var read = readArming();
+  var read   = readArming();
+  var models = Object.keys(WRAPPABLE);
+  var detail = {};
+  var waiting = false;
+  var wrapped = false;
+  var i;
+  var entry;
+
+  for (i = 0; i < models.length; i++) {
+    entry = state.models[models[i]];
+
+    detail[models[i]] = {
+      waiting : !!(entry && entry.waiting),
+      wrapped : !!(entry && entry.wrapped),
+      target  : entry ? entry.target : null,
+      via     : entry ? entry.via : null,
+      methods : (WRAPPABLE[models[i]].methods || []).slice(),
+      prototypeMethods : (WRAPPABLE[models[i]].prototypeMethods || []).slice()
+    };
+
+    waiting = waiting || detail[models[i]].waiting;
+    wrapped = wrapped || detail[models[i]].wrapped;
+  }
 
   return {
     installed  : state.installed,
-    waiting    : state.waiting,
-    wrapped    : state.wrapped,
+    waiting    : waiting,
+    wrapped    : wrapped,
     appRoot    : process.env.PARITY_APP_ROOT || process.cwd(),
     target     : state.target,
-    wrappable  : Object.keys(WRAPPABLE),
+    wrappable  : models,
+    models     : detail,
     armed      : !!read.arming,
     arming     : read.arming,
     usesSpent  : state.used,
@@ -969,6 +1459,11 @@ function status() {
 //     only - so the arming document's field names live here and nowhere else -
 //     and immediately call `restore()`, because nothing in a driver process
 //     should stay patched. They write the arming file between steps.
+//   `status()` keeps every field it has ever reported, including `wrappable`,
+//     which now lists two entries rather than one; `DEFAULT_MODEL` and
+//     `DEFAULT_METHOD` still select `user` and `findById`, so an arming that
+//     names no model still means the auth-scheme lookup. Nothing about the
+//     arming document's existing field names changed.
 //   `calls()`, `faultedCalls()`, `reset()` and `flush()` read the in-memory
 //     record, which is reachable only INSIDE the server process. The drivers
 //     are separate processes, so they read the EVIDENCE LOG at
@@ -1000,6 +1495,13 @@ module.exports = {
     }
     if (source.errorName !== undefined) {
       out.errorName = source.errorName;
+    }
+    // Emitted only when a caller names it, so an arming that does not care
+    // about the error's `code` is textually identical to what this builder has
+    // always produced - which matters, because the fixture keys its use counter
+    // on the arming's exact text.
+    if (source.errorCode !== undefined) {
+      out.errorCode = source.errorCode;
     }
 
     return out;

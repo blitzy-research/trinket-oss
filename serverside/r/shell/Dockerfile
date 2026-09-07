@@ -11,11 +11,42 @@ FROM node:22-bookworm@sha256:8a34c4ab3ea2c5cd194f07e317b2a8f09461d3c8b05c4e34c8c
 # docs/dependency-inventory.md.
 FROM r-base:4.4.2@sha256:fe9b29520eeb5292d814b0958783c0ddfcdab37402967a3e67307604354f98d7
 
-# Install build dependencies including those needed for R graphics packages
+# Install build dependencies including those needed for R graphics packages.
+#
+# No r-* package may be named here. The r-base image ships
+# /etc/apt/sources.list.d/debian-unstable.list (`deb http://http.debian.net/debian
+# sid main`), so naming any r-* package in an unpinned apt install re-resolves it
+# from sid and drags r-base-core up with it - measured: `r-recommended` in this
+# list silently delivered R 4.6.1-6 out of a digest-pinned 4.4.2 base, defeating
+# the pin. The base already carries r-base, r-base-core, r-base-dev and
+# r-recommended at 4.4.2-1, so nothing is lost by leaving them out. The -dev
+# libraries below still resolve from sid; measured, they do not move R.
 RUN apt-get update && apt-get install -y \
-    build-essential curl procps apt-utils r-recommended \
+    build-essential curl procps apt-utils \
     libfontconfig1-dev libfreetype6-dev libcairo2-dev \
     libharfbuzz-dev libfribidi-dev libpng-dev libjpeg-dev
+
+# Build-time version assertion, so a future apt edit that re-resolves R from sid
+# fails the build here instead of shipping a silently different interpreter. It
+# mirrors the root Dockerfile's build-time `engines` assertion: check the
+# interpreter and the four r-* packages, echo whatever was found, exit non-zero
+# on any drift. Refresh the expected version together with the FROM digest.
+RUN set -eu; \
+    found="$(R --version | head -n1)"; \
+    echo "R interpreter: $found"; \
+    case "$found" in \
+      *"R version 4.4.2"*) ;; \
+      *) echo "FAIL: expected 'R version 4.4.2', found '$found'" >&2; exit 1 ;; \
+    esac; \
+    for pkg in r-base r-base-core r-base-dev r-recommended; do \
+      version="$(dpkg-query -W -f='${Version}' "$pkg")"; \
+      echo "  $pkg $version"; \
+      case "$version" in \
+        4.4.2-*) ;; \
+        *) echo "FAIL: $pkg is $version, expected 4.4.2-*" >&2; exit 1 ;; \
+      esac; \
+    done; \
+    echo 'R 4.4.2 pinned by the base digest -- ok'
 
 RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 

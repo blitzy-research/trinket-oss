@@ -33,9 +33,22 @@
 //   above, and the provenance of the run - `appRoot`, `nodeFlags`,
 //   `scrubbedEnv`, `execPath`, `overlay`, `config`, `mongo`.
 //   The streams are captured by handing the child open descriptors rather than
-//   pipes, so nothing here can reorder or lose a line, and are never deleted:
-//   they are the evidence. The PID file IS deleted on a clean shutdown, so one
-//   left behind is itself the signal that something did not stop.
+//   pipes, so nothing here can reorder or lose a line. The PID file IS deleted
+//   on a clean shutdown, so one left behind is itself the signal that something
+//   did not stop.
+//
+// THE RUN DIRECTORY IS REAPED, AND WHO ASKED DECIDES WHEN
+//   A GENERATED directory is removed by `stop()` on a CLI run that shut down
+//   cleanly, which is the one path where nothing survives to read it: `main`
+//   holds the server up, stops it and the process exits. A LIBRARY caller keeps
+//   it by default and opts in with `removeRunDir: true`, because `start` hands
+//   out paths inside it - `stderrPath`, the three fixture logs, the model-fault
+//   log - and the embedding harnesses read them after `stop`, one of them from
+//   a server it has already restarted. `--keep-run-dir` keeps it on a CLI run,
+//   a caller-supplied `--run-dir` is never removed, and ANY run that did not
+//   complete cleanly keeps it and prints the path - that is exactly when the
+//   captured logs are worth reading. The removal itself is guarded by three
+//   conditions in `removeRunDirectory`, and the outcome is always printed.
 //
 // THE OVERLAY IS WHAT MAKES THE APPLICATION LISTEN
 //   `config/test.yaml` sets `app.start: false`, so `NODE_ENV=test node app.js`
@@ -112,6 +125,14 @@ var LOG_PREFIX = '[parity:server] ';
 // The application's entry point, relative to the worktree under test. Named
 // once so a reader never has to grep for what is spawned.
 var APP_ENTRY = 'app.js';
+
+// The stem of a run directory this launcher generates for itself. ONE constant,
+// because it is written by `createRunDirectory` and read back by
+// `removeRunDirectory` as the last of the three conditions guarding a recursive
+// delete: a second copy of the literal is exactly how a rename comes to leave
+// the guard matching a name nothing creates any more, and a guard that matches
+// nothing refuses everything.
+var PREFIX_STEM = 'parity-server';
 
 // The preloads, in load order, resolved against THIS file's directory so they
 // always come from the target worktree. Order matters only in that all four
@@ -293,6 +314,16 @@ var USAGE = [
   '  --run-dir <dir>      Per-run directory for the PID file, the captured logs,',
   '                       the object store and the upload scratch space.',
   '                       Defaults to a fresh directory under the system temp.',
+  '                       A directory given here is the caller\'s and is NEVER',
+  '                       removed; only a generated one can be.',
+  '  --keep-run-dir       Keep the generated run directory. A CLI run removes',
+  '                       it on a clean shutdown - when the launcher is the',
+  '                       process, nothing survives to read it - so pass this',
+  '                       when the captured logs, the object store or the',
+  '                       fixture evidence are wanted afterwards. A run that',
+  '                       did not complete cleanly keeps it regardless and',
+  '                       prints the path. A library caller keeps it by',
+  '                       default and opts in with `removeRunDir: true`.',
   '  --config <json>      An explicit top NODE_CONFIG layer, applied last.',
   '  --s3-seed <path>     PARITY_S3_SEED for fixtures/aws.js.',
   '  --http-profile <n>   PARITY_HTTP_PROFILE for fixtures/http.js.',
@@ -335,6 +366,15 @@ var state = {
   stopping          : false,  // True while a deliberate teardown is in flight.
   exit              : null,   // {code, signal} once the child has exited.
   runDir            : null,   // The per-run directory, for the sweep message.
+  // The run directory's LAYOUT, which the sweep message does not need and the
+  // teardown does: `owned` and `tmpRoot` are the two facts `removeRunDirectory`
+  // guards on, and neither can be recovered from the path alone. Cleared once
+  // the removal has been decided, so the decision is taken exactly once per
+  // start however many times `stop()` is called.
+  runLayout         : null,
+  // Whether THIS run may remove an owned run directory on a clean shutdown -
+  // `options.removeRunDir`, carried here because `stopInternal` has no options.
+  removeRunDir      : false,
   pidPath           : null,   // The PID file, removed on clean shutdown.
   stdoutPath        : null,   // Captured stdout - kept, always.
   stderrPath        : null,   // Captured stderr - kept, always. The gate reads it.
@@ -856,6 +896,14 @@ function defaultOptions() {
     provisionMongo       : PROVISION_AUTO,
     nodeFlags            : [],
     runDir               : null,
+    // Whether teardown may remove a run directory this launcher GENERATED. It
+    // defaults to false - retain - because these defaults are a LIBRARY
+    // caller's, and a library caller is handed paths inside that directory by
+    // `start` and reads them after `stop`; see `reapRunDirectory`. The CLI
+    // flips it in `parseArguments`, where the launcher is the whole process and
+    // there is nobody left to read anything. A caller-supplied `runDir` is
+    // never removed whatever this says.
+    removeRunDir         : false,
     config               : null,
     s3Seed               : null,
     httpProfile          : null,
@@ -893,6 +941,16 @@ function parseArguments(argv) {
   var name;
   var inlineValue;
   var hasInline;
+
+  // THE ONE DEFAULT THE CLI DOES NOT SHARE WITH A LIBRARY CALLER. Under the
+  // CLI this launcher IS the process: `main` starts a server, holds it up until
+  // a signal, stops it and exits, so by teardown there is no caller left to
+  // read the captured logs and a directory left behind is a leak per
+  // invocation - which is what it was. A library caller is the opposite case
+  // and keeps its evidence by default. `--keep-run-dir` sets this back to the
+  // library behaviour for a CLI run whose logs are wanted, and a run that did
+  // not complete cleanly retains them regardless.
+  options.removeRunDir = true;
 
   // Reads the value for `name`, from `--name=value` when one was attached and
   // from the next argument otherwise. A flag whose value is missing is a usage
@@ -1024,6 +1082,15 @@ function parseArguments(argv) {
 
       case '--run-dir':
         options.runDir = value();
+        break;
+
+      case '--keep-run-dir':
+        // Suppresses this CLI run's own removal. Not repeatable - `once` above
+        // has already refused a second occurrence - and deliberately not a
+        // negatable pair: there is one default per entry point and one flag
+        // that departs from it, which is one fewer state than a caller can
+        // contradict itself in.
+        options.removeRunDir = false;
         break;
 
       case '--config':
@@ -1211,9 +1278,14 @@ function fixturePaths() {
  * failed comparison, needs one path rather than seven.
  *
  * A caller-supplied `--run-dir` is created if absent and reused if present, and
- * is never removed by this file - it is the caller's. A generated directory is
+ * is never removed by this file - it is the caller's. A GENERATED directory is
  * unique per process and per invocation, so two launchers on one host cannot
- * overwrite each other's evidence.
+ * overwrite each other's evidence, and it is the only kind `removeRunDirectory`
+ * will delete: on a CLI run that shut down cleanly it is removed, and every
+ * other case - a library caller, `--keep-run-dir`, or any run that failed -
+ * retains it and says so. The split is in `stopInternal`, and the reason it is
+ * a split rather than one default is that a library caller is handed paths
+ * INSIDE this directory by `start` and routinely reads them after `stop`.
  *
  * @param {(string|null)} requested From `--run-dir`, or null.
  * @returns {Object} The resolved layout.
@@ -1222,12 +1294,31 @@ function fixturePaths() {
 function createRunDirectory(requested) {
   var owned = requested === null || requested === undefined;
   var base  = owned
-    ? path.join(os.tmpdir(), 'parity-server-' + process.pid + '-' +
+    ? path.join(os.tmpdir(), PREFIX_STEM + '-' + process.pid + '-' +
         crypto.randomBytes(4).toString('hex'))
     : path.resolve(requested);
   var layout = {
     runDir          : base,
     owned           : owned,
+    // The system temporary root as it is NOW, resolved through the filesystem,
+    // because it is one of the three conditions `removeRunDirectory` checks and
+    // the answer must be the one that was true when the path was CHOSEN. This
+    // launcher repoints only the CHILD's TMPDIR - at `layout.uploadsDir`, in
+    // `buildChildEnv` - so `os.tmpdir()` still answers for the system root
+    // here; capturing it anyway costs nothing and means a caller that repoints
+    // this process's TMPDIR between `start` and `stop`, as the sibling worker
+    // harness does to itself, cannot make the removal refuse a directory it
+    // legitimately owns. Resolved rather than taken verbatim so the comparison
+    // is symlink-stable: on a host where /tmp is a link, the created path
+    // realpaths outside an unresolved root and the check would refuse itself.
+    tmpRoot         : (function () {
+      try {
+        return fs.realpathSync(os.tmpdir());
+      }
+      catch (err) {
+        return os.tmpdir();
+      }
+    })(),
     pidPath         : path.join(base, 'server.pid'),
     stdoutPath      : path.join(base, 'stdout.log'),
     stderrPath      : path.join(base, 'stderr.log'),
@@ -1511,6 +1602,90 @@ function removePidFile(target) {
     recordCleanupFailure('remove the PID file ' + target,
       'could not remove the PID file ' + target + ': ' + err.message);
   }
+}
+
+/**
+ * Removes a run directory this launcher generated, and refuses anything else.
+ *
+ * A run directory that is never removed is a leak per invocation, and it was
+ * one: the launcher generated a fresh tree under the system temp on every run
+ * and nothing ever deleted it, while the sibling worker and storage harnesses
+ * reap theirs. This is the missing half, and it is deliberately the same three
+ * conditions the worker harness applies, because a recursive delete driven by a
+ * path is only ever as safe as the checks in front of it:
+ *
+ *   1. the LAYOUT says the directory is owned - generated here, not supplied
+ *      through `--run-dir`, which belongs to the caller and is never touched;
+ *   2. the resolved REAL path is still inside the system temporary root as it
+ *      was when the path was chosen, so a run directory that has been moved,
+ *      or a layout that has been tampered with, is not followed out of /tmp;
+ *   3. the BASENAME carries this file's own stem, so even inside the temp root
+ *      only a path this launcher could have created is a candidate.
+ *
+ * A caller-supplied directory, a retained one and anything that fails a check
+ * are reported rather than deleted. The distinction between `kept` and
+ * `refused` is what the caller acts on: `kept` is a decision - the directory
+ * belongs to someone else, or the run wants its evidence - while `refused`
+ * means the bookkeeping and the path disagree, which is a fault in this file
+ * and is recorded as a teardown failure rather than shrugged off as a keep.
+ *
+ * The captured logs go with it, and that is the point: they are the run's
+ * evidence and are therefore removed only on the one path where the run has
+ * already succeeded and nothing is left to read them for. Every failure path
+ * retains them.
+ *
+ * @param {(Object|null)} layout From `createRunDirectory`.
+ * @param {boolean} keep Whether this run must retain it.
+ * @returns {{removed: boolean, kept: boolean, refused: boolean,
+ *            reason: string, path: (string|null)}}
+ */
+function removeRunDirectory(layout, keep) {
+  var real;
+
+  if (!layout || !layout.runDir) {
+    return { removed : false, kept : false, refused : false,
+      reason : 'no run directory', path : null };
+  }
+
+  if (!layout.owned) {
+    return { removed : false, kept : true, refused : false,
+      reason : 'caller-supplied through --run-dir', path : layout.runDir };
+  }
+
+  if (keep) {
+    return { removed : false, kept : true, refused : false,
+      reason : 'retained', path : layout.runDir };
+  }
+
+  try {
+    real = fs.realpathSync(layout.runDir);
+  }
+  catch (err) {
+    // Already gone, or never created. Not a failure and not a keep: there is
+    // nothing to delete and nothing to report to a reader.
+    return { removed : false, kept : false, refused : false,
+      reason : 'already gone (' + err.code + ')', path : layout.runDir };
+  }
+
+  if (real.indexOf(layout.tmpRoot + path.sep) !== 0 ||
+      path.basename(real).indexOf(PREFIX_STEM + '-') !== 0) {
+    return { removed : false, kept : false, refused : true,
+      reason : 'not inside ' + layout.tmpRoot + ' under ' + PREFIX_STEM +
+        '- (' + real + ')', path : real };
+  }
+
+  try {
+    fs.rmSync(real, { recursive : true, force : true });
+  }
+  catch (err) {
+    return { removed : false, kept : false, refused : true,
+      reason : 'could not be removed: ' + err.message, path : real };
+  }
+
+  // `force` swallows ENOENT rather than reporting success, so the removal is
+  // confirmed by looking rather than by not having thrown.
+  return { removed : !fs.existsSync(real), kept : false, refused : false,
+    reason : 'generated by this run', path : real };
 }
 
 // ---------------------------------------------------------------------------
@@ -2560,11 +2735,14 @@ async function waitForReady(url, timeoutMs) {
  * signal would never exit on its own and a polite wait alone would hang the
  * gate that is waiting on this promise.
  *
- * The captured logs are deliberately NOT removed. They are the evidence the
- * gates assert against, and a teardown that deleted them would leave a failed
- * comparison with nothing to explain it. The PID file IS removed, so that a
- * PID file which still exists is by itself the signal that something did not
- * shut down.
+ * The captured logs are the evidence the gates assert against, so they survive
+ * every teardown a reader could still want them from: a library caller keeps
+ * them by default, a failed run keeps them whoever started it, and only a CLI
+ * run that shut down cleanly - where the launcher is the process and nothing
+ * outlives it to read them - removes them with the generated run directory
+ * they live in. `reapRunDirectory` carries the decision and prints it either
+ * way. The PID file IS removed on every clean shutdown, so that a PID file
+ * which still exists is by itself the signal that something did not stop.
  *
  * A teardown fault is reported and recorded on `state.failed`, which raises the
  * CLI's exit code, because a leaked application server holding a port is a real
@@ -2759,6 +2937,18 @@ async function stopInternal() {
     }
   }
 
+  // LAST, and after everything else has had its say. The run directory is the
+  // run's evidence, so the decision to remove it can only be taken once every
+  // other teardown step has reported: a mongod that would not stop or a PID
+  // file that would not go both record a cleanup failure above, and either one
+  // must leave the captured logs in place for whoever reads them.
+  //
+  // `surviving` is folded in explicitly rather than left to `state.failed`,
+  // which it also sets, because it is the one case where the directory is still
+  // being WRITTEN TO - the child is alive and holding the port - and deleting
+  // it underneath a live application would be the worst of the three outcomes.
+  reapRunDirectory(surviving);
+
   // The listeners and the child handle are released only when there is nothing
   // left to act on. While a process survives SIGKILL both are still live
   // information: the handle is what a retry signals, and the exit sweep is the
@@ -2777,6 +2967,98 @@ async function stopInternal() {
   state.stopping     = false;
 
   return ok;
+}
+
+/**
+ * Decides this run's run directory, removes it if it may, and says which.
+ *
+ * The decision, and the reason it is not one default for everybody:
+ *
+ *   LIBRARY MODE RETAINS, unless the caller asked for removal. `start` hands
+ *   out `stderrPath`, `mailLogPath`, `s3LogPath`, `httpLogPath` and
+ *   `modelFaultLog` - all inside this directory - and a caller reads them when
+ *   it is ready, not before `stop`. test/parity/joi-matrix.js is the proof:
+ *   it collects `started.stderrPath` from every application it starts,
+ *   including one it has already stopped and restarted, and its warning gate
+ *   reads those streams afterwards, where a stream that cannot be read is a
+ *   gate FAILURE rather than a skip. So a library default of removal would
+ *   turn a passing gate into a failing one, and the opt-in is
+ *   `removeRunDir: true`.
+ *
+ *   THE CLI REMOVES, unless `--keep-run-dir` says otherwise. Its options set
+ *   `removeRunDir` true, because when the launcher IS the process there is no
+ *   caller left to read anything: `main` returns and the process exits.
+ *
+ *   A FAILED RUN RETAINS, either way, and prints the path. That is exactly when
+ *   the captured logs are worth reading, and it matches the sibling worker
+ *   harness, which retains on any failure for the same reason.
+ *
+ * The outcome is printed in every case. A teardown that silently deletes a
+ * directory a reader was about to look in is as unhelpful as one that silently
+ * leaves fifty behind, and the line is what makes either intelligible.
+ *
+ * @param {boolean} surviving Whether a child survived SIGKILL and is still
+ *   writing into the directory.
+ * @returns {undefined}
+ */
+function reapRunDirectory(surviving) {
+  var layout = state.runLayout;
+  var keep;
+  var outcome;
+
+  if (!layout) {
+    return;
+  }
+
+  // Decided exactly once per start: `stop()` is idempotent and retryable, and a
+  // second call must not re-run a decision whose subject no longer exists.
+  state.runLayout = null;
+
+  keep = !state.removeRunDir || surviving || state.failed || cleanupFailed();
+  outcome = removeRunDirectory(layout, keep);
+
+  if (outcome.refused) {
+    // The layout said this directory was ours and the path says otherwise, so
+    // the fault is in this file's bookkeeping rather than in the request. An
+    // ERROR, and a recorded cleanup failure, because a removal that refuses
+    // itself is the one outcome nobody would otherwise notice.
+    note('ERROR: the run directory ' + outcome.path + ' was not removed ' +
+      'because a safety check refused it: ' + outcome.reason + '. Nothing ' +
+      'was deleted; remove it by hand once you have read it.');
+    recordCleanupFailure('remove the run directory ' + outcome.path,
+      'a safety check refused the removal: ' + outcome.reason);
+
+    return;
+  }
+
+  if (outcome.kept) {
+    note('run directory kept (' + outcome.reason +
+      (outcome.reason === 'retained'
+        ? state.removeRunDir
+          ? ' - this run did not complete cleanly'
+          : ' - removal was not requested'
+        : '') + '): ' + outcome.path);
+
+    return;
+  }
+
+  if (outcome.removed) {
+    note('run directory removed: ' + outcome.path);
+
+    return;
+  }
+
+  if (outcome.reason.indexOf('already gone') === 0) {
+    return;
+  }
+
+  // Not removed, not kept and not refused: `rmSync` reported success and the
+  // directory is still there. Reported rather than retried, because a second
+  // attempt at the same call has nothing new to try.
+  note('ERROR: the run directory ' + outcome.path + ' is still present after ' +
+    'its removal reported success.');
+  recordCleanupFailure('remove the run directory ' + outcome.path,
+    'the directory is still present after its removal reported success');
 }
 
 /**
@@ -3125,6 +3407,11 @@ function resolveOptions(supplied) {
   options.secure                = Boolean(options.secure);
   options.printConfig           = Boolean(options.printConfig);
   options.installSignalHandlers = Boolean(options.installSignalHandlers);
+  // Coerced like its neighbours, and safe to coerce in this direction: the
+  // falsy default IS retain, so a caller that passes a variable which did not
+  // get set keeps its evidence rather than losing it to an accident. Only an
+  // explicit truthy value removes anything.
+  options.removeRunDir          = Boolean(options.removeRunDir);
 
   if (options.s3Seed) {
     options.s3Seed = assertReadableFile(options.s3Seed, 'the s3Seed option');
@@ -3192,7 +3479,13 @@ function assertReadableFile(target, label) {
  * @param {(Array.<string>|string)} [options.nodeFlags] Flags for the child.
  *   Validated: each must begin with `-`, and preload or loader flags are
  *   refused because they would run ahead of the fixtures.
- * @param {(string|null)} [options.runDir] Per-run directory.
+ * @param {(string|null)} [options.runDir] Per-run directory. A directory named
+ *   here belongs to the caller and is never removed.
+ * @param {boolean} [options.removeRunDir] Whether `stop()` may remove a run
+ *   directory this launcher GENERATED. Default false, because `start` returns
+ *   paths inside it - `stderrPath` above all - and a library caller reads them
+ *   after `stop`. Pass true for a caller that has finished with the evidence;
+ *   a run that failed keeps it either way.
  * @param {(Object|null)} [options.config] An explicit top NODE_CONFIG layer.
  * @param {(string|null)} [options.s3Seed] PARITY_S3_SEED.
  * @param {(string|null)} [options.httpProfile] PARITY_HTTP_PROFILE.
@@ -3269,6 +3562,14 @@ async function startInternal(supplied) {
     // Tear down whatever did start. Without this a failed readiness poll would
     // leave a child holding the port and the next run would refuse to start,
     // reporting the leak rather than the original failure.
+    //
+    // MARKED FAILED BEFORE the teardown, because the teardown is what decides
+    // the run directory's fate and this is the case where its contents matter
+    // most: a readiness timeout leaves its whole explanation in the captured
+    // stderr. The CLI reaches the same flag through `main`'s catch, but that
+    // runs AFTER this `stop()`, so relying on it would delete the evidence of
+    // the very failure about to be reported.
+    state.failed       = true;
     state.startPromise = null;
     await stop();
     throw err;
@@ -3293,7 +3594,9 @@ async function buildContext(options) {
   var composed;
   var context;
 
-  state.runDir = layout.runDir;
+  state.runDir       = layout.runDir;
+  state.runLayout    = layout;
+  state.removeRunDir = options.removeRunDir;
 
   writeProfileFile(layout.httpProfilePath, options.httpProfile);
 
@@ -3693,6 +3996,12 @@ module.exports = {
   resolveAppRoot                : resolveAppRoot,
   fixturePaths                  : fixturePaths,
   createRunDirectory            : createRunDirectory,
+  // The reaping half of the run-directory lifecycle. Exported alongside its
+  // creator because its refusals are what stand in front of a recursive
+  // delete, and a refusal is only testable directly if it can be called
+  // directly - with a layout that lies about `owned`, one pointed outside the
+  // temp root, and one whose basename is not this launcher's.
+  removeRunDirectory            : removeRunDirectory,
   composeConfiguration          : composeConfiguration,
   addressLayer                  : addressLayer,
   describeEffectiveAddress      : describeEffectiveAddress,

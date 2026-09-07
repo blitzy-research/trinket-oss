@@ -17,6 +17,122 @@ span.error, small.error {
 	}
 }
 
+// Error state for a form control, application-wide.
+//
+// `.input-error` already existed but only inside the `#account` block in
+// _profile.scss, so it could never reach the sign-in, registration or
+// course-creation forms: a control the server had just rejected rendered
+// with exactly the same `#ccc` border as one it had accepted, which is
+// what made an error impossible to locate without reading the whole page.
+//
+// The colour is the one _profile.scss already uses, so an invalid control
+// looks the same everywhere. `#c00` on white is 5.9:1 - well past the 3:1
+// WCAG 2.1 SC 1.4.11 bar for a non-text indicator - and it is distinct
+// both from the resting `#ccc` and from Foundation's `#999` focus border,
+// so the error state stays legible while the control has focus. It is
+// never the only signal: each of these controls also carries
+// `aria-invalid="true"` and an `aria-describedby` pointing at its message.
+//
+// It keys off the `.input-error` class ONLY, deliberately - an earlier
+// revision also matched `[aria-invalid="true"]` directly and that reached
+// too far. AngularJS stamps `aria-invalid="true"` onto an empty `required`
+// `ng-model` control from its very first render, so a pristine, untouched,
+// never-submitted field was painted as an error: measured on the course
+// outline editor, where "Enter new topic name" rendered `rgb(204, 0, 0)`
+// against a `rgb(204, 204, 204)` baseline, directly beneath copy inviting
+// the user to type in it. Every control this file means to style - the six
+// server-rendered branches in login.html, signup.html and
+// courses/create.html, and the two client-side branches in
+// users/includes/{password,profile}.html - sets `.input-error` alongside
+// `aria-invalid`, so the class alone selects exactly the intended set and
+// nothing framework-generated.
+//
+// The `:focus` variants exist to out-specify Foundation's own
+// `input[type="..."]:focus { border-color: #999 }`, which would otherwise
+// drop the error border the moment the user tabbed into the field.
+input.input-error,
+textarea.input-error,
+select.input-error {
+	border-color: #c00;
+
+	&:focus {
+		border-color: #c00;
+	}
+}
+
+// Keep a reflected server message inside its own box.
+//
+// Several of these messages interpolate the value the server rejected, and
+// an unbroken value has nowhere to wrap: `word-break` and `overflow-wrap`
+// both compute to `normal` by default, so a single long token is laid out
+// on one line and pushes the document wider than the viewport. Measured on
+// the sign-in failure with a 10,000-character unbroken username: the alert
+// reported `scrollWidth` 67,331 against a `clientWidth` of 637, the
+// document 67,652 against a 1,280 viewport, and the text ran visibly
+// outside the red box. That is a two-dimensional scroll for every user and
+// a WCAG 2.1 SC 1.4.10 reflow failure, and it applies to whichever control
+// the message is describing, so the fix belongs with the message rather
+// than with one page.
+//
+// `break-word` rather than `anywhere`: both break a token that would
+// otherwise overflow, but only `anywhere` also shrinks the element's
+// min-content contribution, which can change how its container is sized.
+// `break-word` therefore leaves every message that already fits laid out
+// exactly as before. `word-wrap` is the same property under its original
+// name, kept for engines that only recognise that spelling.
+// `#message` is the account pages' banner text and the `aria-describedby`
+// target for their invalid controls. It carries the same reflected server
+// messages - the username-pattern rejection interpolates the submitted
+// value - so it needs the same bound. Scoped to these two elements rather
+// than to `.alert-box` generally, to leave the flash and join banners other
+// units own untouched.
+small.error,
+#message {
+	word-wrap: break-word;
+	overflow-wrap: break-word;
+}
+
+// Make `.show-for-sr` actually collapse a text input.
+//
+// The utility declares `width: 1px; height: 1px` at specificity (0,1,0),
+// which Foundation's own `input[type="text"] { width: 100%; height:
+// 2.4375rem }` out-specifies at (0,1,1). Measured on the change-password
+// form's hidden username field: only `position: absolute !important` and
+// `clip` survived, leaving a 718x39 box. It was still invisible and still
+// unhittable - a zero-area `clip` suppresses painting and hit-testing, and
+// `elementFromPoint` at four points inside the box returned the elements
+// underneath every time - and being absolutely positioned it contributed no
+// layout. But an invisible full-width overlay sitting across a form is one
+// stylesheet edit away from becoming a visible one, so the intended size is
+// asserted here instead of being left to `clip` alone.
+//
+// Specificity (0,1,1) matches Foundation's rule and this file is imported
+// after it in base.scss, so this wins on order rather than by escalating.
+//
+// `width` and `height` alone are not enough, which was measured rather than
+// reasoned about: with only those two declarations the field still came out
+// 22x16. `* { box-sizing: border-box }` is global here, so the specified
+// width IS the border-box width and cannot go below the element's own
+// padding plus border - and this file's own `input[type="text"] { padding:
+// 8px 10px 6px }` at the top, plus Foundation's 1px border, put the floor
+// at exactly 10+10+1+1 = 22 across and 8+6+1+1 = 16 down. Zeroing both
+// removes the floor. `border: 0` also drops the `border-color` the error
+// rule above would otherwise animate on an element nobody can see.
+//
+// The only other input carrying this class is the blocks file input in
+// includes/uploadModal.html, which is unaffected in substance: it is
+// already out-specified by Foundation's `input[type="file"] { width: 100% }`
+// at the same (0,1,1), it declares no padding or border in any matching
+// rule, it is clipped to zero area, and it is operated through its own
+// `<label for="blocks-upload">` and read by fileReaderJS - neither of which
+// depends on its rendered size.
+input.show-for-sr {
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	border: 0;
+}
+
 #bottom-page-interest {
   margin-top: 40px;
   border: 1px solid #c4c4c4;

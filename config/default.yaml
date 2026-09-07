@@ -126,7 +126,7 @@ app:
   log:
     level: info
     debug:
-      filename: '/tmp/debug.txt'
+      filename: ''  # unset by default. Set an absolute path the deployment owns to enable the winston debug transport (config/log.js adds it only when this is truthy). It previously defaulted to /tmp/debug.txt: a predictable, world-readable name in a shared temp directory - see docs/error-edge-inventory.md, log hygiene.
       files: true
       unauth: true
       routehandlertiming: true

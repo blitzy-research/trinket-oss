@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 
+{% block title %}Forgot Password{% endblock %}
+
 {% block content %}
   <div class="row">
     <div class="large-12 columns">
-      <h1>Forgot Password</h2>
+      <h1>Forgot Password</h1>
       {% if emailEnabled %}
       <form id="password-reset-form" action="/send-pass-reset" method="post">
         <input type="text" name="email" placeholder="Email"/>
@@ -13,6 +15,18 @@
       <p>Password reset is not available because email is not configured on this server.</p>
       <p>Please contact your administrator to reset your password.</p>
       {% endif %}
+    </div>
+  </div>
+
+  {# Navigation out of this page. Deliberately outside the emailEnabled branches
+     above so both the reset form and the "not available" copy offer a way back.
+     Uses the same `large-12 columns` column as the content block above, so these
+     links share that block's left alignment in both branches; this page's copy is
+     left-aligned, unlike the centred columns on /login and /signup. #}
+  <div class="row">
+    <div class="large-12 columns">
+      <p>Remembered your password? <a href="/login">Log In</a></p>
+      <p>Need to create an account? <a href="/signup">Sign Up</a></p>
     </div>
   </div>
 {% endblock %}

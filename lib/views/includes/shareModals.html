@@ -11,9 +11,9 @@
         <div class="row">
           <span class="modal-title" role="heading">Share Your Code!</span>
         </div>
-        <form>
+        <form aria-label="Share a link to this trinket">
           <div class="row">
-            <label for="shareURL"><i>Copy the link below to share your code</i></label>
+            <label><i>Copy the link below to share your code</i></label>
             <div id="shareUrl" class="faux-input" data-metric="linkShares" role="textbox" tabindex="0" aria-label="Copy this link to share your trinket."></div>
           </div>
           <div class="row">
@@ -21,7 +21,9 @@
               <legend>Customize</legend>
               {% if runOption or config.app.runOption[lang] %}
               <div id="shareRunOption">
-                <select id="runOptionLink" name="runOptionLink" class="runOptions" data-type="shareUrl" data-trinket-shortCode="" data-trinket-runMode="">
+                {# The enclosing <legend> names the fieldset, not the individual
+                   controls, so each select is named on itself. #}
+                <select id="runOptionLink" name="runOptionLink" class="runOptions" data-type="shareUrl" data-trinket-shortCode="" data-trinket-runMode="" aria-label="Run option for the shared link">
                   <option value="">Allow either Run or Interactive console</option>
                   <option value="run">Run code only</option>
                   <option value="console">Interactive console only</option>
@@ -30,7 +32,7 @@
               {% endif %}
               {% if displayOption %}
               <div id="shareDisplayOptions">
-                <select id="displayOptionLink" name="displayOptionLink" class="displayOptions" data-type="shareUrl" data-trinket-shortCode="" data-trinket-runMode="">
+                <select id="displayOptionLink" name="displayOptionLink" class="displayOptions" data-type="shareUrl" data-trinket-shortCode="" data-trinket-runMode="" aria-label="Display option for the shared link">
                   <option value="">Show {{ blocksOrCode }} and output side-by-side (smaller screens will only show one at a time)</option>
                   <option value="outputOnly">Only show output (hide the {{ blocksOrCode }})</option>
                   <option value="toggleCode">Only show {{ blocksOrCode }} or output (let users toggle between them)</option>
@@ -48,15 +50,15 @@
         {% endif %}
       </div>
     </div>
-    <a class="close-reveal-modal">&#215;</a>
+    <a class="close-reveal-modal" aria-label="Close" role="button">&#215;</a>
   </div>
   <div id="embedModal" class="reveal-modal {{modalWidth if modalWidth else 'full'}}" data-reveal {% if not noCssTop %}data-css-top="0"{% endif %} {% if not noOffset %}data-offset="0"{% endif %} role="dialog" aria-label="Embed Trinket Dialog">
     <div class="row">
       <span class="modal-title" role="heading">Embed Your Code!</span>
     </div>
-    <form>
+    <form aria-label="Embed this trinket on your site">
       <div class="row">
-        <label for="embedCode">Embed this code on your site</label>
+        <label>Embed this code on your site</label>
       </div>
       <div class="row">
         <div class="small-12 columms">
@@ -68,7 +70,8 @@
           <legend>Customize</legend>
       {% if runOption or config.app.runOption[lang] %}
         <div id="embedRunOption">
-          <select id="runOptionEmbed" name="runOptionEmbed" class="runOptions" data-type="embedCode" data-trinket-shortCode="" data-trinket-runMode="">
+          {# Named on the control itself: the <legend> names the group only. #}
+          <select id="runOptionEmbed" name="runOptionEmbed" class="runOptions" data-type="embedCode" data-trinket-shortCode="" data-trinket-runMode="" aria-label="Run option for the embed code">
             <option value="">Allow either Run or Interactive console</option>
             <option value="run">Run code only</option>
             <option value="console">Interactive console only</option>
@@ -77,7 +80,7 @@
       {% endif %}
       {% if displayOption %}
       <div id="embedDisplayOptions">
-        <select id="displayOptionEmbed" name="displayOptionEmbed" class="displayOptions" data-type="embedCode" data-trinket-shortCode="" data-trinket-runMode="">
+        <select id="displayOptionEmbed" name="displayOptionEmbed" class="displayOptions" data-type="embedCode" data-trinket-shortCode="" data-trinket-runMode="" aria-label="Display option for the embed code">
           <option value="">Show {{ blocksOrCode }} and output side-by-side (smaller screens will only show one at a time)</option>
           <option value="outputOnly">Only show output (hide the {{ blocksOrCode }})</option>
           <option value="toggleCode">Only show {{ blocksOrCode }} or output (let users toggle between them)</option>
@@ -96,13 +99,13 @@
         </fieldset>
       </div>
     </form>
-    <a class="close-reveal-modal">&#215;</a>
+    <a class="close-reveal-modal" aria-label="Close" role="button">&#215;</a>
   </div>
   {% if emailEnabled %}<div id="emailModal" class="reveal-modal {{modalWidth if modalWidth else 'full'}}" data-reveal {% if not noCssTop %}data-css-top="0"{% endif %} {% if not noOffset %}data-offset="0"{% endif %} role="dialog" aria-label="Email Trinket Dialog">
     <div class="row first-row">
      <span class="modal-title" role="heading">Email Your Code!</span>
     </div>
-    <form id="emailModalForm" data-trinket-id="" role="form">
+    <form id="emailModalForm" data-trinket-id="" role="form" aria-label="Email a link to this trinket">
       <div class="row">
         <div class="small-12 medium-3 columns">
           <label class="inline" for="share-email">Send To</label>
@@ -138,6 +141,6 @@
     {% if not noTips %}
     <div class="row">{{ tips.copyTrinket() }}</div>
     {% endif %}
-    <a class="close-reveal-modal">&#215;</a>
+    <a class="close-reveal-modal" aria-label="Close" role="button">&#215;</a>
   </div>{% endif %}
 

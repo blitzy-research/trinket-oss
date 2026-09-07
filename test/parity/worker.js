@@ -63,6 +63,21 @@
 // Export document; the archive layout, key and download URL; the notification
 // mail; and cleanup of the temporary file on the success and failure paths.
 //
+// AND THE OUTAGE, which is the half of the transport a reachable Redis cannot
+// reach. Every assertion above is made against a Redis that answers, so what
+// happens when it does not was unexercised - and the answer was not a
+// degradation but a process death (QA F-4). Three claims, driven by
+// `assertRedisOutageDegrades` in bounded CHILD processes against a loopback
+// port measured not to answer: that `lib/util/queues.js` forwards
+// `maxRetriesPerRequest` and `enableOfflineQueue` to Bull's command client and
+// defaults to 20/true when configuration is silent; that an enqueue against an
+// unreachable Redis SETTLES as a rejection instead of hanging; and that the
+// fire-and-forget enqueue in `lib/controllers/users.js` attaches a rejection
+// handler, without which that rejection is unhandled and Node 22 throws. The
+// children are what keep it free: they open the unreachable Redis clients, and
+// their exit closes them, so the case adds no teardown step and can leak no
+// handle into the clean-close assertion.
+//
 // THE RUNTIME DEFECT THIS GATE REPORTS AS A FAILURE. The success half is
 // unreachable while the worker carries two idioms the installed dependency set
 // no longer supports:
@@ -88,6 +103,16 @@ var net          = require('net');
 var os           = require('os');
 var path         = require('path');
 var EventEmitter = require('events').EventEmitter;
+
+// Spawning, and the ONE case that needs it. The Redis-outage case has to build
+// a queue pointed at a Redis that is not there, and a client like that cannot
+// be built inside this process: it would open three ioredis connections that
+// reconnect forever, none of them reachable through `lib/util/queues.js`'s
+// module-level cache once created, so teardown could not close them and
+// `assertCleanClose` would report the leak this harness exists to prevent. A
+// child owns them instead, and its exit takes them with it - which is also why
+// that case needs no teardown step of its own.
+var childProcess = require('child_process');
 
 // The zero-warning gate, stated once for all four parity gates. What counts as
 // a notice, which flags the measurement requires, and the fact that THERE ARE
@@ -185,6 +210,33 @@ var PREFIX_STEM = 'parity-worker';
 // finish a job it no longer holds, which is Bull's own lost-lock path and is
 // harmless here because that instance is the harness's.
 var STALL_HOLD_MS = 4000;
+
+// The Redis-outage case's own configuration and bound.
+//
+// THE LIMIT HAS TO BE SMALL, and the reason is measured rather than assumed.
+// Bull 4.16.5 installs its own ioredis `retryStrategy` -
+// `Math.min(Math.exp(times), 20000)`, measured on the delivered tree - so
+// reconnect attempts are 20 SECONDS apart from about the tenth onwards. At the
+// documented default of 20 the offline queue is therefore flushed at attempt 21,
+// which measured at roughly FOUR MINUTES after the enqueue. That is the real
+// production behaviour and it is exactly why the un-awaited enqueue's rejection
+// was so easy to miss, but it is not a bound a gate can wait out. A limit of 1
+// flushes on the second attempt, which measured at 0.06s, so the case asserts
+// the same mechanism inside a bound a reviewer will actually run.
+//
+// The second probe's `false` is not a variation for its own sake: `false` is
+// NOT ioredis's default, so observing it arrive is what distinguishes a value
+// this application forwarded from a value ioredis happened to choose. The third
+// probe configures neither key, which is what pins the documented defaults.
+var OUTAGE_MAX_RETRIES_PER_REQUEST = 1;
+
+// How long one outage probe gets, end to end: a child process start, `config`
+// and `bull` loading, and the enqueue settling. Generous against the ~0.5s a
+// probe measures at, because the cost of a bound that is too tight is a
+// failure a reviewer has to disbelieve. AN EXPIRED BOUND IS A FAILURE and is
+// reported as the probe having HUNG - which is the outcome this case exists to
+// detect, so it is never a skip.
+var OUTAGE_PROBE_TIMEOUT_MS = 20000;
 
 // The lock horizon used for the ONE job that provokes Bull's queue-level
 // `error`. 1ms expires before any processor can finish, and the renewal timer
@@ -439,6 +491,18 @@ var USAGE = [
   'archive, the upload, the mail and Bull\'s own completion, failure, retry and',
   'stalled semantics.',
   '',
+  'It also drives the OUTAGE case, which the jobs above cannot: three bounded',
+  'child processes build the exports queue against a loopback port measured not',
+  'to answer, and assert that lib/util/queues.js forwards maxRetriesPerRequest',
+  'and enableOfflineQueue to Bull\'s command client (defaulting to 20/true when',
+  'configuration is silent), that an enqueue then SETTLES as a rejection rather',
+  'than hanging, and that the fire-and-forget enqueue in',
+  'lib/controllers/users.js attaches a rejection handler - without which that',
+  'rejection is unhandled and Node 22 kills the process. The children need no',
+  'Redis and no database of their own, so this case runs whatever --app',
+  'resolved and each is bounded at ' + OUTAGE_PROBE_TIMEOUT_MS + 'ms, an',
+  'expired bound being a failure and never a skip.',
+  '',
   'Precondition, and the only one: a Redis that ANSWERS PING. The in-memory',
   'queue in lib/util/queues.js emits no events, so Bull 4\'s completion,',
   'failure, retry and stalled semantics cannot be asserted against it; this',
@@ -477,6 +541,10 @@ var USAGE = [
   '                          redacted and that no absolute path is recorded.',
   '                          Drives nothing: no Redis, no database, no worker.',
   '                          `<path>.provenance.json` must be beside it.',
+  '                          A RUN-ONLY option alongside it is a usage error,',
+  '                          not a silent no-op: a run and an audit are two',
+  '                          commands. --help wins over any mode, wherever it',
+  '                          appears, so the mode never depends on order.',
   '  --worker-module <path>  the module to require as the worker, relative to',
   '                          appRoot (default: lib/workers/exports). A CONTROL.',
   '  --timeout <ms>          overall bound (default: ' + OVERALL_TIMEOUT_MS + ').',
@@ -1011,6 +1079,8 @@ function parseArguments(argv) {
   var arg;
   var endpoint;
   var seen = {};
+  var sawHelp = false;
+  var conflicting;
 
   // Reads the value for `name`, from `--name=value` when one is attached and
   // from the next token otherwise.
@@ -1081,7 +1151,12 @@ function parseArguments(argv) {
     once(arg.indexOf('=') > 0 ? arg.slice(0, arg.indexOf('=')) : arg);
 
     if (arg === '--help' || arg === '-h') {
-      options.mode = 'help';
+      // Recorded rather than applied, and resolved after the loop. Applying it
+      // here made the mode depend on ARGUMENT ORDER: `--help --verify a.json`
+      // verified and `--verify a.json --help` printed help, both exiting 0,
+      // with the last mode flag silently winning. Help is what a caller who
+      // asked for help gets, wherever they asked.
+      sawHelp = true;
     }
     else if (arg === '--app' || arg.indexOf('--app=') === 0) {
       options.appRoot = path.resolve(valueFor('--app'));
@@ -1119,7 +1194,11 @@ function parseArguments(argv) {
       // A MODE, not a phase of a run: it drives nothing, needs no Redis and
       // no database, and reads one artifact. `--out` and `--verify` in one
       // invocation would be a caller asking for a run and an audit at once,
-      // which is two commands and is how the gate script spells it.
+      // which is two commands and is how the gate script spells it - and that
+      // sentence is enforced after the loop rather than merely stated here,
+      // because a run-only option in verify mode used to be accepted and
+      // silently discarded: `--verify a.json --out b.json` exited 0 with
+      // VERIFY OK and wrote no b.json at all.
       options.mode       = 'verify';
       options.verifyPath = path.resolve(valueFor('--verify'));
     }
@@ -1135,6 +1214,40 @@ function parseArguments(argv) {
     }
     else {
       throw new ToolError('unknown argument `' + arg + '`. Use --help.');
+    }
+  }
+
+  // --help wins over any other mode, wherever it appeared, so the mode never
+  // depends on argument order.
+  if (sawHelp) {
+    options.mode = 'help';
+  }
+
+  // A RUN-ONLY OPTION IN VERIFY MODE IS REFUSED, not discarded. `verifyArtifact`
+  // reads `verifyPath` and nothing else, so every option below was accepted and
+  // then thrown away: `--verify a.json --out b.json` exited 0 saying VERIFY OK
+  // and wrote no artifact, and `--verify a.json --compare missing.json
+  // --worker-module no/such/module` exited 0 without mentioning either. A
+  // caller who passes them believes something happened. Checked after the loop
+  // so the order of the two options cannot change the answer, and only when
+  // help was not asked for, since help is not a request to do any of this.
+  if (options.mode === 'verify') {
+    conflicting = ['--app', '--overlay', '--run-dir', '--keep-run-dir', '--out',
+      '--compare', '--redis', '--worker-module', '--timeout', '--job-timeout'
+    ].filter(function (name) {
+      return Boolean(seen[name]);
+    });
+
+    if (conflicting.length) {
+      throw new ToolError('--verify is an AUDIT of one artifact this gate ' +
+        'already wrote: it drives no job, needs no Redis and no database, and ' +
+        'reads nothing but the file named after it. ' + conflicting.join(', ') +
+        ' ' + (conflicting.length === 1 ? 'belongs' : 'belong') + ' to a RUN, ' +
+        'and passing ' + (conflicting.length === 1 ? 'it' : 'them') + ' here ' +
+        'would have had no effect whatever. A run and an audit are two ' +
+        'commands, which is how the gate script spells it: `node ' +
+        'test/parity/worker.js --redis <host:port> --out <path>` and then ' +
+        '`node test/parity/worker.js --verify <path>`.');
     }
   }
 
@@ -2486,7 +2599,26 @@ function readSourceAnchors(appRoot) {
       bullConstructor : /cache\[name\] = new Queue\(name, opts\)/,
       inMemoryBranch  : /cache\[name\] = new InMemoryQueue\(name\)/,
       getterFactory   : /bullqueues\.forEach\(/,
-      closeAll        : /module\.exports\.closeAll = /
+      closeAll        : /module\.exports\.closeAll = /,
+      // The two ioredis options the outage case is about. They are anchored
+      // because the runtime probes measure their VALUES and a value alone
+      // cannot say where it came from: 20 and true are also ioredis's own
+      // defaults, so a tree that stopped forwarding them would still report
+      // them on the silent-configuration probe. The anchor is what names the
+      // line that does the forwarding.
+      maxRetriesForward   : /maxRetriesPerRequest: resolveMaxRetriesPerRequest\(name\)/,
+      offlineQueueForward : /enableOfflineQueue: resolveEnableOfflineQueue\(name\)/
+    },
+    // The enqueue call site, which is the other half of the outage fix and is
+    // in a file no other assertion in this gate reads. Its containment cannot
+    // be driven from here - this harness starts no HTTP server, so
+    // `requestExport` is out of reach - so it is anchored instead, which is
+    // enough to fail by name if a later edit separates the transport half of
+    // the fix from the call-site half.
+    'lib/controllers/users.js' : {
+      exportEnqueue           : /exportsQueue\.add\(\{/,
+      enqueueRejectionHandler : /\}\)\.then\(null, function\(err\) \{/,
+      enqueueFailureLog       : /console\.log\('export job could not be queued:'/
     },
     'lib/workers/exports.js' : {
       queueRequire    : /require\('\.\.\/util\/queues'\)\.exports\(\)/,
@@ -4081,6 +4213,536 @@ async function assertQueueRegistration(ctx, ledger) {
         'measured as a delta over the pre-require baseline ' +
         JSON.stringify(ctx.queueListenerBaseline) + ' with this harness\'s ' +
         'own observer subtracted; got ' + JSON.stringify(counts));
+    });
+}
+
+// ---------------------------------------------------------------------------
+// The Redis outage
+// ---------------------------------------------------------------------------
+
+// The outage probe, as source for a child process.
+//
+// A STRING rather than a file because there is nothing to keep: it is read
+// once, by `node -e`, and a file would be one more thing for teardown to
+// remove and for a failed run to leave behind.
+//
+// What it reports is deliberately narrow. It resolves the queue through the
+// tree under test's OWN `lib/util/queues.js` - the module whose forwarding this
+// case is about - reads back what that module handed Bull's command client,
+// and then, when asked to, issues the one call the finding is about and says
+// whether the promise SETTLED. It writes one marked line with `fs.writeSync`
+// rather than `console.log`, because a `console.log` to a pipe followed by
+// `process.exit` can be truncated, and a truncated result would read as a hung
+// probe.
+//
+// `<absent>` rather than `undefined` for a missing option, because
+// `JSON.stringify` drops an undefined value and the parent could not then tell
+// "the key was not there" from "the field did not survive serialization".
+var OUTAGE_CHILD_SOURCE = [
+  '"use strict";',
+  'var fs = require("fs");',
+  'var out = {',
+  '  label   : process.env.PARITY_OUTAGE_LABEL,',
+  '  loaded  : false,',
+  '  enqueue : { attempted : false, settled : null }',
+  '};',
+  'function shown(value) {',
+  '  return value === undefined ? "<absent>" : value;',
+  '}',
+  'function report() {',
+  '  fs.writeSync(1, "PARITY_OUTAGE_RESULT " + JSON.stringify(out) + "\\n");',
+  '  process.exit(0);',
+  '}',
+  'try {',
+  '  var queues  = require(process.env.PARITY_OUTAGE_QUEUES_MODULE);',
+  '  var queue   = queues.exports();',
+  '  var options = (queue && queue.client && queue.client.options) || {};',
+  '  out.loaded          = true;',
+  '  out.constructorName = (queue && queue.constructor && queue.constructor.name) || null;',
+  '  out.redisEnabled    = typeof queues.isRedisEnabled === "function"',
+  '    ? queues.isRedisEnabled()',
+  '    : null;',
+  '  out.maxRetriesPerRequest = shown(options.maxRetriesPerRequest);',
+  '  out.enableOfflineQueue   = shown(options.enableOfflineQueue);',
+  '  out.blockingClientsForcedNull = !!(queue.bclient && queue.eclient) &&',
+  '    queue.bclient.options.maxRetriesPerRequest === null &&',
+  '    queue.eclient.options.maxRetriesPerRequest === null;',
+  '  if (process.env.PARITY_OUTAGE_ENQUEUE !== "yes") {',
+  '    report();',
+  '  }',
+  '  out.enqueue.attempted = true;',
+  '  var added = queue.add({',
+  '    action   : "bulk-export",',
+  '    exportId : process.env.PARITY_OUTAGE_EXPORT_ID,',
+  '    userId   : process.env.PARITY_OUTAGE_USER_ID',
+  '  });',
+  '  if (!added || typeof added.then !== "function") {',
+  '    out.enqueue.settled = "not-a-promise";',
+  '    report();',
+  '  }',
+  '  added.then(function(job) {',
+  '    out.enqueue.settled = "resolved";',
+  '    out.enqueue.jobId   = job && job.id !== undefined ? String(job.id) : null;',
+  '    report();',
+  '  }, function(err) {',
+  '    out.enqueue.settled      = "rejected";',
+  '    out.enqueue.errorName    = (err && err.constructor && err.constructor.name) || null;',
+  '    out.enqueue.errorMessage = (err && err.message) || String(err);',
+  '    report();',
+  '  });',
+  '}',
+  'catch (err) {',
+  '  out.error = (err && err.message) || String(err);',
+  '  report();',
+  '}'
+].join('\n');
+
+/**
+ * Chooses a loopback endpoint that is NOT there, and measures that it is not.
+ *
+ * Bound to port 0 and released: the kernel names a free port in its ephemeral
+ * range, and nothing is listening on it the moment the listener closes. The
+ * port is never hard-coded, because up to sixty-four clones of this repository
+ * run on one host and a fixed "dead" port is only dead in the clone that
+ * reserved it.
+ *
+ * Then it CONNECTS, and records what happened. "Unreachable" is the premise the
+ * whole case rests on, so it is measured rather than assumed - and the
+ * measurement also closes the one race the port-0 trick has, which is another
+ * process binding the port between the release and the probe. A connection that
+ * succeeds means exactly that, and the case fails by name instead of quietly
+ * asserting nothing.
+ *
+ * @returns {Promise<Object>} `{host, port, outcome, unreachable}`
+ */
+function pickUnreachableEndpoint() {
+  return new Promise(function(resolve, reject) {
+    var listener = net.createServer();
+
+    listener.once('error', reject);
+
+    listener.listen(0, DEFAULT_REDIS_HOST, function() {
+      var port = listener.address().port;
+
+      listener.close(function() {
+        var socket = net.connect(port, DEFAULT_REDIS_HOST);
+        var settled = false;
+
+        function finish(outcome) {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          socket.destroy();
+
+          resolve({
+            host        : DEFAULT_REDIS_HOST,
+            port        : port,
+            outcome     : outcome,
+            unreachable : outcome !== 'connected'
+          });
+        }
+
+        socket.setTimeout(REDIS_PROBE_TIMEOUT_MS);
+        socket.once('connect', function() { finish('connected'); });
+        socket.once('timeout', function() { finish('timeout'); });
+        socket.once('error', function(err) {
+          finish((err && err.code) || 'error');
+        });
+      });
+    });
+  });
+}
+
+/**
+ * Runs one outage probe in a child process and returns what it observed.
+ *
+ * `spawnSync` and not the asynchronous form, on purpose. The child is the only
+ * thing this harness is waiting for while it runs, no job has been enqueued at
+ * the point the case is driven, and a synchronous call leaves NO ChildProcess
+ * handle behind for `inspectHandles` to find - which matters in a file whose
+ * own rule is that no handle it opened may survive it. The `timeout` option is
+ * the bound, `killSignal: 'SIGKILL'` is what makes the bound real against a
+ * child stuck inside a reconnect loop, and an expired bound is reported as
+ * `hung: true` and asserted as a FAILURE by the caller.
+ *
+ * The environment is composed rather than inherited. The harness's own
+ * NODE_CONFIG names the in-memory MongoDB and the REACHABLE Redis this run's
+ * queue is built on, and a probe that inherited it would be measuring the
+ * opposite of what it is for. `mongo.applyConfigIsolation` points `config` at
+ * the tree under test's own `config/` and redirects its runtime layer, so the
+ * child cannot write `config/runtime.json` into that tree; `scrubPreloadVars`
+ * drops any inherited preload that would redirect module resolution.
+ *
+ * @param {Object} options Resolved options; `appRoot` selects the tree.
+ * @param {Object} endpoint From pickUnreachableEndpoint.
+ * @param {Object} spec `{label, redisOptions, enqueue, description}`.
+ * @returns {Object} The probe record, ready to record and to assert on.
+ */
+function runOutageProbe(options, endpoint, spec) {
+  var queueEntry = {
+    host : endpoint.host,
+    port : endpoint.port
+  };
+  var env;
+  var result;
+  var line;
+  var observed = null;
+  var record;
+
+  Object.keys(spec.redisOptions).forEach(function(key) {
+    queueEntry[key] = spec.redisOptions[key];
+  });
+
+  env = Object.assign({}, process.env, {
+    NODE_ENV : 'test',
+    // Both entries, for the same reason applyEnvironment sets both: the queue
+    // resolves `config.db.redis.exports` while `config/redis.js` dials
+    // `config.db.redis.app`, and a probe that set only one of them would leave
+    // the other pointed at whatever committed configuration says - which on
+    // this host is a Redis that answers.
+    NODE_CONFIG : JSON.stringify({
+      db : {
+        redis : {
+          enabled    : true,
+          bullqueues : ['exports'],
+          app        : { host : endpoint.host, port : endpoint.port },
+          exports    : queueEntry
+        }
+      }
+    }),
+    PARITY_OUTAGE_LABEL         : spec.label,
+    PARITY_OUTAGE_QUEUES_MODULE : path.join(options.appRoot, 'lib', 'util',
+      'queues.js'),
+    PARITY_OUTAGE_ENQUEUE       : spec.enqueue ? 'yes' : 'no',
+    PARITY_OUTAGE_EXPORT_ID     : HARNESS_IDS.exportSuccess,
+    PARITY_OUTAGE_USER_ID       : '000000000000000000000101'
+  });
+
+  mongo.scrubPreloadVars(env);
+  mongo.applyConfigIsolation(env, {
+    appRoot   : options.appRoot,
+    configDir : 'set'
+  });
+
+  result = childProcess.spawnSync(process.execPath, ['-e',
+    OUTAGE_CHILD_SOURCE], {
+    cwd        : options.appRoot,
+    encoding   : 'utf8',
+    env        : env,
+    timeout    : OUTAGE_PROBE_TIMEOUT_MS,
+    killSignal : 'SIGKILL',
+    stdio      : ['ignore', 'pipe', 'pipe']
+  });
+
+  // The child's own stdout carries `lib/util/queues.js`'s boot line as well as
+  // the result, and its stderr carries whatever ioredis says about a connection
+  // that will not come up. Neither is forwarded: this process's streams are
+  // EVIDENCE - stdout belongs to the artifact and to the worker's console.log
+  // lines, and stderr is what the zero-warning gate reads - so a child's noise
+  // is captured here and reported through the probe record instead.
+  (result.stdout || '').split('\n').forEach(function(candidate) {
+    if (candidate.indexOf('PARITY_OUTAGE_RESULT ') === 0) {
+      line = candidate.slice('PARITY_OUTAGE_RESULT '.length);
+    }
+  });
+
+  if (line) {
+    try {
+      observed = JSON.parse(line);
+    }
+    catch (err) {
+      observed = null;
+    }
+  }
+
+  record = {
+    label       : spec.label,
+    description : spec.description,
+    // The endpoint as a LABEL. The port is chosen per run, so recording the
+    // number would put a value in the artifact that differs between two runs
+    // of one tree and would break `--compare` for the whole `queue` section.
+    // What is stable and what a reviewer needs is that it was loopback and that
+    // it was measured not to answer.
+    endpoint    : 'ephemeral:unreachable-loopback',
+    configured  : spec.redisOptions,
+    enqueued    : Boolean(spec.enqueue),
+    // Timing is not recorded, for the same reason: `durationMs` is in VOLATILE
+    // precisely because a wall-clock reading is not comparable. The BOUND is
+    // what this case asserts about time, and `hung` is its outcome.
+    hung        : Boolean(result.signal) ||
+      Boolean(result.error && result.error.code === 'ETIMEDOUT'),
+    exitCode    : result.status === undefined ? null : result.status,
+    observed    : observed,
+    // Kept short and only when there is nothing better to report: a child that
+    // produced a parseable result has already said everything, and its stderr
+    // on this path is a reconnect log that would differ between runs.
+    reason      : observed
+      ? null
+      : ((result.error && result.error.message) ||
+         (result.stderr || '').split('\n').filter(function(text) {
+           return text.trim() !== '';
+         }).slice(-3).join(' | ') ||
+         'the probe produced no result line')
+  };
+
+  note('outage probe ' + spec.label + ': ' + (record.hung
+    ? 'HUNG - the bound of ' + OUTAGE_PROBE_TIMEOUT_MS + 'ms expired'
+    : (observed
+      ? 'maxRetriesPerRequest ' + JSON.stringify(observed.maxRetriesPerRequest) +
+        ', enableOfflineQueue ' + JSON.stringify(observed.enableOfflineQueue) +
+        (observed.enqueue.attempted
+          ? ', enqueue ' + observed.enqueue.settled +
+            (observed.enqueue.errorName ? ' with ' + observed.enqueue.errorName : '')
+          : ', enqueue not attempted')
+      : 'no result: ' + record.reason)));
+
+  return record;
+}
+
+/**
+ * Asserts that a Redis outage DEGRADES instead of killing the process.
+ *
+ * This is the case QA issue F-4 asked for and the one AAP 0.9.6's open
+ * Bull-retry item is not honestly closed without. Every other Bull assertion in
+ * this file is made against a Redis that answers, so the whole outage half of
+ * the transport was unexercised - and the delivered tree's behaviour there was
+ * not a degradation but a process death: `lib/util/queues.js` forwarded no
+ * ioredis options, so ioredis's default `maxRetriesPerRequest` applied by
+ * accident, and the un-awaited `exportsQueue.add()` in
+ * `lib/controllers/users.js` had nothing attached, so the flush rejection was
+ * UNHANDLED and Node 22 threw on it. Measured before the fix: exit 1 out of
+ * `node_modules/ioredis/built/redis/event_handler.js` with
+ * MaxRetriesPerRequestError, minutes after the request it belonged to had
+ * already been answered.
+ *
+ * Three claims, and they are separate because each fails for its own reason:
+ *
+ *   FORWARDING     the two options reach Bull's command client with the values
+ *                  configuration gave them, and the documented defaults arrive
+ *                  when configuration is silent. This is the regression guard:
+ *                  a tree that stopped forwarding them would pass the
+ *                  silent-configuration probe and fail the other two, which is
+ *                  exactly the discrimination a default-valued option needs.
+ *   DELIVERABILITY the enqueue SETTLES. A rejection is a failure the caller can
+ *                  route; a promise that never settles is not, and it is what
+ *                  `maxRetriesPerRequest: null` would produce.
+ *   CONTAINMENT    the call site attaches a rejection handler, so that
+ *                  rejection is not fatal. Asserted through the generated
+ *                  source anchors rather than by driving the route: this gate
+ *                  has no HTTP server, and an anchor is what keeps the two
+ *                  halves of the fix - transport and call site - from being
+ *                  separated by a later edit.
+ *
+ * Nothing here touches this run's own queue, its Redis or its database, so the
+ * case is driven whatever `--app` resolved: on a worktree whose
+ * `lib/util/queues.js` predates the fix the forwarding claim FAILS by name and
+ * carries its remedy, which is the report this gate is supposed to produce.
+ *
+ * @param {Object} ctx
+ * @param {Object} ledger
+ * @param {Object} options Resolved options.
+ * @param {Object} evidence The evidence document under construction.
+ * @returns {Promise<undefined>}
+ */
+async function assertRedisOutageDegrades(ctx, ledger, options, evidence) {
+  var endpoint = await pickUnreachableEndpoint();
+  var anchors  = evidence.sourceAnchors || {};
+  var queueAnchors = anchors['lib/util/queues.js'] || {};
+  var callSiteAnchors = anchors['lib/controllers/users.js'] || {};
+  var probes;
+  var byLabel = {};
+
+  note('outage endpoint: loopback port ' + endpoint.port + ' - connect said ' +
+    endpoint.outcome);
+
+  probes = [
+    {
+      label        : 'bounded-retry',
+      description  : 'a bounded maxRetriesPerRequest, so the offline queue ' +
+                     'is flushed and the enqueue rejects with ' +
+                     'MaxRetriesPerRequestError',
+      redisOptions : {
+        maxRetriesPerRequest : OUTAGE_MAX_RETRIES_PER_REQUEST,
+        enableOfflineQueue   : true
+      },
+      enqueue      : true
+    },
+    {
+      label        : 'offline-queue-disabled',
+      description  : 'enableOfflineQueue false, which is NOT ioredis\'s ' +
+                     'default, so observing it arrive proves the value was ' +
+                     'forwarded; the enqueue is refused at once instead of ' +
+                     'after the retries',
+      redisOptions : {
+        maxRetriesPerRequest : OUTAGE_MAX_RETRIES_PER_REQUEST,
+        enableOfflineQueue   : false
+      },
+      enqueue      : true
+    },
+    {
+      label        : 'configuration-silent',
+      description  : 'neither key configured, which pins the documented ' +
+                     'defaults 20 and true - the values that were already in ' +
+                     'force before they were made explicit, so this is what ' +
+                     'says nothing drifted. No enqueue: at 20 the flush is ' +
+                     'four minutes away, which is the measurement that ' +
+                     'decided the other probes\' limit',
+      redisOptions : {},
+      enqueue      : false
+    }
+  ].map(function(spec) {
+    var record = runOutageProbe(options, endpoint, spec);
+
+    byLabel[spec.label] = record;
+
+    return record;
+  });
+
+  // Recorded inside `evidence.queue`, which is already in COMPARABLE, rather
+  // than as a section of its own: every value below is a boolean, a configured
+  // number, an error class name or a fixed label, so the determinism the
+  // allow-list requires holds without an addition to it.
+  if (evidence.queue) {
+    evidence.queue.outage = portableRecord({
+      endpoint : {
+        kind        : 'ephemeral:unreachable-loopback',
+        outcome     : endpoint.outcome,
+        unreachable : endpoint.unreachable
+      },
+      boundMs : OUTAGE_PROBE_TIMEOUT_MS,
+      probes  : probes
+    }, options.appRoot);
+  }
+
+  await ledger.check('Redis outage: lib/util/queues.js forwards ' +
+    'maxRetriesPerRequest and enableOfflineQueue to Bull\'s command client, ' +
+    'and defaults to 20/true when configuration is silent', function() {
+      var hung = probes.filter(function(probe) {
+        return probe.hung;
+      }).map(function(probe) {
+        return probe.label;
+      });
+      var silent = byLabel['configuration-silent'];
+
+      assert.deepStrictEqual(hung, [], 'probe(s) ' + hung.join(', ') +
+        ' did not finish within ' + OUTAGE_PROBE_TIMEOUT_MS + 'ms. An ' +
+        'expired bound is a failure and never a skip: a probe that cannot ' +
+        'even read back the queue\'s options is reporting that requiring ' +
+        'lib/util/queues.js hangs.');
+
+      probes.forEach(function(probe) {
+        assert.ok(probe.observed, probe.label + ': the probe produced no ' +
+          'result. ' + probe.reason);
+        assert.strictEqual(probe.observed.loaded, true, probe.label +
+          ': lib/util/queues.js could not build the exports queue: ' +
+          probe.observed.error);
+        assert.strictEqual(probe.observed.constructorName, 'Queue',
+          probe.label + ': the probe must have taken the Bull branch, not ' +
+          'the in-memory one; it built ' + probe.observed.constructorName +
+          '. The probe sets db.redis.enabled true, so an InMemoryQueue here ' +
+          'means the tree under test resolves that flag differently.');
+        assert.strictEqual(probe.observed.blockingClientsForcedNull, true,
+          probe.label + ': Bull\'s bclient and subscriber must still report ' +
+          'maxRetriesPerRequest null. Bull forces that value for those two ' +
+          'client types (bull/lib/queue.js:290-297) and its ' +
+          'MISSING_REDIS_OPTS guard (:316-319) throws on a TRUTHY one, so ' +
+          'this is what says a forwarded limit reaches the command client ' +
+          'ONLY. Remedy: forward the option through opts.redis and leave ' +
+          'Bull\'s own createClient alone.');
+      });
+
+      assert.strictEqual(byLabel['bounded-retry'].observed
+        .maxRetriesPerRequest, OUTAGE_MAX_RETRIES_PER_REQUEST,
+        'a configured maxRetriesPerRequest must reach the command client; it ' +
+        'reported ' + JSON.stringify(byLabel['bounded-retry'].observed
+          .maxRetriesPerRequest) + '. Remedy: lib/util/queues.js must put it ' +
+        'in opts.redis - ioredis\'s default of 20 arriving here instead is ' +
+        'the defect QA F-4 reported, where the outage behaviour was ' +
+        'whatever the resolved ioredis happened to choose.');
+      assert.strictEqual(byLabel['offline-queue-disabled'].observed
+        .enableOfflineQueue, false,
+        'a configured enableOfflineQueue false must reach the command ' +
+        'client; it reported ' + JSON.stringify(
+          byLabel['offline-queue-disabled'].observed.enableOfflineQueue) +
+        '. This is the discriminating case: false is not ioredis\'s default, ' +
+        'so true here means the value was never forwarded.');
+      assert.strictEqual(silent.observed.maxRetriesPerRequest, 20,
+        'with neither key configured the documented default must arrive, ' +
+        'and 20 is the value that was already in force before this file ' +
+        'forwarded anything; it reported ' + JSON.stringify(
+          silent.observed.maxRetriesPerRequest) + '. A different value here ' +
+        'is a behaviour change on a HEALTHY Redis, which making the option ' +
+        'explicit was specifically not allowed to cause.');
+      assert.strictEqual(silent.observed.enableOfflineQueue, true,
+        'and enableOfflineQueue must default to true for the same reason; it ' +
+        'reported ' + JSON.stringify(silent.observed.enableOfflineQueue));
+    });
+
+  await ledger.check('Redis outage: an enqueue against an unreachable Redis ' +
+    'SETTLES as a rejection rather than hanging', function() {
+      var bounded = byLabel['bounded-retry'];
+      var refused = byLabel['offline-queue-disabled'];
+
+      assert.strictEqual(endpoint.unreachable, true,
+        'the endpoint this case is built on answered a TCP connect (' +
+        endpoint.outcome + '), so nothing about an outage was measured. The ' +
+        'port is taken by binding to port 0 and releasing it, so a listener ' +
+        'here means another process claimed it in between. Remedy: re-run; a ' +
+        'repeat means the ephemeral range is contended and the case needs a ' +
+        'port reserved for it.');
+
+      assert.strictEqual(bounded.observed.enqueue.settled, 'rejected',
+        'exportsQueue.add() must produce a DELIVERABLE failure when Redis is ' +
+        'unreachable - a settled, rejected promise a caller can route. It ' +
+        'settled as ' + JSON.stringify(bounded.observed.enqueue.settled) +
+        '. A promise that never settles is the outcome ' +
+        'maxRetriesPerRequest: null produces, and an export request would ' +
+        'then be answered with no record anywhere that its job was lost.');
+      assert.strictEqual(bounded.observed.enqueue.errorName,
+        'MaxRetriesPerRequestError',
+        'and the rejection must be ioredis\'s own offline-queue flush, which ' +
+        'is what a bounded maxRetriesPerRequest buys; it rejected with ' +
+        JSON.stringify(bounded.observed.enqueue.errorName) + ': ' +
+        JSON.stringify(bounded.observed.enqueue.errorMessage));
+      assert.strictEqual(refused.observed.enqueue.settled, 'rejected',
+        'with enableOfflineQueue false the enqueue must be refused outright ' +
+        'rather than held; it settled as ' +
+        JSON.stringify(refused.observed.enqueue.settled));
+    });
+
+  await ledger.check('Redis outage: the fire-and-forget enqueue in ' +
+    'lib/controllers/users.js attaches a rejection handler, so that ' +
+    'rejection is not fatal', function() {
+      assert.ok(queueAnchors.maxRetriesForward,
+        'lib/util/queues.js must forward maxRetriesPerRequest in opts.redis, ' +
+        'and no line matching that assignment was found. The runtime probes ' +
+        'above measure the value; this anchor is what names the line, so a ' +
+        'reader following the failure lands on the code rather than on a ' +
+        'number.');
+      assert.ok(queueAnchors.offlineQueueForward,
+        'and enableOfflineQueue, likewise not found');
+      assert.ok(callSiteAnchors.exportEnqueue,
+        'lib/controllers/users.js must still carry the exportsQueue.add() ' +
+        'the export request enqueues with; no line matched it, so either the ' +
+        'call moved or this anchor needs updating with it');
+      assert.ok(callSiteAnchors.enqueueRejectionHandler,
+        'the enqueue at lib/controllers/users.js must attach a rejection ' +
+        'handler IN THE SAME TURN the promise is created. Without one, ' +
+        'ioredis\'s MaxRetriesPerRequestError is an unhandled rejection and ' +
+        'Node 22 throws on it - measured as process exit 1 out of ' +
+        'ioredis\'s event_handler, seconds to minutes after the request it ' +
+        'belonged to had already been answered (QA F-4). The enqueue must ' +
+        'stay un-awaited: the response does not wait on the queue and a ' +
+        'queue failure is not reported to the caller, which is the contract ' +
+        'the comment above it states. Remedy: ' +
+        '.then(null, function(err) { console.log(...); }) on the add(), not ' +
+        'an await.');
+      assert.ok(callSiteAnchors.enqueueFailureLog,
+        'and that handler must LOG, naming the export id and the error, or a ' +
+        'queue outage becomes an export that is recorded as pending and ' +
+        'never processed with nothing said about it anywhere');
     });
 }
 
@@ -7042,6 +7704,16 @@ async function run(options) {
       await assertSeeded(ctx, ledger, evidence.seed);
       await assertQueueRegistration(ctx, ledger);
 
+      // The outage case, HERE and not later, for two reasons. It must run
+      // before the first job is enqueued, because its probes are synchronous
+      // child processes and a blocked event loop while a job is in flight
+      // would make a job's own timing a function of this case; and it must run
+      // whatever the queue turned out to be, because it drives none of this
+      // run's resources - it reads the tree's source and spawns its own
+      // children - so it is the one case that still reports something on a
+      // worktree where nothing else can be driven.
+      await assertRedisOutageDegrades(ctx, ledger, options, evidence);
+
       if (!ctx.queueUsable) {
         await failUndrivenJobs(ctx, ledger, 'no job was enqueued: the ' +
           'selected worktree resolved ' + ctx.queueSurface.package +
@@ -7353,15 +8025,21 @@ async function run(options) {
 
   // The check tally as of serialization, AND THE IDENTITIES BEHIND IT. It
   // cannot include the artifact write's own check - a document cannot record
-  // the outcome of writing itself - so the terminal tally below is one higher
-  // whenever `--out` was given. The difference is exactly that check, and
-  // reading the artifact at all is proof it passed.
+  // the outcome of writing itself - so it stands one short of the number of
+  // checks the run performs whenever `--out` was given. It is nonetheless THE
+  // figure this run reports: the terminal line below headlines THIS FIELD
+  // rather than the live ledger, and names the write's check beside it, so
+  // stderr, the artifact and `--verify` all quote one number and the check
+  // that is missing from it is stated rather than left to be derived.
+  // Reading the artifact at all is proof that the write passed.
   //
   // `names` is what makes the tally mean something. A count and a pass count
   // are satisfied by ANY pair of equal numbers, `0/0` included, so an artifact
-  // carrying only the two numbers cannot distinguish a run that asserted 109
-  // things from one that asserted nothing - and 109 of 109 is precisely the
-  // figure the parity record quotes. The ordered list of names is the evidence
+  // carrying only the two numbers cannot distinguish a run that asserted 112
+  // things from one that asserted nothing - and 112 of 112 is precisely the
+  // figure the parity record should quote, the three Redis-outage checks
+  // included; it read 109 before they existed, and the documentation lane owns
+  // moving it. The ordered list of names is the evidence
   // for the number: an audit can check that the list is as long as the count,
   // that the assertions AAP 0.9.3 enumerates by name are in it, and a reviewer
   // can read what was actually asserted instead of trusting an integer.
@@ -7517,7 +8195,32 @@ async function run(options) {
   verdict  = decision.verdict;
   code     = decision.code;
 
-  note('checks ' + ledger.passed() + '/' + ledger.count() + ' passed, ' +
+  // ONE FIGURE, AND IT IS THE ONE THE DOCUMENT CARRIES. The headline tally is
+  // READ OUT OF `evidence.checks` - the object serialized above, the one the
+  // artifact carries and the one `--verify` reads back - rather than
+  // recomputed from the ledger, because a reader comparing this line with the
+  // artifact has to see the same number and "the same number" is only
+  // provable when it is literally the same field. Recomputing is what
+  // produced the reported off-by-one: by this point the live ledger has
+  // gained the artifact write's own check, so the line said 110 over a
+  // document recording 109 and left the reader to work out which of the two
+  // was wrong. Reading is all that happens here - the `attach` above
+  // hash-links `evidence`, and that invariant is untouched.
+  //
+  // The write's check is not dropped from the report, because it is a real
+  // check that really passed and a line that omitted it would trade one
+  // inaccuracy for another. It is named ALONGSIDE the headline, in the same
+  // sentence, so the difference of one is stated rather than discovered - and
+  // only where there is one to state. With no `--out` no write check exists;
+  // when the write FAILED the branch above re-serialized `evidence.checks`
+  // with it already counted. Both of those cases print their own tally and
+  // nothing else, so the addendum can never double-count and never dangles.
+  note('checks ' + evidence.checks.passed + '/' + evidence.checks.count +
+    ' passed' + (artifactWritten
+      ? ' as recorded in the artifact, plus the write of that artifact - a ' +
+        'check that passed, and the one check a document cannot record about ' +
+        'itself - for ' + ledger.passed() + '/' + ledger.count() + ' run'
+      : '') + ', ' +
     evidence.jobs.length + ' job(s) driven on ' +
     (evidence.queue ? evidence.queue.package + ' at ' + evidence.queue.redis +
       ' under ' + evidence.queue.prefix : 'no queue') + ', ' +
@@ -7630,6 +8333,11 @@ var REQUIRED_CHECKS = Object.freeze([
   'retry: Bull ran the processor twice and reported each attempt',
   'stalled: Bull emitted `stalled` for this job',
   'Bull raised its own `Missing lock` error on the queue',
+  // The outage half of the same transport, which a reachable Redis cannot
+  // reach. Named here so `--verify` reports its ABSENCE from an artifact: a
+  // run that lost this case would otherwise still audit clean, and it is the
+  // one case that closes AAP 0.9.6's Bull-retry item rather than assuming it.
+  'Redis outage: an enqueue against an unreachable Redis',
   // The persisted document, the archive, the upload and the mail.
   'the status sequence is processing -> completed',
   'the document carries status `failed` and that exact errorMessage',
@@ -7910,7 +8618,7 @@ async function verifyArtifact(options) {
     'VERDICT ' + artifact.verdict);
 
   // A TALLY IS NOT A RESULT. `count === passed` is satisfied by `0/0`, and an
-  // artifact claiming "109 of 109" has to be distinguishable from one that
+  // artifact claiming "112 of 112" has to be distinguishable from one that
   // asserted nothing - so the identities are required, they are required to be
   // as many as the count, and the assertions AAP 0.9.3 enumerates are required
   // to be among them by name. `count > 0` is stated separately so a vacuous
@@ -7927,8 +8635,9 @@ async function verifyArtifact(options) {
           ? ', failed: ' + artifact.checks.failures.map(function(entry) {
             return entry.name;
           }).join('; ')
-          : '') + ' (the terminal tally is one higher: a document cannot ' +
-        'record the outcome of writing itself)'
+          : '') + ' (the producing run headlines this same figure and names ' +
+        'one further check beside it: its own artifact write, which a ' +
+        'document cannot record the outcome of)'
       : 'no check summary');
 
   check('the checks it records are named, one name per counted check',
@@ -8128,6 +8837,18 @@ module.exports = {
   listenerCounts         : listenerCounts,
   installUpdateRecorder  : installUpdateRecorder,
   requireWorker          : requireWorker,
+
+  // The outage case's own pieces, exported for the same reason the rest of
+  // this section is: the endpoint picker and one probe can be exercised on
+  // their own, without a Redis, a database or a driven job, and a full worker
+  // run is not the place to discover that the child's result line stopped
+  // parsing.
+  pickUnreachableEndpoint : pickUnreachableEndpoint,
+  runOutageProbe          : runOutageProbe,
+  OUTAGE_CHILD_SOURCE     : OUTAGE_CHILD_SOURCE,
+  OUTAGE_MAX_RETRIES_PER_REQUEST : OUTAGE_MAX_RETRIES_PER_REQUEST,
+  OUTAGE_PROBE_TIMEOUT_MS : OUTAGE_PROBE_TIMEOUT_MS,
+
   measureTemplateResolution : measureTemplateResolution,
   probeCapabilities      : probeCapabilities,
   buildExpectedTrinkets  : buildExpectedTrinkets,

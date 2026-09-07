@@ -143,7 +143,8 @@ trinket-oss/
 | app | 3000 | Trinket web application |
 | mongodb | 17017 | MongoDB database |
 | redis | 16379 | Redis (optional - uses in-memory fallback if disabled) |
-| nginx | 443 | HTTPS proxy (optional) |
+
+These are the services `docker-compose.yml` defines. The repository's only nginx is the serverside reverse proxy, published on 8080 - see [serverside/README.md](serverside/README.md); the root Compose file has no HTTPS proxy and no 443 listener.
 
 ## Troubleshooting
 
@@ -259,12 +260,7 @@ aws:
       host: 'https://my-trinket-assets.s3.amazonaws.com'
 ```
 
-For S3-compatible storage (MinIO, DigitalOcean Spaces), add an `endpoint`:
-
-```yaml
-aws:
-  endpoint: 'https://minio.example.com'
-```
+S3-compatible storage (MinIO, DigitalOcean Spaces) is not supported. `config/aws.js` forwards only `accessKeyId`, `secretAccessKey` and `region` to `AWS.config.update`, and every S3 client is constructed with no options - `new aws.S3()` in `lib/util/file.js`. An `endpoint` key in configuration is read by nothing and silently ignored, so uploads still go to AWS.
 
 ## Server-Side Languages
 

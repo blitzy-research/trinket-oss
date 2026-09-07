@@ -1,11 +1,14 @@
 <div id="instructionsContainer" class="hide">
 {% if isOwner %}
+  {# These are href-less anchors driven by click handlers, so they need an
+     explicit name and tab stop; public/js/embed/embed.js forwards ENTER and
+     SPACE to the same handlers. #}
   <div id="instructionsActions" class="hide">
-    <a id="edit-instructions-link"><i class="fa fa-pencil" title="Edit"></i></a>
+    <a id="edit-instructions-link" class="highlight-on-focus" role="button" tabindex="0" aria-label="Edit instructions" title="Edit instructions"><i class="fa fa-pencil" title="Edit"></i></a>
   </div>
   <div id="instructionsToolbar" class="hide">
-    <a class="right" id="save-instructions"><i class="fa fa-save" title="Save"></i></a>
-    <a id="cancel-edit-instructions"><i class="fa fa-times" title="Cancel"></i></a>
+    <a class="right highlight-on-focus" id="save-instructions" role="button" tabindex="0" aria-label="Save instructions" title="Save instructions"><i class="fa fa-save" title="Save"></i></a>
+    <a id="cancel-edit-instructions" class="highlight-on-focus" role="button" tabindex="0" aria-label="Cancel editing instructions" title="Cancel editing instructions"><i class="fa fa-times" title="Cancel"></i></a>
   </div>
 {% endif %}
   <div id="instructionsOutput"></div>

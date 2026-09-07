@@ -8,6 +8,32 @@
 		background: $primary-color;
 	}
 }
+
+// Touch-target sizing and separation inside the mobile menu's dropdowns
+// (a11y F127/F128). The top-level rows of the open menu already get 44px and
+// an 8px gap further down this file, but the rows nested inside the user menu
+// and the "New Trinket" submenu are Foundation's defaults - measured 36.8px to
+// 41.2px tall with 0-1px between consecutive rows at 375px. They are reachable
+// touch targets once the menu is open, so they get the same treatment.
+//
+// `min-height` only, and no flex: each row is an icon element followed by a
+// text node, and flex layout would collapse the whitespace between them and
+// visibly join glyph to label. Dividers are presentational (`li.divider` has
+// role="presentation") and are excluded so the menu does not grow by 44px per
+// separator.
+@media #{$small-only} {
+	.top-bar-section .dropdown li:not(.divider) {
+		margin-bottom: rem-calc(8);
+
+		&:last-child {
+			margin-bottom: 0;
+		}
+
+		> a {
+			min-height: 44px;
+		}
+	}
+}
 .nav-wrapper nav.top-bar {
 	li.name {
     padding: .25rem .75rem;
@@ -18,6 +44,54 @@
       top: .05rem;
     }
   }
+
+  // Mobile-only touch-target sizing (a11y F127). At <=640px the logo link and
+  // the menu toggle are the only two controls in the top bar that fall below
+  // the 44x44 minimum: measured 96x25 and 55x34 at 375px. Both are grown to
+  // 44px of height *inside* the existing $topbar-height (45px) bar, so the bar
+  // does not change size and the >=641px design is untouched. Scoped to
+  // $small-only for exactly that reason.
+  @media #{$small-only} {
+    li.name {
+      // The .25rem block padding above is what capped the link at the height of
+      // its logo image. Foundation fixes li.name at $topbar-height with
+      // border-box sizing, so dropping only the *vertical* padding frees the
+      // full 45px of content box for the link without moving the bar; the
+      // .75rem horizontal indent is deliberately preserved.
+      padding-top: 0;
+      padding-bottom: 0;
+      display: flex;
+      align-items: center;
+
+      a {
+        // inline-flex, not block: a block-level anchor would stretch to the
+        // full width of the title-area list item and swallow taps aimed at
+        // empty chrome. inline-flex keeps the link shrink-to-fit around the
+        // 6rem logo image while align-items centres that image in the taller
+        // box, so the logo does not appear to move.
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+      }
+    }
+
+    li.toggle-topbar.menu-icon {
+      // Foundation centres a 34px-tall anchor in the bar with
+      // `top: 50%; margin-top: -16px`. Growing that anchor to 44px without
+      // re-centring would put its bottom edge at 50.5px, outside the 45px bar,
+      // where `.top-bar { overflow: hidden }` clips it out of the hit area.
+      // -22px places the 44px box at 0.5px..44.5px: the whole target stays
+      // inside the bar. The hamburger glyph is `span::after`, positioned at
+      // `top: 50%` of this anchor, so it stays centred in the control.
+      margin-top: -22px;
+
+      a {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+      }
+    }
+  }
 }
 
 nav.top-bar {
@@ -26,6 +100,27 @@ nav.top-bar {
   }
 
 	.top-bar-section {
+		// Adjacent-target separation for the expanded mobile menu (a11y F128).
+		// With the menu open every pair of stacked rows measured 0px apart, and
+		// the first row sat 4.5px under the menu toggle - which the 44px toggle
+		// in _nav.scss above closes to ~0.5px. Both gaps are opened here.
+		//
+		// The margin-top is invisible while the menu is closed: Foundation gives
+		// `.top-bar` `overflow: hidden` and a fixed `height: $topbar-height`, and
+		// only `.top-bar.expanded` relaxes that to `height: auto`, so the offset
+		// is clipped when collapsed and only produces a gap once the toggle has
+		// opened the menu.
+		@media #{$small-only} {
+			margin-top: 8px;
+
+			// Only the top-level rows of each list: the child combinators stop
+			// this reaching the nested #user_dropdown / #new_trinket_list items,
+			// whose own spacing and dividers are unchanged.
+			> ul > li {
+				margin-bottom: 8px;
+			}
+		}
+
 		#trinket-user-menu.hover{
 			a.dropdown-btn:hover{
 				span#userdata{

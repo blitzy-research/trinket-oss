@@ -42,6 +42,24 @@
  *   computed here and re-checked at load time, and only the snapshot cases
  *   read a clock, to MEASURE that the module's own delay elapsed.
  *
+ * A READ THAT FAILS IS REPORTED, AND THAT IS WHAT THE STREAM CASES PIN
+ *   `lib/util/file.js` used to let a failed read reach process scope: neither
+ *   `hashcontents`' read stream nor `downloadMaterialFile`'s source carried an
+ *   'error' listener - `.pipe()` attaches one to the destination only - so an
+ *   absent object or an unwritten temporary file emitted 'error' with no
+ *   listener, Node raised it as an uncaught exception and the process exited 1
+ *   with the callback never firing. Both now report instead: `hashcontents`
+ *   calls back with the read error as a SECOND argument and no digest, and
+ *   `downloadMaterialFile` absorbs the error on the stream it returns,
+ *   destroys that stream with it, and announces it through an optional `ready`
+ *   callback. Five cases pin that - `digest-unreadable-path`,
+ *   `materials-read-missing`, `materials-read-ready`,
+ *   `materials-read-missing-ready`, `materials-read-unattended` - and each
+ *   installs a process-level capture that must catch NOTHING, because an error
+ *   with no listener cannot be observed any other way. R-b and AAP 0.7 are why
+ *   the earlier outcome is not preserved under R-d: an absent process is the
+ *   absence of a response rather than behaviour a client can depend on.
+ *
  * ORDERING, WHICH IS LOAD-BEARING
  *   Nothing application-facing is required at module scope. `config` freezes
  *   its values on first require, so the database address must reach
@@ -86,6 +104,11 @@ var os       = require('node:os');
 var path     = require('node:path');
 var zlib     = require('node:zlib');
 var Readable = require('node:stream').Readable;
+// Only for DESTINATION_HWM_BYTES below: the read-announcement case's payload has
+// to be sized against the real high-water mark of the stream type
+// `downloadMaterialFile` pipes into, and reading it from an instance is what
+// keeps that true across Node versions.
+var PassThrough = require('node:stream').PassThrough;
 
 // Sibling tooling. Both are declared dependencies of this file and neither
 // starts anything at require time: mongo.js runs `main` only under direct
@@ -919,6 +942,69 @@ if (ALTERED_ASSET_DIGEST === DIGESTS.assetGif) {
   throw new Error(
     LOG_PREFIX + 'the altered user-asset payload hashes to the SAME digest as ' +
     'the original, so the negative control cannot distinguish them.'
+  );
+}
+
+// A material large enough that ONE write into the destination fills it.
+//
+// This is the payload the read-announcement case needs, and its size is the
+// whole point rather than a detail. `downloadMaterialFile` announces a
+// successful read from the SOURCE's first 'data' event, and the only way to
+// prove the announcement is not in fact being made at EOF is to read an object
+// whose source CANNOT reach 'end'. The fixture writes the body in a single
+// chunk, so a chunk at or above the destination PassThrough's
+// writableHighWaterMark makes `dest.write()` return false, `pipe` pauses the
+// source, and a paused source emits no 'end' until a consumer drains the
+// destination. A case that never drains it therefore separates a first-byte
+// announcement, which arrives, from an EOF announcement, which cannot - and an
+// EOF announcement is exactly the regression that would buffer a whole large
+// material before the response began.
+//
+// The threshold is READ FROM A REAL STREAM rather than written down: Node's
+// default rose from 16 KiB to 64 KiB, and a hard-coded 16 KiB would have made
+// this payload too small on Node 22 while the guard below still passed.
+// Measured on this runtime: a single write of 65535 bytes returns true and one
+// of 65536 returns false.
+//
+// 128 KiB, built from a repeating deterministic pattern rather than random
+// bytes so the digest below is fixed by this file. Deliberately NOT in
+// `PAYLOADS`: keeping it out leaves the key-composition and content-type cases
+// iterating the same eight payloads they always have, and it follows the
+// precedent `ALTERED_ASSET_GIF` set immediately above.
+var DESTINATION_HWM_BYTES = new PassThrough().writableHighWaterMark;
+
+var LARGE_MATERIAL = (function() {
+  var unit  = Buffer.from('parity-storage-large-material-0123456789\n', 'utf8');
+  var total = 128 * 1024;
+  var out   = Buffer.alloc(total);
+  var at    = 0;
+
+  while (at < total) {
+    at += unit.copy(out, at, 0, Math.min(unit.length, total - at));
+  }
+
+  return out;
+})();
+
+var LARGE_MATERIAL_DIGEST = '27b67013c37805ff8cc62d0c84ce32ac52cb2cef';
+
+if (LARGE_MATERIAL.length < DESTINATION_HWM_BYTES) {
+  throw new Error(
+    LOG_PREFIX + 'the large material payload is ' + LARGE_MATERIAL.length +
+    ' bytes, which is below this runtime\'s ' + DESTINATION_HWM_BYTES +
+    '-byte PassThrough writableHighWaterMark. Without backpressure the source ' +
+    'reaches \'end\' with no consumer, and the read-announcement case would ' +
+    'no longer distinguish a first-byte announcement from an EOF one.'
+  );
+}
+
+if (sha1Hex(LARGE_MATERIAL) !== LARGE_MATERIAL_DIGEST) {
+  throw new Error(
+    LOG_PREFIX + 'the large material payload no longer hashes to its ' +
+    'committed digest ' + LARGE_MATERIAL_DIGEST + ' (computed ' +
+    sha1Hex(LARGE_MATERIAL) + '). The digest IS the stored object key ' +
+    '(lib/util/file.js:32-53), so the bytes and the committed digest are ' +
+    'changed together or not at all.'
   );
 }
 
@@ -3624,13 +3710,14 @@ cases.push({
 
 cases.push({
   name : 'digest-agreement',
-  pins : 'lib/util/file.js:66-78',
+  pins : 'lib/util/file.js:98-126',
   run  : async function(ctx) {
     var names = Object.keys(PAYLOADS);
     var i;
     var name;
     var source;
     var digest;
+    var delivery;
 
     // The application's STREAMING implementation, over every payload, compared
     // with this file's buffer implementation AND with the committed constant.
@@ -3644,13 +3731,34 @@ cases.push({
       fs.writeFileSync(source, PAYLOADS[name]);
       ctx.harnessOwned.push(source);
 
-      digest = (await callback(function(done) {
-        // hashcontents calls back with the digest ALONE - no error argument -
-        // so it is adapted here rather than the module being reshaped.
-        ctx.FileUtil.hashcontents(source, function(value) {
-          done(null, value);
+      delivery = (await callback(function(done) {
+        // hashcontents' callback is NOT the Node convention and is adapted here
+        // rather than the module being reshaped: the DIGEST is argument one,
+        // and a read failure is reported as a SECOND argument
+        // (lib/util/file.js:98-126). On the success path that second argument
+        // is absent, which the assertions below check rather than assume - a
+        // module that started passing `(null, digest)` would otherwise hand
+        // every caller written as `function(digest)` an error object where a
+        // hex string belongs, and every key this file asserts is built from
+        // argument one.
+        ctx.FileUtil.hashcontents(source, function(value, hashError) {
+          done(null, {
+            value     : value,
+            hashError : hashError,
+            arity     : arguments.length
+          });
         });
       })).result;
+
+      digest = delivery.value;
+
+      assert.strictEqual(delivery.hashError, undefined,
+        'the second argument is undefined on a successful read of `' + name +
+        '`: an error there would mean the read failed and the digest is not ' +
+        'one');
+      assert.strictEqual(delivery.arity, 1,
+        'and the module passes ONE argument on success - `cb(hash.read())` - ' +
+        'so a caller cannot mistake a success for a failure');
 
       assert.strictEqual(digest, EXPECTED_DIGESTS[name],
         'the streaming sha1 of payload `' + name + '` must equal the ' +
@@ -3673,6 +3781,90 @@ cases.push({
       // root value the whole contract rests on.
       ctx.evidence[name] = { bytes : PAYLOADS[name].length, sha1 : digest };
     }
+  }
+});
+
+cases.push({
+  name : 'digest-unreadable-path',
+  pins : 'lib/util/file.js:86-126',
+  run  : async function(ctx) {
+    // THE OTHER SIDE OF THE DIGEST CONTRACT: a path that cannot be read.
+    //
+    // `hashcontents` opens `fs.createReadStream(path)` and pipes it into the
+    // hash. Before this checkpoint that read stream carried no 'error'
+    // listener - `.pipe()` attaches one to the DESTINATION and never to the
+    // source - so an unreadable path emitted 'error' with no listener, Node
+    // raised it as an uncaught exception, the process exited 1 and the callback
+    // never fired at all. It is reachable from two ordinary requests: a
+    // user-asset upload whose temporary file is not yet on disk, and a material
+    // upload whose temporary file has gone.
+    //
+    // It now reports the failure to the caller instead, as a SECOND argument
+    // with NO digest in the first, exactly once. No digest is invented for a
+    // read that did not happen, which matters more here than anywhere else in
+    // this file: the digest is the storage key (AAP 0.6.7), so a substituted
+    // one - sha1("") in particular - would store real bytes where nothing can
+    // find them again.
+    var missing  = path.join(ctx.scratch, 'digest-unreadable-does-not-exist');
+    var uncaught = [];
+    var delivery;
+
+    function onUncaught(err) { uncaught.push(err); }
+
+    assert.strictEqual(fs.existsSync(missing), false,
+      'the path this case hashes must not exist, or it would be measuring the ' +
+      'success path again');
+
+    process.on('uncaughtException', onUncaught);
+
+    try {
+      delivery = await callback(function(done) {
+        ctx.FileUtil.hashcontents(missing, function(value, hashError) {
+          done(null, {
+            value     : value,
+            hashError : hashError,
+            arity     : arguments.length
+          });
+        });
+      });
+
+      // Long enough for a second delivery or a late uncaught exception: the
+      // read fails on a later tick, and both arms of `hashcontents` guard the
+      // same `settled` flag, so this is where a broken guard shows up.
+      await delay(100);
+    }
+    finally {
+      process.removeListener('uncaughtException', onUncaught);
+    }
+
+    assert.strictEqual(delivery.calls, 1,
+      'the callback fires exactly once for a failed read');
+    assert.ok(delivery.result.hashError,
+      'and it fires with the read error as its SECOND argument');
+    assert.strictEqual(delivery.result.hashError.code, 'ENOENT',
+      'which is the fs error unwrapped - the caller can tell an absent ' +
+      'temporary file from a permission failure');
+    assert.strictEqual(delivery.result.value, null,
+      'the first argument is null: no digest is produced for bytes that were ' +
+      'never read, so no key can be built from one');
+    assert.strictEqual(delivery.result.arity, 2,
+      'and the failure form passes both arguments');
+    assert.deepStrictEqual(uncaught.map(function(err) {
+      return (err && err.code) || (err && err.message) || String(err);
+    }), [],
+      'an unreadable path must raise NO uncaught exception. One here is ' +
+      'process exit 1 in the running application, with the callback never ' +
+      'firing and the request never answered.'
+    );
+
+    measured(ctx, {
+      unreadablePathExisted : fs.existsSync(missing),
+      deliveries            : delivery.calls,
+      arity                 : delivery.result.arity,
+      digest                : delivery.result.value,
+      errorCode             : delivery.result.hashError.code,
+      uncaughtCount         : uncaught.length
+    });
   }
 });
 
@@ -4164,35 +4356,57 @@ cases.push({
 
 cases.push({
   name : 'materials-read-missing',
-  pins : 'lib/util/file.js:80-89',
+  pins : 'lib/util/file.js:184-232',
   run  : async function(ctx) {
     // THE OTHER HALF OF THE MATERIALS CONTRACT, and the one with a consequence.
     //
     // For an absent key the SDK's read stream emits 'error' and never ends
-    // (test/parity/fixtures/aws.js reproduces exactly that), and
-    // `downloadMaterialFile` pipes it with `.pipe()`, which attaches NO error
-    // listener to the source. Two things follow, both measured here rather
-    // than described:
+    // (test/parity/fixtures/aws.js reproduces exactly that, and attaches no
+    // listener of its own). What `downloadMaterialFile` does with that error is
+    // the contract this case pins, and it CHANGED in this checkpoint.
     //
-    //   1. the PassThrough the caller holds neither ends nor errors, so a
-    //      consumer waiting on it waits forever - the request is left
-    //      unsettled. That is asserted rather than corrected, because the only
-    //      alternative is to make the read reject, which is a change to what a
-    //      client sees.
-    //   2. the source's 'error' has no listener anywhere, so Node raises it as
-    //      an UNCAUGHT EXCEPTION. In the running application that is an
-    //      unhandled error on the request path; in this harness it would end
-    //      the process mid-run.
+    // WHAT IT USED TO DO. `.pipe()` attaches an 'error' listener to the
+    // destination and never to the source, so the source's 'error' had no
+    // listener anywhere - not in the module, not in the calling handler, not in
+    // hapi, which only attaches its own once it begins transmitting. Node
+    // therefore raised it as an UNCAUGHT EXCEPTION and the process exited 1
+    // from a single unauthenticated GET /api/files/{id}/{name}, taking all 233
+    // routes and every concurrent request with it; the PassThrough the caller
+    // held neither ended nor errored, so a consumer waiting on it waited
+    // forever. Both halves were measured on this tree, and this case asserted
+    // them.
     //
-    // So the uncaught exception is captured for the duration of this case and
-    // released in a `finally`, which is the only way to observe an error that
-    // by construction has no listener. The capture is scoped as narrowly as the
-    // mechanism allows - one case, one handler, removed whatever happens - and
-    // it asserts the identity of what it caught rather than swallowing it.
+    // WHY IT IS NOT ASSERTED ANY MORE. R-d preserves observable behaviour, but
+    // an absent process is not behaviour a client can depend on - it is the
+    // absence of a response - and R-b ("the application must genuinely run ...
+    // with no route or module excluded") is unqualified about routes serving.
+    // AAP 0.7 decided exactly that precedence for the sibling never-settling
+    // file response, and it is the same argument here. So `downloadMaterialFile`
+    // now attaches an absorbing 'error' listener to the returned stream at
+    // construction and destroys that stream with the read's own error, and it
+    // announces the failure through its optional `ready` callback so the
+    // calling handler can map it to a status. The read itself - bucket, Key,
+    // and the bytes on the success path - is untouched.
+    //
+    // WHAT THIS CASE ASSERTS NOW, all of it positively:
+    //
+    //   1. the read is still attempted against the materials bucket with the
+    //      Key verbatim, and the store still reports the object absent;
+    //   2. no byte is delivered;
+    //   3. the caller's stream SETTLES, as an 'error' carrying the store's own
+    //      NoSuchKey identity and its 404 - so a consumer is released rather
+    //      than left waiting, and the error it receives is the store's and not
+    //      a substitute;
+    //   4. and NOTHING reaches process scope. The uncaughtException capture is
+    //      retained for this last point alone: it is now a NEGATIVE assertion -
+    //      it must catch nothing - and it is still released in a `finally`,
+    //      because a handler left installed would swallow a later case's fault.
     var missingKey = 'parity-absent-material.txt';
     var before     = callsFor(ctx, 'createReadStream').length;
     var uncaught   = [];
     var settled    = null;
+    var settlements = 0;
+    var settledError = null;
     var chunks     = 0;
     var stream;
     var reads;
@@ -4218,69 +4432,94 @@ cases.push({
         'does not exist - the miss is not detectable at the call'
       );
 
-      // What a real consumer does: read it and wait for it to finish. If the
-      // behaviour ever changed to forwarding the error, these listeners are
-      // what keep that change from crashing this case instead of failing it.
+      // What a real consumer does: read it and wait for it to finish. The
+      // 'error' listener is what a consumer attaches; the module's own
+      // absorbing listener does not displace it, and this case asserts that by
+      // receiving the error here.
       stream.on('data', function() { chunks++; });
-      stream.on('end', function() { settled = 'end'; });
+      stream.on('end', function() {
+        settlements++;
+        settled = 'end';
+      });
       stream.on('error', function(err) {
+        settlements++;
+        settledError = err;
         settled = 'error:' + ((err && err.code) || (err && err.message) || err);
       });
 
-      // Bounded, and deliberately far below the case ceiling: the claim is that
-      // nothing ever settles, and the fixture delivers through `setImmediate`,
-      // so a settlement would have happened within a few ticks. Waiting longer
-      // would not make the negative stronger, only slower.
+      // Bounded, and deliberately far below the case ceiling: the fixture
+      // delivers through `setImmediate`, so the settlement has happened within
+      // a few ticks. The wait is long enough to catch a SECOND settlement or a
+      // late uncaught exception as well, which is what the counters below are
+      // for.
       await delay(250);
 
       reads = callsFor(ctx, 'createReadStream').slice(before);
 
-      // The read really was attempted, against the right bucket and key.
+      // (1) The read really was attempted, against the right bucket and key.
+      // The failure path resolves the bucket exactly as the success path does,
+      // so a miss here is evidence about the OBJECT and never about a bucket
+      // the module picked differently once the read went wrong.
       assert.strictEqual(reads.length, 1,
         'exactly one read stream was opened for the absent key');
       assert.strictEqual(reads[0].bucket, ctx.config.aws.buckets.materials.name,
-        'Bucket is config.aws.buckets.materials.name (:84) on the miss path too');
+        'Bucket is config.aws.buckets.materials.name (:206) on the miss path too');
       assert.strictEqual(reads[0].key, missingKey,
-        'Key is the `remote` argument verbatim (:85)');
+        'Key is the `remote` argument verbatim (:207)');
       assert.strictEqual(reads[0].outcome, 'missing',
         'and the store reported the object absent');
 
-      // (1) The caller's stream never settles. This is the preserved quirk, and
-      // it is asserted positively so that a future change which made the read
-      // reject would fail here and be looked at, rather than passing silently.
-      assert.strictEqual(settled, null,
-        'the PassThrough at :81 neither ends nor errors: `.pipe()` at :86 ' +
-        'forwards neither the source\'s end nor its error, so a caller waiting ' +
-        'on this stream waits forever. Preserved as measured under R-d - a ' +
-        'read that rejected would be a different observable behaviour.'
-      );
-      assert.strictEqual(chunks, 0, 'and no bytes are delivered');
+      // (2) No bytes. The miss is total: nothing partial is delivered ahead of
+      // the error, so a consumer cannot have written a truncated body before
+      // learning the read failed.
+      assert.strictEqual(chunks, 0, 'no bytes are delivered for an absent key');
 
-      // (2) The source's error surfaced as an uncaught exception, with the
-      // SDK's own identity intact.
-      assert.strictEqual(uncaught.length, 1,
-        'the absent key raises exactly one uncaught error: the source stream ' +
-        'emits \'error\' and no listener exists on it, here or in the ' +
-        'application. In a running server this is an unhandled error on the ' +
-        'request path.'
+      // (3) The caller's stream SETTLES, exactly once, as an error.
+      assert.strictEqual(settled, 'error:NoSuchKey',
+        'the returned stream settles as an \'error\' rather than hanging: ' +
+        'lib/util/file.js:210-217 destroys it with the read\'s own error, so a ' +
+        'consumer waiting on it is released and the calling handler can answer. ' +
+        'Before this checkpoint it neither ended nor errored and the process ' +
+        'died on the unhandled source error instead - see the note above for ' +
+        'why R-b and AAP 0.7 control that outcome rather than R-d.'
       );
-      assert.strictEqual(uncaught[0].code, 'NoSuchKey',
-        'and it is the SDK\'s NoSuchKey, unwrapped - the same error ' +
-        'downloadUserAsset REJECTS with, which is the difference between the ' +
-        'two read paths'
+      assert.strictEqual(settlements, 1,
+        'and it settles exactly once - an \'end\' after the \'error\', or a ' +
+        'second \'error\', would be a response delivered twice'
       );
-      assert.strictEqual(uncaught[0].statusCode, 404, 'with its 404 intact');
+      assert.ok(settledError, 'the settlement carries an error object');
+      assert.strictEqual(settledError.code, 'NoSuchKey',
+        'and it is the store\'s own NoSuchKey, unwrapped - the same error ' +
+        'downloadUserAsset REJECTS with, so both read paths report the miss ' +
+        'with one identity'
+      );
+      assert.strictEqual(settledError.statusCode, 404, 'with its 404 intact');
+
+      // (4) And nothing reached process scope. This is the assertion the
+      // capture now exists for. It covers the shape THIS case drives - a
+      // consumer that attached its own 'error' listener - and the harsher
+      // shape, a caller that attaches nothing at all and relies entirely on
+      // the module's construction-time listener at lib/util/file.js:203, is
+      // driven by `materials-read-unattended` below.
+      assert.deepStrictEqual(uncaught.map(function(err) {
+        return (err && err.code) || (err && err.message) || String(err);
+      }), [],
+        'an absent key must raise NO uncaught exception. One here means the ' +
+        'read error reached process scope, which in the running application ' +
+        'is process exit 1 from a single unauthenticated request and every ' +
+        'concurrent request lost with it.'
+      );
 
       measured(ctx, {
-        bucket        : reads[0].bucket,
-        key           : reads[0].key,
-        outcome       : reads[0].outcome,
-        streamSettled : settled,
-        bytesDelivered: chunks,
-        uncaught      : {
-          code       : uncaught[0].code,
-          statusCode : uncaught[0].statusCode
-        }
+        bucket          : reads[0].bucket,
+        key             : reads[0].key,
+        outcome         : reads[0].outcome,
+        streamSettled   : settled,
+        streamSettlements: settlements,
+        settledErrorCode: settledError.code,
+        settledStatus   : settledError.statusCode,
+        bytesDelivered  : chunks,
+        uncaughtCount   : uncaught.length
       });
     }
     finally {
@@ -4295,6 +4534,282 @@ cases.push({
     }
 
     assertFixtureHealthy(ctx, 'materials-read-missing');
+  }
+});
+
+cases.push({
+  name : 'materials-read-ready',
+  pins : 'lib/util/file.js:184-232 (the `ready` announcement, success path)',
+  run  : async function(ctx) {
+    // `downloadMaterialFile` grew a SECOND, OPTIONAL parameter in this
+    // checkpoint: `ready`, fired once with `null` as soon as the read is known
+    // to be delivering and with the read's error if it failed before then. It
+    // is what lets a handler answer with a status instead of committing to a
+    // response before it knows whether the object exists, and it is the reason
+    // the absent-object branch is measurable at all rather than a dead process.
+    //
+    // TWO PROPERTIES, and the second needs a payload chosen for it.
+    //
+    //   A. For a seeded object the announcement arrives once with `null` and
+    //      the bytes are still the stored bytes exactly - the announcement
+    //      consumes nothing.
+    //   B. It arrives ON THE FIRST BYTE and NOT at EOF. A large object read
+    //      with NO consumer proves it: the fixture writes the body in one
+    //      chunk, so a chunk at or above the destination's high-water mark
+    //      makes `pipe` pause the source, and a paused source emits no 'end'
+    //      until something drains the destination. An announcement that
+    //      arrives while nothing is draining therefore cannot have come from
+    //      'end' - which matters because an EOF announcement would buffer a
+    //      whole material before the response began, changing the time to
+    //      first byte for every large file.
+    var descriptor  = seed.storage({ exports: false }).materialText;
+    var expected    = Buffer.from(seed.fixtures.bytes.materialText.base64, 'base64');
+    var announced   = [];
+    var largeKey    = LARGE_MATERIAL_DIGEST + '.bin';
+    var largeSeen   = [];
+    var largeStream = null;
+    var seededStream;
+    var body;
+    var largeBody;
+    var stored;
+
+    // (A) The seeded object, announced and then read.
+    seededStream = ctx.FileUtil.downloadMaterialFile(descriptor.key, function(err) {
+      announced.push({ err : err });
+    });
+
+    await waitFor('the ready announcement for ' + descriptor.key, function() {
+      return announced.length > 0;
+    });
+
+    assert.strictEqual(announced.length, 1, 'ready fires once for a healthy read');
+    assert.strictEqual(announced[0].err, null,
+      'and it is announced with null, not with an error or with undefined - ' +
+      'the caller distinguishes success from failure on this argument alone');
+
+    body = await drain(seededStream);
+
+    assert.ok(body.equals(expected),
+      'the announcement consumes nothing: every stored byte still reaches the ' +
+      'caller after it');
+
+    // Draining takes the source to 'end', which is the module's OTHER
+    // announcement site. A second delivery from it would be a caller told
+    // twice, so the count is re-checked after the read has completed rather
+    // than only at the moment it arrived.
+    await delay(50);
+    assert.strictEqual(announced.length, 1,
+      'and reaching \'end\' after a first-byte announcement does not announce ' +
+      'again - lib/util/file.js:190-197 fires exactly once for the life of ' +
+      'the stream');
+
+    // (B) The large object, announced with nothing draining it.
+    stored = await callback(function(done) {
+      ctx.FileUtil.uploadMaterialFile(
+        upload(ctx, 'large-material.bin', LARGE_MATERIAL,
+          'parity-large-material.bin', 'application/octet-stream'),
+        done
+      );
+    });
+
+    assert.strictEqual(stored.err, null, 'the large material must store cleanly');
+    assert.strictEqual(stored.result.name, largeKey,
+      'and it is keyed by its own digest, like every other material');
+
+    largeStream = ctx.FileUtil.downloadMaterialFile(largeKey, function(err) {
+      largeSeen.push({
+        err        : err,
+        // Read AT THE MOMENT OF THE ANNOUNCEMENT, which is the whole point:
+        // afterwards the drain below changes both of them.
+        ended      : largeStream ? largeStream.readableEnded : null,
+        buffered   : largeStream ? largeStream.readableLength : null
+      });
+    });
+
+    await waitFor('the ready announcement for ' + largeKey, function() {
+      return largeSeen.length > 0;
+    });
+
+    assert.strictEqual(largeSeen.length, 1, 'ready fires once for the large read');
+    assert.strictEqual(largeSeen[0].err, null, 'with null');
+    assert.strictEqual(largeSeen[0].ended, false,
+      'and it arrives BEFORE the stream has ended. Nothing is draining this ' +
+      'stream and the body is ' + LARGE_MATERIAL.length + ' bytes against a ' +
+      DESTINATION_HWM_BYTES + '-byte high-water mark, so the source is paused ' +
+      'by backpressure and cannot have emitted \'end\' - an announcement made ' +
+      'at EOF could not have arrived here at all.'
+    );
+    assert.ok(largeSeen[0].buffered > 0,
+      'with bytes already buffered on the caller\'s stream, which is what ' +
+      '"on the first byte" means: ' + largeSeen[0].buffered + ' bytes were ' +
+      'waiting when the caller was told the read was under way'
+    );
+
+    largeBody = await drain(largeStream);
+
+    assert.ok(largeBody.equals(LARGE_MATERIAL),
+      'and the whole large object still arrives once it is drained');
+    assert.strictEqual(sha1Hex(largeBody), LARGE_MATERIAL_DIGEST,
+      'byte-identical to what was stored, by digest');
+
+    measured(ctx, {
+      seededKey            : descriptor.key,
+      seededAnnouncements  : announced.length,
+      seededAnnouncedError : announced[0].err,
+      seededReadSha1       : sha1Hex(body),
+      largeKey             : largeKey,
+      largeBytes           : LARGE_MATERIAL.length,
+      destinationHwmBytes  : DESTINATION_HWM_BYTES,
+      largeAnnouncements   : largeSeen.length,
+      largeEndedAtAnnouncement   : largeSeen[0].ended,
+      largeBufferedAtAnnouncement: largeSeen[0].buffered,
+      largeReadSha1        : sha1Hex(largeBody)
+    });
+
+    assertFixtureHealthy(ctx, 'materials-read-ready');
+  }
+});
+
+cases.push({
+  name : 'materials-read-missing-ready',
+  pins : 'lib/util/file.js:190-217 (the `ready` announcement, failure path)',
+  run  : async function(ctx) {
+    // The failure half of the announcement. `materials-read-missing` above
+    // asserts what the STREAM does for an absent object; this asserts what the
+    // CALLER is told, which is the part a handler maps to a status.
+    var missingKey = 'parity-absent-material-ready.txt';
+    var announced  = [];
+    var uncaught   = [];
+    var chunks     = 0;
+    var stream;
+
+    function onUncaught(err) { uncaught.push(err); }
+
+    assert.strictEqual(
+      ctx.awsFixture.has(ctx.config.aws.buckets.materials.name, missingKey),
+      false, 'the key must not be in the store'
+    );
+
+    process.on('uncaughtException', onUncaught);
+
+    try {
+      stream = ctx.FileUtil.downloadMaterialFile(missingKey, function(err) {
+        announced.push(err);
+      });
+
+      // A consumer that counts bytes and absorbs the error, which is what the
+      // calling handler does once it has decided to stream.
+      stream.on('data', function() { chunks++; });
+      stream.on('error', function() {});
+
+      await waitFor('the ready announcement for the absent key', function() {
+        return announced.length > 0;
+      });
+
+      // Long enough for a second announcement or a late uncaught exception to
+      // have arrived; the fixture delivers through setImmediate.
+      await delay(100);
+
+      assert.strictEqual(announced.length, 1,
+        'ready fires exactly once for an absent object');
+      assert.ok(announced[0], 'and it is announced WITH an error, not with null');
+      assert.strictEqual(announced[0].code, 'NoSuchKey',
+        'carrying the store\'s own code, so the handler can map the miss to a ' +
+        'status rather than guess');
+      assert.strictEqual(announced[0].statusCode, 404, 'and its 404');
+      assert.strictEqual(chunks, 0, 'no byte was delivered before the failure');
+      assert.deepStrictEqual(uncaught, [],
+        'and nothing reached process scope while the failure was reported'
+      );
+    }
+    finally {
+      process.removeListener('uncaughtException', onUncaught);
+
+      if (stream) {
+        stream.removeAllListeners('data');
+        stream.removeAllListeners('error');
+      }
+    }
+
+    measured(ctx, {
+      key             : missingKey,
+      announcements   : announced.length,
+      announcedCode   : announced[0] && announced[0].code,
+      announcedStatus : announced[0] && announced[0].statusCode,
+      bytesDelivered  : chunks,
+      uncaughtCount   : uncaught.length
+    });
+
+    assertFixtureHealthy(ctx, 'materials-read-missing-ready');
+  }
+});
+
+cases.push({
+  name : 'materials-read-unattended',
+  pins : 'lib/util/file.js:199-217 (the construction-time \'error\' listener)',
+  run  : async function(ctx) {
+    // THE CASE THAT PINS THE PROCESS-KILL FIX, and it is deliberately the most
+    // hostile shape a caller can take: no `ready`, no 'error' listener, no
+    // 'data' listener, nothing. That is what the calling handler looked like
+    // before this checkpoint, and for an absent object it was fatal - the
+    // source's 'error' had no listener anywhere, so Node raised it as an
+    // uncaught exception and the process exited 1 on one unauthenticated
+    // request.
+    //
+    // The stream now carries an absorbing 'error' listener from the moment it
+    // is constructed, BEFORE any caller can hold it, so `destroy(err)` has
+    // somewhere to go even when the caller has attached nothing. Two
+    // observables follow, and both are asserted: the stream ends up destroyed,
+    // and process scope stays clean.
+    var missingKey = 'parity-absent-material-unattended.txt';
+    var uncaught   = [];
+    var stream;
+
+    function onUncaught(err) { uncaught.push(err); }
+
+    assert.strictEqual(
+      ctx.awsFixture.has(ctx.config.aws.buckets.materials.name, missingKey),
+      false, 'the key must not be in the store'
+    );
+
+    process.on('uncaughtException', onUncaught);
+
+    try {
+      // One argument. `ready` is optional and this is the call every existing
+      // caller still makes.
+      stream = ctx.FileUtil.downloadMaterialFile(missingKey);
+
+      assert.ok(stream instanceof Readable, 'the stream still comes back');
+
+      // No listeners are attached on purpose. An 'error' listener here would
+      // be the very thing whose absence used to kill the process, so adding
+      // one would make this case pass for the wrong reason.
+      await delay(250);
+
+      assert.deepStrictEqual(uncaught.map(function(err) {
+        return (err && err.code) || (err && err.message) || String(err);
+      }), [],
+        'an absent object read by a caller that attaches NOTHING must raise no ' +
+        'uncaught exception. This is the exact shape that terminated the ' +
+        'process from a single unauthenticated GET /api/files/{id}/{name}.'
+      );
+      assert.strictEqual(stream.destroyed, true,
+        'and the stream is destroyed rather than left open, so an abandoned ' +
+        'read holds nothing'
+      );
+    }
+    finally {
+      process.removeListener('uncaughtException', onUncaught);
+    }
+
+    measured(ctx, {
+      key            : missingKey,
+      listeners      : 'none - no ready, no error, no data',
+      uncaughtCount  : uncaught.length,
+      streamDestroyed: stream ? stream.destroyed : null
+    });
+
+    assertFixtureHealthy(ctx, 'materials-read-unattended');
   }
 });
 
@@ -4937,6 +5452,199 @@ cases.push({
     });
 
     ctx.createdFileIds.push(UPLOAD_FAIL_FILE_ID);
+  }
+});
+
+cases.push({
+  name : 'user-asset-missing-temp-file',
+  pins : 'lib/util/file.js:319-330',
+  run  : async function(ctx) {
+    // THE UPLOAD PATH'S HALF OF THE UNREADABLE-PATH CONTRACT, and the one the
+    // asset-from-URL route reaches.
+    //
+    // `uploadUserAsset` hashes `fileupload.path` before it does anything else,
+    // and the temporary file it is given is written by its CALLER. A caller
+    // that has not finished writing it - or has lost it - used to end the
+    // process here, with no response and every concurrent request lost with it:
+    // `hashcontents`' read stream emitted 'error' with no listener anywhere.
+    // `POST /api/users/assetFromURL` did exactly that under concurrency,
+    // because it started the upload from the source stream's 'end' while the
+    // destination write stream was still queued on the FS threadpool.
+    //
+    // Two fixes meet here, and this case pins the one in this module: the read
+    // failure is reported to the callback, which every caller has an arm for.
+    // The other fix is in the caller - the upload is now started from the write
+    // stream's 'finish', so the file is complete before this function is
+    // called at all - and it is not expressible in this harness, which hands
+    // `FileUtil` an already-written file and therefore has no unflushed window
+    // to open. See `user-asset-unflushed-digest` below for the consequence that
+    // IS expressible here.
+    var before   = callsFor(ctx, 'putObject').length;
+    var docsBefore = await ctx.FileModel.model.collection.countDocuments();
+    var missing  = path.join(ctx.scratch, 'user-asset-never-written.gif');
+    var uncaught = [];
+    var captured;
+    var docsAfter;
+
+    function onUncaught(err) { uncaught.push(err); }
+
+    assert.strictEqual(fs.existsSync(missing), false,
+      'the temporary file must be absent - that is the whole fixture');
+
+    process.on('uncaughtException', onUncaught);
+
+    try {
+      // `uploadUserAsset` logs the read error before reporting it
+      // (lib/util/file.js:328), so the log is captured: it keeps the
+      // application's output off this harness's stdout AND turns "the error was
+      // reported before being handed on" into an assertion.
+      captured = await captureConsoleLog(function() {
+        return callback(function(done) {
+          ctx.FileUtil.uploadUserAsset({
+            path     : missing,
+            filename : 'parity-missing-temp.gif',
+            // The size the caller BELIEVES it wrote. Nothing reads it on this
+            // path, and it is set to a real value so the case cannot pass
+            // because of a falsy byte count.
+            bytes    : PAYLOADS.assetGif.length,
+            headers  : { 'content-type' : 'image/gif' }
+          }, seed.ids.user, null, done);
+        });
+      });
+
+      // Long enough for a second delivery or a late uncaught exception.
+      await delay(100);
+    }
+    finally {
+      process.removeListener('uncaughtException', onUncaught);
+    }
+
+    docsAfter = await ctx.FileModel.model.collection.countDocuments();
+
+    assert.strictEqual(captured.value.calls, 1,
+      'the callback fires exactly once');
+    assert.ok(captured.value.err, 'and it fires with the read error');
+    assert.strictEqual(captured.value.err.code, 'ENOENT',
+      'the fs error unwrapped, so the calling handler can map it to a response');
+    assert.strictEqual(captured.value.result, undefined,
+      'and with no document: lib/util/file.js:329 is `return cb(hashError)`, ' +
+      'the error alone');
+    assert.strictEqual(callsFor(ctx, 'putObject').length, before,
+      'nothing is uploaded - the key would have had to be built from a digest ' +
+      'that does not exist');
+    assert.strictEqual(docsAfter, docsBefore,
+      'and no File document is created, so the failure leaves no record ' +
+      'pointing at an object that was never stored');
+    assert.strictEqual(captured.logged.length, 1,
+      'the read error is logged once before it is reported (:328)');
+    assert.deepStrictEqual(uncaught.map(function(err) {
+      return (err && err.code) || (err && err.message) || String(err);
+    }), [],
+      'and NOTHING reaches process scope. An uncaught exception here is the ' +
+      'measured concurrency crash of POST /api/users/assetFromURL: 32 of 48 ' +
+      'requests answered and the process gone.'
+    );
+
+    measured(ctx, {
+      tempFileExisted : fs.existsSync(missing),
+      deliveries      : captured.value.calls,
+      errorCode       : captured.value.err.code,
+      callbackResult  : captured.value.result,
+      uploadsAttempted: callsFor(ctx, 'putObject').length - before,
+      documentsCreated: docsAfter - docsBefore,
+      loggedLines     : captured.logged.length,
+      uncaughtCount   : uncaught.length
+    });
+  }
+});
+
+cases.push({
+  name : 'user-asset-unflushed-digest',
+  pins : 'lib/util/file.js:319-351 (AAP 0.6.7)',
+  run  : async function(ctx) {
+    // WHAT AN UNFLUSHED TEMPORARY FILE COSTS, expressed at the only layer this
+    // harness can express it.
+    //
+    // The race itself belongs to the CALLER and cannot be reproduced here: this
+    // file hands `FileUtil` a file it has already written, so there is no
+    // window in which the bytes are still queued. What IS reproducible, and is
+    // the whole reason that window matters, is the outcome: `uploadUserAsset`
+    // keys the object and stamps `File.hash` from the digest of WHAT IS ON DISK
+    // WHEN IT READS, and it has no way to notice that the caller's declared
+    // `bytes` disagrees. So a temp file the caller has not finished writing is
+    // stored under the digest of what had been flushed - sha1("") in the
+    // extreme, which is the value the live audit found on a 42-byte GIF - and
+    // AAP 0.6.7 is explicit that "any change to the digest silently orphans
+    // every stored object: no error, only files that cannot be found".
+    //
+    // This case makes that failure signature a measured, named value rather
+    // than a story, so a regression in the caller's trigger produces a key this
+    // file can be pointed at. The caller-side fix is asserted where it lives:
+    // `lib/controllers/users.js` now starts the upload from the write stream's
+    // 'finish' rather than the source's 'end'.
+    var bucket   = ctx.config.aws.buckets.userassets;
+    var emptySha1 = sha1Hex(Buffer.alloc(0));
+    var source   = upload(
+      ctx, 'user-asset-unflushed.gif', Buffer.alloc(0),
+      'parity-unflushed.gif', 'image/gif',
+      { harnessOwned : true }
+    );
+    var outcome;
+    var remoteName;
+    var record;
+    var persisted;
+
+    // The declared size is the size the caller MEANT to write. Nothing in
+    // `uploadUserAsset` reconciles it with the file, and that is the point.
+    source.bytes = PAYLOADS.assetGif.length;
+
+    outcome = await callback(function(done) {
+      ctx.FileUtil.uploadUserAsset(source, seed.ids.user, null, done);
+    });
+
+    assert.strictEqual(outcome.err, null,
+      'the upload SUCCEEDS - there is no error to notice, which is exactly ' +
+      'what makes a wrong digest silent');
+    assert.ok(outcome.result, 'and a document comes back');
+
+    remoteName = emptySha1 + '-' + outcome.result.id + '.gif';
+    record     = storedObject(ctx, bucket.name, remoteName);
+
+    assert.strictEqual(emptySha1, 'da39a3ee5e6b4b0d3255bfef95601890afd80709',
+      'sha1("") is the signature to recognise in a bucket listing or an s3 ' +
+      'log: an object keyed on it holds either nothing or bytes that were not ' +
+      'flushed when the digest was taken');
+    assert.strictEqual(record.body.length, 0,
+      'the object holds the bytes that WERE on disk, not the bytes the caller ' +
+      'declared');
+    assert.strictEqual(outcome.result.size, PAYLOADS.assetGif.length,
+      'while File.size carries the caller\'s declared count (:346), so the ' +
+      'document itself records the disagreement: 42 bytes claimed, 0 stored');
+    assert.strictEqual(outcome.result.hash, emptySha1,
+      'and File.hash is the digest of what was read (:345), which is the ' +
+      'database\'s own content hash for the object');
+
+    persisted = await ctx.FileModel.findById(outcome.result.id);
+
+    assert.ok(persisted, 'the document is persisted');
+    assert.strictEqual(persisted.hash, emptySha1,
+      'with the same hash, so the drift is durable rather than in-memory');
+    assert.strictEqual(persisted.url, bucket.host + '/' + remoteName,
+      'and its url points at the object under that key');
+
+    measured(ctx, {
+      bucket           : bucket.name,
+      remoteName       : remoteName,
+      emptyDigest      : emptySha1,
+      storedBytes      : record.body.length,
+      declaredBytes    : outcome.result.size,
+      documentHash     : outcome.result.hash,
+      persistedHash    : persisted.hash,
+      callerFixedIn    : 'lib/controllers/users.js assetUploadFromURL - the ' +
+        'upload is started from the write stream\'s \'finish\''
+    });
+
+    ctx.createdFileIds.push(outcome.result.id);
   }
 });
 

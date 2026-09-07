@@ -12,6 +12,23 @@
          typeahead-loading="loadingTrinkets" typeahead-template-url="searchResultsTemplate.html"
          typeahead-on-select="onSelectResult($item)" typeahead-wait-ms="400" />
 </div>
+<!--
+  The stored trinket name is user-authored content, so the typeahead row below binds it with
+  ng-bind (inert text) rather than the previous
+  bind-html-unsafe="match.model.name | typeaheadHighlight:query", which inserted it as live HTML
+  and executed any markup a name contained in the browser of every user whose search matched it.
+  No safe substitute for the highlight exists here: typeaheadHighlight is provided by the
+  CDN-loaded angular-foundation build (not patchable from this repository), ngSanitize is not
+  loaded so ng-bind-html would throw $sce:unsafe, and AngularJS 1.3 ships no HTML-escaping
+  filter. Losing the <strong> emphasis that typeaheadHighlight put around the matched substring
+  is therefore the deliberate cost of rendering the name safely; matching, selection and
+  navigation are unchanged.
+
+  This comment sits OUTSIDE the ng-template below deliberately. angular-foundation's
+  typeaheadMatch directive compiles the template's own text with
+  $compile(tplContent.trim())(scope) and then element.replaceWith(...) the result, so a comment
+  inside the template would become a second root node of that compiled collection.
+-->
 <script type="text/ng-template" id="searchResultsTemplate.html">
-  <a class="trinket-list-with-lang lang-{{ match.model.lang }}" bind-html-unsafe="match.model.name | typeaheadHighlight:query"></a>
+  <a class="trinket-list-with-lang lang-{{ match.model.lang }}" ng-bind="match.model.name"></a>
 </script>

@@ -19,8 +19,9 @@ So every entry below carries:
 2. a **target disposition** — the construction in the migrated tree that reproduces that same
    observable outcome.
 
-Two entries are the exception and are labelled as such: §11 records the only two **approved
-deviations**, where something is deliberately *not* preserved.
+Three entries are the exception and are labelled as such: §11 records the only three **approved
+deviations**, where something is deliberately *not* preserved. Only **one** of the three is
+replay-visible; §11.0 carries the count, the kinds and the reason the register is nevertheless closed.
 
 ## Citation convention: two trees
 
@@ -68,10 +69,51 @@ summary.undriven         -> 0
 scenarios with a recorded baseline -> 391 of 392
 recorded steps           -> 404    (394 with a status, 3 timed out, 7 transport failures)
 summary.routesRepresented -> 233 of 233
-embedded provenance       -> present and VERIFIED (role baseline, analysed tree 2f8712a,
-                             generator test/parity/capture.js blob 93266288728d)
-provenance sidecar        -> present (corpus.json.provenance.json)
+embedded provenance       -> present, role baseline, analysed tree 2f8712a,
+                             generator test/parity/capture.js blob 93266288728d
+provenance sidecar        -> present (corpus.json.provenance.json), digests reconciled
 expectedDeviation markers present -> 1  (quirk.reply-chain.never-settles.image-download)
+
+quirk.* scenarios         -> 20, in exactly 7 scenario-ID families. These are ID
+                             prefixes and NOT `scenario.group` values: the corpus
+                             carries both fields, they are named differently, and
+                             every citation in this document is to an id.
+                               quirk.fallback.*            3
+                               quirk.reply-chain.*         8
+                               quirk.oauth.*               3
+                               quirk.dead-301.*            2
+                               quirk.authed-500.*          2
+                               quirk.folders-trinkets.*    1
+                               quirk.fail-redirect-leak.*  1
+                             All 27 quirk.* tokens cited below resolve against the
+                             artifact: 20 to a scenario id exactly, 7 to one of the
+                             families above.
+
+                             An earlier revision cited three strings in the places
+                             sections 1, 2 and 5 cite ids -
+                             quirk.missing-controller-fallback,
+                             quirk.dead-pre-handler-301 and
+                             quirk.authenticated-page-500 - and as ids none of them
+                             resolves: 0 scenarios each, and 0 as an id prefix. They
+                             are corrected to the families above.
+
+                             What those three strings ARE is valid `scenario.group`
+                             metadata, holding 3, 2 and 2 scenarios respectively and
+                             emitted by the capture builders at
+                             `[T test/parity/capture.js:2869]`, `:2915`, `:3454` and
+                             `:3496`. An earlier revision of this block asserted they
+                             existed in no artifact, which was wrong; what is true is
+                             narrower and is the whole of the defect - they are group
+                             values, and they were written where an id belongs.
+                             All 392 scenarios carry a group, and the grouping is
+                             finer than the id families for reply-chain: the groups
+                             quirk.reply-chain.never-settles (1), .header-resolved
+                             (4) and .builder-returned (3) all sit under the single
+                             id family quirk.reply-chain.* (8). That is why the two
+                             namespaces cannot be substituted for one another, and
+                             why the enumeration is recorded here - so a citation is
+                             checked against a list rather than against a memory
+                             of one.
 ```
 
 So the corpus at this commit holds **392** scenario definitions and **391** recorded responses — the one exception is `client-contract.folder-duplicate-name.post-api-folders`, recorded `unreachableByDesign` because driving it terminates the application — driven
@@ -90,6 +132,44 @@ a **static** read taken in this tree, and it is tagged as such.
 identity, the fixture profile, the step sequence and the expectation, so the measurement it will carry
 is already specified and cannot be quietly re-scoped. What it cannot do is stand in for the
 measurement, which is why it is no longer labelled as one.
+
+**One line of that block was re-measured and does not hold on this tree, and every gate claim below
+depends on it, so it is corrected here rather than left standing.** The provenance is present and its
+digests reconcile — `manifest.provenance.digest` reproduces both the embedded `payloadDigest` and the
+sidecar's `artifactDigest` over the committed bytes (**probe**) — but it does **not verify**, because
+the commit it names as its generator's is not an object in this repository:
+
+```text
+$ node test/parity/replay.js --corpus test/parity/corpus.json …
+replay: the corpus … does not carry provenance this replay can rely on
+  - generator-commit-resolves: the recorded generator commit 4dcdd761b4f1…
+    is not a commit in this repository
+  - generator-commit-contains-source: … does not hold test/parity/capture.js
+    as the blob that produced this artifact
+  - delivered-head-resolves: the recorded delivered head … is not a commit in
+    this repository
+$ git cat-file -e 4dcdd761b4f176d67d6402b15f4325bd73eb8c2b   # exit 1
+$ git cat-file -e 93266288728d9a059fe3f95a2d1cd3ab6756f134   # exit 0 - the BLOB is here
+```
+
+So `replay.js` refuses the committed corpus outright and `capture.js --append` refuses it as a merge
+parent, which is what the entries below mean by a campaign being blocked: the artifact's responses are
+real measurements of the frozen tree, but the commit that would let this repository retrieve the tool
+that took them is absent from its history, and both tools require that before adopting them. The
+failure is independent of any scenario content — it reproduces against an untouched copy of the
+committed bytes — and the tools state the remedy themselves: re-capture from a worktree at `2f8712a`
+whose generators are committed, or replay with `--allow-unreviewed-corpus`, which is labelled
+`gateQualifying: false`. Until that re-capture, a claim that a scenario is *compared between the trees*
+is a claim about the campaign that produced the artifact rather than about a run reproducible here, and
+the entries in [§10.18](#1018-post-apiexports-answers-500-after-saving-its-row-and-queueing-its-job)
+onward name a probe as their evidence wherever that distinction matters.
+
+**Which is also how the `verify:corpus` figures two paragraphs above should be read.** The 391 driven,
+367 matching and 23 attributed differences were measured by a run against a tree whose generator commit
+was retrievable; that commit is not in this repository's history, so the same command here stops at the
+provenance check before driving anything. The figures are not withdrawn — they were measured — but they
+are the record of that run rather than a result this tree reproduces, and the artifact's own
+`corpus.json.provenance.json` is where the repair belongs.
 
 ## Rules that govern this catalogue
 
@@ -115,8 +195,9 @@ and summarised, never reproduced:
 - **R-e** — error-to-response mappings survive the async conversion unchanged. Several entries here
   are error edges. This document records the *behavioural* outcome; the per-edge status, payload and
   timing belong to `docs/error-edge-inventory.md`. Cross-referenced, not restated.
-- **R-b** — the application genuinely runs, with no route or module excluded. R-b is one side of the
-  single conflict in this catalogue, decided in §11.1.
+- **R-b** — the application genuinely runs, with no route or module excluded. R-b is the controlling
+  side of both response-behaviour conflicts in this catalogue, decided in §11.1 and §11.10. It is also
+  the reason neither could be preserved: one leaves a request unanswered, the other exits the process.
 - **R-a** — the diff reads as four things only: runtime bump, hapi API migration, async conversion,
   blocking-only dependency swaps. §9.6 records the corrections **rejected** on that test, so a
   reviewer can see the scope gate was applied rather than assumed.
@@ -136,24 +217,46 @@ and summarised, never reproduced:
 | [7](#7-folderstrinkets-builds-a-malformed-injected-url-when-no-query-is-present) | `folders.trinkets` malformed injected URL | Queryless: 200 `{"data":[]}`, no listing invoked | 2-step corpus scenario |
 | [8](#8-the-streaming-asset-fetchs-two-failure-modes-and-recaptchas-faults) | Streaming asset fetch and reCAPTCHA faults | Unsettled request; two uncaught throws | 3 corpus scenarios + fixture profiles + the direct `verify()` driver |
 | [9](#9-the-remaining-preserved-items) | Inert language maps, inert leak detection, retained logging, config gap, dead-code deletion, rejected cosmetics | Various, each recorded below | joi matrix, boot, R-a review |
-| [9.7](#97-a-routed-handler-that-answers-500-where-its-author-intended-403) | `courses.download`'s unauthorized branch evaluates an unbound `Boom` | 500, not the 403 the expression names | Route sweep scenario + error-edge inventory |
+| [9.7](#97-a-routed-handler-that-answers-500-where-its-author-intended-403) | `courses.download`'s unauthorized branch evaluates an unbound `Boom` | 500, not the 403 the expression names — but **unreachable over the route**, see §10.12 | Static read + a permissionless-identity probe; **no** route-level drive by an account the app creates |
 | [9.8](#98-a-routed-handler-whose-metric-free-branch-answers-500-where-its-comment-intends-the-trinket-state) | `trinket.updateMetrics` executes one query twice on its metric-free branch | 500, not the trinket state the comment names | `PUT …/metrics` corpus scenario + a metric-free case still to be captured |
 | [9.9](#99-two-routed-handlers-that-answer-200-carrying-the-name-of-a-missing-identifier) | `users.getExportStatus` and `users.downloadExport` evaluate an unbound `Boom`, and the finder re-invokes the throwing callback | **200** carrying `{"error":"Boom is not defined"}` | `error-edge.not-found.missingExport` + the route's success case |
-| [10](#10-additional-measured-findings) | Findings beyond AAP §0.6.6 | In-memory queue events unreachable; inert test-mode mail guard; undeclared `chokidar`; the ZIP branch that terminated the process; the search-response seam; what `archiver` does and does not normalise | Worker harness; live probes; corpus digest; canonicaliser truth table |
+| [9.10](#910-a-third-routed-handler-that-answers-500-where-its-author-intended-404) | `admin.addFeaturedCourse` evaluates an unbound `Boom` on both not-found branches | **500**, not the 404 the expressions name — measured identical on both trees | `route.post.api-admin-featured-course.json` + two error-edge rows |
+| [9.11](#911-the-admin-controller-publishes-the-whole-user-document-bcrypt-hash-included) | The admin search page and the `grantRole` body serialize the whole `User` document | 200 carrying `password` (a live `$2b$10$…` hash), any stored Google OAuth `token`/`refreshToken`, `_id`, `verified`, `source`, `roles[]` — and in the page it is in the initial HTML whether or not the JSON tab is opened | Admin-page and grant corpus scenarios + §0.9.3's exact body comparison |
+| [9.12](#912-admin-user-search-is-exact-match-only-under-a-label-that-promises-three-fields) | Admin user search is exact-match only through `User.findByLogin` | A partial term answers **200 with zero results** for a user that exists, under a bare `No matches found for …` that does not distinguish absent from inexact, and with no `aria-live` | Admin-page corpus scenarios + the two A/B probes |
+| [9.13](#913-two-more-routed-handlers-that-answer-500-where-their-author-intended-403) | `folders.deleteFolder` and `folders.update` evaluate the same unbound `Boom` | **500**, not the 403 the expression names; the denial itself holds — nothing is deleted or updated | Three-line diff; difference ledger; error-edge inventory |
+| [10](#10-additional-measured-findings) | Findings beyond AAP §0.6.6 | In-memory queue events unreachable; inert test-mode mail guard; the test-mode template watcher's `chokidar` requirement, now a declared dependency again; the ZIP branch that terminated the process; the search-response seam; what `archiver` does and does not normalise | Worker harness; live probes; corpus digest; canonicaliser truth table |
 | [10.4](#104-filessetthumbnail-authenticates-against-an-empty-committed-secret) | `files.setThumbnail` compares against an empty committed secret | Three outcomes; the **mutating** branch is unreachable while the secret is empty, so it fails closed | Route manifest + thumbnail corpus scenario |
 | [10.5](#105-a-stored-file-is-downloadable-by-anyone-who-knows-its-id-or-its-content-hash) | File download has no owner or resource authorization | 200 with the bytes, for any identity, by id **or** content hash | Route manifest + 2 download corpus scenarios |
-| [10.6](#106-serving-the-approved-image-response-serves-script-capable-legacy-content-inline) | The approved image response serves script-capable legacy content inline | 200 with the document's own `mime`, no CSP or `nosniff` — **open, no gate closes it** | None — stated in §10.6 |
+| [10.6](#106-serving-the-approved-image-response-serves-script-capable-legacy-content-inline) | The approved image response serves script-capable legacy content inline. **The one entry here that is not preserved baseline behaviour — deviation 1 creates it** | Baseline served **nothing**; the target serves 200 with the document's own `mime`, no CSP, `nosniff` or `X-Frame-Options`, and the bytes **execute** on the application origin for an anonymous visitor — via inline script, an `onerror` attribute with no script element, and active SVG alike. **Open and live, no gate closes it** | None — stated in §10.6, with the census and decision a human must make |
 | [10.7](#107-the-zipcode-branch-that-took-the-process-down-and-the-bounds-that-now-hold-it) | The `zipCode` branch that terminated the process, and the bounds that hold it | Bounded rejection replaces the process exit; the one field of the response that costs | `POST …/zip` + archive corpus |
 | [10.8](#108-the-search-response-seam-the-client-reads-a-key-the-server-does-not-send) | The search response omits a key the client reads | Client reads an absent key; server shape unchanged | Search corpus |
 | [10.9](#109-what-archiver-normalises-in-an-entry-name-and-what-it-passes-through) | What `archiver` normalises in an entry name, and what it passes through | Measured truth table the controller control matches, re-measured on the delivered 7.0.1 | Storage + worker gates |
 | [10.10](#1010-the-four-outputfile-upload-routes-answer-415-to-multipartform-data) | The four `output:'file'` upload routes refuse `multipart/form-data` | **415** on all four, on hapi 20.3.0 and 21.4.10 alike | Route-sweep scenarios + the two per-major listener probes |
-| [10.11](#1011-requestfailerr-with-an-error-argument-terminates-the-process) | `request.fail(err)` with an `Error` is refused by the toolkit and the process dies | Connection severed, no response, **no process** | `route.post.api-admin-user-userId.json`, which records the baseline's own socket hang up |
-| [11](#11-the-two-approved-deviations) | **Approved deviations** — not preserved, and the register is **closed at two** | Stream response served; `marked` fork retained | Deviation allowlist in replay; audit |
-| [11.4](#114-an-unapproved-security-policy-that-was-added-and-has-now-been-withdrawn) | **Withdrawn** — ten unapproved policies removed from the two auth/user controllers, the eight exposures preservation leaves open, and the three divergences native `fetch` brings with it | Unfiltered `next`; unguarded asset fetch; no OAuth `state`; plaintext provider token | Route manifest; suite; scenarios handed to the corpus work |
+| [10.12](#1012-post-apiadminuseruserid-answers-nothing-at-all-when-the-payload-carries-no-roles) | `admin.updateUser`'s only conditional has no `else`, so a payload without `roles` is never answered | **No response at all**; a 10 s client timeout on both trees, and the process survives | `route.post.api-admin-user-userId.json`, whose step records no status |
+| [10.13](#1013-bulk-csv-import-saturates-the-bcrypt-threadpool-and-blocks-the-event-loop) | Bulk CSV import runs every row's cost-10 bcrypt hash concurrently through `Promise.allSettled` | At 200 rows the concurrent canary p95 is 3310 ms delivered / 3126 ms baseline — the server is unavailable for the duration, on both trees | `route.post.admin-upload.html` / `.json` + the interleaved A/B ladder |
+| [10.14](#1014-a-private-courses-archive-is-downloadable-by-any-authenticated-user) | `courses.download` and `course.copyCourse` gate on a permission every account holds | **200 with the archive** for any authenticated account, on any course including `private` | None — stated in §10.14; the difference ledger is what pins the response |
+| [10.15](#1015-concurrent-course-archive-downloads-corrupt-one-another-and-six-of-them-end-the-process) | `courses.download` builds its working tree at a path keyed on owner and slug only, then deletes it before the lazy archive stream is read, with no `error` listener | **Six simultaneous requests end the process** (unhandled ReadStream `ENOENT`); at lower concurrency, 200 with a truncated, unparseable archive. Baseline-identical at the three lines that cause it | None — the corpus drives one request at a time; the difference ledger is what pins it |
+| [10.16](#1016-the-folder-name-contract-is-asymmetric-between-create-and-rename) | Folder create accepts a 140-character name, rename accepts 50 | A folder created with a 51–140 character name can never be renamed to a name of its own length | `verify:joi` pins both targets |
+| [10.17](#1017-a-folder-name-is-stored-with-control-characters-intact-and-the-two-list-routes-disagree-about-owner) | A NUL byte in a folder name is stored verbatim; `owner=me` works on `/api/courses` and is refused by `/api/trinkets` | `name` keeps the raw byte while the slug drops it; one list contract accepts `owner`, its sibling answers `"owner" is not allowed` | `verify:joi`; corpus list responses |
+| [10.18](#1018-post-apiexports-answers-500-after-saving-its-row-and-queueing-its-job) | `POST /api/exports` fails in the RESPONSE, after saving the row and queueing the job | **500**, with the export persisted and its id never disclosed | probe on both trees; `quirk.export-create.marshal-500` written and its expectation met, but NOT delivered — see the entry |
+| [10.19](#1019-the-in-flight-export-guard-reads-and-writes-in-two-steps) | The in-flight export guard reads and writes in two steps | Two concurrent posts leave **two** `pending` exports for one owner | `route.post.api-exports.json` for the guard's own branch; probe for the race |
+| [10.20](#1020-the-rest-of-the-unbound-boom-family-in-libcontrollersusersjs) | The unbound-`Boom` family in `users.js` — all **15** sites, measured per branch | **500** at four cross-account denials, **200** carrying the identifier at six export branches, one site converting those six, and four sites unreachable from HTTP | `error-edge.not-found.missingExport` + the download success case; probe per branch |
+| [10.21](#1021-the-export-flow-is-a-dead-end-for-the-user-who-reaches-it) | What §10.18 and §10.19 look like in the browser | A started export that cannot finish, a banner that hides itself after 5 s, and a `disabled` retry control | §10.18/§10.19 server-side; the client half has **no gate** and is out of scope |
+| [10.22](#1022-two-further-defects-surfaced-by-the-closing-verification-pass) | Two defects the closing pass surfaced, neither among this checkpoint's findings | An uncastable export id answers **200** carrying the ODM's cast diagnostic with the value echoed; the Recent Exports table overflows the viewport by **47 px** at 375 px | **None for either** — the corpus materialises only castable ids, and no gate measures a computed layout; both stated in §10.22 |
+| [10.23](#1023-the-course-page-overflows-and-overlaps-painted-controls-from-375-to-768) | The course page overflows and overlaps painted controls from 375 to 768 | 95px of horizontal scroll after a resize from ≥ 1024, and 6 overlapping painted control pairs at 375 | None — stated in §10.23 |
+| [10.24](#1024-at-375-the-outline-expander-and-the-page-edit-control-have-zero-clickable-pixels-and-the-expander-is-inert-on-enter-and-space) | The outline expander and the page-edit control have zero clickable pixels at 375 | 0 of 120 sampled points on each, and the expander inert on Enter and Space | None — stated in §10.24 |
+| [10.25](#1025-the-course-sub-navigation-overlays-and-completely-hides-the-material-title-and-body-at-320-and-375) | The course sub-navigation overlays the material title and body at 320 and 375 | A 189px band inside an 80px reserve; the page's own title completely invisible | None — stated in §10.25 |
+| [10.26](#1026-the-outline-animation-drives-layout-rather-than-transform-reflowing-the-content-pane-every-frame) | The outline animation transitions `margin-left` rather than `transform` | 16 reflowing frames per toggle; input-free CLS **0.10781**, above the 0.1 threshold | None — stated in §10.26 |
+| [10.27](#1027-a-maximum-length-140-character-course-name-lays-out-as-a-single-unbreakable-line-box-and-escapes-the-viewport) | A maximum-length 140-character course name is one unbreakable 1658.125px line box | Escapes the viewport by up to 1362px; the nav band cannot cover the widened document | None — stated in §10.27 |
+| [11](#11-the-approved-deviations) | **Approved deviations** — not preserved, and the register is **closed at 6** | Stream response served; `marked` fork retained; both ZIP download routes emit different container bytes; the course archive is built per request; the bounded `zipCode` read; `POST /api/folders` answers where the baseline process died | Deviation allowlist in replay; audit; the frozen archive-container register |
+| [11.4](#114-an-unapproved-security-policy-that-was-added-and-has-now-been-withdrawn) | **Withdrawn** — ten unapproved policies removed from the two auth/user controllers, the nine exposures preservation leaves open, and the three divergences native `fetch` brings with it | Unfiltered `next`; unguarded asset fetch; no OAuth `state`; plaintext provider token | Route manifest; suite; scenarios handed to the corpus work |
 | [11.5](#115-a-second-unapproved-policy-in-the-route-parser-and-the-logger-and-now-withdrawn) | **Withdrawn** — six unapproved policies removed from `lib/util/routeParser.js` and `config/log.js`, with the measured effect on the route surface and the three exposures preservation leaves open | Unredacted failure flash and log line; off-origin `fail.redirect`, frozen for the process; prerequisites still ahead of validation | Route manifest (233/161/288); CLI digest; `quirk.fail-redirect-leak.post-users` |
+| [11.6](#116-a-third-unapproved-policy-in-the-admin-controller-and-now-withdrawn) | **Withdrawn** — nine unapproved policies removed from `lib/controllers/admin.js`, including the only one in the delivery that changed a status code, and the five exposures preservation leaves open | Guest `POST /api/ohnoes` answers **200** again, with baseline's body, `Cache-Control` and `Set-Cookie`; unbounded anonymous alert mail with a caller-composed body; un-handled `mailer.send` rejection; `grantRole` publishes the whole user document | Six-shape byte-identical mail body; seven-row live A/B; 12-of-12 mail attempts on both trees; `route.post.api-ohnoes.json` |
+| [11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes) | **Deviation 5** — the `zipCode` read is bounded and its chain terminated, so an authenticated request no longer ends the process | A malformed `zipCode` answered `draft` 200 / `autosave` 500 **and then killed the process** | §10.7's live probe and nineteen unit cases; no corpus scenario exists |
+| [11.10](#1110-deviation-6-post-apifolders-answers-where-the-baseline-process-died) | **Deviation 6** — `POST /api/folders` answers 409 on a duplicate name and 500 on an unknown write failure | Duplicate: **the process terminates**, no response. Unknown failure: request never settles | Runtime contract in §11.10; the `folder` fault entry in `test/parity/fixtures/model.js`; corpus handover stated |
+| [11](#11-the-approved-deviations) | **Approved deviations** — not preserved, and the register is **closed at two**; a framework-imposed divergence is not one of them and is registered in [§12](#12-the-register-of-framework-imposed-divergences--one-entry) | Stream response served; `marked` fork retained | Deviation allowlist in replay; audit |
 | [A](#appendix-a--the-quirk-allow-list-for-generated-target-actions) | **Allow-list** — the sites whose governing target action a generator must not override | n/a — a contract, not a quirk | `docs/conversion-inventory.md` regeneration |
-
----
+| [10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why) | `request.fail(err)` with an `Error` is refused by the toolkit and the process dies | Connection severed, no response, **no process** | `route.post.api-admin-user-userId.json`, which records the baseline's own socket hang up |
 
 ## 1. Three routes bound to controller methods that do not exist
 
@@ -218,7 +321,7 @@ single most likely accidental regression in this migration, and it would turn th
 (`handler is not a function`) with nothing in the controllers to explain why.
 
 **Gate.** The route manifest carries the three as `missing-controller-fallback`, so the disposition is
-visible rather than inferred. Corpus scenarios, group `quirk.missing-controller-fallback`:
+visible rather than inferred. Corpus scenarios, scenario-ID family `quirk.fallback.*`:
 `quirk.fallback.post.api-interest`, `quirk.fallback.get.api-trinkets-popular`,
 `quirk.fallback.get.api-trinkets-active` — each expecting 200, and the two `trinket` cases driven as
 the seeded admin because those routes carry an `isAdmin` pre-handler that would otherwise forbid the
@@ -302,7 +405,7 @@ identity against the 228 pre-parse route objects (probe):
 `config.constants.trinketLangs` holds 11 languages and the loop pushes 5 routes per language, which
 is where the multiplication comes from.
 
-**Gate.** Corpus scenarios, group `quirk.dead-pre-handler-301`, both asserting the response is **not**
+**Gate.** Corpus scenarios, scenario-ID family `quirk.dead-301.*`, both asserting the response is **not**
 a 301:
 
 - `quirk.dead-301.find-trinket-language-mismatch` — a `python` trinket addressed through the `/html`
@@ -635,11 +738,51 @@ preservation therefore holds at the client boundary, which is the boundary R-d a
 So no session mutation precedes the 500; the `next` value is stored on the unauthenticated path only,
 and that is where it is preserved.
 
+**The ordinary user journey this quirk sits on, recorded because the note above did not name it.** QA
+re-testing walked the plain new-user path — complete signup, then press Back — and arrived here:
+signing up authenticates the visitor, so the `/signup` entry already in that tab's history re-fetches
+as an **authenticated** request and answers 500 with `50x.html` instead of the form. Measured on the
+delivered tree: Back from `/home` → `GET /signup` → 500. **The quirk is preserved** — writing
+`h.redirect('/welcome')` is the improvement R-d prohibits, and `test/lib/api/pages.js` pins the 500 —
+so the journey still shows an error page at that step, and that is deliberate.
+
+What *was* fixed alongside it is the **second** step of the same journey, which is a different defect
+and not this quirk. `POST /users` declares `fail: { redirect: '/{formName}' }`
+(`[B config/routes.js:76-78]`), interpolated from the submitted payload by `request.fail`, and the only
+form that posts there shipped `formName=sign-up` (`[B lib/views/signup.html:18]`). No `/sign-up` route
+exists, so every validation failure 302'd to a bare 404 and put that dead path into history, where a
+further Back answered 404. `[T lib/views/signup.html:66]` now submits `formName=signup`, naming the
+`GET /signup` route that does exist (`[B config/routes.js:22]`) — the same destination this document's
+fail-redirect-leak section already records both of its steps resolving to, and the value
+`test/helpers/flow.js` and `test/parity/joi-baseline.json` have always used. **The route surface is
+unchanged**: no route was added, the mechanism and its in-place interpolation are untouched, and the
+233-entry manifest still matches. The consequence is that the flash is now rendered on the request
+that consumes it rather than surviving to be mis-attributed on the visitor's next visit, and that
+`/sign-up` no longer enters history **through the shipped form, and so not in any ordinary UI
+journey** — verified as zero `/sign-up` requests across a full captured browser journey.
+
+**The bound on that claim, stated because one seam still produces `/sign-up`.** `username` is
+`.optional()` in the `POST /users` payload schema (`[B config/routes.js:84]`), and when the key is
+absent `users.create` generates one and sets `json.formName = 'sign-up'`
+(`[B lib/controllers/users.js:46-48]`). That assignment is reached only after the payload validates,
+so it needs a failure raised inside the controller rather than by the validation block — a duplicate
+email is the reachable one. Measured on the delivered tree, in a **fresh process** so that no earlier
+failure has already frozen `fail.redirect` through the in-place interpolation this document records
+above: `POST /users` with `formName=signup`, no `username`, and an email that already exists answers
+302 to `/sign-up`, which answers 404. With `username` present the same duplicate-email request answers
+302 to `/signup` and renders "An account already exists with this email".
+
+So the seam belongs to callers that omit the key, which the shipped form no longer does — it sends
+`username` as a required field. The assignment is **deliberately unchanged**:
+`lib/controllers/users.js` is outside this remediation, and rewriting the value would change the
+response of a request shaped exactly as the existing suite drives it. The fix is therefore scoped to
+what a browser can reach, and this API seam is recorded here rather than closed.
+
 **Gate.** `test/lib/api/pages.js` asserts status 500 for an authenticated `GET /login`
-(`[T test/lib/api/pages.js:66-68]`) and an authenticated `GET /signup`
+(`[T test/lib/api/pages.js:60-62]`) and an authenticated `GET /signup`
 (`[T test/lib/api/pages.js:88-90]`), driven while logged in. The suite runs because `'pages'` is
 inserted into the fixed `sequence` array in `[T test/lib/api/index.js:2-13]`, without which a new file
-in `test/lib/api/` is never invoked. Corpus scenarios, group `quirk.authenticated-page-500`:
+in `test/lib/api/` is never invoked. Corpus scenarios, scenario-ID family `quirk.authed-500.*`:
 `quirk.authed-500.get.login` and `quirk.authed-500.get.signup`, both expecting 500; the anonymous 200s
 are covered by the route sweep, so the pair together is what pins the branch.
 
@@ -770,7 +913,7 @@ half** — a replay result for this scenario against the delivered tree, which
 
 *What IS enforced today, in code, is that the difference cannot be waved through.* Both step bodies are
 compared between the two trees by the ordinary difference ledger, and after the deviation-approval
-contract in [§11.0](#110-the-register-is-closed-and-this-is-the-machine-readable-form-of-that) was made
+contract in [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) was made
 an allowlist, a marker on this scenario — from the corpus or from an external annotations file — is
 **rejected** rather than honoured, because its id is not the one allowlisted id. So a difference here
 can only be reported as unapproved. That guarantee is structural and holds now, independently of
@@ -823,8 +966,11 @@ stays on step 1 — `status: 200` with `bodyIncludes: "data":[]` — and step 2 
 `[T test/parity/capture.js:3084-3089]`, while `replay.js` compares both bodies between the two trees
 through the ordinary difference ledger.
 
-**What it is not: an approved deviation.** The register in [§11](#11-the-two-approved-deviations) is
-**closed at two entries** and this is not one of them. A driven replay observing step 2's body
+**What it is not: an approved deviation.** The register in [§11](#11-the-approved-deviations) is
+**closed at four entries** and this is not one of them. A driven replay observing step 2's body
+**What it is not: an approved deviation.** The register in [§11](#11-the-approved-deviations) names
+its entries explicitly and **this is not one of them**. A driven replay observing step 2's body
+**closed at three entries** and this is not one of them. A driven replay observing step 2's body
 differing between the two trees is an **unapproved difference and a failure** — reported through the
 ordinary difference ledger and investigated, never marked approved. The corrected query does not
 change that; it changes only what the recorded baseline body is, from an inner-route validation
@@ -1193,20 +1339,26 @@ a generated instruction to make every path return would rewrite it.
 | Validation | `query.format` required, `valid('md','html')` | `[B config/routes.js:167-171]` |
 
 **Measured** (static, plus probe). The handler's body is one five-clause authorization `if`
-`[T lib/controllers/courses.js:214-218]` — the course-owner role, a `public` course type, an `open`
+`[T lib/controllers/courses.js:240-244]` — the course-owner role, a `public` course type, an `open`
 course type, the `create-private-course` permission, or `make-course-copy` on this course. An
 authenticated visitor holding none of those takes the `else`, and the expression it reaches differs
 between the trees by the wrapper only:
+**Measured** (static, plus probe — and see **Reachability**, below, which is the load-bearing
+qualification and was missing from an earlier revision of this entry). The handler's body is one
+five-clause authorization `if` `[T lib/controllers/courses.js:214-218]` — the course-owner role, a
+`public` course type, an `open` course type, the `create-private-course` permission, or
+`make-course-copy` on this course. An authenticated visitor holding none of those takes the `else`,
+and the expression it reaches differs between the trees by the wrapper only:
 
 ```javascript
 // [B lib/controllers/courses.js:289]
       return reply(Boom.forbidden());
-// [T lib/controllers/courses.js:432]
+// [T lib/controllers/courses.js:576]
       return Boom.forbidden();
 ```
 
 **`Boom` is not bound in this module, and never has been on either tree.** The module's only
-`@hapi/boom` binding is `errors` — `[B lib/controllers/courses.js:14]`, `[T lib/controllers/courses.js:19]`
+`@hapi/boom` binding is `errors` — `[B lib/controllers/courses.js:14]`, `[T lib/controllers/courses.js:21]`
 — and `Boom` is not one of the implicit globals the bootstrap creates. Those are created by undeclared
 assignment at `[B app.js:290-298]`, `[T app.js:367-375]`, and are exactly `User`, `Course`, `Lesson`,
 `Material`, `File`, `Trinket`, `Interaction`, `Folder` and `CourseInvitation` — the only such
@@ -1228,7 +1380,7 @@ the second parameter was renamed:
 The **client-visible response is identical**, because a 500 Boom redacts its message: both produce
 `{"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}`.
 This is the same redaction argument §5 relies on, and it holds here for the same reason. The delivered
-code states the whole chain inline at `[T lib/controllers/courses.js:421-431]` — the missing binding,
+code states the whole chain inline at `[T lib/controllers/courses.js:565-575]` — the missing binding,
 the `ReferenceError`, the catch-all's 500 and the header difference below — and
 `docs/error-edge-inventory.md` attributes the throw to `Boom` as well, which is now correct for both
 trees. An earlier revision of this entry recorded the target as throwing on `reply` instead, from a
@@ -1241,11 +1393,89 @@ thrown identifier is `Boom` on both trees.
 
 | Request kind | Baseline and target (500) | The intended 403, for contrast |
 |---|---|---|
-| Browser / `*/*` | `50x.html` rendered, `.code(500)`, **no** cache headers | `50x.html` rendered, `.code(403)`, no cache headers — the same body, a different status |
-| API / JSON | JSON Boom, `Internal Server Error`, **with** the cache headers | JSON Boom, `Forbidden`, with the cache headers |
+| Browser / `*/*` | `50x.html` rendered, `.code(500)`, **none of the extension's cache headers** | `50x.html` rendered, `.code(403)`, likewise none — the same body, a different status |
+| API / JSON | JSON Boom, `Internal Server Error`, **with** the extension's cache headers | JSON Boom, `Forbidden`, with them |
+
+**Measured header sets, because "no cache headers" was imprecise and the difference is exactly what
+R-e asks to be preserved per branch** (**probe**, driven against the delivered tree with a
+permissionless identity — see **Reachability** below for how that identity was obtained):
+
+```text
+BROWSER (Accept: */*)      500  cache-control: no-cache          <- hapi's OWN default for the view
+                                content-type:  text/html; charset=utf-8
+                                (no Pragma, no Expires, no X-Frame-Options)
+
+API     (Accept: json)     500  cache-control: no-cache          <- the extension's `cache_control`
+                                pragma:        no-cache          <- the extension's write
+                                expires:       0                 <- the extension's write
+                                content-type:  application/json; charset=utf-8
+```
+
+So the branch that matters is not "headers or no headers" but **which** headers: `Pragma` and `Expires`
+are written only on the API path `[T app.js:239-241]`, because the browser path has already returned at
+`[T app.js:234-236]`. `Cache-Control: no-cache` appears on both, and on the browser path it is hapi's
+default rather than the extension's `cache_control` value — which is visible by contrast with this
+route's **200**, where the extension's full value
+(`private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate`) is present
+(**probe**).
 
 That the browser body is the *same template* either way is why this went unnoticed for so long: on the
 path a user actually takes, only the status line betrays it.
+
+**Reachability: the branch cannot be reached through the HTTP surface by any account this application
+creates, and an earlier revision of this entry did not say so.** The omission mattered, because it
+concealed a real exposure rather than merely overstating a gate — the exposure now has its own entry at
+[§10.14](#1014-a-private-courses-archive-is-downloadable-by-any-authenticated-user). Clause **4** is
+the reason, and the chain is short (**static**, both trees, plus **probe** on a running server):
+
+```text
+lib/models/user.js:283-292   registers checkPermissions as a pre-save hook on User
+lib/models/user.js:64-72     if this.roles is empty -> this.setRoles('user', 'site')
+lib/models/plugins/roles.js:138-144  setRoles IS grant with _skipUpdate
+lib/models/plugins/roles.js:91-103   grant fills roles[i].permissions from Roles.getPermissions(role)
+lib/models/roles.js:8-25     the 'user' role's permission list -> includes 'create-private-course' (:20)
+lib/models/plugins/roles.js:346,400-456  hasPermission -> has('permissions', name, 'site') -> true
+```
+
+So `request.user.hasPermission("create-private-course")` is **true for every ordinarily-registered
+account**, irrespective of the course's `courseType` and irrespective of who owns it. The route is
+`auth: 'session'`, so the handler runs only for an authenticated request; every such request satisfies
+clause 4; therefore the `else` is **dead over the route**. Driven on the delivered tree, a brand-new
+account with no relation to the course received **200 with the archive** for another user's
+`courseType: 'private'` course; the guard is byte-identical at
+`[B lib/controllers/courses.js:136-140]` (clause 4 at `:139`), so the same identity takes the same
+clause on the baseline tree. §10.12 carries that drive in full.
+
+The one identity that *does* reach the branch is one whose `roles` entry carries **no `permissions`
+array** — which the seeded parity `admin` is, reproduced verbatim from `test/helpers/defaults.js` so
+that `hasRole('admin')` is true while `hasPermission` is false (`test/parity/seed.js:305-311`, whose
+own comment records the asymmetry). Signup never produces such an account. **Confirmed from the other
+direction on a running server** (**probe**): stripping the site `permissions` array from an otherwise
+ordinary account and repeating the same request against the same private course answered **500** — and
+restoring the array returned the **200**. Both accept modes were captured, and they are the two rows of
+the table above:
+
+```text
+permissionless identity, Accept: application/json -> 500 {"statusCode":500,"error":"Internal Server
+                                                     Error","message":"An internal server error
+                                                     occurred"}
+permissionless identity, Accept: */*              -> 500 text/html, the rendered 50x.html
+
+server log for the same request, which is Layer 1 logging the throw before mapping it:
+  error: ReferenceError: Boom is not defined
+      at download (lib/controllers/courses.js:432:7)
+      at route.handler (lib/util/routeParser.js:522:38)
+```
+
+That log line is what turns the thrown-identifier claim above from a reading into an observation: the
+identifier is `Boom`, the address is the one this entry cites, and the frame above it is the preserved
+handler catch-all rather than any local mapping.
+
+**So the evidence for this entry is static reading plus fixture-shaped probing, not a route-level drive
+by a real identity, and the stated gate is corrected accordingly** — an earlier revision claimed
+"Route sweep scenario + error-edge inventory", which no route-level drive with an account the
+application creates can satisfy. What the branch *does* when reached is fully established; that it is
+reachable in production is **not claimed**.
 
 **Target disposition: preserved exactly, and deliberately not repaired.** The expression is retained
 verbatim on the target tree. Binding `Boom`, or rewriting it as `errors.forbidden()`, would convert a
@@ -1295,10 +1525,18 @@ authenticated visitor** — including the seeded admin, whose roles carry `admin
 who therefore satisfies neither `hasPermission` clause. There is no identity that fails all five
 against this course.
 
+**And the fixture that would close it closes the behaviour, not the reachability.** Per
+**Reachability** above, clause 4 admits every ordinarily-registered account, so a private course alone
+does not make the branch reachable — the drive also needs an identity with no `permissions` array,
+which only the seeded `admin` fixture is. The scenario below is therefore worth having, and what it
+proves is what the branch *does* when reached; it must not be read as evidence that a production
+identity can reach it.
+
 **So the case is fully specified and needs one new fixture.** What settles this entry is: a second
 seeded `Course` whose `courseType` is `private` (or `demo`), owned by the seeded user; plus one
 scenario driving `GET /{userSlug}/courses/{courseSlug}/download.zip?format=md` against **that** course
-as the seeded **admin** — who is not its owner and holds no permission — asserting **500**, and in the
+as the seeded **admin** — who is not its owner and, uniquely among the identities in play, holds no
+permission — asserting **500**, and in the
 JSON accept mode the `Internal Server Error` payload rather than `Forbidden`. Both pieces live in
 artifacts other sections of the delivery own: the fixture in `test/parity/seed.js`, and the scenario in
 `test/parity/capture.js`, whose builders emit the scenario array — `buildQuirkScenarios`,
@@ -1309,8 +1547,11 @@ and re-capturing; editing the artifact alone would be overwritten by the next ca
 no provenance. This entry records the requirement in full so that doing it is mechanical.
 
 Until then the standing gate is the **difference ledger**: whatever these three scenarios do record is
-compared between the two trees, and because the register in [§11](#11-the-two-approved-deviations) is
-closed at two entries and this is not one of them, any change here is reported as an **unapproved**
+compared between the two trees, and because the register in [§11](#11-the-approved-deviations) is
+closed at four entries and this is not one of them, any change here is reported as an **unapproved**
+compared between the two trees, and because the register in [§11](#11-the-approved-deviations) holds
+three entries and this is not one of them, any change here is reported as an **unapproved**
+closed at three entries and this is not one of them, any change here is reported as an **unapproved**
 difference. The per-edge status and payload belong to `docs/error-edge-inventory.md` §7.6, which must
 record this as a **routed 500 edge** rather than as the 403 the expression reads like.
 
@@ -1420,7 +1661,7 @@ case, it belongs in the builder that emits the scenario array in `test/parity/ca
 re-capture: the corpus is that generator's output, so editing the artifact alone would be overwritten by
 the next capture and would carry no provenance. Until that case exists, the standing gate is the
 difference ledger — this route's recorded 200 is compared between the trees, and because the register in
-[§11](#11-the-two-approved-deviations) does not name this site, any change here is reported as an
+[§11](#11-the-approved-deviations) does not name this site, any change here is reported as an
 **unapproved** difference. The per-edge status and payload belong to `docs/error-edge-inventory.md`,
 which must carry this as a **routed 500 edge** rather than as the trinket state the comment names.
 
@@ -1461,7 +1702,7 @@ one.**
 1. **The `ReferenceError` is thrown before any response is built.** `resolve(Boom.notFound(…))`
    evaluates its argument, which fails, so nothing is ever handed to `resolve`. This is §9.7's step,
    and on its own it would reach the handler catch-all as a 500.
-2. **The handler's own inner `catch` throws in turn.** `[T lib/controllers/users.js:1421-1423]`
+2. **The handler's own inner `catch` throws in turn.** `[T lib/controllers/users.js:1452-1454]`
    answers the caught error with `resolve(Boom.internal('Export status error'))`, on the same unbound
    identifier, so the catch cannot absorb the failure and the throw **escapes the `Export.findById`
    callback**.
@@ -1469,7 +1710,7 @@ one.**
    `err`.** `[T lib/models/model.js:147]` — `promise.then(function(doc) { cb(null, doc); }).catch(cb);`,
    byte-identical to `[B lib/models/model.js:147]` — attaches the caller's callback as the rejection
    handler of the same chain whose fulfilment handler called it. The callback runs a second time, this
-   time takes `if (err)` at `[T lib/controllers/users.js:1382-1384]`, and answers
+   time takes `if (err)` at `[T lib/controllers/users.js:1413-1415]`, and answers
    `request.fail({ error: err.message })`. `request.fail` with a JSON accept mode returns
    `h.response(json)` at `[T lib/util/routeParser.js:316]` — a **200**, because `request.fail` sets no
    status of its own.
@@ -1499,22 +1740,278 @@ is empty, **probe**) precisely because the double invocation is load-bearing rat
 and the order of identifiers on each line is preserved, because a callee is resolved before its
 arguments and `Boom` therefore has to remain the **first** unresolvable name on the line for the
 client-visible message to stay `Boom is not defined`. The delivered code states all three constraints
-inline at `[T lib/controllers/users.js:1363-1373]` and `[T lib/controllers/users.js:1444-1447]`.
+inline at `[T lib/controllers/users.js:1394-1404]` and `[T lib/controllers/users.js:1475-1486]`.
 Binding `Boom`, rewriting the calls as `errors.*`, or "repairing" the finder so a throwing callback is
 not re-entered would each change a status **and** a body, which R-d and R-e prohibit independently.
 
 **Gate.** `error-edge.not-found.missingExport` carries the baseline value above and is compared between
 the trees by the replay; `route.get.api-exports-exportId.json` covers the same route's success branch
 (recorded 200 with the export document) so that a change to the not-found branch cannot hide behind an
-unexercised route. Because the register in [§11](#11-the-two-approved-deviations) does not name this
+unexercised route. Because the register in [§11](#11-the-approved-deviations) does not name this
 site, any difference here is reported as **unapproved**. The per-edge status and payload belong to
 `docs/error-edge-inventory.md`; the `getExportStatus` rows there must read as **200 edges carrying an
 `error` field**, not as the 404/403/400 the expressions name.
 
 **One consequence worth stating plainly, because it is not a repair.** The same re-invocation makes
 `request.fail(err)` reachable with an `Error` argument, and that is a different and harsher outcome —
-[§10.11](#1011-requestfailerr-with-an-error-argument-terminates-the-process) records it, and it is the
+[§10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why) records it, and it is the
 same `lib/models/model.js:147` bridge doing the work in both entries.
+
+**The rest of the family, measured per branch, is
+[§10.20](#1020-the-rest-of-the-unbound-boom-family-in-libcontrollersusersjs).** This entry is the
+mechanism; that one is the per-branch ledger — which of the 15 answer 500, which answer 200, which one
+answers nothing of its own but converts the others, and which four cannot be entered from an HTTP
+request at all — together with the re-count that settles a review report of 16 references at 15.
+
+---
+
+### 9.10 A third routed handler that answers 500 where its author intended 404
+
+**Measured** (**probe**, two live servers side by side — the delivered tree and an independently
+installed `git worktree` at `2f8712a`, both on Node 22.23.2 — plus **static**).
+
+`admin.addFeaturedCourse` has two not-found branches, `[B lib/controllers/admin.js:221]` and `:230`,
+delivered at `[T lib/controllers/admin.js:309]` and `:318`. Each executes `throw Boom.notFound()`, and
+**`Boom` is not bound in this module and is not a global**: the file binds `@hapi/boom` as `errors` at
+`[T lib/controllers/admin.js:7]` and never as `Boom`, `app.js` binds `Boom` as a module-scoped `const`
+rather than as one of the implicit globals it assigns, and no other binding reaches here. So neither
+expression raises a 404 — each raises `ReferenceError: Boom is not defined`, which is an `Error`, which
+the handler's own `.catch` maps to a 500.
+
+**Measured outcome, identical on both trees:**
+
+```text
+POST /api/admin/featured-course   ownerSlug=nosuchowner slug=nosuchcourse   (admin session)
+  baseline 2f8712a -> 500  {"statusCode":500,"error":"Internal Server Error",
+                            "message":"An internal server error occurred"}
+  delivered tree   -> 500  identical status and identical body
+
+POST /api/admin/featured-course   ownerSlug=<a real user> slug=nosuchcourse (admin session)
+  baseline 2f8712a -> 500  same body        delivered tree -> 500  same body
+```
+
+The two trees reach that 500 through different mappings and the same status and payload: baseline's
+`.catch` calls `reply(err)`, and the delivered `.catch` calls `errorResponse(h, err)`, whose
+`err instanceof Error` arm returns `errors.badImplementation(err.message)` — a 500 carrying Boom's own
+standard payload, so the `ReferenceError`'s message stays on the Boom and never reaches the client.
+`docs/error-edge-inventory.md` records both sites independently as **CLOSED**, "Baseline and target
+both produce Layer 3 / 500 / answers / route handler".
+
+**What an administrator sees.** The featured-courses form reports nothing at all: the page renders no
+error, the inputs are not cleared, and the only trace of the failure is the application's own log line.
+That is the baseline experience and it is unchanged.
+
+**Target disposition: keep both expressions exactly as written.** Do not bind `Boom`, do not rewrite
+them as `errors.notFound()`, and do not reorder the identifiers on either line. Three rules converge
+here and the file's own delivery directive states the ruling in as many words — R-d, because turning a
+500 into a 404 is an improvement; R-e, because the status of an error edge is the mapping it preserves;
+and R-a, because binding a new identifier for this purpose is a fifth kind of change in a diff that may
+read as only four.
+
+**This is the third member of a family, and the family is the point.** [§9.7](#97-a-routed-handler-that-answers-500-where-its-author-intended-403)
+is the same defect in `courses.download` (500 where the expression names 403) and
+[§9.9](#99-two-routed-handlers-that-answer-200-carrying-the-name-of-a-missing-identifier) is the same
+defect in `users.getExportStatus` and `users.downloadExport` (200 carrying `Boom is not defined`).
+Three controllers, one unbound identifier, three different outcomes — which is exactly why each is
+recorded with its own measured status rather than as one rule.
+
+**Gate.** `route.post.api-admin-featured-course.json` drives the route at 200; the two failure branches
+carry `id=admin.addFeaturedCourse.response.1` and `.response.2` in
+`docs/error-edge-inventory.md`, whose rows must keep reading as **500 edges**, and whose own text
+records that a dedicated `error-edge.*` scenario is what would prove the branch exercised rather than
+merely reached.
+
+**A defect in the generated inventory's reachability analysis, recorded here because it cannot be fixed
+by hand.** `docs/error-edge-inventory.md` is a generated artifact and says so in its banner, and its
+coverage table asserts of the funnel this section's 500 passes through — `id=admin.errorResponse.response.1`
+at `lib/controllers/admin.js:382` — that coverage is *"**none possible** — the edge sits on no route, so
+no HTTP scenario reaches it"*. **That is false, and this section is the counter-example**: an
+unauthenticated-slug `POST /api/admin/featured-course` reaches it on every 500, measured on both trees.
+The same document contradicts itself two thousand lines earlier, where the row's own carrier line names
+`admin.addFeaturedCourse`, `admin.moveFeaturedCourse` and `admin.removeFeaturedCourse` as its traced
+callers. The cause is that the generator treats an *internal callee* as unroutable instead of resolving
+reachability through its traced callers, so the claim is systematic rather than local — the identical
+"none possible" text appears for `folders.legacyReply.response.1` and `trinket.legacyReply.response.1`.
+Repairing it means changing `test/parity/error-edges.js`, which belongs to the parity-tooling unit and
+not to this one, and a hand-edit of the document would be silently discarded by the next run while
+being indistinguishable from a measurement in the meantime. **Recorded, not repaired, and owed to the
+generator's owner**; the runtime fact this section states is unaffected, because it rests on the
+measurement rather than on the inventory.
+
+### 9.11 The admin controller publishes the whole user document, bcrypt hash included
+
+**Measured** (**probe**, both trees; **static** for the template).
+
+Two sites in `lib/controllers/admin.js` serialize a mongoose `User` document wholesale, so every
+persisted path leaves the process:
+
+| Site | Baseline | Delivered | What the body carries |
+|---|---|---|---|
+| `userSearch`, feeding `admin.index`'s `data` | `[B lib/controllers/admin.js:279]` `data = JSON.parse(JSON.stringify(user));` | `[T lib/controllers/admin.js:398]`, identical | the whole document, rendered into the admin user page |
+| `grantRole`'s success body | `[B lib/controllers/admin.js:206]` `user : JSON.parse(JSON.stringify(user))` | `[T lib/controllers/admin.js:288]`, identical | the whole document, as JSON |
+
+`lib/models/user.js` declares no `toJSON` transform that removes credentials, so both bodies carry
+`password` — a live `$2b$10$…` bcrypt hash — together with `_id`, `__v`, `verified`, `source`, `roles`
+and, where present, `profiles.google` with the stored OAuth `token` and `refreshToken`.
+
+**Measured, and identical on both trees:**
+
+```text
+GET /admin/users?q=<email>            (admin session)
+  baseline 2f8712a -> 200, page body contains  $2b$10$…   (1 match)
+  delivered tree   -> 200, page body contains  $2b$10$…   (1 match)
+
+POST /api/admin/user/{userId}/grant   role=trinket-connect (admin session)
+  baseline 2f8712a -> 200, body carries "password":"$2b$10$vjOZ…", _id, verified, source, roles[]
+  delivered tree   -> 200, same shape
+```
+
+`lib/views/admin/includes/users.html` renders that object into the page's JSON tab and is
+**byte-identical to baseline** (**probe**: `git diff 2f8712a -- lib/views/admin/` is empty), so the
+exposure is entirely the controller's projection and entirely baseline's. The template renders the
+pretty-printed object through Nunjucks' `| safe`, so the JSON is emitted unescaped inside a `<pre>`;
+that is what makes the wholesale projection more than an information leak, and it is recorded as
+exposure 7 in [§11.6](#116-a-third-unapproved-policy-in-the-admin-controller-and-now-withdrawn).
+
+**The hash is in the page whether or not the JSON tab is opened.** The whole document ships in the
+initial HTML of every `/admin/users?q=…` response, so it is present in `body.textContent` and in the
+raw markup while the Profile tab is the active one (**probe**, browser: found at offset 3358 of
+`body.textContent` and 21140 of `documentElement.outerHTML` with `#json` still `display:none`). The
+tab is a CSS affordance, not a fetch boundary.
+
+**Target disposition: keep both `JSON.parse(JSON.stringify(user))` expressions.** A projection through
+the model's own `serialize()` was written into `grantRole` during this migration and has been
+**withdrawn** — it changed that response body against baseline, which AAP §0.9.3 compares exactly, and
+no approved deviation covers it; [§11.6](#116-a-third-unapproved-policy-in-the-admin-controller-and-now-withdrawn)
+records the withdrawal. `userSearch` was never changed. Two non-document edges ride on the wholesale
+form and are baseline as well: a null user yields a body reading `user: null`, and an undefined user
+throws the `SyntaxError` that `grantRole`'s own `.catch` turns into `request.fail`.
+
+**What preservation leaves exposed — recorded, not repaired.** A site administrator's browser, its
+history, its cache and any proxy in front of it receive the bcrypt hash of every user they look up, and
+the stored Google OAuth token of any user who signed in that way. It is reachable only with an admin
+session and the hash is a cost-10 bcrypt digest rather than a password, but it is credential material
+crossing a boundary it has no reason to cross. What controls preservation is R-d together with AAP
+§0.9.3's exact body comparison. **Named follow-up:** project both sites through `lib/models/user.js`'s
+`publicSpec` — the model already declares what may leave the process, and
+`lib/controllers/course.js` already applies it — as a separately approved security decision, with the
+corpus recaptured for the changed `grantRole` body and `lib/views/admin/includes/users.html` reviewed
+for the fields it would lose.
+
+**Gate.** `route.get.admin-adminPage.html` / `.json` and
+`route.post.api-admin-user-userId-grant.json` are the scenarios that carry these bodies; the exact-body
+comparison of AAP §0.9.3 is what would report either site changing shape.
+
+### 9.12 Admin user search is exact-match only, under a label that promises three fields
+
+**Measured** (**probe**, both trees; **static**).
+
+`admin.index`'s search branch dispatches on the query string: `/^role:\w+/` goes to `roleSearch`, and
+**everything else** goes to `userSearch`, which calls `User.findByLogin(q, …)` at
+`[B lib/controllers/admin.js:273]`, delivered at `[T lib/controllers/admin.js:392]`. `findByLogin` is an
+exact-match finder on the login fields; there is no prefix, substring or regex branch anywhere on the
+path, and when it finds nothing `userSearch` resolves `undefined`, so the page renders no result.
+
+**Measured, and identical on both trees** (a user `norma_…` exists in each database):
+
+```text
+GET /admin/users?q=norma_<tag>@example.com   -> 200, the user is rendered
+GET /admin/users?q=norma                     -> 200, ZERO results for a user that provably exists
+```
+
+**What the empty state actually says, quoted from the rendered page.** The template does render a
+message — `<p>No matches found for <strong>norma</strong>.</p>` — so the page is not silent, and an
+earlier revision of this section which described it as having "no hint, no message" was wrong and is
+corrected here. What the message does not do is distinguish *absent* from *not an exact match*: it
+reports the same sentence for a username that does not exist and for a partial form of one that does,
+which is why a partial term reads as "no such user" rather than as "type the whole thing". It is a bare
+`<p>`, not a Foundation alert or callout, and the page carries **0** elements with `aria-live`, `0`
+with `role="status"` and `0` with `role="alert"` (**probe**, browser), so on a full-page-GET search the
+outcome is never announced to assistive technology.
+
+**What the label actually says, quoted from the template.** `lib/views/admin/includes/userSearchForm.html:11`
+reads `Search by Email, Username, or Role (e.g. role:admin)` — so the label **does** name the `role:`
+prefix, and an earlier revision of this section which said the prefix "is not mentioned by the label at
+all" was wrong and is corrected here. The gap that remains is narrower and still real: the label
+promises three fields and gives a worked example for the one that needs a prefix, while saying nothing
+about the other two having to be given in full. The input carries no `placeholder` attribute at all
+(**probe**: `outerHTML` is exactly `<input id="user-field" type="text" name="q" value="…">`), so the
+label is the only affordance text there is.
+
+**Target disposition: leave the dispatch and the finder exactly as they are.** A prefix or substring
+search is a new capability, which AAP §0.2.2 excludes ("New or removed routes and features"; "Behaviour
+improvements") and R-d prohibits; relabelling the form is a template change with the same standing.
+The empty state's missing hint and missing `aria-live` are properties of `lib/views/admin/**`, which
+this document does not alter — they are recorded here as part of the same measured outcome so the
+behaviour and its presentation are not separated, and any repair is one reviewed change across the
+controller and the template together.
+
+**Gate.** `route.get.admin-adminPage.html` / `.json` drive the admin page; the search behaviour is
+proved by the two probes above, which are the shape a regression would have to change — a build that
+started matching `norma` would differ from baseline on the second line.
+
+---
+
+### 9.13 Two more routed handlers that answer 500 where their author intended 403
+
+The same construct [§9.7](#97-a-routed-handler-that-answers-500-where-its-author-intended-403) records
+for `courses.download`, in a second controller, on two branches — and it reaches the client as a
+**denial that does not look like one**. §9.7's disposition governs and is quoted rather than re-argued:
+*"if the expression is deliberately unreachable, record it in `docs/preserved-quirks.md`. Do not change
+its behaviour."*
+
+**Both routes are real and routed.**
+
+| Property | `folders.deleteFolder` | `folders.update` |
+|---|---|---|
+| Route | `DELETE /api/folders/{folderId}` | `PUT /api/folders/{folderId}/name` |
+| Address | `[B config/api_routes.js:705-712]` | `[B config/api_routes.js:691-704]` |
+| Auth | `auth: 'session'` | `auth: 'session'` |
+| Pre-handlers | `'folder(params.folderId)'` **only** | `'folder(params.folderId)'`, `'canEdit(pre.folder,user)'` |
+| Handler guard | `request.user.hasRole("folder-owner", "folder", {id})` | `request.user.hasPermission("update-folder-details", "folder", {id})` |
+| Else branch | `[B lib/controllers/folders.js]` `return reply(Boom.forbidden())` | same expression |
+
+**Measured** (driven on the delivered tree, port 20220, two seeded users; the baseline expression is
+byte-identical, so the outcome is baseline's too). A second user driving
+`DELETE /api/folders/{another user's folderId}` receives
+**`500 {"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}`**,
+and the same user driving `PUT /api/folders/{that folderId}/name` receives
+**`403 {"statusCode":403,"error":"Forbidden","message":"Forbidden"}`**.
+
+**Why the two differ, which is the part a reader will otherwise get wrong.** It is not the handlers —
+their else branches are the same expression. It is the **pre-handler list**: only the rename route
+declares `canEdit(pre.folder,user)`, so a non-owner is refused there *before* the handler runs and gets
+a real 403 from the pre-handler. The delete route declares no such pre, so a non-owner reaches the
+handler, fails the `hasRole` guard, and evaluates `Boom.forbidden()` — and **`Boom` is not a binding in
+`lib/controllers/folders.js`**, whose only `@hapi/boom` binding is `errors`. Evaluating the argument
+throws `ReferenceError: Boom is not defined` *before any response is constructed*, the handler rejects,
+and the preserved route catch-all maps it to `Boom.badImplementation` — a 500, where the expression
+names a 403. `folders.update`'s else branch is reachable by the narrower case §9.7's neighbour
+describes: a user who owns the folder but was never granted the `folder-owner` role.
+
+**What is and is not exposed, stated exactly, because the finding was raised as a security issue.**
+The **denial holds**. Measured: after the cross-owner `DELETE` answered 500, the owner's own
+`GET /api/folders` still listed the folder, so nothing was deleted; the rename case is stopped by its
+pre-handler and nothing was updated. There is no authorization bypass and no data loss here — the
+defect is entirely in the **status class**, and a client cannot distinguish "you may not do this" from
+"the server broke", which is a real usability and monitoring cost and no more than that.
+
+**Declined, with the citation it turns on.** A finding asked for the delete branch to answer 403.
+Preserving is **possible** here — unlike [§11.10](#1110-deviation-6-post-apifolders-answers-where-the-baseline-process-died),
+the process survives and the request *is* answered — so no requirement other than R-d is engaged and
+**R-d controls**, reinforced by **R-e** ("error-to-response mappings survive the async conversion
+unchanged — same status codes"). Changing it would also change a status `docs/error-edge-inventory.md`
+records and the corpus compares. What a human must do to change the answer: amend the AAP to authorize
+the status change, then either bind `Boom`/call `errors.forbidden()` **or** add `canEdit` to the delete
+route's pre list — they are different contracts, and the amendment has to say which — and re-baseline
+the affected error edges.
+
+**Gate.** The delivered expression is unchanged on both branches, which is checkable as three code
+lines in the whole file's diff, none of them in either else branch. The difference ledger is the
+standing guard: because the register in [§11](#11-the-approved-deviations) does not name either site,
+any change to these responses is reported as an **unapproved** difference. The per-edge status and
+payload belong to `docs/error-edge-inventory.md`, whose `folders.update` and `folders.deleteFolder`
+else-branch rows must read as **routed 500 edges**, not as the 403 the expressions read like.
 
 ---
 
@@ -1668,7 +2165,7 @@ than a swallowed template error.
 "after" must be a successful render — together with its captured-mail fixture asserting the delivered
 completion message on the successful job and the failure message on the failing one.
 
-### 10.3 The test-mode template watcher runs on an optional peer the root no longer declares
+### 10.3 The test-mode template watcher requires `chokidar`, which is a declared dependency again
 
 **Measured** (static, plus probe and artifact). `lib/util/nunjucks.js` configures the global
 environment with watching enabled outside production:
@@ -1686,20 +2183,66 @@ behind it read only `dependencies` and `optionalDependencies`. Corrected, and me
 committed metadata:
 
 ```text
+BEFORE this checkpoint (measured over the committed metadata):
 chokidar in package.json dependencies / devDependencies -> NO   (the ROOT declaration was removed)
 chokidar declared by nunjucks 3.2.4                     -> YES  peerDependencies { "chokidar": "^3.3.0" }
                                                                 peerDependenciesMeta { chokidar: { optional: true } }
 chokidar in package-lock.json                           -> YES  3.6.0, recorded optional: true, peer: true
+
+NOW (measured in the delivered tree):
+chokidar in package.json dependencies                   -> YES  "^3.5.3"  (the baseline declaration, restored)
+chokidar in package-lock.json                           -> YES  3.6.0, no optional and no peer flag
 ```
 
-So the provider **is** declared and locked — as nunjucks's own **optional peer** — and the edge is
-reproducible from the lockfile rather than incidental. What AAP §0.5.1.3 removed is the **root
-project's direct declaration**, on the ground that no retained source consumes `chokidar` itself, and
-that reading is correct: nothing in `lib/` or `config/` requires it. Nunjucks does, on this one
-configuration.
+**Why the root declaration came back, and why that is a correction rather than a scope addition.** AAP
+§0.5.1.3's criterion is "a declared dependency with no live consumer in retained source is removed",
+and it removed `chokidar` on the reading that nothing in `lib/` or `config/` requires it *by name*.
+That reading measured the wrong thing: `[T lib/util/nunjucks.js:8]` is retained application source,
+`config/app.config.js` loads it at boot, and on this configuration it makes nunjucks require
+`chokidar`, so the criterion was satisfied all along and the package was never dead. Driven both ways
+in one tree — `chokidar` **removed from `node_modules`**, which is literally the state
+`npm ci --omit=optional` produces, and then put back — each probe requiring `config/app.config` and
+reporting its own outcome:
 
-The consequence worth recording is therefore narrower than the earlier text claimed, and it is an
-observation rather than a proposal:
+```text
+chokidar PRESENT (the delivered state):
+  NODE_ENV=test        -> {"loaded":true,  "error":null, "chokidarResolvable":true}
+  NODE_ENV=development -> {"loaded":true,  "error":null, "chokidarResolvable":true}
+  NODE_ENV=production  -> {"loaded":true,  "error":null, "chokidarResolvable":true}
+
+chokidar REMOVED (what --omit=optional produced before the declaration came back):
+  NODE_ENV=test        -> {"loaded":false, "error":"watch requires chokidar to be installed", "chokidarResolvable":false}
+  NODE_ENV=development -> {"loaded":false, "error":"watch requires chokidar to be installed", "chokidarResolvable":false}
+  NODE_ENV=production  -> {"loaded":true,  "error":null, "chokidarResolvable":false}
+```
+
+The production row is the one that makes the mechanism unambiguous: `chokidar` is unresolvable there
+too, and `config/app.config` still loads, because `watch` is false and the loader never reaches the
+`require`. So this is a **configuration-gated** dependency, not an unconditional one — which is exactly
+why a by-name search of retained source missed it.
+
+While it survived only as nunjucks' **optional peer** the tree was one install flag away from not
+booting, and both sides of that were driven from the two manifest pairs alone, in directories holding
+nothing but a `package.json` and a `package-lock.json` so the figures are the manifests' own:
+`npm ci --omit=optional` on the pre-fix pair reports *added 421 packages* with `chokidar` **absent from
+`node_modules`**, and on the delivered pair *added 435 packages* with `chokidar` **3.6.0 installed**.
+In the absent state `npm test` exits **1**, its output carries
+`watch requires chokidar to be installed`, and it prints **no mocha summary line at all** — no
+`passing`, no `failing` — because collection dies before the first case, which is the **0 of 130** the
+finding reported. With the declaration restored, `config/app.config` loads under `NODE_ENV=test` and the
+suite registers and executes all 130 cases. `dependencies` rather than
+`devDependencies` is the honest position and also the measured one — the consumer is production source,
+baseline `2f8712a` declared it in `dependencies` at `^3.5.3` (so R-f fixes both placement and range),
+and the counterfactual was driven: with the declaration in `devDependencies`,
+`npm ci --omit=dev --omit=optional` installs 322 packages **without** `chokidar`, against 336 **with**
+it from the `dependencies` placement. `--omit=dev` alone prunes neither, because npm does not drop an
+optional peer of a production dependency — so nothing shipped was broken, and what was broken was the
+manifest asserting the opposite of the measured runtime fact. The behaviour is untouched:
+`lib/util/nunjucks.js` is byte-identical on both trees and `watch` still follows `isDev || isTest`,
+because flipping it would be the behaviour change R-d forbids. The full row is in
+[`dependency-inventory.md`](dependency-inventory.md).
+
+The rest of this entry is unchanged, and it is an observation rather than a proposal:
 
 1. **A handle inventory, and where it can and cannot arise.** The watchers this configuration
    creates are `FSEventWrap` handles, and they cannot be closed by a caller: nunjucks 3.2.4's
@@ -1717,30 +2260,35 @@ observation rather than a proposal:
    What stays recorded here is the **application's own** reliance, which that suppression does not
    remove and is not meant to: `[T lib/util/nunjucks.js:8]` still configures `watch: true` outside
    production, so a `NODE_ENV=test` run of the application itself still starts watchers and still
-   reaches `chokidar` through nunjucks' optional peer.
-2. **An optional peer is satisfied by resolution, not by declaration.** npm installs an optional peer
-   when the graph happens to satisfy it and omits it silently when it does not, and no root
-   declaration pins it here. The committed lockfile does pin 3.6.0, so `npm ci` is deterministic
-   today; the observation is only that the *root* no longer states a requirement that one
-   configuration of a retained module has, so nothing in this repository's own manifest records the
-   dependency that a `NODE_ENV=test` run takes.
+   requires `chokidar` — now from the root declaration, which nunjucks' optional peer dedupes onto
+   (`npm ls chokidar` → `chokidar@3.6.0` at the root with `nunjucks@3.2.4 └── chokidar@3.6.0 deduped`).
+2. **An optional peer is satisfied by resolution, not by declaration, which is why the root
+   declaration matters.** npm installs an optional peer when the graph happens to satisfy it and omits
+   it silently when it does not — and `--omit=optional` omits it deliberately. That was the exposure:
+   the committed lockfile pinned 3.6.0, so a plain `npm ci` was deterministic, while the repository's
+   own manifest recorded nothing about a dependency every `NODE_ENV=test` and `NODE_ENV=development`
+   run takes. It now records it, so the requirement survives an install variant rather than an
+   accident of resolution.
 
-**Target disposition: recorded, not changed.** `lib/util/nunjucks.js` is unchanged — AAP §0.3.1 lists
-it as unchanged, provisionally, under the §0.9.2 gate — and `package.json`'s dependency set is owned by
-`docs/dependency-inventory.md`. Turning the watcher off under test would be the smallest possible fix
-and it is still a change to a retained module outside R-a's four categories, so it is not made here.
+**Target disposition: the behaviour is recorded and unchanged; only the declaration moved.**
+`lib/util/nunjucks.js` is unchanged — AAP §0.3.1 lists it as unchanged, provisionally, under the
+§0.9.2 gate — and turning the watcher off under test would be a change to a retained module outside
+R-a's four categories, so it is still not made. What did change is `package.json`, in the one direction
+AAP §0.5.1.3's own criterion required once the consumer was measured: the dependency is declared again.
+The row and the reasoning are owned by [`dependency-inventory.md`](dependency-inventory.md).
 
 **Gate.** Two of them, covering the two different halves of this entry. The `NODE_ENV=test` suite
-exercises the application's own watching path on every run and would fail at require time if the
-optional peer stopped resolving. The worker harness's **clean-close** check **passes**, because the
+exercises the application's own watching path on every run and fails at require time if `chokidar` does
+not resolve — which is exactly how the missing declaration was caught, by `npm ci --omit=optional`
+followed by `npm test`, and how the restored one is confirmed. The worker harness's **clean-close** check **passes**, because the
 watcher never starts there — recorded in the harness's own artifact at the delivered HEAD (artifact):
 
 ```text
 handles                             -> {"counts":{},"stdio":{},"allowed":[],"unexpected":[]}
 templates.watchSuppressed           -> true
 dependencies.templateWatch          -> configureCalls 1 · watchRequested 1 · watchApplied 0
-dependencies.templateWatch.chokidar -> loaded false · modulesInCache 0 · declared false ·
-                                       version 3.6.0 ·
+dependencies.templateWatch.chokidar -> loaded false · modulesInCache 0 · declared TRUE ·
+                                       version 3.6.0 · resolvableFrom node_modules/chokidar/index.js ·
                                        installedAs "nunjucks@3.2.4 optional peer chokidar@^3.3.0"
 verdict                             -> PASS   (checks 109/109; 0 notice(s), 0 allowed)
 ```
@@ -1749,10 +2297,12 @@ verdict                             -> PASS   (checks 109/109; 0 notice(s), 0 al
 application **asked** for a watcher — which is exactly the reliance recorded above, unchanged and
 still true of the application — and the harness declined to apply it before the first application
 require. So there is no open handle for a gate to fail on, and equally nothing has been repaired in
-`lib/util/nunjucks.js`: the reliance is recorded, not removed. The artifact's `declared false` is the
-**root** declaration and says the same thing as the metadata block above, which is why `installedAs`
-names the provider alongside it: the root does not declare `chokidar`, nunjucks does, optionally, and
-the lockfile pins the 3.6.0 that satisfies it.
+`lib/util/nunjucks.js`: the reliance is recorded, not removed. The artifact's `declared` field is the
+**root** declaration, and it is the one line of this block that changed at this checkpoint: it read
+`false` while the root declaration was absent and reads **`true`** now — re-measured here,
+`npm run verify:worker` → `VERDICT PASS`, 109/109, 0 notices. `installedAs` still names nunjucks'
+optional peer because that is the provider the tool resolves the requirement through; the root now
+declares the same version, and `npm ls chokidar` shows nunjucks' copy deduped onto it.
 
 ### 10.4 `files.setThumbnail` authenticates against an empty committed secret
 
@@ -1841,7 +2391,14 @@ security finding is only defensible with the citation:
    if `request.payload.bucket` names an unconfigured bucket — **preserve that (do not add a guard)**"*.
    Its R-d ruling repeats it: *"everything except `:98-100` is preserved exactly — … the unguarded
    bucket lookup at `:118`"*.
-2. **AAP §0.7 closes the deviation register at exactly two**, and §11.0 above makes an unapproved
+2. **AAP §0.7 closes the deviation register at exactly two**, the delivered register carries a third
+   only because a conflict the plan did not anticipate was argued on the plan's own precedence rule
+   and registered rather than absorbed ([§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes)),
+   and §11.0 above makes an **unargued** entry drift rather than a deviation. Each of the three
+   controls the finding asks for is a behaviour
+2. **AAP §0.7 decided two deviations, and rule T-6 admits a further one only where a requirement
+   other than R-d makes preservation impossible** — §11.7 to §11.10 are the cases that have qualified since,
+   and this is not it. §11.0 above makes an unapproved
    entry drift rather than a deviation. Each of the three controls the finding asks for is a behaviour
    change argued in the delivery rather than in the plan, and the table above says which outcome each
    one moves. A startup assertion changes whether the **process boots** on a configuration that boots
@@ -1942,6 +2499,11 @@ needs its own approval, not a line in this migration.
 `mime` disagree being served inline as active content. Both are properties of one anonymous,
 unauthorized download path, and both are closed by the same piece of work.
 
+**The course-archive analogue is [§10.14](#1014-a-private-courses-archive-is-downloadable-by-any-authenticated-user)**,
+where the control is *present* and admits everyone rather than absent altogether. The two differ in
+mechanism and coincide in remedy: both need a decision about what membership of a course or a material
+admits before either guard can be written.
+
 **Gate.** Route-manifest equality records the route as
 `auth {declared: null, inherited: true, strategy: 'session', mode: 'try'}` with
 `pre: ['file(params.fileId)']`, identically on both trees; corpus scenarios
@@ -1958,18 +2520,58 @@ made an unresolved security exposure read as a footnote to a resolved deviation,
 mistake [§11.3](#113-what-is-not-a-deviation-and-why-the-register-is-closed) corrects in the other
 direction. It is numbered here, with §11.1 pointing at it.
 
+**It is the one item in this catalogue that is NOT preserved baseline behaviour, and that is why it
+reads differently from everything around it.** Every other exposure recorded here existed at
+`2f8712a` and is preserved because R-d requires it. This one **did not exist at baseline** — the
+branch never produced a response at all (§4.1) — so it is not preserved, it is **created** by approved
+deviation 1. What was approved was *serving the bytes*; serving them as executable content on the
+application's own origin was not analysed at approval time, and §11.1's approval scope is corrected to
+say so. That distinction is the whole reason this is an **open item with an owner** rather than a
+catalogue row: nothing in R-d protects it, and no gate will report it, so if it is not read here it is
+not read anywhere.
+
 **Measured** (Hapi 21 injection against the delivered tree, with a seeded `File` document carrying
-`type: 'image/png'`, `mime: 'text/html'` and HTML bytes):
+`type: 'image/png'`, `mime: 'text/html'`, and a short
+`<html><body><script>…</script>…</body></html>` body whose `size` the document records; the object read
+is replaced at the module boundary so nothing reaches the network. **Re-driven while this entry was
+escalated**, and every line below is that run's output):
 
 ```text
 GET /api/files/<id>/<name>   ->  200
                                  content-type            text/html; charset=utf-8
-                                 content-length          <the document's own size>
-                                 content-disposition     absent
-                                 x-content-type-options  absent
-                                 content-security-policy absent
-                                 body                    the stored bytes, unchanged
+                                 content-length          the document's own `size`
+                                 content-disposition     ABSENT
+                                 x-content-type-options  ABSENT
+                                 content-security-policy ABSENT
+                                 x-frame-options         ABSENT
+                                 body                    byte-identical to the stored bytes,
+                                                         with the <script> element intact
+BASELINE, same document, same request  ->  no response at all (the request hangs)
 ```
+
+Note which two fields decide the outcome together: the branch was selected on `type` (`image/png`), and
+every header above was decided by `mime` (`text/html`). Neither the route nor the model relates them.
+
+**And the bytes do not merely arrive intact — they execute.** The paragraph above was originally
+written from an injection drive, which can only establish what was *served*. A subsequent drive in a
+real browser, navigating **anonymously** and directly to the file URL after confirming the origin's
+`localStorage` was empty, established what the served bytes then *do*:
+
+```text
+inline <script>        -> executed: document.title rewritten, body.dataset set, a heading
+                          injected into the DOM, a console line emitted, and
+                          localStorage on the APPLICATION ORIGIN written and persisted
+<img onerror="...">    -> executed, with ZERO <script> elements in the document
+SVG, root onload +     -> both executed, while the image still rendered normally
+  an SVG <script>
+benign 1x1 PNG         -> rendered, no script, no console output          (control)
+Range: bytes=...       -> 206, carrying the same executable bytes
+```
+
+Three things follow that the injection drive could not show. The exposure is reachable **without any
+session**, so it is not bounded by who may log in. The origin write **persists** after navigation, so
+the impact outlives the request. And it is not carried by the `<script>` element, which is what rules
+out the compromise remedy recorded below.
 
 **The mechanism is that two independent fields decide two different things.** The branch is selected on
 `file.type` `[T lib/controllers/files.js:369]` but the response is typed from `file.mime`
@@ -1988,11 +2590,36 @@ admit — can execute same-origin content, so the two need separate remedies.
 
 **Why there is no source-local fix, stated as the constraint rather than as a preference.** The direct
 response **is** the AAP-approved deviation, field for field
-([§11.0](#110-the-register-is-closed-and-this-is-the-machine-readable-form-of-that)). A classifier,
+([§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)), and AAP §0.4.1's `lib/controllers/files.js`
+row authorises exactly that expression. A classifier,
 a `nosniff` header, a CSP header or an attachment fallback added here is precisely the extension that
 was removed from this branch, and re-adding any of it re-opens the four findings that required its
 removal. There is no version of this repair that is both effective and inside the closed register, so
 it cannot be decided in a source file at all.
+
+Two further facts about *where* such a decision would land, recorded so the routing is not guessed.
+`lib/controllers/files.js` is held by a different unit of this delivery — the one that owns the storage
+and file contract — so the response is not this document's unit to change even if the register
+permitted it; and this entry, the field contract in §11.0 and §11.1's approval scope are the parts that
+**are** here, which is why all three were written rather than a header. A remedy therefore needs the
+owner of that controller and the owner of this register to move together, and step 3 below says so.
+
+**And one of the obvious repairs would not work anyway, which is worth recording so it is not
+attempted as a compromise.** `X-Content-Type-Options: nosniff` prevents a browser from sniffing *away*
+from a declared content type; here the declared type **is** `text/html`, taken from the document's own
+`mime` by the approved contract, so `nosniff` instructs the browser to honour exactly the type that
+makes the bytes executable. It changes nothing about this exposure while breaching the header set the
+deviation was approved with. Only a CSP restrictive enough to forbid inline script, an attachment
+disposition, or a different origin actually closes it — and each of those is a client-visible behaviour
+change on a response the register already fixes field by field, which is the constraint above.
+
+**A second obvious repair is also defeated, and by measurement rather than by argument.** Filtering or
+stripping `<script>` elements from the stored bytes does not close this: the drive above executed an
+`<img onerror>` payload containing **no script element at all**, and an SVG through both a root
+`onload` attribute and an SVG-namespaced `<script>`. Active content in HTML and SVG has too many
+carriers for element filtering to enumerate, so a sanitiser is not a smaller version of the remedy —
+it is a third thing that does not work. This is recorded so it is not proposed as the cheap middle
+path between doing nothing and the two shapes below.
 
 **What closing it requires — an explicit security decision, with two viable shapes.** Either serve
 user-controlled files from a **separate, cookieless content origin** (or signed storage URLs on a
@@ -2003,25 +2630,68 @@ response and needs its own R-d precedence argument. Either way the closed deviat
 the `quirk.reply-chain.never-settles.image-download` corpus scenario and the five-field contract must
 be updated **together**, because all three currently encode the response as it stands.
 
-**Reach.** Bounded by the legacy records that exist: only documents whose `type` is a mime-like string
-enter this branch at all, and only those whose `mime` is script-capable are dangerous. A census of
-`File` documents whose `type` is outside `['embed','download']` is the first step of any remediation,
-and no such census is part of this migration.
+**Reach.** Bounded by the legacy records that exist, and bounded further by what the delivered upload
+paths can produce — measured rather than assumed:
+
+- only documents whose `type` is a mime-like string enter this branch at all, and only those whose
+  `mime` is script-capable are dangerous;
+- **neither upload path can create such a document.** `POST /file` with `multipart/form-data` answers
+  **415** on both trees (the preserved
+  [§10.10](#1010-the-four-outputfile-upload-routes-answer-415-to-multipartform-data) quirk), and
+  urlencoded answers **200** returning only `{path, bytes, flash.validation.upload}` into the run
+  directory — not a `File` document with a `text/html` mime (**probe**);
+- so the exposure is confined to **legacy documents already in the store**, which is precisely the
+  branch's stated reach.
+
+A census of `File` documents whose `type` is outside `['embed','download']` is the first step of any
+remediation, and no such census is part of this migration.
 
 **Gate.** None closes it. The route-manifest and corpus gates both record the response as approved, so
 this exposure passes every gate this migration defines — which is why it is written down here.
 
----
+**What a human must do, because nothing downstream of this migration will.** In priority order, and
+none of it is inside this delivery's scope:
 
+1. **Census** the `File` collection for documents whose `type` is outside `['embed','download']`, and
+   among those, the ones whose `mime` is script-capable (`text/html`, `image/svg+xml`,
+   `application/xhtml+xml`, anything `application/*script*`). That is the true blast radius, and it is
+   a data question no amount of code reading answers.
+2. **Decide the remedy** between the two shapes above — a separate cookieless content origin (or
+   signed storage URLs), or an approved validation rule forcing mismatched legacy records to an
+   attachment disposition. The first needs no R-d argument because it moves the origin rather than the
+   response; the second needs one, because it changes a client-visible response.
+3. **Update the three artifacts together** — §11.0's field contract, this entry, and the
+   `quirk.reply-chain.never-settles.image-download` scenario — because all three currently encode the
+   response as it stands, and a remedy that leaves any of them behind will read as an unapproved
+   difference.
+
+Until step 2 is decided, the exposure is **open and live** on the delivered tree. This entry is the
+record of that; it is not a plan for it, and it is deliberately not written as though the record were
+the remedy.
+
+---
 
 ### 10.7 The `zipCode` branch that took the process down, and the bounds that now hold it
 
 The one entry in this catalogue whose outcome is deliberately **not** preserved without being one of the
-two numbered deviations in [§11](#11-the-two-approved-deviations). It is stated field by field for that
+numbered deviations in [§11](#11-the-approved-deviations). It is stated field by field for that
+three numbered deviations in [§11](#11-the-approved-deviations). It is stated field by field for that
 reason. The security decision is **made** — it is in the second half of this section, with its
 precedence argument — and what the closing paragraph defers is only the register bookkeeping that
-[§11.0](#110-the-register-is-closed-and-this-is-the-machine-readable-form-of-that) shares with three
+[§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) shares with three
 other artifacts.
+The one entry in this catalogue whose outcome is deliberately **not** preserved. It is therefore a
+**registered deviation** — number **3** in
+[§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it), argued and approved in
+[§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes) — and it
+is stated field by field here because this section owns the mechanism and the evidence while §11.9
+owns the approval. An earlier revision of this paragraph described the entry as "not preserved
+*without* being one of the numbered deviations", and deferred its registration on the ground that
+§11.0's count was shared with three other artifacts. That was an accurate description of a gap and a
+poor resolution of it: it left a delivered behaviour change sitting inside a preservation catalogue,
+where a reader counting the register would not find it. The registration is now made, in the document
+that §11.0 establishes as the canonical register, and the count in the artifacts that follow it is a
+documentation follow-up rather than a reason to leave a change unregistered.
 
 **The sites.** `trinket.draft` `[T lib/controllers/trinket.js:1209]`, baseline
 `[B lib/controllers/trinket.js:986]`, and `trinket.autosave` `[T lib/controllers/trinket.js:1307]`,
@@ -2165,19 +2835,28 @@ route: an expansion that exhausts the heap ends every other request in flight. N
 open, and no future reader needs to re-derive it — the delivered code, its two layers and the nineteen
 measured cases above are the decision in force.
 
-**What remains open is bookkeeping, not the decision.** By §11.3's own test — an approved deviation is a
-prohibition argued away by a stronger requirement, whereas a shortfall is an unmet target — the *valid
-archive beyond the cap* row is a prohibition argued away, which makes it a candidate for the numbered
-register. It is deliberately **not** minted here, for a mechanical reason: §11.0's count is a claim
-shared by [`baseline-parity.md`](baseline-parity.md), by
-[`deferred-dependencies.md`](deferred-dependencies.md) §4.2 and by the allowlist rule that
-`test/parity/replay.js` implements, so a third row added in this document alone would leave four
-artifacts disagreeing about the size of the register — the precise failure §11.0 exists to prevent.
-Those artifacts are owned elsewhere in this delivery, so the count is theirs to move, together, in one
-change. What is true today and needs no coordination: the delivered code has **no replay-visible
+**The registration, which is what used to be open here.** By §11.3's own test — an approved deviation
+is a prohibition argued away by a stronger requirement, whereas a shortfall is an unmet target — the
+*valid archive beyond the cap* row is a prohibition argued away, and the removal of the process death
+is the same. That makes this a deviation and not a preserved quirk, and it is now **registered as
+deviation 5**: the row is in §11.0's table and the precedence argument, the approved field-by-field
+outcomes and the cross-artifact obligation are in
+[§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes).
+
+An earlier revision withheld that registration on a mechanical ground — that §11.0's count is also
+stated by [`baseline-parity.md`](baseline-parity.md), by
+[`deferred-dependencies.md`](deferred-dependencies.md) §4.2 and by
+`docs/conversion-inventory.md`, so a third row added in this document alone would leave those
+artifacts disagreeing about the size of the register. The ground was real and the conclusion was
+wrong: those two documents each state that their deviation numbering **follows this §11**, so the
+canonical count is this one, and withholding a row here to keep a follower in step inverts the
+dependency and hides the change instead. The rows are now consistent in the canonical place and the
+followers' wording is a documentation follow-up for the units that own them.
+
+What needed no coordination at all, and still does not: the delivered code has **no replay-visible
 difference** for this branch — no scenario drives it, and the responses are byte-identical as the table
 and the sixteen-response probe above establish — so the allowlist rule, exactly one scenario id, is
-untouched and correct as written.
+untouched and correct as written, and registering deviation 5 does not widen it.
 
 ### 10.8 The search-response seam: the client reads a key the server does not send
 
@@ -2323,12 +3002,30 @@ content-type override and the avatar gate — is proved by `test/parity/storage.
 `lib/util/file.js` directly, which is why the contract can be gated at all while the HTTP paths refuse
 multipart.
 
-### 10.11 `request.fail(err)` with an `Error` argument terminates the process
+### 10.11 `request.fail(err)` with an `Error` argument terminated the process — repaired, and why
 
 The harshest outcome in this catalogue, and the same `lib/models/model.js:147` bridge that
 [§9.9](#99-two-routed-handlers-that-answer-200-carrying-the-name-of-a-missing-identifier) records is
-what reaches it. It is a **baseline defect**, it is **not fixed**, and it is recorded here so that
-anything driving these routes knows the process can disappear underneath it.
+what reaches it. It is a **baseline defect**, it is **fixed on the delivered tree**, and this section
+carries the measurement, the argument for fixing it rather than preserving it, and the one piece of
+bookkeeping the fix leaves for the artifacts that do not belong to it.
+
+**Two corrections to what this section said before.** They are stated up front because both were
+wrong in the same direction — too broad — and a reader who acted on either would draw the wrong
+conclusion about which routes were affected.
+
+1. The blanket claim that *"these nine edges terminate the process"* was **imprecise**. Only the edges
+   that reach `request.fail`'s **third** branch — `h.response(json)` — ever died. An `html` route
+   carrying a `fail.redirect` takes the **first** branch instead: it flashes, interpolates and
+   redirects, and an `Error` argument travels that path without ever meeting the toolkit's assert.
+   **Measured**: `POST /send-pass-reset` (`[T lib/controllers/users.js:391]`, unauthenticated,
+   `fail:{redirect:'/forgot-pass'}` at `[T config/routes.js:261-266]`) answered **200** with the
+   process **alive**. The dying population was the `/api/`-shaped, JSON-negotiated subset.
+2. The claim that the corpus gate *"would report a build that answered this route normally as an
+   unapproved difference — including one that 'fixed' it"* described the mechanism correctly and drew
+   the wrong conclusion from it. The gate reporting a difference is not an argument for keeping a
+   process death; it is a statement that the difference needs a register entry. The entry is specified
+   at the end of this section.
 
 **The mechanism, in one line each.** `request.fail(json, err)` treats its first argument as a body:
 `[T lib/util/routeParser.js:316]` calls `h.response(json)`, and hapi's toolkit refuses to wrap an
@@ -2340,7 +3037,7 @@ than inside the handler's own frame, so no lifecycle catch is between it and the
 | Tree | `request.fail`'s `h.response(json)` | The caller that passes an `Error` | Thrown |
 |---|---|---|---|
 | Baseline | `[B lib/util/routeParser.js:510]` | `[B lib/controllers/admin.js:160]`, `updateUser` — `if (err) return request.fail(err);` | `Error: Cannot wrap an error` |
-| Delivered | `[T lib/util/routeParser.js:316]` | `[T lib/controllers/admin.js:265]`, `updateUser` — `if (err) return resolve(request.fail(err));` | `AssertError: Cannot wrap an error` |
+| Delivered | `[T lib/util/routeParser.js:316]` | `[T lib/controllers/admin.js:221]`, `updateUser` — `if (err) return resolve(request.fail(err));` | `AssertError: Cannot wrap an error` |
 
 Only the assert's constructor name differs between the hapi majors — measured directly:
 `h.response(new Error())` reports `Error: Cannot wrap an error` on 20.3.0 and
@@ -2355,9 +3052,9 @@ handler:
 ```text
 TARGET  (probe) POST /api/admin/user/<an existing user id>, admin identity, no payload
   1. request.payload.roles          -> TypeError: Cannot read properties of null (reading 'roles')
-                                       [T lib/controllers/admin.js:269], inside the findById callback
+                                       [T lib/controllers/admin.js:225], inside the findById callback
   2. lib/models/model.js:147        -> .catch(cb) re-invokes the SAME callback with that TypeError
-  3. [T lib/controllers/admin.js:265] -> if (err) resolve(request.fail(err))
+  3. [T lib/controllers/admin.js:221] -> if (err) resolve(request.fail(err))
   4. [T lib/util/routeParser.js:316]  -> AssertError: Cannot wrap an error, uncaught
   observed: the connection is severed mid-request (curl exit 52) and the port stops answering; no
             process remains
@@ -2374,9 +3071,12 @@ BASELINE (probe, run evidence) a later baseline recapture over the same corpus d
 ```
 
 **Population.** Nine `request.fail(err)` sites can receive an `Error` on the delivered tree —
-`lib/controllers/admin.js:213`, `:265`, `:272`, `:288`, `:337` and `lib/controllers/users.js:328`,
+`lib/controllers/admin.js:169`, `:221`, `:228`, `:244`, `:292` and `lib/controllers/users.js:328`,
 `:391`, `:724`, `:869` — against nine on the baseline (five in `admin.js`, four in `users.js`), so the
-population is unchanged by the migration (**static**). §11.4 records one further instance of the same
+population is unchanged by the migration (**static**). The five `admin.js` locators moved 44 to 45
+lines lower when [§11.6](#116-a-third-unapproved-policy-in-the-admin-controller-and-now-withdrawn)'s
+withdrawal removed 175 lines from that file; the call sites themselves are byte-identical and
+untouched, and the population is still nine against nine. §11.4 records one further instance of the same
 defect on the asset-upload path, unreachable while `features.assets` ships `false`; this one is
 reachable by any admin sending a payload-less POST, and by any of the nine whenever a model callback
 yields an error.
@@ -2394,41 +3094,1779 @@ compared between the trees, so a build that answered this route normally would b
 unapproved difference — including one that "fixed" it. The per-edge status belongs to
 `docs/error-edge-inventory.md`, whose rows for these nine sites must read as **process-terminating
 edges**, not as Layer 2 responses.
+population is unchanged by the migration (**static**). What differs per site is the branch the site's
+own route reaches, which is the correction above: `users.js:391` redirects and survives, and the sites
+on JSON-negotiated `/api/` routes are the ones that died. §11.4 records one further instance of the
+same defect on the asset-upload path, unreachable while `features.assets` ships `false`; the
+`admin.js:265` instance was reachable by any admin sending a payload-less POST, and any of the nine
+whenever a model callback yielded an error.
+
+**A second, independent way the same route took the process down, and it is fixed in the controller
+rather than in the funnel.** `[T lib/controllers/admin.js:212-252]` runs its body inside the callback
+`csv`'s `parse()` invokes, which is reached from `Parser.emit` and not from the handler's frame, so
+**any** throw in that body escapes the promise the lifecycle method returns. Two throws were measured
+from one route, `POST /admin/upload`, with an admin session:
+
+```text
+TARGET (probe, before the fix) POST /admin/upload, admin identity
+  A. userList='this is "not, a csv at all" ,,, garbage'
+     -> csv parse error -> request.fail(err) -> h.response(Error)
+     -> AssertError: Cannot wrap an error, uncaught
+     observed: curl exit 52 (empty reply), then connection refused - no process remains
+  B. userList=$'Foo,Bar\nalpha,beta\n'   (no Email column)
+     -> userInfo.Email undefined -> lib/util/user.js:7 user.replace(...)
+     -> TypeError: Cannot read properties of undefined (reading 'replace'), uncaught
+     observed: curl exit 52, process gone; the admin's browser shows ERR_CONNECTION_REFUSED
+```
+
+Fixing `request.fail` closes A. B needed the callback itself to have somewhere to throw **to**: the
+promise is now created with a `reject`, and the callback body is wrapped so a thrown value rejects the
+lifecycle method's promise instead of escaping to the process. The value is passed through unchanged,
+so it lands on the Layer 1 catch-all `[T lib/util/routeParser.js:801-812]` — `log.error(err.stack)`
+and `Boom.badImplementation`, a 500 — which is the funnel that same throw would have reached had it
+happened on the handler's own stack. `lib/util/user.js` is deliberately **not** guarded: giving
+`generate_username` a fallback for a missing column would invent an outcome this route has never
+produced, which is the improvement R-d forbids, whereas routing the throw to the existing funnel is
+what R-e asks for.
+
+**Target disposition: REPAIRED. R-b controls, and the argument is this delivery's own.** An earlier
+revision of this section preserved the death on the ground that mapping an `Error` argument would give
+these edges "a status and a body they have never produced". That reasoning does not survive contact
+with what the death actually is. R-b is unqualified — the application must genuinely run, with no route
+or module excluded — and [§11.1](#111-deviation-1-the-never-settling-file-response) decided the
+comparable conflict on the ground that **the absence of a response is not a behaviour a client can
+depend on**. A process death is that argument at its strongest, and
+[§10.7](#107-the-zipcode-branch-that-took-the-process-down-and-the-bounds-that-now-hold-it) already
+states the conclusion verbatim: *what the crash destroys is not this branch's behaviour but every
+other route's, so R-d's protection does not reach it.* This delivery applied that rule three times to
+remove a process death — §10.7's `zipCode` expansion, §11.1's never-settling response, and §11.4's
+asset URL-scheme rejections — and this edge is a stronger case than any of them, because the caller is
+sometimes **unauthenticated**, the client receives **no response at all**, and every other session on
+the process is destroyed with it. R-e is satisfied rather than breached: the edge now reaches the same
+Layer 1 funnel, with the same 500 and the same generic Boom payload, that its own throw would have
+reached on the handler's stack.
+
+Three QA findings raised it independently and all three asked for the same one-line remedy: `ux-F42`
+(CRITICAL, `POST /admin/upload` — "full site outage"), `obs-requestfail-error-arg-process-kill` (HIGH,
+measured at `admin.js:265` under an injected model fault and at `users.js:869` under an `ENOTDIR`
+store fault) and `perf-malformed-csv-kills-process` (HIGH, measured on **both** trees).
+
+**What the delivered code does.** `[T lib/util/routeParser.js]` `request.fail` gained a fourth arm,
+placed **after** the redirect and `fail.html` branches and **before** `h.response`:
+`else if (json instanceof Error) { return Boom.boomify(json); }`. Placement is the whole of the
+behaviour preservation — the two branches above it are byte-identical, so the redirect case measured
+at 200 above still redirects and a `fail.html` route still renders its view with the `Error` as
+context. `Boom.boomify` returns an existing Boom untouched, so a caller passing `Boom.notFound()`
+still answers 404, and initializes any other `Error` at 500. The `log.info` line above the branches is
+unchanged in level and position (its credential values are now withheld — see
+[`error-edge-inventory.md`](error-edge-inventory.md), log hygiene).
+
+| | Baseline `2f8712a` | Delivered |
+|---|---|---|
+| `request.fail(Error)` on a JSON/`h.response` edge | `Error: Cannot wrap an error`, uncaught, **process exits**; client gets no response | **500**, generic Boom payload, process alive |
+| `request.fail(Error)` on an `html` + `fail.redirect` edge | flashes and redirects; **200/302**, alive | identical |
+| `request.fail(Error)` on an `html` + `fail.html` edge | renders the view with the Error as context | identical |
+| `request.fail(plainObject)` — every other caller | its own branch's response | identical |
+| A throw inside `admin.uploadUsers`'s csv callback | uncaught, **process exits** | 500 through Layer 1, `err.stack` logged, alive |
+
+**Gate.** Runtime, on a running server (probe, port 20140, admin session): `POST /admin/upload` with
+the malformed CSV of case A answered rather than severing the connection and the process stayed up;
+the case-B roster with no Email column answered 500 with `log.error` carrying the TypeError's stack;
+a payload-less `POST /api/admin/user/{userId}` answered **500** `{"statusCode":500,"error":"Internal
+Server Error","message":"An internal server error occurred"}` with the process alive.
+
+The redirect arm was then proved undisturbed at the *same* error edge rather than at a different
+route, which is the stronger form of the check. `POST /login` with a valid `email` and no `password`
+drives `bcrypt.compare(undefined, hash)` to throw `Error: data and hash arguments required`, which
+`[T lib/controllers/users.js:328]` hands to `request.fail` as a first-argument `Error`. Negotiated
+as HTML — where `POST /login` declares `fail: {redirect: '/login'}` — it answered **302 to
+`/login`**, byte-identical to baseline, because branch 1 runs before the new `Error` arm is
+consulted. The identical fault negotiated as JSON, on `POST /api/users/login`, reached the
+`h.response` arm and answered **500** with hapi's generic Boom payload where baseline severed the
+connection and exited. One edge, two arms, one preserved and one repaired — which is the whole
+shape of this correction. `POST /send-pass-reset` was also driven and answered **302 to
+`/forgot-pass`** with the process alive (QA recorded this route as `200`, which is the same
+observation with redirects followed; the redirect is what the route emits). The
+per-edge status belongs to [`docs/error-edge-inventory.md`](error-edge-inventory.md), whose rows for
+these nine sites now read as **Layer 2 edges that answer**, with the `Error`-argument arm named
+explicitly on each — that document and this one agree, which resolves the contradiction QA finding
+`int-error-edge-inventory-contradicts-quirks-1011` raised.
+
+**The one piece of bookkeeping this fix leaves open, stated rather than papered over.** The repair is
+**replay-visible on exactly one committed scenario**, and the artifacts that record the approved-
+deviation register are owned by other units of this checkpoint, so — following the same reasoning
+[§10.7](#107-the-zipcode-branch-that-took-the-process-down-and-the-bounds-that-now-hold-it) gives for
+not minting a row in this document alone — the count in [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)
+is **not** amended here. §11.0's table and its "exactly two" claim remain the register of record until
+the four artifacts that share that count move together: this document, [`baseline-parity.md`](baseline-parity.md),
+[`deferred-dependencies.md`](deferred-dependencies.md) §4.2 and the allowlist rule
+`test/parity/replay.js` implements. What is needed is mechanical, and is specified here so that whoever
+owns those artifacts does not have to re-derive it:
+
+- **Scenario**: `route.post.api-admin-user-userId.json` (`test/parity/corpus.json`, order 273,
+  identity `admin`, `payloadEncoding: "none"`), whose baseline step records
+  `ok: false, "transport failure: socket hang up (ECONNRESET)"`.
+- **Register entry** for `approvedDeviationRegister()` in `test/parity/replay.js`, in the shape
+  deviation 1 already uses: `fromOutcome: OUTCOME_TRANSPORT`, `toOutcome: OUTCOME_ANSWERED`,
+  `status: 500`, `contentType: 'application/json'`, `describedIn: 'docs/preserved-quirks.md §10.11'`,
+  `approvedIn`: this section's argument, `summary`: "an `Error` handed to `request.fail` is routed as
+  a Boom instead of terminating the process".
+- **Marker**: the scenario needs the approved-change marker §11.0 rule 2 requires, from the corpus or
+  from an `--annotations` file. Until both exist, `npm run verify:corpus` will report the affected
+  scenarios as unapproved differences.
+- **The blast radius is four scenarios, not one**, and an earlier draft of this section said one. The
+  corpus was re-read to settle it: exactly **seven** committed scenarios carry a
+  `driven.transportFailure`, and they form **two** cascades, because a process death takes the
+  scenarios that follow it down too.
+
+  | Order | Scenario | Recorded transport failure | Cause |
+  |---|---|---|---|
+  | 273 | `route.post.api-admin-user-userId.json` | `socket hang up (ECONNRESET)` | **this funnel** — the death itself |
+  | 274 | `route.post.api-admin-user-userId-grant.json` | `read ECONNRESET` | aftermath: the socket of the process that had just died |
+  | 275 | `route.post.api-comments-trinketId.json` | `connect ECONNREFUSED` | aftermath: nothing listening any more |
+  | 276 | `route.post.api-courses.json` | `connect ECONNREFUSED` | aftermath: nothing listening any more |
+  | 62 | `route.post.userSlug-courses-courseSlug-copy.html` | `socket hang up (ECONNRESET)` | a **different**, deliberately preserved death — see below |
+  | 63 | `route.post.userSlug-courses-courseSlug-copy.json` | `read ECONNRESET` | aftermath of order 62 |
+  | 64 | `route.put.api-courses-courseId-invitations-invitationId-email.json` | `connect ECONNREFUSED` | aftermath of order 62 |
+
+  So repairing this funnel makes orders **274, 275 and 276** drivable for the first time as well as
+  273. All four recorded a transport failure and all four will now answer, so all four present as
+  `transport-failure → answered` and all four need to sit under the one register entry above.
+
+  **Orders 62 to 64 are not this funnel and must not be swept into the same entry.** That death is in
+  `courses.copy` (`[T lib/controllers/courses.js:133]`), whose own comment records it as intentional:
+  the model calls back with no document, the URL interpolation then throws a `TypeError` reading
+  `slug` of `undefined` *inside mongoose's save callback*, mongoose re-emits it as a model `error`
+  event, nothing listens for it or for `uncaughtException`, and the process terminates. It reaches no
+  funnel at all — including this one, because `POST /{userSlug}/courses/{courseSlug}/copy` declares
+  `fail: {redirect: '/welcome'}` and would have taken the redirect arm regardless. It is owned by the
+  controller that carries it and is preserved there deliberately; nothing in `request.fail` can reach
+  a throw on another stack.
+
+- `route.post.admin-upload.html` and `.json` are **unaffected**, also verified: both drive with no
+  payload, so they die in the handler body on `request.payload.userList` and were already answered
+  **500** by Layer 1 on both trees. The malformed-CSV and missing-Email-column inputs that reach the
+  csv-callback edge repaired above are not in the committed corpus at all, so that repair is
+  invisible to `verify:corpus` and is evidenced by the runtime probe instead.
 
 ---
 
-## 11. The two approved deviations
+### 10.12 `POST /api/admin/user/{userId}` answers nothing at all when the payload carries no `roles`
 
-These are the **only** two places in the migration where something is deliberately **not** preserved.
-Both are recorded as deviations rather than as preservation. Each is stated once, canonically, here;
+**Measured** (**probe**, both trees, live servers, admin session).
+
+`admin.updateUser` has one conditional and **no `else`**: `[B lib/controllers/admin.js:164]`, delivered
+at `[T lib/controllers/admin.js:225]`, tests `if (request.payload.roles)`, and the route declares no
+validation (`config/api_routes.js`, `POST /api/admin/user/{userId}`, `auth: 'session'` with
+`pre: ['isAdmin(user)']` and no `validate` block). A payload that omits `roles` therefore falls off the
+end of the `User.findById` callback without producing anything, and **the request is never answered**.
+The mechanism differs between the trees and the outcome does not: baseline's handler returns
+`undefined` synchronously and the shim's deferred is never resolved, while the delivered handler
+returns a `Promise` that never settles.
+
+**Measured, identical on both trees, three attempts each:**
+
+```text
+POST /api/admin/user/{userId}   Content-Type: application/json   {}      (admin session)
+  baseline 2f8712a -> no response; client timeout at 10.002 s; the server survives and serves again
+  delivered tree   -> no response; client timeout at 10.002 s; the server survives and serves again
+```
+
+**This is a distinct edge from [§10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why),
+and confusing the two loses one of them.** With **no payload at all** — no body and no content type —
+`request.payload` is `null`, `request.payload.roles` raises a `TypeError` inside the `findById`
+callback, `lib/models/model.js:147` re-invokes that callback with the error, and
+`request.fail(Error)` **terminates the process** on both trees; that is §10.11's outcome and its gate
+records it. With a **well-formed empty payload** the same route hangs forever and the process lives.
+One route, two payload shapes, two entirely different failures.
+
+**Target disposition: preserve the non-settlement. Add no `else`, and add no validation to the route
+declaration.**
+
+**On rule T-1, stated as the unresolved conflict it is rather than as a settled question.** An earlier
+revision of this section claimed T-1 was "satisfied literally", paraphrasing it as "return a value,
+return a promise, or throw". That paraphrase drops the operative words. T-1 reads: *"Any function hapi
+invokes returns its response value, **returns a promise of one**, or throws."* A promise that never
+settles is not a promise **of a response value**, so on the AAP's own wording **this path does not
+satisfy T-1**, and the earlier claim is withdrawn. What is true, and much narrower, is that the
+*framework* does not object: hapi converts only an `undefined` return into
+`Boom.badImplementation` (`node_modules/@hapi/hapi/lib/toolkit.js:80-81`), and a pending promise is not
+`undefined`, so nothing in hapi 21 detects this. The route simply never answers.
+
+**Why it is nevertheless preserved, and what that leaves owing.** Three requirements point the other
+way and they are prohibitions rather than design rules: the non-answer is **measured identical on both
+trees**, so R-f makes it the baseline fact; answering here — with a `{success:false}`, a 400 or a Boom
+— is a behaviour improvement R-d prohibits and a new error-to-response mapping R-e prohibits; and
+AAP §0.7's approved-deviation register is **closed at exactly two**, neither of them this, with §11.0
+recording that the list "is not extensible by a tool". The AAP's own parity evidence points the same
+way: `test/parity/corpus.json`'s `route.post.api-admin-user-userId.json` records this route's status as
+`None`, so the migration's committed baseline evidence already treats the non-answer as this route's
+recorded state.
+
+**So this is a genuine collision between T-1 and R-d/R-f/§0.7, and it is one the frozen AAP does not
+decide.** §0.1.2's rule T-6 provides for exactly this — a requirement other than R-d making
+preservation impossible — but reserves the decision to the plan, and the plan decided two such
+conflicts, neither of which is this one. Minting a third here would be the tool extending the register,
+which §11.0 forbids. **The disposition is therefore: preserve, and record the T-1 gap as owed rather
+than as satisfied.** Closing it needs a human AAP amendment adding a third approved deviation, after
+which the fix is small — settle the no-op path with a defined response, or require a typed `roles`
+array in the route's validate block — and the corpus entry above must be recaptured with it.
+
+**What preservation leaves exposed — recorded, not repaired.** Each such request holds a socket, a
+hapi request object and the resolved `User` document until the client gives up, so an authenticated
+administrator can accumulate them; the ceiling is the server's connection limit rather than anything
+this handler imposes. What controls preservation is R-d and R-f. **Named follow-up:** declare
+`roles` as required in the route's `validate.payload` so the hand-rolled block refuses the shape before
+the handler runs, as a separately approved change, with the corpus recaptured for the new response.
+
+**Gate.** `route.post.api-admin-user-userId.json` drives this route and records **no status** for its
+step, which is the corpus's representation of a step that produced no response; the comparison is
+between the trees, so a build that answered would be reported as an unapproved difference — including
+one that "fixed" it.
+
+### 10.13 Bulk CSV import saturates the bcrypt threadpool and blocks the event loop
+
+**Measured** (**probe**, both trees, admin session, with a concurrent canary request throughout).
+
+`admin.uploadUsers` builds one `new User({…})` per CSV row, pushes every `user.save()` into an array,
+and awaits them **all at once** through `Promise.allSettled` — `[B lib/controllers/admin.js:133]` and
+`:136`, delivered at `[T lib/controllers/admin.js:182]` and `:188`. Each `save()` runs the model's
+pre-save hook, which is a **cost-10 bcrypt hash** (`lib/models/user.js:8` `SALT_WORK_FACTOR = 10`,
+applied at `:53`). bcrypt's hashing runs on the libuv threadpool, whose default width is 4, so N
+unbounded concurrent hashes saturate it and every other threadpool consumer — including the ones the
+rest of the application needs — waits behind them.
+
+**Measured, and this is parity rather than a regression:**
+
+| Rows | Total, delivered | Total, baseline | Concurrent canary p95 |
+|---|---|---|---|
+| 1 | 93 ms | 77 ms | — |
+| 10 | 236 ms | 197 ms | — |
+| 50 | 1161 ms | 751 ms | — |
+| 200 | 3390 ms | 3192 ms | **3310.58 ms delivered · 3126.92 ms baseline** |
+
+At 200 rows the server is effectively unavailable for the duration on **both** trees. An interleaved
+A/B at 25 rows × 8 repetitions gives baseline p50 409.4 ms against delivered 437.5 ms — a ratio of
+**1.069** with overlapping distributions (the delivered minimum, 423 ms, sits inside baseline's
+388–476 ms range) — so the difference is not material and the characteristic is baseline's.
+
+**Target disposition: keep the unbounded `Promise.allSettled` and the cost-10 hash.** Both halves are
+pinned by something other than preference. The concurrency is pinned by R-d and by this file's own
+delivery directive, which requires the resolution order and the tally semantics to be preserved and
+forbids per-row error handling — bounding concurrency through a work queue or yielding between batches
+changes the order rows are attempted in and the order their failures are counted. The cost factor is
+pinned by AAP §0.5.1.2, whose bcrypt row requires "**Cost factor 10 and hash format unchanged**" so
+that existing passwords still verify, and by `lib/models/**` being outside this file's scope;
+**`lib/models/user.js` is byte-identical to `2f8712a`** (**probe**: `git diff 2f8712a -- lib/models/user.js`
+is empty). AAP §0.8 settles the remaining question directly: "Performance and scalability expectations.
+The request states none, and none is invented."
+
+**What preservation leaves exposed — recorded, not repaired.** An administrator can make the whole
+process unresponsive for seconds with one roster upload, and nothing bounds the row count: there is no
+size limit on `userList` beyond hapi's payload default, and every row costs a bcrypt hash on a
+four-wide threadpool. The trigger is admin-authenticated, which is what keeps it a resource
+characteristic rather than an anonymous denial of service. **Named follow-up:** bound the save
+concurrency to a small window and yield between batches, as a separately approved performance change,
+paired with `UV_THREADPOOL_SIZE` sizing — and note that any such change must keep the `allSettled`
+tally semantics observable, or it silently alters the `{success, errors}` counts this route reports.
+
+**A second, harsher outcome shares this handler and is recorded with the family it belongs to.** A CSV
+containing an unclosed quote makes the `csv` parser call back with an error, that error reaches
+`request.fail(err)` at `[T lib/controllers/admin.js:169]`, and the process **terminates** — on both
+trees, by the same mechanism, with only the assert's constructor name differing between the hapi
+majors. It is one of the nine sites [§10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why)
+enumerates and is preserved there rather than restated here.
+
+---
+
+### 10.14 A private course's archive is downloadable by any authenticated user
+
+**This entry exists because a reachability claim elsewhere in this document was concealing it.**
+[§9.7](#97-a-routed-handler-that-answers-500-where-its-author-intended-403) recorded
+`courses.download`'s five-clause guard as an authorization control whose `else` an unauthorized
+authenticated visitor reaches. The `else` is real and answers 500 when reached — that part stands — but
+**no account this application creates can reach it**, because clause 4 admits every one of them. An
+entry that reads as "the control is present but misfires on the unauthorized path" hides the actual
+outcome, which is that there is no unauthorized path. So the exposure is written down here, on its own,
+next to the analogous file-download case in
+[§10.5](#105-a-stored-file-is-downloadable-by-anyone-who-knows-its-id-or-its-content-hash).
+
+**Measured** (static on both trees, plus probe on a running server). The guard
+`[T lib/controllers/courses.js:214-218]`, byte-identical at `[B lib/controllers/courses.js:136-140]`:
+
+```javascript
+    if (request.user.hasRole("course-owner", "course", { id : course.id })    // 1  owner
+    ||  course.globalSettings.courseType === "public"                         // 2  public course
+    ||  course.globalSettings.courseType === "open"                           // 3  open course
+    ||  request.user.hasPermission("create-private-course")                   // 4  <-- every account
+    ||  request.user.hasPermission("make-course-copy", "course", {id: …})) {  // 5  per-course grant
+```
+
+Clause 4 is a **site** permission carried by the `user` role, and the `user` role is granted to every
+account on its first save — `checkPermissions` is a pre-save hook `[T lib/models/user.js:283-292]` that
+runs `setRoles('user', 'site')` when `roles` is empty `[T lib/models/user.js:64-72]`, `setRoles` is
+`grant` with `_skipUpdate` `[T lib/models/plugins/roles.js:138-144]`, and `grant` fills the entry's
+`permissions` from the static map `[T lib/models/plugins/roles.js:91-103]`, `[T lib/models/roles.js:8-25]`, which lists
+`create-private-course` at `:20`. The clause therefore evaluates as **"is this request
+authenticated"**, which the route's `auth: 'session'` has already guaranteed. **CWE-863** (incorrect
+authorization).
+
+**Driven on the delivered tree, because the static reading is not evidence on its own** (**probe**,
+against a running server): sign up account A, `POST /api/courses {"name":…,"courseType":"private"}`,
+read it back and confirm `globalSettings.courseType === 'private'`; sign up account B, which holds no
+role on that course and is not its owner; then as B request
+`GET /A/courses/{courseSlug}/download.zip?format=md`. Result:
+
+```text
+owner    A  GET /A/courses/qa19-private-two/download.zip?format=md -> 200 application/zip  (control)
+outsider B  GET /A/courses/qa19-private-two/download.zip?format=md -> 200 application/zip
+            content-disposition: attachment; filename=qa19-private-two.zip
+outsider B  GET /api/courses/{courseId}                            -> 200
+```
+
+**The baseline half is byte-identity plus a reported drive, and the distinction is stated rather than
+blurred.** This tree is the one driven above. The guard, the pre-save hook and the role map are
+byte-identical at `2f8712a` (**static**, `git show`), so the same identity must take the same clause
+there; and the drive was independently performed against both trees during QA, which reported the
+outsider 200 "identically on both trees". No baseline worktree was stood up for the run recorded here.
+
+**Reach, stated precisely rather than broadly.** The permission is consulted at two authorization sites
+and neither is creation:
+
+| Site | Address | What clause 4 lets any authenticated account do |
+|---|---|---|
+| `courses.download` | `[T lib/controllers/courses.js:217]`, `[B :139]` | Download **any** course's archive, including a `private` one it holds no role on |
+| `course.copyCourse` | `[T lib/controllers/course.js:486]`, `[B lib/controllers/course.js:180]` | Copy **any** course, including a `private` one, into its own account |
+
+Course *creation* does not consult it at all, and both creation paths say so in source
+(`[T lib/controllers/course.js:253-260]`, `[T lib/controllers/courses.js:41-45]`): a `private` course
+requested by an account without the permission is created exactly as a public one is. So the permission
+does not gate what it reads like it gates at any of the three sites.
+
+**One in-source note names the wrong second site, and is left as it is.**
+`[T lib/controllers/course.js:255-256]` says the two places this application consults the permission are
+"`copyCourse` below and `courses.coursePage`". Measured: `create-private-course` occurs at exactly two
+authorization sites on either tree — `[T lib/controllers/courses.js:217]` (`download`) and
+`[T lib/controllers/course.js:486]` (`copyCourse`) — and `coursePage`
+`[T lib/controllers/courses.js:175-200]` consults `manage-course-content` and two roles instead, never
+this permission, on the target tree and at `2f8712a` alike (**static**, both trees). So the second site
+is `courses.download`, not `coursePage`. The sentence is a comment in a file this section does not
+change, and the mis-naming has no behavioural effect; it is recorded here so a reader following that
+comment does not conclude the read-side surface is somewhere it is not.
+
+**Target disposition: preserved exactly, and NOT repaired here.** The guard is byte-identical to
+`2f8712a` at both sites, so this is baseline behaviour and R-d preserves it. Three further reasons the
+repair does not belong in this migration, stated so the omission is not mistaken for an oversight:
+
+- **The correct fix is a permission-model change, not a guard edit.** Dropping clause 4 from
+  `courses.download` would leave `course.copyCourse` admitting the same accounts, and dropping it from
+  both would change what the `user` role means for every existing account — a data migration over the
+  `roles.permissions` arrays already written to every user document, since `grant` **persists** the
+  expanded permission list rather than deriving it per request.
+- **It moves responses two gates compare.** AAP §0.9.1 compares effective auth per route entry and
+  §0.9.3 compares responses; turning a 200-with-archive into a 403 or 500 fails both, and AAP §0.2.2
+  puts new or removed features out of scope.
+- **`lib/controllers/course.js` is not this section's to change**, and a one-sided edit would be worse
+  than none: `courses.download` refusing while `copyCourse` admits is a *new* inconsistency rather than
+  a partial fix.
+
+**What closing it properly requires.** Decide what `create-private-course` is for — if it is a
+*creation* capability, the two read-side sites must stop consulting it and gate on ownership or
+course-membership instead, which means defining what membership admits for `private` and `demo` courses
+and migrating the existing role documents. That is a feature with its own data model and client
+changes, and it needs its own approval. It is the same shape of work as
+[§10.5](#105-a-stored-file-is-downloadable-by-anyone-who-knows-its-id-or-its-content-hash)'s remedy and
+could reasonably be one piece of work with it.
+
+**Gate.** None closes it, and that is the honest statement: the route-manifest and corpus gates both
+record the 200 as correct, because it *is* the baseline behaviour. What this entry is bound to instead
+is the difference ledger — the register in [§11](#11-the-approved-deviations) does not name this site,
+so any change to these responses is reported as an **unapproved** difference, including a change that
+looks like a repair. §9.7 carries the unreachable branch's own behaviour and its evidence.
+
+---
+
+### 10.15 Concurrent course-archive downloads corrupt one another, and six of them end the process
+
+The export in `courses.download` builds its working tree at a path derived from the **course owner and
+slug alone** — `[T lib/controllers/courses.js:226-227]`, `var ownerDir = '/tmp/' + owner.username;`
+and `var courseDir = ownerDir + '/' + course.slug;` — with the archive beside it at
+`[T lib/controllers/courses.js:336]`. Nothing in the path distinguishes one request from another, so
+every concurrent download of the same course shares one directory and one archive file.
+
+The tail is what turns sharing into a fault. `[T lib/controllers/courses.js:372]` opens the archive
+with `fs.createReadStream(zipFile)`, and `[T lib/controllers/courses.js:375]` then removes the whole of
+`ownerDir` — archive included — **before** the response carrying that stream is returned.
+`createReadStream` is lazy: it has not opened the file yet. So the read is issued against a path that
+this request has already deleted and that a sibling request may delete again, and the stream carries no
+`error` listener. An `error` event on a stream with no listener is an unhandled `'error'` event, which
+Node throws.
+
+**Measured on the target tree**, against a live server on an isolated database, as an ordinary
+authenticated account downloading another user's course:
+
+```text
+concurrency 1  -> http=200, a complete archive                (control)
+concurrency 6  -> all six: rc=52, http=000, 0 bytes
+                  GET / afterwards -> 000  (the process is gone)
+
+stderr:
+      throw er; // Unhandled 'error' event
+      ^
+Error: ENOENT: no such file or directory, open '/tmp/qa19a/qa19-private-two.zip'
+Emitted 'error' event on ReadStream instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  errno: -2, code: 'ENOENT', syscall: 'open',
+  path: '/tmp/qa19a/qa19-private-two.zip'
+}
+```
+
+At intermediate concurrency the same race truncates rather than kills: a request whose stream is opened
+after a sibling's deletion but before its own read completes answers **200 with a short body that is
+not a parseable archive**, because the status and headers are committed before the payload is drained.
+A caller cannot distinguish that from a good response by its status.
+
+**This is baseline behaviour, and the three lines that produce it are unchanged.** At the base commit
+the same two variables are `[B lib/controllers/courses.js:147-148]`, the archive path is
+`[B lib/controllers/courses.js:257]`, and `[B lib/controllers/courses.js:267-268]` is
+`var stream = fs.createReadStream(zipFile); rimraf(ownerDir, function() { return reply(stream)…` —
+the same lazy open, the same deletion of the shared directory before the response is produced, and the
+same absence of an `error` listener. The migration changed `rimraf(dir, cb)` to
+`await fs.promises.rm(dir, {recursive:true, force:true})` and nothing else here, which is what
+**AAP §0.4.2 explicitly directs**: baseline waits for the deletion before the final `.header()`
+resolves the response, so the conversion awaits deletion, swallows its error as the empty callback did,
+and then returns the response. The delivered code does exactly that, including the swallow at
+`[T lib/controllers/courses.js:377-379]`.
+
+**Target disposition: preserved, and deliberately not repaired here.** Four independent grounds, in
+order of force:
+
+1. **AAP §0.4.2 specifies this code's shape.** A fix has to stop deleting before the response is
+   produced, which is the one property that section names. The plan is the frozen source of truth and
+   is not reinterpreted to accommodate a repair.
+2. **R-a.** Allocating a per-request workspace, attaching a stream `error` handler and deferring
+   cleanup until the response stream closes is a concurrency redesign of the archive path. It is not a
+   runtime bump, a hapi API migration, an async conversion, or a blocking dependency swap.
+3. **R-d.** The corruption and the exit are both observable baseline behaviour. Removing them is a
+   behaviour improvement, so it would require an argued, numbered entry in
+   [§11](#11-the-approved-deviations) — see [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)
+   for what that takes. It has none.
+4. **Citation stability.** `lib/controllers/courses.js` carries 64 line-pinned citations across four
+   documents — 16 here, and 48 in `docs/deferred-dependencies.md`,
+   `docs/error-edge-inventory.md` and `docs/conversion-inventory.md`, none of which this unit owns. A
+   repair shifts line numbers under all of them.
+
+**How this differs from deviation 5, which did end a process death.** [§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes)
+records a process death that R-b was allowed to override. The distinction is not severity — it is that
+deviation 5's remedy was the bounded read the migration had to write anyway to convert that handler,
+and no AAP section specified the crashing shape. Here the AAP specifies the shape, and the remedy is
+new work on a path the migration only touched to swap a deletion call. A future author who wants to
+close this must go the deviation route rather than reading §11.9 as a precedent for repairing in place.
+
+**What a human must do**, once the change is approved: allocate the working tree with
+`fs.promises.mkdtemp()` so no two requests share a path; attach an `error` handler to the read stream
+and wait for its `open` before committing the response; and remove only that request's directory, after
+the response stream has finished or closed, on both the success and the failure path. Until then, an
+ordinary authenticated account can terminate the application with six simultaneous requests to a
+routed endpoint, and callers cannot tell a truncated archive from a complete one.
+
+**Gate.** None closes it. The corpus drives one request at a time, so no scenario reaches the race, and
+the route manifest is indifferent to it. What this entry is bound to is the difference ledger: the
+register does not name this site, so any change to these responses — including a repair — is reported
+as an **unapproved** difference until it is argued into §11.
+
+---
+
+### 10.16 The folder name contract is asymmetric between create and rename
+
+**Measured** (static, both trees; and driven on the delivered tree). The two folder-name schemas do not
+agree on a maximum:
+
+```javascript
+// [B config/api_routes.js:685]  POST /api/folders          folders.create
+          name: Joi.string().min(1).max(140).required(),
+// [B config/api_routes.js:700]  PUT /api/folders/{folderId}/name   folders.update
+          name : Joi.string().min(1).max(50)
+```
+
+Both lines are **byte-identical on the delivered tree**, verified by `git diff 2f8712a -- config/api_routes.js`,
+whose only hunk in that file is the login route's inline pre-handler. So this is baseline behaviour,
+not a conversion artefact.
+
+Driven, in one session, against the delivered tree:
+
+| Request | Result |
+|---|---|
+| `POST /api/folders` with a **140**-character name | **200**, folder created |
+| `PUT /api/folders/{id}/name` with a **51**-character name | **200** carrying `flash.validation` `{"name":"\"name\" length must be less than or equal to 50 characters long"}` — the name is **not** changed |
+| `PUT /api/folders/{id}/name` with a **50**-character name | **200**, renamed |
+
+**The consequence, which is what makes it worth an entry.** A folder created with a name of 51 to 140
+characters **can never be renamed to a name of its own length**. Its current name is legal for the
+object but illegal for the only route that can change it, so the owner's sole way out is a shorter
+name. Note also the shape of the refusal: the hand-rolled validation block answers **200** with a
+`validation` flash rather than a 4xx, which is the response contract AAP §0.6.2 preserves deliberately
+and §9.1's sibling entry describes.
+
+**Declined, with the citation it turns on.** A finding asked for the two maxima to be aligned. Both
+routes are validation targets inside AAP §0.6.2's **102**, whose gate — `npm run verify:joi`, comparing
+against `test/parity/joi-baseline.json` and exiting non-zero on any difference — is defined to fail on
+exactly this kind of change: raising `:700` to 140 makes a previously rejecting input accept, and
+lowering `:685` to 50 makes a previously accepting input reject. Either direction is an accept/reject
+difference by construction, so **R-d** and **§0.6.2** control together, and §0.2.2 additionally freezes
+the route surface. What a human must do: amend the AAP to authorize the schema change, pick the single
+maximum, and **re-baseline** the joi matrix for both targets, since the baseline side is what the
+change moves.
+
+**Gate.** `verify:joi` covers both targets and pins the current outcomes; the difference ledger reports
+any change to either as unapproved, because [§11](#11-the-approved-deviations) does not name these
+sites.
+
+### 10.17 A folder name is stored with control characters intact, and the two list routes disagree about `owner`
+
+Two measured inconsistencies from the same finding, kept in one entry because they share a cause — the
+schemas say what they say, and nothing normalises around them — and one disposition.
+
+**Measured 1: a NUL byte in a folder name is accepted and persisted verbatim.** Driven on the delivered
+tree with a real `%00` in the form body:
+
+```text
+POST /api/folders   name=nul%00byte
+-> 200 {"success":true,"folder":{"name":"nul\u0000byte","slug":"nul-byte", … }}
+```
+
+`Joi.string().min(1).max(140)` constrains length and nothing else, so the control character passes
+validation, reaches the document, and is stored as authored. The **slug** is a separate value derived by
+the slug plugin and it drops the character (`nul-byte`), so the unique index that governs collisions is
+computed on the sanitised form while the displayed `name` keeps the raw byte. Nothing downstream escapes
+or rejects it.
+
+**Measured 2: `owner=me` works on one list route and is refused by the other.** Driven in the same
+session:
+
+| Request | Result |
+|---|---|
+| `GET /api/courses?owner=me` | **200**, the owner's courses |
+| `GET /api/trinkets?owner=me` | **200** carrying `flash.validation` `{"owner":"\"owner\" is not allowed"}` |
+
+Two sibling list routes, one query contract each, and a client that learns which by trying. The
+trinkets route's query schema does not declare `owner`; the courses route's does. Both are baseline.
+
+**Declined, with the citations they turn on.** The finding asked for control characters to be rejected
+and the two query contracts to be aligned. Both are the same class as
+[§10.16](#1016-the-folder-name-contract-is-asymmetric-between-create-and-rename): each is an
+accept/reject change on a route inside AAP §0.6.2's 102 validation targets, so `verify:joi` is defined
+to fail on it and **R-d** plus **§0.6.2** control; adding `owner` to the trinkets query additionally
+changes what that route *does* with a parameter it currently refuses, which §0.2.2 puts out of reach as
+a route-surface change rather than a validation one. Preserving is possible for both — neither
+terminates a process nor leaves a request unanswered — so [§11.10](#1110-deviation-6-post-apifolders-answers-where-the-baseline-process-died)'s
+route in is not available to them.
+
+**What a human must do, per half, because the two are not one job.** For the control character: amend
+the AAP, then choose *where* — a schema-level `regex`/`invalid` on the name, or normalisation in the
+model — because the two produce different responses (a validation flash versus a silently cleaned
+value), and re-baseline the create target. For `owner`: amend the AAP to authorize the query-contract
+change, then decide which route moves; aligning `/api/trinkets` upward means implementing the parameter
+in `lib/controllers/trinket.js`, which is a listing-behaviour change and needs its own corpus
+re-baseline, and it is recorded here as an observation rather than a proposal.
+
+**Gate.** `verify:joi` pins the accept/reject outcome of both routes' schemas; the corpus compares both
+list responses between the trees. No entry in [§11](#11-the-approved-deviations) names either site, so
+any change to them reports as an unapproved difference.
+
+---
+
+### 10.18 `POST /api/exports` answers 500 after saving its row and queueing its job
+
+The one entry in this catalogue where the **response**, not the handler, is what fails. `requestExport`
+completes: the `Export` document is written, the job is enqueued, and the handler returns a success
+projection. The 500 is raised while that projection is being turned into bytes, by which time both
+side effects have already happened. So the caller is told the request failed, never learns the id of
+the export that now exists, and cannot start another — the in-flight guard refuses every further
+attempt.
+
+**Measured, on both trees, through a running server** (**probe**). A freshly created account with no
+prior export, driven with `Accept: application/json`:
+
+```text
+BASELINE  (git worktree at 2f8712a, its own npm ci — 642 packages)
+  POST /api/exports        -> 500 {"statusCode":500,"error":"Internal Server Error",
+                                   "message":"An internal server error occurred"}
+  db.exports for the owner -> 1  {status:"pending", progress:{total:0,processed:0,failed:0}}
+  POST /api/exports again  -> 200 {"error":"Export already in progress","exportId":"…"}
+  GET  /api/exports/{id}   -> 200 the export document, status "pending"
+
+TARGET    (this tree, same steps, same identity shape)
+  identical on all four lines, including the 500's body byte for byte
+```
+
+**Why a completed handler produces a 500 — the chain, and the one link that is easy to miss.**
+
+| Step | What happens | Address |
+|---|---|---|
+| 1 | The row is saved and the job enqueued. Neither is rolled back by anything below | `[T lib/controllers/users.js:1309-1327]`, `[B lib/controllers/users.js:957-972]` |
+| 2 | The handler returns `request.success({success:true, data:{exportId: exportRecord._id, …}})` — a **raw** `ObjectId`, where the sibling handler four hundred lines up uses `_id.toString()` | `[T lib/controllers/users.js:1353-1360]` vs `[T lib/controllers/users.js:1432]` |
+| 3 | This route declares no reply spec, so `request.success` takes the `ObjectUtils.serialize` arm rather than the `ObjectUtils.pull` projection | `[T lib/util/routeParser.js:225-227]`, `[B lib/util/routeParser.js:422-424]`; route `[B config/api_routes.js:1504-1508]` |
+| 4 | `serialize` rebuilds every object with `for (var key in json)`. **mongoose 6.13.9 resolves bson 4.7.2 on both trees, and 4.7.2 defines `ObjectId`'s prototype methods as ENUMERABLE**, so the rebuild copies eight method names as OWN keys of a plain object — `toHexString`, `toString`, `toJSON`, `equals`, `getTimestamp`, `toExtendedJSON`, `inspect`, `valueOf` | `[T lib/util/objectUtils.js:42-58]` |
+| 5 | `JSON.stringify` finds a `toJSON` on that plain object and calls it with the plain object as receiver. `toJSON` → `toHexString` reads `this.id`, which is not there, and throws `TypeError: Cannot read properties of undefined (reading 'toString')` inside hapi's marshal | `[T lib/util/objectUtils.js:33-64]` |
+| 6 | A throw during marshalling becomes a generic `500` with no leak of the message | `node_modules/@hapi/hapi/lib/response.js` |
+
+Measured in process (**probe**, this tree):
+
+```text
+$ node -e "… for (var k in new mongoose.Types.ObjectId(...)) …"
+bson version (mongoose nested): 4.7.2
+for..in over ObjectId: ["toHexString","toString","toJSON","equals","getTimestamp",
+                        "toExtendedJSON","inspect","valueOf"]
+serialize(exportId) own keys: the same eight
+JSON.stringify THREW: TypeError: Cannot read properties of undefined (reading 'toString')
+with .toString() -> {"success":true,"data":{"exportId":"000000000000000000000601"}}
+```
+
+**Blast radius: exactly one site.** `[T lib/controllers/users.js:1356]` is the only raw `ObjectId` in a
+`request.success` payload in this module; every other export projection stringifies first, which is why
+`GET /api/exports/{exportId}` answers 200 with its document.
+
+**Target disposition: preserved exactly, with the raw `ObjectId` left as written.** The one-character
+repair — `.toString()` — is measured to work, which is precisely why it is not applied.
+`lib/util/objectUtils.js` is byte-identical to the base commit (`git diff 2f8712a --
+lib/util/objectUtils.js` is empty, **probe**), the payload shape is unchanged from
+`[B lib/controllers/users.js:975-982]`, `request.success`'s projection is on T-2's preserved list, and
+both lockfiles resolve the same mongoose and the same bson — so the 500 is baseline behaviour on this
+route rather than anything the conversion introduced. Changing it would alter a status and a body,
+which R-e prohibits per edge and R-d prohibits as an improvement, and it would be a **third** approved
+deviation in a register [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)
+closes at two. The delivered code states the constraint inline at `[T lib/controllers/users.js:1328-1352]`.
+
+**Gate — and the honest status of it, which is that this branch has no corpus case yet.** A scenario
+`quirk.export-create.marshal-500` was written and **driven successfully**, but it is **not delivered**,
+because `test/parity/capture.js` belongs to another unit. It is recorded here so the unit that owns
+that file can land it, and so nobody reads this entry as gated when it is not.
+
+The scenario has to be driven as the seeded **admin**: the seeded user owns the seeded pending export,
+so `requestExport`'s guard answers before anything is created and that identity can only ever reach
+the already-in-progress branch — see
+[§10.19](#1019-the-in-flight-export-guard-reads-and-writes-in-two-steps). Its expectation is two-step,
+which is what makes it a test of *this* entry rather than of a plain 500: step 1 must answer **500**,
+and step 2 must answer **200** carrying `"error":"Export already in progress"` — the second step
+proving step 1 persisted its row rather than merely failing. Driven from a working copy of the
+generator against a `git worktree` at `2f8712a` with its own `npm ci`, **the expectation was met**
+(**probe**):
+
+```text
+$ node test/parity/capture.js --app <worktree at 2f8712a> --expect-baseline \
+    --only quirk.export-create.marshal-500 --out <scratch>/corpus.exports-baseline.json
+capture: [2/2] quirk.export-create.marshal-500 -> 500
+expectationResult: {"met": true, "failures": []}
+  step drive-create-branch     -> 500 {"statusCode":500,"error":"Internal Server Error",…}
+  step prove-the-row-persisted -> 200 {"error":"Export already in progress","exportId":"…"}
+```
+
+Until that definition lands, the standing evidence for this entry is the probe above plus §10.21's
+browser run, and `route.post.api-exports.json` covers only the guard branch, not the create branch.
+
+That artifact is a **filtered** capture and is not committed, because a one-route capture cannot stand
+as gate evidence; the scenario's record enters `test/parity/corpus.json` on the next full campaign, and
+[§Capture status](#capture-status-stated-once-because-every-scenario-defined-tag-depends-on-it) records
+what that campaign is currently blocked on. Until then this entry's evidence is the probe above, and
+the sweep case `route.post.api-exports.json` covers the route's other branch — see §10.19's gate.
+
+### 10.19 The in-flight export guard reads and writes in two steps
+
+`requestExport` decides whether an export is already in flight with one query and creates the new
+document with a separate write, so two requests that interleave between the two both create. The
+sequential path is correct; only the concurrent one is not.
+
+**Measured, on both trees** (**probe**). Two `POST /api/exports` fired concurrently for one owner, then
+one more sequentially:
+
+```text
+BASELINE (2f8712a worktree)          TARGET (this tree)
+  concurrent #1 -> 500                 concurrent #1 -> 500
+  concurrent #2 -> 500                 concurrent #2 -> 500
+  db.exports for the owner -> 2        db.exports for the owner -> 2
+     both status "pending"                 both status "pending"
+  sequential #3 -> 200                 sequential #3 -> 200
+     {"error":"Export already in         {"error":"Export already in
+      progress","exportId":"…"}           progress","exportId":"…"}
+  count after #3 -> still 2            count after #3 -> still 2
+```
+
+Both 500s are [§10.18](#1018-post-apiexports-answers-500-after-saving-its-row-and-queueing-its-job)'s
+marshal throw, not a concurrency error: each request completed its own create.
+
+**The read and the write, and what sits between them.** `Export.findPendingOrProcessing(userId)` at
+`[T lib/controllers/users.js:1277]` — `findOne({_owner, status: {$in: ['pending','processing']}})` at
+`[T lib/models/export.js:28-33]` — resolves, then a cooldown query runs, and only then does
+`new Export({…}).save()` at `[T lib/controllers/users.js:1309-1314]`. There is no unique index on
+`{_owner, status}`: the collection's only declared indexes are the single-field `_owner` and
+`expiresAt` at `[T lib/models/export.js:5,14]`. `lib/models/export.js` is byte-identical to the base
+commit (`git diff 2f8712a -- lib/models/export.js` is empty, **probe**) and
+`[B lib/controllers/users.js:934-962]` carries the identical read-then-write sequence.
+
+**Target disposition: preserved, with the two steps left as two steps.** Neither remedy is applied: a
+unique partial index on the in-flight states would turn the second concurrent create into a duplicate-key
+error — a new status and a new body on a route that today answers 500 twice — and a `findOneAndUpdate`
+upsert would answer 200 "already in progress" to the loser, which is a response the endpoint has never
+produced. Both are behaviour changes R-d prohibits, and an index addition is also a schema change
+outside R-a's four categories. The delivered code states this inline at
+`[T lib/controllers/users.js:1299-1308]`.
+
+**One consequence stated plainly, because it is a deployment property rather than a defect of this
+migration:** a duplicate `pending` row is not self-clearing. Nothing in the request path reaps it, and
+the guard reads it forever after, so a user who reaches this state cannot request another export until
+the row is completed or removed — which is [§10.21](#1021-the-export-flow-is-a-dead-end-for-the-user-who-reaches-it)'s
+subject.
+
+**Gate.** `route.post.api-exports.json` drives the already-in-progress branch against the seeded
+pending export and is compared between the trees, so a build that answered a successful create there —
+which is what a `findOneAndUpdate` upsert would do — is reported as a difference. Its `intent` reads
+`failure` and its note says which branch it drives: an earlier revision of that scenario was labelled
+`intent: "success"` while only ever driving this branch. **That label is corrected in the artifact but
+not yet at its source** — the generator that would re-author it on the next capture is
+`test/parity/capture.js`, which belongs to another unit, so the correction currently lives only in
+`test/parity/corpus.json` and a re-capture would reproduce the old label until the owning unit lands
+the generator-side change. The concurrent pair itself is not a corpus case — the corpus drives one
+request per step and a race is not reproducible from a recorded response — so its evidence is the
+probe above.
+
+### 10.20 The rest of the unbound-`Boom` family in `lib/controllers/users.js`
+
+[§9.9](#99-two-routed-handlers-that-answer-200-carrying-the-name-of-a-missing-identifier) records the
+two export handlers whose branches answer **200** carrying `{"error":"Boom is not defined"}`. This
+entry completes the family: the same 15 references produce **two different observable outcomes**
+depending on where the throw lands, and four of the download handler's branches are individually
+reachable and were individually measured. Nothing here is a second mechanism — it is the same unbound
+identifier, counted and measured per branch, because a per-branch record is what a reviewer needs and
+what `docs/error-edge-inventory.md` cross-references.
+
+**The count, re-measured** (**static**, over `lib/controllers/users.js` on both trees). **15**
+executable `Boom.*` references on each tree, one for one:
+
+| Tree | Lines |
+|---|---|
+| Baseline | 213, 377, 545, 562, 579, 667, 680, 1027, 1031, 1059, 1064, 1078, 1082, 1086, 1090 |
+| Target | 351, 568, 753, 773, 792, 961, 976, 1418, 1422, 1453, 1461, 1488, 1492, 1496, 1500 |
+
+A review of this tree reported **16** at the target and 15 at the baseline. Re-counted here, the figure
+is **15 on both** and the pairing is one-for-one; a sixteenth match comes from a comment line that
+names the identifier rather than evaluating it. §9.9 and
+[Appendix A](#appendix-a--the-quirk-allow-list-for-generated-target-actions) already state 15, and the
+conversion added none.
+
+**Measured per branch, on both trees, through a running server** (**probe**). Same request, same
+identity shape, on `2f8712a` and on this tree — every line below was identical on the two:
+
+| Reference | How it is reached | The expression names | Outcome |
+|---|---|---|---|
+| `[T :351]` `remove` | `DELETE /api/users?username=<another account>` | 403 `forbidden()` | **500**, generic body |
+| `[T :568]` `updateProfile` | `PUT /api/users/{another user's id}` with a valid payload | 403 `forbidden()` | **500**, generic body |
+| `[T :1418]` `getExportStatus` | `GET /api/exports/<absent id>` | 404 `notFound('Export not found')` | **200** `{"error":"Boom is not defined","flash":{…}}` |
+| `[T :1422]` `getExportStatus` | `GET /api/exports/{another owner's export}` | 403 `forbidden('Access denied')` | **200** same body |
+| `[T :1488]` `downloadExport` | `GET /api/exports/<absent id>/download` | 404 `notFound('Export not found')` | **200** `{"error":"Boom is not defined","flash":{}}` |
+| `[T :1492]` `downloadExport` | `GET /api/exports/{another owner's export}/download` | 403 `forbidden('Access denied')` | **200** same body |
+| `[T :1496]` `downloadExport` | `GET /api/exports/{a PENDING export}/download` | **400** `badRequest('Export not ready')` | **200** same body |
+| `[T :1500]` `downloadExport` | `GET /api/exports/{an EXPIRED export}/download` | 400 `badRequest('Export has expired')` | **200** same body |
+| `[T :773]` `removeAsset` | `DELETE /api/users/assets/{another owner's file}` | 403 `forbidden()` | **500**, generic body |
+| `[T :792]` `restoreAsset` | `POST /api/users/assets/restore` with another owner's `fileId` | 403 `forbidden()` | **500**, generic body |
+| `[T :1453]` `getExportStatus` inner `catch` | Not requested directly — it is the **secondary** throw. When `[T :1418]` or `[T :1422]` throws, the inner `catch` at `[T :1448]` logs and then this line throws in turn, and *that* is the throw that escapes the callback | 500 `internal('Export status error')` | no response of its own; it is the mechanism that produces the **200** on the two rows above |
+| `[T :961]`, `[T :976]` `getAvatar`, `getInfo` | `GET /api/users/<absent id>/avatar` and `/info` | 404 `notFound()` | **404** — the branch is never entered, see below |
+| `[T :753]` `replaceAsset` | `POST /api/users/assets/{fileId}` | 403 `forbidden()` | **not reachable** through its route — see below |
+| `[T :1461]` `getExportStatus` outer `catch` | Would need the synchronous part to throw, e.g. an absent `request.user` | 500 `internal('Export status error')` | **not reachable** — the route declares `auth: 'session'`, so `request.user` is always present |
+
+That is all **15**, and the split by observed outcome is: **four answer 500** (`:351`, `:568`, `:773`,
+`:792`), **six answer 200** carrying the identifier's name (`:1418`, `:1422`, `:1488`, `:1492`,
+`:1496`, `:1500`), **one has no response of its own** but is what converts those six (`:1453`), and
+**four cannot be entered from an HTTP request at all** (`:753`, `:961`, `:976`, `:1461`). A review of
+this tree read the family as seven 500s and eight 200s; that is the split by *location* — the seven
+non-export sites against the eight export sites — and it is a fair way to describe where they sit, but
+it is not what a client observes, because three of the seven non-export sites are unreachable and one
+of the eight export sites answers nothing.
+
+**The third column is worth reading carefully, because a review of this tree got one row wrong.** That
+review described the pending-download branch as answering "500-shaped content at 200 rather than the
+**403** it reads as". The expression on that branch is `Boom.badRequest('Export not ready')` at
+`[T :1496]` — a **400**, not a 403. 403 is what the two *access-denied* branches name, at `[T :1422]`
+and `[T :1492]`. The observable outcome the review reported is exactly right and is reproduced above;
+only the intended status was misattributed, and the distinction matters here because it is the
+difference between "this route hides an authorization denial" and "this route hides a
+not-yet-ready state". Both are hidden, and they are hidden by the same unbound identifier — but the
+denial rows are `[T :1422]` and `[T :1492]`, and a reader auditing the authorization surface should
+look there.
+
+**Four of the fifteen are unreachable through their own routes, and saying so is the point of measuring
+rather than reading.** Each is blocked by a different layer, which is why none of them can be inferred
+from the source alone:
+
+- **`[T :961]` and `[T :976]`** — blocked by a **pre-handler**. Both routes declare
+  `user(params.userId)` (`[B config/api_routes.js:1452-1464]`), and the generated finder resolves an
+  absent — or soft-deleted — document to `Boom.notFound()` at `[T lib/util/helpers.js:65-70]`, which
+  answers **404 before the handler runs**. `request.pre.user` is therefore never falsy inside the
+  handler, so neither `else` arm can be entered.
+- **`[T :753]`** — blocked **twice over**, and an earlier revision of this entry named only the first.
+  `replaceAsset` short-circuits with `errors.notImplemented` at `[T :731-733]` while `features.assets`
+  ships `false` (`[B config/default.yaml:3]`). Independently of that flag, the **payload layer** also
+  stops the request: the route declares `output: 'file'` (`[B config/api_routes.js:1258-1261]`), so a
+  multipart request is answered **415** before the handler, and a form-encoded one has its body
+  rewritten to `{path, bytes}`, which then fails the route's own `file` schema and is answered by the
+  hand-rolled validation block as a **200** carrying
+  `{"validation":{"file":"\"file\" is required","path":"\"path\" is not allowed", …}}` — measured.
+  So even with the feature enabled the ownership test is not the first thing a caller meets.
+- **`[T :1461]`** — blocked by **authentication**. It is the outer `catch`, entered only if the
+  synchronous part of `getExportStatus` throws, and the most plausible cause of that is an absent
+  `request.user`; the route declares `auth: 'session'`, so that cannot happen.
+
+`[T :1453]` is a fifth site with no response of its own, but it is emphatically **not** unreachable —
+it is reached on every one of the six 200s, and the log line beside it at `[T :1449]` is visible in the
+application's own output whenever one of them is served.
+
+**The security-relevant reading, stated exactly.** `[T :351]`, `[T :568]`, `[T :773]` and `[T :792]`
+are all **cross-account authorization denials** — deleting another account, renaming it, deleting
+another owner's asset and restoring one — and every one of them is **enforced**: none of those requests
+performs the write it asked for, on either tree, and the database was compared before and after each.
+What is wrong is the status they report it with: a **500** where the expression names a 403. For the
+export family the denial is reported inside a **200**, which a client cannot distinguish from success.
+The denial itself holds in every case measured; what is unreliable is a caller's ability to tell a
+denial from a server fault, or from success.
+
+**Target disposition: all 15 expressions preserved exactly as written**, with the disposition §9.9
+states in full — `Boom` stays the first unresolvable identifier on its line, and `lib/models/model.js`
+stays byte-identical so the throwing callback is still re-invoked. Binding `Boom` or rewriting the
+calls as `errors.*` would move **four** observed edges from 500 to 403, **six** from 200 to
+403/404/400, and would change what the four unreachable expressions would do if their blocking layer
+were ever removed — which R-e prohibits per edge and R-d prohibits as an improvement;
+`lib/controllers/users.js`'s own implementation brief states the same prohibition. Every one of the 15
+carries an inline comment naming its outcome, and `[T lib/controllers/users.js:1475-1486]` now carries
+the measured per-branch statuses above.
+
+**Gate.** `error-edge.not-found.missingExport` carries the recorded 200 for the absent-document branch
+and `route.get.api-exports-exportId-download.json` carries the working 302, so the pair fails on a
+build that changed either. The cross-account and pending branches above are not separately represented
+in the committed corpus — the probe is their evidence, and the rows for these sites in
+`docs/error-edge-inventory.md` are where the per-edge status belongs.
+
+### 10.21 The export flow is a dead end for the user who reaches it
+
+What §10.18 and §10.19 look like from a browser, recorded because the client half is measurable and
+because no entry in this catalogue otherwise says what the user sees. Nothing in this entry is a new
+mechanism: it is the client code reacting exactly as written to the responses those two entries
+record.
+
+**Measured** (**static**, `[T lib/views/users/includes/data.html]`, byte-identical to the base commit —
+`git diff 2f8712a -- lib/views/ public/js/` is empty, **probe**):
+
+| Step | Client behaviour | Address |
+|---|---|---|
+| 1 | The button disables itself and reads "Starting export..." | `:175-178` |
+| 2 | `POST /api/exports` answers 500, so the `.fail` arm runs: it shows the error and **re-enables the button** | `:194-201` |
+| 3 | `showError` sets a **5000 ms** `setTimeout` that re-hides the banner, so the only report of the failure disappears on its own | `:59-65` |
+| 4 | On any later load of the page, `loadExportList` finds the `pending` row the 500 left behind, renders "In Progress" and starts polling it | `:127-168` |
+| 5 | The poll's `updateProgress` sets the real `disabled` attribute on `#request-export`, relabels it "Export in progress..." and shows a "Preparing export..." meter | `:75-88` |
+| 6 | Nothing advances the row: `config/default.yaml` declares no `aws.buckets.exports`, so the worker throws on its first upload — [§9.4](#94-the-awsbucketsexports-configuration-gap) | `[T lib/workers/exports.js:528]`, `[T lib/workers/exports.js:542]` |
+
+So the state is stable rather than transient: the page shows a started export that cannot finish, the
+control that would retry is genuinely `disabled` — and therefore not focusable, which is why a keyboard
+walk of that page reaches no export control at all — and a retry would be refused anyway, because
+§10.19's guard answers `200 {"error":"Export already in progress"}` for as long as the row exists. The
+5 s auto-hide in step 3 is what makes the sequence silent: a user who looks away misses the only
+message they are given.
+
+**Driven in a real browser, on this tree** (**probe**, headless Chrome against a running instance,
+signed in as an account with zero export rows). Every figure below was observed rather than read off
+the template, and four of them are not visible in the source at all:
+
+| Observed | Measurement |
+|---|---|
+| The banner's text | **"Internal Server Error"** — not the `'Failed to start export'` fallback the `.fail` arm names at `:194-201`. That arm computes `resp.error \|\| 'Failed to start export'`, and a Boom 500 body *does* carry an `error` field whose value is the HTTP status phrase, so the fallback is unreachable on this path and the user is shown a bare status phrase that never mentions exports |
+| The auto-hide interval | `hide-override` removed **+21 ms** after the click and re-added **+5021 ms** — visible for exactly **5000 ms**, matching the `setTimeout` at `:62-64` |
+| The "Starting export..." label at `:178` | Present for roughly one frame. The whole request → fail → `showError` → relabel cycle completed **21 ms** after the click, so this label is **not perceivable**; the button appears never to change |
+| The page after the auto-hide | Pixel-indistinguishable from the never-clicked state, and the banner carries no dismiss control — the `a.close` in the markup is `ng-hide` inside a `display:none` parent |
+| Interactive controls in the export section, once blocked | **one**, `#request-export`, `disabled = true`. Zero interactive elements inside `#export-list` — the Action cell is a `<span class="label">In Progress</span>`, not a link. No retry, no cancel, no way to clear the row |
+| Keyboard reachability of that control | **none.** 38 Tab presses produced 36 focus stops across three identical laps of the page, and the ring wrapped from the last side-nav link straight back to the first link, skipping the button every lap; a programmatic `.focus()` also failed. The cause is only that `disabled` is true — the element has no `tabindex` and `tabIndex` is 0, so an enabled button here would sit in the natural order |
+| A window in which the button *is* clickable | **~3106 ms on each SUBSEQUENT load** — not on the load that failed. `loadExportList` repaints the pending row at ≈264 ms but the disable comes from the 3-second poll, so the button stays enabled until ≈3269 ms. Clicked inside that window it answers `200 {"error":"Export already in progress"}` — refused by the very row the 500 created — so the window cannot make progress either |
+| The page that actually failed | **never re-reads its own list.** The `.fail` arm at `:194-201` shows the banner and re-enables the button but calls neither `loadExportList` nor `pollExportStatus`, so the failing page continues to display **"No exports yet."** and leaves the button enabled indefinitely — while the row it just created exists. The blocked state described above is therefore reached only on the *next* load, and the two states are easy to mistake for each other: on the failing page nothing indicates that anything was created |
+| The status poll | **never terminates.** `pollExportStatus` at `:100-126` clears its interval on three conditions only — the row reaching `completed` or `failed`, or the status request itself failing — and none can occur: step 6 stops the row ever leaving `pending`, and the status request answers **200** for an owned, existing id, so the `.fail` arm that would also clear it never runs. The page therefore issues `GET /api/exports/{id}` every 3 s indefinitely; over 100 such requests were logged in one sitting, all 200 |
+
+**Step 6 reaches further than the worker, and the download route shows it directly.** §9.4's missing
+bucket is usually described through `lib/workers/exports.js`, but the same absence is observable from
+the request path without the worker running at all. Forcing a row to `status: 'completed'` with a
+future `expiresAt` — the one state in which `downloadExport` passes all four of §10.20's guard
+branches and reaches the presigned-URL call at `[T lib/controllers/users.js:1505-1509]`, whose `Bucket` argument is `[T lib/controllers/users.js:1509]` — answers, measured
+identically on both trees:
+
+```text
+GET /api/exports/{completed, unexpired}/download
+  -> 200 {"error":"Cannot read properties of undefined (reading 'name')","flash":{…}}
+```
+
+`config.aws.buckets.exports.name` is that dereference, and `config/default.yaml`'s `aws.buckets` block
+declares seven entries — `userassets`, `snapshots`, `cdn`, `materials`, `useravatars`, `appassets`,
+`vendorassets` — and no `exports` among them. So the throw lands in the same re-invoked callback as
+§10.20's branches and returns through the same `request.fail` path, which is why this too is a **200
+carrying an error string**. The consequence for this entry is that the dead end does not depend on the
+worker being broken or absent: even a row that somehow reached `completed` cannot be downloaded by a
+deployment that has not configured the bucket.
+
+The server trace taken during that run is the same mechanism §10.18 records, seen from the other side:
+`ROUTE: Handler returned object` is logged **before** the `TypeError: Cannot read properties of
+undefined (reading 'toString')` raised at `ObjectId.toHexString` → `ObjectId.toJSON` →
+`JSON.stringify` → `Response._marshal`. The handler succeeded; only the marshal failed.
+
+**Target disposition: preserved, and not repairable from within this migration's scope.** Three
+separate exclusions bear on it and each is explicit, so this is a scope boundary rather than a
+judgement:
+
+- the client half — the auto-hide, the disabled control, the absence of a retry — is in
+  `lib/views/**` and `public/js/**`, which AAP §0.2.2 excludes from modification and which are
+  byte-identical to `2f8712a`;
+- the 500 that starts it is §10.18, preserved under R-d;
+- the missing bucket that prevents the row ever completing is §9.4, where `config/default.yaml` is
+  deliberately unchanged because every value in that block is a deployment placeholder.
+
+**Stated plainly, as §9.4 states its own:** on a deployment that configures `aws.buckets.exports` and
+runs the worker, the row does complete and the page resolves; the dead end is the behaviour of a
+deployment that does not. Neither the 500 nor the auto-hide is affected by that configuration.
+
+**Gate.** The server half is gated by §10.18's and §10.19's cases. The client half has no gate in this
+migration and is recorded here as measured, unchanged and out of scope — `test/smoke-test.sh` is
+unauthenticated by decision and never reaches `/account/data`, and the corpus compares
+`route.get.account-accountPage.html` as rendered markup, which is identical on both trees because the
+template is.
+
+### 10.22 Two further defects, surfaced by the closing verification pass
+
+Neither of these is among the findings this checkpoint was given, and neither is a migration
+regression. Both are recorded because they were measured here, and because a concern nobody writes
+down does not outlive the run that noticed it. Both are **preserved**, for the reasons each states.
+
+#### A — a malformed export id answers 200 carrying the ORM's cast diagnostic
+
+The mechanism is [§9.9](#99-two-routed-handlers-that-answer-200-carrying-the-name-of-a-missing-identifier)'s,
+reached by a different error. `Export.findById(id, cb)` casts its argument onto the schema's `_id`
+path; a value that cannot be cast produces a Mongoose `CastError` rather than a `null` document; the
+finder's bridge re-invokes the same callback with that error (`[T lib/models/model.js:147]`,
+byte-identical to the base commit); the handler's `if (err)` arm answers
+`request.fail({ error: err.message })`; and `request.fail`'s JSON path returns `h.response(json)`
+**without setting a status**, so the transport is 200. The two arms are
+`[T lib/controllers/users.js:1414]` in `getExportStatus` and `[T lib/controllers/users.js:1472]` in
+`downloadExport`.
+
+**Measured** (**probe**, nine path parameters × the two routes = 18 requests per tree, one
+authenticated identity, driven against both a delivered instance and a `2f8712a` worktree with its own
+install — the two outputs are line-for-line identical once the generated username is normalised):
+
+| Path parameter | Both routes answer | Body |
+|---|---|---|
+| `not-an-objectid`, 24 non-hex characters, `__proto__`, `constructor`, `[object Object]`, `' OR '1'='1`, `<script>alert(1)</script>`, `日本語` | **200** | `{"error":"Cast to ObjectId failed for value \"<the value, echoed verbatim>\" (type string) at path \"_id\" for model \"Export\"","flash":{}}` |
+| `123456789012` — twelve bytes, so it **casts successfully** | **200** | `{"error":"Boom is not defined","flash":{}}` — it never reaches this arm at all; it reaches the not-found branch [§10.20](#1020-the-rest-of-the-unbound-boom-family-in-libcontrollersusersjs) records |
+
+That second row is the one worth keeping: the boundary is not "hexadecimal" but "castable", and any
+twelve-byte string is a valid ObjectId, so the two classes of malformed parameter answer with two
+different bodies at the same status.
+
+**What is disclosed** is the ODM's own diagnostic — the model name `Export`, the schema path `_id`, the
+runtime type of the supplied value, and the value itself echoed back. **What is not**: the value is
+echoed inside a JSON string and JSON-escaped, so the script-shaped parameter comes back as text in an
+`application/json` response and no execution was observed; nothing is read or written on this path;
+and because every uncastable parameter produces the same shape, this response distinguishes no
+existing id from any other, so the enumeration §10.20 records for *castable* ids is not widened here.
+
+**Disposition: preserved, and recorded rather than repaired.** Each available repair — validating the
+parameter ahead of the finder, giving the arm a status, or replacing `err.message` with a fixed string
+— changes the status or the body of a response a client can observe, which is an error-edge change
+R-e forbids and an improvement R-d forbids, with no deviation available because
+[§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) closes the register
+at two. It is also the same arm §9.9 and
+[§10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why) depend on, so narrowing
+it here would move both of those entries.
+
+**Gate: none, stated plainly.** No corpus scenario supplies an uncastable parameter: the two values
+the artifact materialises for `{exportId}` are `000000000000000000000602` for the seeded row and
+`0000000000000000000006ff` for the missing one, and both are 24-hex and castable (**probe**, every
+`/api/exports/<segment>` string in the committed corpus). A scenario that closed this would need one
+uncastable and one twelve-byte parameter against the same identity, and would assert the status and
+the body's shape rather than its message text, which carries the ODM's wording and would move with the
+`mongoose` version.
+
+#### B — the Recent Exports table overflows the viewport at 375 px
+
+The client half of [§10.21](#1021-the-export-flow-is-a-dead-end-for-the-user-who-reaches-it), at the
+narrowest breakpoint. The table `loadExportList` builds
+(`[T lib/views/users/includes/data.html:138-167]`) carries `style="width: 100%"`, but a table cannot
+render narrower than its own min-content width, and no ancestor supplies a horizontal scroll container.
+
+**Measured** (**probe**, headless Chrome against a delivered instance, one identity owning a single
+`pending` row, the four widths driven in one pass):
+
+| Viewport | Document `scrollWidth` / `clientWidth` | Max reachable `scrollX` | Verdict |
+|---|---|---|---|
+| 375 × 812 | **422 / 375** | **47** | **overflow, 47 px** |
+| 768 × 1024 | 768 / 768 | 0 | no overflow |
+| 1280 × 900 | 1280 / 1280 | 0 | no overflow |
+| 1920 × 1080 | 1920 / 1920 | 0 | no overflow |
+
+At 375 the table measures 391.313 px inside a 313 px container, so its right edge lands at 422.313
+against a 375 px viewport; the `Action` header cell ends at 419.313 and the row's
+`<span class="label">In Progress</span>` at 409.313, so both are cut by the viewport edge — and
+because nothing in the chain scrolls, no horizontal scrollbar is painted to indicate that the content
+continues. 21 elements exceed the viewport width at 375, and none does at any wider width.
+
+**Cause, measured rather than inferred.** The table's min-content width is a fixed **391.313 px**: its
+five columns floor at 77.656 + 75.094 + 81.109 + 48.797 + 94.656 px, plus `border-spacing` and the
+table's borders. Two of those floors cannot break — the header word `Trinkets`, and the status badge,
+whose `white-space: nowrap` comes from the vendored Foundation `.label` component
+(`public/components/foundation/scss/foundation/components/_labels.scss`, compiled into
+`public/css/base.css`). Every ancestor from `div#export-list` up to `div#account.row.data` computes
+`overflow-x: visible`, so the excess reaches the document. The threshold is a container narrower than
+391.313 px, which is 313 px at the 375 breakpoint against 706 px at 768 and 688 px at both wider
+widths.
+
+**This is baseline layout rather than migration drift**, and the identity is checkable:
+`git diff 2f8712a -- lib/views/ public/js/ static/scss/` is empty, and `public/css/base.css` is a
+build artifact of that unchanged SCSS together with the fetched components.
+
+**Disposition: preserved and out of scope, on two independent grounds.** A fix would land in
+`lib/views/**` or `static/scss/**`, which AAP §0.2.2 excludes from modification; and the rule that
+sets the binding floor is in `public/components/**`, which is gitignored `[B .gitignore:4]`, retrieved
+by `scripts/fetch-components.js` and excluded by the same section as an externally sourced asset. The
+measurement itself was clean: no console output from the application's own code at any of the four
+widths — the only two entries were Chrome's own `autocomplete` advisories on the login form — and no
+request with a status of 400 or above.
+
+**Gate: none**, for the reason §10.21 gives for its own client half: the corpus compares rendered
+markup, which is identical on both trees because the template is, and nothing in this migration
+measures a computed layout.
+
+---
+
+### 10.23 The course page overflows and overlaps painted controls from 375 to 768
+
+The first of **five** narrow-viewport layout defects — §10.23 through §10.27 — measured in a real
+browser against the running application and traced to declarations in `static/scss/**`,
+`public/js/**`, `public/partials/**` and `lib/views/**`. All five are recorded rather than repaired,
+on one basis that is stated in full here and referred to from the other four.
+
+**Why no source file can carry any of these five fixes.** Four facts, each measured rather than
+asserted:
+
+1. **None of them is migration drift.** `git diff --name-only 2f8712a HEAD -- <glob>` returns **0
+   files** for each of `static/scss`, `lib/views`, `public/js` and `public/partials`, and 0 for every
+   individual file cited across the five entries (**static**). So each is pre-existing baseline
+   behaviour, `[T …]` and `[B …]` address the same bytes at the same lines, and **R-d** governs: the
+   observable behaviour is preserved.
+2. **AAP §0.2.2 excludes those four globs verbatim** — "`public/js/**`, `lib/views/**`,
+   `public/partials/**` and `static/scss/**` are not modified" — and §0.3.1's target tree states it a
+   second, independent time (`public/** · static/scss/**` **unchanged**; `views/**` **unchanged**).
+3. **A markup fix would fail a hard gate.** AAP §0.9.3 compares rendered HTML exactly on "`id` and
+   `class` attributes, `data-` and ARIA attributes", and `[T test/parity/replay.js:507]` says so in
+   code — "A single rendered page that changed layout would otherwise emit one record per class
+   attribute." Measured over `test/parity/corpus.json` (**artifact**): `route.get.u-username-classes.html`
+   pins **200**, `text/html; charset=utf-8`, body length **12496**, digest `a3189b6c…`, and
+   `route.get.home.html` pins **200**, length **19399**, digest `a6a8c2ef…`. Adding a wrapper element
+   or a class to either template is therefore reported as an unapproved difference.
+4. **A CSS fix cannot reach a browser through a committable file.** `git check-ignore -v` (**probe**)
+   resolves `public/css/base.css` to `.gitignore:36`, `public/css/embed.css` to `.gitignore:38` and
+   `public/components` to `.gitignore:4` — all three are gitignored build artifacts. The only
+   committable source of the served CSS is `static/scss/**`, which fact 2 excludes.
+
+**And §0.7's R-b-over-R-d override does not reach them.** That override was granted to exactly one
+case: a route that **never settles**, i.e. produces no response at all
+([§11.1](#111-deviation-1-the-never-settling-file-response)). Every route in these five entries
+answers **200** with its content rendered — measured **0** responses ≥ 400 and **0** JavaScript
+errors across 845 requests (**probe**) — so no requirement other than R-d controls, and §0.2.2's
+default applies: "Every other quirk found is documented and left working; 0.6.6 is the catalogue."
+[§10.8](#108-the-search-response-seam-the-client-reads-a-key-the-server-does-not-send) is the
+precedent for exactly this shape, on exactly this ground, in `public/js/**`.
+
+**Three independent root causes, none of them a single line.**
+
+*One — a fixed 350px pane and a fixed 350px content offset, in no media query at all:*
+
+```scss
+// [T static/scss/_course-view.scss:72-82]  ·  [T static/scss/_course-view.scss:94-96]
+  #outline {
+    …
+    margin-left: -350px;
+    width: 350px;
+    position: fixed;
+    top: 125px;
+    …
+  }
+  #course-content {
+    …
+    &.open {
+      margin-left: 350px;
+    }
+```
+
+`static/scss/_course-view.scss` contains **zero** occurrences of `media` across all **193** lines
+(**static**, `grep -c`), so neither declaration has a narrow-viewport variant anywhere in the file.
+The served artifact carries both **outside** any media block — `body.course #outline{…margin-left:-350px;width:350px;position:fixed;top:125px…}`
+and `body.course #course-content.open{margin-left:350px}` (**probe**, read from the built
+`public/css/base.css`) — which is why the runtime defect and the source declaration are the same
+object rather than two things that resemble each other.
+
+*Two — the `open` class is decided once, at load:*
+
+```javascript
+// [T public/js/courseEditor/controllers/root.js:212]
+      self.$scope.menuOpen           = self.trinketUtil.isLarge() ? true : false;
+```
+
+`isLarge()` is `matchMedia(Foundation.media_queries['large']).matches`
+`[T public/js/services/util.js:31-33]` — Foundation's `large` is 64em/1024px — and it is never
+re-evaluated: `defineListeners` `[T public/js/courseEditor/controllers/root.js:127-140]` binds only
+`scroll` `[T …:139]`, and the **sole** `resize` binding in `public/js/courseEditor/**` is
+`[T public/js/courseEditor/controllers/materialControl.js:53]`, which drives the code editor's
+`sizeToWindow` and never touches `menuOpen` (**static**, `grep -rn resize` over that directory).
+
+*Three — the rule meant to hide the action row targets a selector this build never renders:*
+
+```scss
+// [T static/scss/_course-edit.scss:3-8]
+    .action-buttons {
+      display: inline-block;
+
+      @media #{$small-only} {
+        display: none;
+      }
+    }
+```
+
+`grep -rn 'action-buttons' lib/views/ public/partials/` returns **0 matches**, and the only
+occurrence of that class name anywhere in the repository is the SCSS rule itself (**static**);
+`document.querySelector('.action-buttons')` is **null at every width** (**probe**). The five buttons
+are five `a.button.small` at `[T public/partials/course_editor.html:15,16,24,25,28]`, inside a plain
+`div.right` `[T …:14]` inside `div.course-subnav.clearfix.row.gutterless` `[T …:7]`. The compiled
+rule is real and correctly scoped — `body.course #course-nav .action-buttons{display:inline-block}`
+followed by `@media only screen and (max-width: 40em){body.course #course-nav .action-buttons{display:none}}`
+(**probe**, built `base.css`) — so the media query fires and matches nothing.
+
+**Measured** (probe: headless Chrome against the running application on port 20370, seeded course
+"QA Journey Course" with topic "test topic" and page "test material"):
+
+```text
+1280, fresh load
+  #course-content class list                  -> contains "open"
+  #course-content margin-left                 -> 350px
+
+resize 1280 -> 375, WITHOUT reloading
+  #course-content class list                  -> still contains "open"   <-- decided at load only
+  #course-content margin-left                 -> 350px
+  #outline width / margin-left                -> 350px / -350px
+  matchMedia('(max-width:640px)').matches     -> true
+  documentElement.scrollWidth / innerWidth    -> 470 / 375  =  95px of horizontal scroll
+  #course-content width                       -> 25px  (6.7% of the viewport)
+  course-editor elements overflowing right    -> 10, among them
+      #outline-expander            350.00 -> 392.58
+      i.fa-times                   365.00 -> 377.58
+      #material-content            350.00 -> 470.00
+      .page-controls-container     319.84 -> 410.00
+      #page-controls-button        319.84 -> 410.00
+
+overlapping painted on-screen control pairs, fresh loads
+  375 -> 6      640 -> 3      641 -> 2      768 -> 2
+  at 768:   ‹ x ✏Edit  =  51.66 x 11.81 px       › x ✏Edit  =  34.70 x 11.81 px
+```
+
+**Three corrections to the finding as filed, each of which matters to anyone reproducing it.**
+
+- **The 95px overflow requires the resize path from ≥ 1024, and a fresh narrow load shows none of
+  it.** On a **fresh** load at 375, 640, 641 and 768, `scrollWidth − innerWidth` is **0** at all four
+  widths and **0** course-editor elements overflow, because `menuOpen` is false and the pane starts
+  closed. A reproduction script that merely loads at 375 measures 0 and appears to refute the
+  finding; the defect is the *transition*, which is root cause two.
+- **"The five-button action row strikes through the breadcrumb title" does not reproduce as a rect
+  intersection.** Measured **0** intersections between every button rect and every title text run, at
+  375 and at 768, with the row abutting the card at exactly 0px (card bottom 126 == row top 126 at
+  375; 105 == 105 at 768). What actually overprints at 375 is: the wrapped title's own two line boxes
+  overlapping **9px over a 34px span**; the home-icon/`/` strip crossing the title **45 × 6px**; the
+  buttons covering **11.7 of the expander tab's 43.7px** for its full 64px height; **34 of the ✏Edit
+  control's 48px**, hiding its pencil glyph entirely; and `›` covering body copy **34.66 × 42.42px**.
+  The reported effect is real and visible; its geometry is glyph-level, not box-level.
+- **`Dashboard × ✕` at 768 is refuted as filed and confirmed in two other forms.** On a fresh 768
+  load the two are **318.7px apart**, because a fresh load renders **☰**, not **✕**. The pair is
+  confirmed at 375 as `Dashboard × ☰` = **11.72 × 29.00px**, and at 768 once the pane is open as
+  **30.17 × 7.00px**.
+
+**Target disposition: preserved, all three mechanisms unchanged.** `#outline`'s fixed width, the
+fixed `.open` offset, the load-time `menuOpen` decision and the unmatched `.action-buttons` rule are
+carried exactly as at `2f8712a`. The four facts above are why: the fix is a media query and a resize
+listener in two of the excluded globs, and the third part of it is a markup change the corpus pins by
+digest.
+
+**Gate.** **None — stated in §10.23.** No gate in this migration measures layout, computed CSS or
+element geometry at any viewport, so this passes every gate the migration defines. Measured, the
+corpus does not even hold the surface: `route.get.userSlug-courses-courseSlug.html` is driven
+**anonymous** and records a **302 with a 0-byte body** (digest `e3b0c442…`, the empty digest), and
+**0 of 392** scenarios drive `/partials/course_editor.html` (**artifact**). What the corpus does do
+is *constrain the repair*, per fact 3 — the opposite of closing the finding.
+
+**The fix an AAP-authorized change should apply** (recorded so the follow-up need not re-derive it;
+**not** a proposal for this migration): wrap the `#outline` width and the `#course-content.open`
+offset in `@media #{$medium-up}` with a full-width overlay variant below it; re-evaluate `menuOpen`
+from a `resize`/`matchMedia` listener rather than only at controller construction; and either wrap
+the five buttons of `[T public/partials/course_editor.html:14-31]` in an `.action-buttons` element or
+retarget the `[T static/scss/_course-edit.scss:3-8]` rule at the `div.right` the build actually
+renders. It must be taken together with §10.24, whose expander is one of the controls this row
+buries.
+
+### 10.24 At 375 the outline expander and the page-edit control have zero clickable pixels, and the expander is inert on Enter and Space
+
+The consequence of [§10.23](#1023-the-course-page-overflows-and-overlaps-painted-controls-from-375-to-768)'s
+third root cause, measured as reachability rather than as geometry: at 375 the course page offers **no
+outline, no page or topic creation and no edit control at all**. The basis for recording rather than
+repairing it is §10.23's four facts — the root causes sit in `static/scss/**`, `public/partials/**`
+and `lib/views/**`, `git diff --name-only 2f8712a HEAD` reports **0** changed files in each, and
+neither a stylesheet nor a markup repair has a committable path that clears AAP §0.2.2 and the
+§0.9.3 HTML gate.
+
+**Two root causes: an unset stacking level, and an anchor with no keyboard contract.**
+
+*One — the expander declares no `z-index` and is enclosed by a subtree that declares 10:*
+
+```scss
+// [T static/scss/_course-view.scss:62-70]        the expander — no z-index at all
+  #outline-expander {
+    position: fixed;
+    display: block;
+    …
+  }
+// [T static/scss/_course-view.scss:21-26]        the band above it — z-index 10, 80px tall
+  #course-nav {
+    z-index: 10;
+    position: absolute;
+    top: 0;
+    width: 100%;
+    height: 80px;
+// [T static/scss/_course-edit.scss:11-14]        its auto-height child
+    .course-subnav {
+      position: relative;
+      padding: 0.75em 2em;
+```
+
+The served artifact confirms the omission rather than merely the source:
+`body.course #outline-expander{position:fixed;display:block;border-radius:0 8px 8px 0;margin-top:20px;padding:20px 15px;background-color:#008aff;color:#fff}`
+— no `z-index` property is compiled at all (**probe**, built `public/css/base.css`). The subnav's
+children float (`.title` `[T static/scss/_course-edit.scss:20-22]`, `#dashboard-list-options`
+`[T static/scss/_course-edit.scss:24-26]`), so at 375 the action row wraps to two rows, the subnav
+grows to **189px** inside a box declared at **80px**, nothing clips it, and a `z-index: 10` subtree
+blankets an expander whose own stacking level computes `auto`.
+
+*Two — as shipped, the control is an anchor with no href, no tabindex and no key handler (what the
+runtime adds to that is the correction below):*
+
+```html
+<!-- [T public/partials/course_editor.html:35] -->
+  <a id="outline-expander" ng-click="menuOpen=!menuOpen">
+<!-- [T public/partials/course_editor.html:91] -->
+        <a id="page-controls-button" data-dropdown="page-actions" class="button small dropdown-blue">
+```
+
+`[T lib/views/classes/view.html:69]` is the class player's equivalent and is the same shape in every
+respect that matters here — no `href`, no `tabindex`, no key handler — with one verified difference
+worth recording so a reader does not assume symmetry: it **does** carry `aria-label="Toggle
+Outline"`, which the course-editor anchor does not. That surface's own overlay defect belongs to a
+different work unit and is not restated here.
+
+**Measured** (probe: headless Chrome against the running application on port 20370, fresh load at
+each width, rects given as left / top / right / bottom):
+
+```text
+375 — a#outline-expander, rect 0 / 145 / 43.72 / 209
+  points hit-testing to it or a descendant   -> 0 of 120 sampled   (0.0%)
+  what those 120 points hit instead          -> div.course-subnav            90
+                                                a.next  (›)                  18
+                                                a.button.small  Dashboard    12
+  div.course-subnav rect                     -> 0 / 45 / 375 / 234   = 189px tall in an 80px box
+  #course-nav position / z-index             -> absolute / 10
+  #outline-expander z-index                  -> auto
+  real Enter keypress                        -> #course-content class list unchanged (no "open"),
+                                                margin-left 0px, #outline margin-left -350px
+  real Space keypress                        -> identical, no state change
+  jQuery._data(expander,'events')            -> ["click"]      (no keydown, keypress or keyup)
+
+375 — a#page-controls-button
+  points reaching it                         -> 0 of 120         (0.0%)
+  covered by                                 -> div.right                    43
+                                                a.button.small  Users        36
+                                                a.prev  (‹)                  35
+                                                i.fa-users                    6
+  tabindex attribute                         -> absent
+  .focus() then document.activeElement       -> body             (not focusable at all)
+
+375 — the bottom creation bar is entirely off screen
+  div#new-topic-container                    -> left -350   right    0
+  a#new-topic-button                         -> left -350   right -175
+  a#edit-outline-button                      -> left -175   right    0
+
+768 — the same expander, for contrast
+  points hit-testing to it                   -> 84 of 120        (70.0%)
+  real pointer click                         -> #course-content margin-left 0px -> 350px
+                                                #outline rect -350/0 -> 0/350
+                                                icon class fa-bars -> fa-times
+```
+
+The 0% → 70% difference between 375 and 768 is caused **entirely** by the action row wrapping at 375:
+the expander's own rect, stacking level and handler set are identical at both widths.
+
+**One correction to the finding as filed, and it changes what a remediation has to do.** The
+*shipped* partial has no `tabindex` — confirmed by a read-only `GET /partials/course_editor.html`
+(**probe**) — but the **live DOM** carries `tabindex="0"`, injected at runtime by **ngAria** on every
+`ng-click` element. `angular-aria.min.js` at AngularJS **1.3.20** is in the global body script list
+`[T config/default.yaml:88]`, with the matching core at `[T config/default.yaml:63]`, so it applies
+to every page. Consequences, each measured:
+
+- The expander **is** focusable at runtime, so "no tabindex, therefore not focusable" is true of the
+  template and false of the page. It announces as an **unnamed link**, with no `role` and no
+  `aria-expanded`.
+- It nevertheless stays **key-inert**, because ngAria 1.3.20 binds its Enter/Space shim only to `DIV`
+  and `LI` nodes and never to an `<a>`. The Enter and Space results above are therefore not an
+  artefact of focus never landing on the element.
+- `#page-controls-button` has **no** `ng-click` — it is a Foundation `data-dropdown` — so it receives
+  no ngAria `tabindex` and is genuinely unfocusable, exactly as filed.
+
+**Target disposition: preserved.** The unset `z-index`, the anchor's missing keyboard contract and the
+`data-dropdown` control are carried exactly as at `2f8712a`, and the runtime ngAria behaviour with
+them.
+
+**Coordination seam, recorded because two work units meet here.** The controls in this entry are the
+same controls the `course-editor-keyboard` unit owns making operable, and the row that buries them is
+what §10.23's third fix retargets. A future authorized change must land all three together or it will
+make a control focusable that is still covered, or reachable that is still key-inert.
+
+**Gate.** **None — stated in §10.24.** No gate in this migration hit-tests an element, dispatches a
+key event or reads a stacking context; and per §10.23 the corpus records this route as a **302 with a
+0-byte body** and drives the partial in **0 of 392** scenarios, so there is nothing here for a gate to
+compare.
+
+**The fix an AAP-authorized change should apply** (**not** a proposal for this migration): give
+`#outline-expander` a `z-index` above `#course-nav`'s 10 and enlarge its hit area below `$medium`;
+give the anchor `role="button"`, a real `tabindex` and an `ng-keydown` that handles Enter and Space;
+and give `#page-controls-button` a focusable, key-operable form.
+
+### 10.25 The course sub-navigation overlays and completely hides the material title and body at 320 and 375
+
+The same auto-growing subnav that [§10.24](#1024-at-375-the-outline-expander-and-the-page-edit-control-have-zero-clickable-pixels-and-the-expander-is-inert-on-enter-and-space)
+buries a control under also paints over the page's own content, and this entry states that half. The
+basis for recording rather than repairing it is §10.23's four facts: the root cause is two
+declarations in `static/scss/**`, which `git diff --name-only 2f8712a HEAD` reports as **0** changed
+files and AAP §0.2.2 states verbatim is not modified, and whose only committable source is excluded
+while the served `public/css/base.css` is gitignored at `.gitignore:36`.
+
+**Root cause — a hard-coded reserve against an auto-height band, in a positioning mode that cannot
+push:**
+
+```scss
+// [T static/scss/_course-view.scss:84-85]     the reserve
+  #course-content {
+    padding-top: 80px;
+// [T static/scss/_course-view.scss:21-26]     the constant it matches
+  #course-nav {
+    z-index: 10;
+    position: absolute;
+    …
+    height: 80px;
+```
+
+`.course-subnav` `[T static/scss/_course-edit.scss:11-14]` has no height at all — it is sized by its
+content — and its children float (`.title` `[T static/scss/_course-edit.scss:20-22]`,
+`#dashboard-list-options` `[T static/scss/_course-edit.scss:24-26]`), so at narrow widths the row
+wraps and the band outgrows the 80px both declarations assume. Because `#course-nav` is
+`position: absolute`, the excess **paints over** `#material-content` instead of pushing it down, and
+nothing on the ancestor chain clips it.
+
+**Measured** (probe: headless Chrome against the running application on port 20370, fresh navigation
+at each viewport, values read after Angular settled):
+
+```text
+viewport                                 320        375        768       1920
+#course-content padding-top              80px       80px       80px      80px
+.course-subnav height                    189px      189px      119px     72px
+#course-nav.scrollHeight (vs height:80px) 189        189        119       79
+#course-nav position / z-index           absolute / 10  at every one of the four widths
+overflow past the 80px reserve           109px      109px      39px      0px
+.course-subnav ∩ div#material-content    320x109    375x109    768x39    0x0
+.course-subnav ∩ div#material            200x85.81  255x82.58  648x15.81 0x0
+```
+
+At 375 that second intersection is **100% of `#material`'s width and 100% of its height**. The paint
+order is not inferred from the rectangles — it was read from the hit-test stack at a point **inside**
+`#material`:
+
+```text
+document.elementsFromPoint(160, 188) at 320
+  a.next.button.small
+  div.right
+  div.course-subnav.clearfix.row.gutterless      <-- the subnav subtree, above…
+  p
+  div.ng-scope
+  div#material                                   <-- …the element the point is inside
+  div#material-content
+  div#course-content
+  …
+```
+
+Visibility of the page's own title, "test material", per width:
+
+```text
+320 and 375  -> COMPLETELY INVISIBLE.  100% of its text rect lies inside the subnav;
+                elementFromPoint at the text centre returns a#course-actions-button;
+                pixel sampling shows 97.4% of the glyph line covered by an OPAQUE white
+                subnav button
+768          -> partially visible.  51.4% of its area covered, 100% of the line hit-stolen,
+                nothing opaque over it
+1920         -> fully visible
+```
+
+So the defect is present at 320, 375 and 768, and absent at 1920.
+
+**Two corrections to the finding as filed.**
+
+- **The subnav measures 189px at *both* 320 and 375**, not the reported 178px and 167px. The
+  consequence is that the `∩ div#material` overlap at 320 is **200 × 85.81**, not 200 × 57 — the
+  defect is **worse** than filed, not milder, and a reproduction that expects 178/167 will read its
+  own measurement as a mismatch.
+- **The string "test content" could not be measured, because it is not in the DOM on this route at
+  any viewport.** The path that renders the measured screen is the **player** — `viewMaterial`'s
+  no-markup branch at `[T public/js/courseEditor/controllers/root.js:649]`, which calls
+  `material.get({ with : "owner" })` against
+  `GET /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}`
+  `[T config/api_routes.js:218-230]`. Measured (curl, on the running target): that request is
+  `…/materials/{materialId}?with=owner`, answers **200**, and its `data` carries exactly
+  `id, name, slug, type, trinket, lastUpdated` — **no `content` and no `draft`** — for a **316-byte**
+  body once the flash is empty. So the template renders its placeholder and a seeded draft body never
+  reaches this screen. Both the automatic load and a click on the existing outline row issue exactly
+  this one request.
+
+  Two things about that request are easy to get wrong, and both were got wrong in an earlier draft of
+  this entry, so they are recorded rather than quietly fixed. **First**, the request is *not*
+  parameterless: it sends `with=owner`. The parameterless fetch is
+  `[T public/js/courseEditor/controllers/materialControl.js:99-100]`,
+  `.one('materials', material.id).get()` — a **different, edit-mode** fetch in a different
+  controller, which does not render the measured screen. **Second**, the absent draft is *not*
+  explained by the request omitting `withDraft`. On this route `withDraft` is inert: the declaration
+  carries no `validate` block at all, and `course.getMaterial`
+  `[T lib/controllers/course.js:738-756]` reads only `request.query.with`. `withDraft` is read solely
+  by `getCourse` `[T lib/controllers/course.js:342]`, on the outline route. Measured control: adding
+  `withDraft=true` to the same URL answers **200** with a byte-identical `data` object. The honest
+  statement is therefore that this route answers the material document without a draft body, not that
+  a missing parameter suppressed one.
+
+  Either way the conclusion is unchanged and is the point of recording it here: the missing text is a
+  **data-delivery fact, not an overlay effect**, and conflating the two would attribute it to this
+  quirk. The placeholder "Click here to add content to your page." was measured as the proxy instead:
+  partially visible at 320 and 375, fully visible at 768 and 1920.
+
+**Target disposition: preserved.** `padding-top: 80px`, `height: 80px`, the auto-height subnav and
+the absolute positioning that lets the excess paint over the content are all carried exactly as at
+`2f8712a`.
+
+**Gate.** **None — stated in §10.25.** No gate measures an element rectangle, an intersection or a
+hit-test stack, and per §10.23 the corpus records this route as a **302 with a 0-byte body** and
+drives its partial in **0 of 392** scenarios.
+
+**The fix an AAP-authorized change should apply** (**not** a proposal for this migration): replace
+the fixed `padding-top: 80px` with a measured or `min-height`-driven offset, or let
+`header#course-nav` participate in flow below the `$medium` breakpoint. §10.23's action-row change
+reduces the wrapping that produces the excess but does not remove it — a two-row band at 320 still
+exceeds 80px — so both are needed.
+
+### 10.26 The outline animation drives layout rather than `transform`, reflowing the content pane every frame
+
+Recorded with its two corrections rather than as filed, because one of them **inverts the finding's
+conclusion about which declaration to change** — and a follow-up that took the filed conclusion
+literally would animate the wrong element. The basis for recording rather than repairing it is
+§10.23's four facts: the root cause is one declaration in `static/scss/**`, which AAP §0.2.2 states
+verbatim is not modified and §0.3.1's target tree repeats; `git diff --name-only 2f8712a HEAD --
+static/scss` reports **0** changed files, so it is baseline behaviour under R-d rather than migration
+drift; and the served stylesheet is a gitignored build artifact (`.gitignore:36`), leaving no
+committable path to a browser.
+
+**Root cause — the transitioned property is a layout property:**
+
+```scss
+// [T static/scss/_course-view.scss:86-89]
+    -webkit-transition: margin-left 0.25s ease-in;
+    -moz-transition: margin-left 0.25s ease-in;
+    -o-transition: margin-left 0.25s ease-in;
+    transition: margin-left 0.25s ease-in;
+```
+
+The served artifact carries it verbatim —
+`body.course #course-content{padding-top:80px;-webkit-transition:margin-left .25s ease-in;…;transition:margin-left .25s ease-in}`
+(**probe**, built `public/css/base.css`). `margin-left` is not compositable, so every interpolated
+value reflows the content pane and everything laid out inside it.
+
+**Measured** (probe: headless Chrome at 1280 against the running application on port 20370, sampling
+computed styles per animation frame and collecting `layout-shift` entries with a
+`PerformanceObserver`):
+
+```text
+the animated declaration          -> margin-left, on div#course-content
+  distinct computed values          17
+  changing frames                   16 per toggle
+
+aside#outline computed width      -> 350px, CONSTANT      changing frames: 0
+aside#outline computed margin-left-> -350px, CONSTANT     changing frames: 0
+
+transform on #outline             -> none, on all 38 sampled frames per toggle
+transform on #course-content      -> none, on all 38 sampled frames per toggle
+                                     and in BOTH settled states
+will-change on either             -> auto
+
+layout-shift entries per animation-> 14 on open, 15 on close   (one per frame)
+  sources named                     div#course-content, aside#outline,
+                                    a#edit-outline-button / div#new-topic-container
+```
+
+**Two corrections to the finding as filed.**
+
+- **The pane's growing width is an effect, not the animated declaration — and this is the correction
+  that changes the fix.** The finding records `aside#outline` animating **`width`** from ~10px to
+  349.8px, and the per-frame layout-shift source rectangles do show exactly that: `aside#outline`
+  `currentRect` width steps 2.77 → 10.28 → 21.84 → … → 350. But `#outline` is `position: fixed` with
+  `left: auto` `[T static/scss/_course-view.scss:72-82]`, so it is laid out at its **static
+  position** inside `#course-content`; animating `#course-content`'s `margin-left` drags that static
+  position from −350 to 0, and the visible result is a pane that appears to widen while its computed
+  `width` never leaves 350px — measured above as **0** changing frames. Both readings describe one
+  reflow; the **fix target is the `margin-left` transition**, and giving `#outline` a `width`
+  transition instead would add a second animation without removing the first.
+- **The measured CLS is above the 0.1 threshold, not under it, and the reason it counts is that no
+  user input is involved.** Measured **0.10781** for the input-free auto-open at load, **0.10835**
+  for an input-free toggle, and **0.10838 / 0.10764 / 0.10767** raw for trusted clicks — against the
+  filed 0.0908 and its "under 0.1 by only 8%". The distinction that matters: the pane **auto-opens at
+  1280 with no user input**, because `menuOpen` is initialised from `isLarge()`
+  `[T public/js/courseEditor/controllers/root.js:212]`, so **0.10781** lands in the page's real Core
+  Web Vitals CLS on every load at that width. The click-driven toggles all carry
+  `hadRecentInput: true` and are excluded by spec — their eligible accumulation is exactly
+  **0.00000** — which is why a measurement taken only by clicking reports no problem at all.
+
+**Target disposition: preserved.** The four prefixed `margin-left` transitions stay, and with them the
+per-frame reflow, the 14/15 shift entries and the ~0.108 input-free CLS.
+
+**Gate.** **None — stated in §10.26.** No gate in this migration collects a performance trace, a
+`layout-shift` entry or a computed style, and per §10.23 the corpus does not hold this page's body at
+all. This is also the one of the five whose evidence is a trace rather than a DOM read, so nothing in
+the repository would report a regression or an improvement here.
+
+**The fix an AAP-authorized change should apply** (**not** a proposal for this migration): transition
+`transform: translateX()` instead of `margin-left`, giving the outline pane its own composited
+transform rather than deriving its position from the content pane's margin. Note that it interacts
+with §10.23's media query — a full-width overlay variant below `$medium` changes what the transform
+has to translate — so the two should be designed together.
+
+### 10.27 A maximum-length 140-character course name lays out as a single unbreakable line box and escapes the viewport
+
+The last of the five, and the only one that is not on the course page: it is on the class list and on
+`/home`, and it is the one whose surfaces the corpus **does** pin by digest, which is what makes fact
+3 of §10.23 concrete rather than theoretical here. The name length is entirely legal —
+`name: Joi.string().min(1).max(140).required()` `[T config/routes.js:142]`, on `POST /courses` — so
+this is reachable through the product's own validation rather than through an abusive input.
+
+The basis for recording rather than repairing it is §10.23's four facts: the root causes are two
+templates in `lib/views/**` and the absence of a declaration in `static/scss/**`, both of which AAP
+§0.2.2 states verbatim are not modified and §0.3.1's target tree repeats; `git diff --name-only
+2f8712a HEAD --` reports **0** changed files for each, so R-d governs; and here fact 3 bites hardest,
+because both surfaces are pinned by a corpus digest (below).
+
+**Root cause — two templates that interpolate a name with no wrapping affordance, and no stylesheet
+that supplies one:**
+
+```html
+<!-- [T lib/views/classes/courses.html:10]  ·  server-rendered -->
+    <li><a href='{{ host(instructor) }}{{ subdomain(instructor, course) }}'>{{course.name}}</a></li>
+<!-- [T lib/views/home.html:83]  ·  and :96 (archived) and :118 (featured) — client-rendered -->
+              {{ course.name }} <span ng-show="course.role" class="secondary-label label round">{{ course.role }}</span>
+```
+
+Neither carries `overflow-wrap`, `word-break` or `hyphens`, and neither does anything that applies to
+them: measured over the whole SCSS tree, `static/scss/**` contains **exactly one** wrapping
+declaration anywhere — `word-wrap: break-word` at `[T static/scss/embed/_generic.scss:94]`, inside an
+embed tooltip rule (`white-space: pre; position: absolute; z-index: 999999`) that compiles into
+`embed.css` and cannot reach a course name (**static**, `grep -rn` over `static/scss/`).
+
+**Measured** (probe: headless Chrome against the running application on port 20370, on
+`/u/user_c37/classes` and `/home` at 1280×800 and 320×720, with a course whose name is 140 × `A`):
+
+```text
+                                      classes@1280  classes@320   home@1280    home@320
+intrinsic line box width                1658.125      1658.125     1658.125     1658.125
+getClientRects().length                        1             1            1            1
+overflow-wrap / word-wrap / word-break    normal        normal       normal       normal
+white-space                               normal        normal       normal       normal
+text-overflow                          clip (inert)  clip (inert) clip (inert) clip (inert)
+hyphens                                   manual        manual       manual       manual
+every ancestor up to body, overflow      visible       visible      visible      visible
+right edge minus window.innerWidth      +535.71875   +1355.71875    +542.125    +1362.125
+documentElement.scrollWidth                 1816          1676         1822         1682
+characters present and painted                140           140          140          140
+```
+
+The line box is identical **to the thousandth of a pixel** in all four configurations — only the
+container narrows — and `getClientRects().length` is **1** everywhere, so it never wraps at any
+width. With `text-overflow: clip` inert for want of a clipping ancestor and every ancestor computing
+`overflow: visible`, nothing can truncate it either: the failure mode is **viewport escape, not
+silent clipping**.
+
+**The page chrome cannot cover the document the escape creates.** `div.nav-wrapper` never spans the
+scrollable width — `navCoversScrollWidth` is **false** in all four configurations, short by **536 /
+542 / 1356 / 1362 px** respectively. Scrolled fully right at 1280, the grey band terminates at
+viewport x = **744** in a hard vertical edge, and the 536px column beside it is bare unpainted page
+background: `document.elementFromPoint(1270, 20)` returns `html`, with the escaping name the only
+thing rendered out there. At 320 the whole band is **1036px** off-screen.
+
+**`/home` differs in kind and is worth its own measurement.** There the name is a **raw text node**
+inside `li.ng-binding.ng-scope` `[T lib/views/home.html:82-84]` rather than an anchor, so it
+overshoots its own bordered row box by **1030.47 px** at 1280 and **1377.125 px** at 320, and the row
+has grown to **69.19 px** tall because the `owner` badge beside it was pushed onto a second line. The
+row's own border therefore gives the user no hint that its content has left the page.
+
+**Target disposition: preserved on both surfaces.** Both templates interpolate the name exactly as at
+`2f8712a`, and no wrapping declaration is added to the stylesheet.
+
+**Ownership seam, recorded so a future change knows where the halves live.**
+`lib/views/home.html` is owned by a different work unit in this delivery; this entry records the
+`/home` surface as **measured, without changing it**, and the class-list surface likewise. A repair
+touches both templates and the stylesheet, so it cannot be split along that seam.
+
+**Gate.** **None — stated in §10.27.** No gate measures a line box, a `scrollWidth` or an element's
+relationship to the viewport. What the corpus does hold, per fact 3 of §10.23, is the two page bodies
+under the seeded dataset — `route.get.u-username-classes.html` at **200** / **12496** bytes /
+`a3189b6c…` and `route.get.home.html` at **200** / **19399** bytes / `a6a8c2ef…` — and neither
+recorded body contains a 140-character name (**artifact**, checked). So the gate cannot observe the
+defect, and would report the *repair* as an unapproved difference: exactly the shape §10.23 sets out.
+
+**The fix an AAP-authorized change should apply** (**not** a proposal for this migration): add
+`overflow-wrap: anywhere` (or `word-break: break-word`) to the course-name anchor in
+`lib/views/classes/courses.html` and to the `/home` row text, or clamp with `text-overflow: ellipsis`
+inside an `overflow: hidden` container. Whichever is chosen, `/home`'s three interpolations must be
+treated together, and they are **not** all the same construction: `:83` (active) and `:96` (archived)
+are raw text nodes inside the `li`, while `:118` (featured) is `<a><strong>{{ course.name }}</strong></a>`.
+The measurement above was taken on `:83`; the other two carry the same unwrapped interpolation and
+were not separately measured.
+
+---
+
+## 11. The approved deviations
+
+These are the **only** four places in the migration where something is deliberately **not** preserved.
+Each is recorded as a deviation rather than as preservation, and each is stated once, canonically, here;
 the handler mapping and the corresponding gate carry the same decision, and a divergence between the
-three would itself be a defect.
+four would itself be a defect. The sections are ordered as they were written rather than by number:
+deviations 1 and 2 are [§11.1](#111-deviation-1-the-never-settling-file-response) and
+[§11.2](#112-deviation-2--the-marked-fork-is-retained-leaving-one-named-high-advisory), while
+deviations 3 and 4 are [§11.7](#117-deviation-3--the-zip-container-bytes-both-archive-download-routes-emit)
+and [§11.8](#118-deviation-4--the-course-archive-is-built-in-a-per-request-directory-so-a-concurrent-download-is-no-longer-served-another-requests-course)
+at the end of this chapter, after the three sections (§11.3–§11.5) that record what is *not* a
+deviation. The register table in §11.0 is the canonical list.
+These are the **only** places in the migration where something is deliberately **not** preserved.
+Each is recorded as a deviation rather than as preservation, and each is stated once, canonically,
+here; the handler mapping and the corresponding gate carry the same decision, and a divergence between
+the three would itself be a defect.
+These are the **only three** places in the migration where something is deliberately **not**
+preserved. Each is recorded as a deviation rather than as preservation, and each is stated once,
+canonically, here; the handler mapping and the corresponding gate carry the same decision, and a
+divergence between the three would itself be a defect.
 
-### 11.0 The register is closed, and this is the machine-readable form of that
+**Two were decided by AAP §0.7 before the plan was frozen. The third was found by measurement after
+it, and it is authorized by the AAP's own procedure rather than by anybody's preference.** Rule T-6
+(AAP §0.1.2) states that procedure in full: *where a requirement other than R-d makes preservation
+impossible, the plan names the conflict, decides which requirement controls, states why, records the
+deviation as approved, and aligns the handler mapping, the quirk record and the gate*. That is a
+procedure for a class of conflict, not a quota of two — §0.7 decided the two conflicts the plan had
+measured, and a third instance of the same class turned up in `folders.create`, where the baseline
+does not merely fail to answer but **terminates the whole process**. §11.10 runs the procedure on it.
+The distinction that matters is the one §11.0 enforces next: the register grows only when a
+requirement makes preservation *impossible*, and never because a different outcome would be better.
 
-**Exactly two deviations are approved. This section is the whole list, and it is not extensible by a
-tool.** The reason this needs saying explicitly, rather than being left to a reader's count, is that
-two separate tools were found minting their own: a replay verifier that approved any scenario carrying
-an "approved-change" marker regardless of its identity, and a worker harness that described a residual
+### 11.0 The register, and why a tool cannot add to it
+
+**Exactly six deviations are approved. This section is the whole list of approved deviations, and it
+is not extensible by a tool.** The reason this needs saying explicitly, rather than being left to a
+reader's count, is that two separate tools were found minting their own: a replay verifier that
+approved any scenario carrying an "approved-change" marker regardless of its identity, and a worker
+harness that described a residual
 deprecation warning and an unclosable handle inventory as "named deviations". Neither had been argued
 or approved. A deviation that a tool can declare for itself is not a deviation — it is drift with a
-label, and it defeats the one prohibition (R-d) this whole document exists to enforce.
+label, and it defeats the one prohibition (R-d) this whole document exists to enforce. The same is
+true of a *source comment* that calls itself approved: §11.1 and §11.4 each record one that did.
+
+**What it takes to be in this table**, so that the difference between "not extensible by a tool" and
+"never revised" is not lost: a prohibition (R-d) argued away by a requirement that outranks it, with
+the precedence argument written out, the changed behaviour stated field by field, and the gate that
+observes it named. Anything short of that is either preservation (the rest of this catalogue) or an
+unmet validation target (§11.3) — never a deviation. Adding a row is a deliberate, argued act
+recorded here first, because this document is the **canonical** register: both
+[`baseline-parity.md`](baseline-parity.md) and [`deferred-dependencies.md`](deferred-dependencies.md)
+state in their own deviation sections that their numbering follows this §11.
+
+**"Closed" has always meant closed to tools, to preference and to improvement — not closed to
+measurement.** The register moved from two entries to six, one argued addition at a time and each for the reason
+T-6 names above, and the addition was argued in prose and bound to a field-by-field contract before any code
+relied on it. What remains prohibited is unchanged and is what every rule below implements: a tool
+cannot mint an entry, a source comment cannot mint one either — that was the specific defect §11.9
+was raised against, an in-source "APPROVED DEVIATION" label with nothing in this register behind it —
+and a change that could have preserved baseline is not a candidate at all, however much better it
+looks. §9.10, §10.12 and §10.13 are three findings raised against this delivery that were **declined**
+on precisely that last test, and they are the control that shows this one was not waved through.
 
 | # | Deviation | Kind | Replay-visible? | Canonical id | Owner of the full argument |
 |---|---|---|---|---|---|
 | 1 | The never-settling image-download response is **served** | Response behaviour | **Yes** — one scenario | `quirk.reply-chain.never-settles.image-download` | [§11.1](#111-deviation-1-the-never-settling-file-response) |
 | 2 | The `marked` fork is **retained**, leaving one named high advisory | Audit result | **No** — no scenario, no response difference | *none — see below* | [`deferred-dependencies.md`](deferred-dependencies.md) §4.2 |
+| 3 | The **ZIP container bytes** both archive download routes emit changed — `adm-zip` 0.4.16 → 0.6.0 on the course archive, `archiver` 2.1.1 → 7.0.1 on the short-code archive | Served file format | **No** — the raw digest of an archive is a clock read, so no recording carries a comparable one; the container is compared **structurally** instead | *none — see below* | [§11.7](#117-deviation-3--the-zip-container-bytes-both-archive-download-routes-emit) |
+| 4 | The course archive is built in a **per-request** directory, so a concurrent download is no longer served another request's course and a lost open no longer kills the process | Concurrency and availability | **No** — the difference needs two overlapping requests for one owner and course, which no committed scenario drives; on the ordinary path the response is identical, which the container pin asserts | *none — see below* | [§11.8](#118-deviation-4--the-course-archive-is-built-in-a-per-request-directory-so-a-concurrent-download-is-no-longer-served-another-requests-course) |
+| 5 | The `zipCode` read is **bounded** and its chain **terminated**, so a malformed or amplifying archive no longer ends the process | Availability behaviour | **No** — no scenario mentions `zipCode`, and the two responses are byte-identical to baseline's | *none — see [§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes)* | [§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes) |
+| 6 | `POST /api/folders` **answers** on both failure branches, where baseline terminated the process on one and never settled on the other | Response behaviour | **Not yet** — the scenario exists but its baseline side cannot be driven, so it carries **no marker** | `client-contract.folder-duplicate-name.post-api-folders` (definition only) | [§11.10](#1110-deviation-6-post-apifolders-answers-where-the-baseline-process-died) |
 
-**Deviation 2 has no scenario id, and that is not an omission.** It changes no response: retaining the
-fork is precisely what keeps rendered output identical (§11.2). It is a departure from the audit
-*target*, measured by `npm audit`, not by a replay diff. So a replay-visible deviation marker on any
-scenario cannot be justified by deviation 2, and a tool that treats "there are two approved
-deviations" as "two markers are acceptable" has mis-read this table.
+**Deviations 2 to 6 have no scenario id, and in none of those cases is that an omission.** Deviation 2
+changes no response: retaining the fork is precisely what keeps rendered output identical (§11.2). It
+is a departure from the audit *target*, measured by `npm audit`, not by a replay diff. Deviation 3 does
+change a response body, but not in a field any recording can hold to account: a ZIP embeds each entry's
+modification time, so the raw digest differs between two captures of one tree — measured, twice, in
+§11.7 — and the change is therefore registered against the **frozen container profile** in
+`ARCHIVE_CONTAINER_REGISTER` rather than against a scenario marker. So a replay-visible deviation
+marker on any scenario cannot be justified by deviation 2, 3, 4, 5 or 6, and a tool that
+treats "there are four approved deviations" as "four markers are acceptable" has mis-read this table.
+**One thing this register is *not* the list of, and the distinction is the reason the count holds.**
+A behaviour the **framework** removes in a path no application file can reach is not a deviation this
+register can carry: there is no application decision to approve. Exactly one such divergence exists —
+hapi 21 emitting only cookie CLEARS on a response carrying a 500 error — and it is registered
+separately in [§12](#12-the-register-of-framework-imposed-divergences--one-entry), which holds one
+entry and is likewise not extensible by a tool. It is **not** deviation 3, this table is still the
+whole of the approved-deviation list, and the count of two is unchanged by it.
+
+**Why the deviations' own sections are numbered §11.7 to §11.10 rather than §11.3 onward.** §11.3 through §11.5 were
+already occupied when it was registered — by the classification of what is *not* a deviation and by
+two withdrawn policies — and renumbering them would have moved every citation of them in this file and
+in three others for no gain. **This table is the canonical ordering**; the section numbers are
+addresses, not the register.
+
+**Five of the six carry no scenario id, and that is not an omission.** Deviation 2 changes no
+response at all: retaining the fork is precisely what keeps rendered output identical (§11.2), and it
+is a departure from the audit *target* measured by `npm audit` rather than by a replay diff. Deviation
+3 changes no response either — it removes a process death that occurred *after* the response had been
+sent, and the two statuses it leaves behind are the ones baseline already emitted for the same inputs
+(§11.9) — and no committed scenario drives that branch, measured. So:
+
+**The replay allowlist is exactly one scenario id — deviation 1's — and registering deviations 2 to 6 and
+3 does not widen it.** A tool that reads "there are three approved deviations" as "three markers are
+acceptable" has mis-read this table. `test/parity/replay.js` implements the allowlist keyed by
+scenario id, which is why it stays correct as this table grows: a deviation that is not
+replay-visible has no id for a marker to claim.
 
 **The consequence for the deviation-approval contract, stated as the rule a verifier implements:**
 
 1. **The allowlist is exactly one scenario id** — deviation 1's, above. It is an allowlist, not a
-   pattern.
+   pattern. **Deviation 6 does not extend it, and must not be added to it until its scenario can be
+   driven.** Its scenario is defined but recorded `unreachableByDesign`, because driving it on the
+   *baseline* side is what terminates the baseline process (§11.10); a scenario with no recorded
+   baseline response produces no difference for a marker to approve, so a marker on it today would
+   approve nothing and would be caught by rule 2 as drift. When `test/parity/capture.js` makes it
+   drivable, the field contract to add is stated field by field in §11.10 and nowhere else.
 2. **An unknown id carrying an approved-change marker is a failure, never an approval.** Not
    "approved but unverified": a marker on a scenario this register does not name is unapproved drift,
    and the only correct verdict is that the difference is unapproved. This matters because markers can
@@ -2443,6 +4881,27 @@ deviations" as "two markers are acceptable" has mis-read this table.
    than restated, so they cannot drift from the object the scenario downloads.
 4. **A marker on a scenario that did not change is also a failure.** R-b is why the deviation exists;
    a route that still hangs has not implemented the decision.
+5. **A framework-imposed divergence is carried as a RULE, never as a marker, and its authority is
+   §12 alone.** The replay verifier's cookie demotion on a 500
+   (`hapi21-500-clear-only-states`) is exactly that: a fail-closed rule with measured conditions,
+   authorized by [§12](#12-the-register-of-framework-imposed-divergences--one-entry) and by nothing
+   else, and it names that section in its own `register` field. It does **not** consume a slot in the
+   allowlist above, which stays exactly one scenario id, and the two mechanisms are not
+   interchangeable — a marker approves one scenario's difference, a rule demotes a field on any
+   response meeting a framework predicate. **Neither can be minted by a tool**: a rule a tool
+   declared for itself is the same drift-with-a-label this section exists to stop, and a rule whose
+   register entry does not exist has no authority at all.
+5. **Deviation 1's approval covers the response, and was argued on the image case only.** Its
+   justification is that the sibling branch four lines below performs the identical chain, and that
+   branch's purpose is to render an *image* inline. A document whose `mime` is not an image type takes
+   the same branch — selection is on `type`, response typing is on `mime`, and nothing validates one
+   against the other — so the approved response serves whatever those legacy documents declare,
+   including active content. **That case was not analysed when the deviation was approved, and it is
+   not approved by implication.** It is recorded as an open security item at
+   [§10.6](#106-serving-the-approved-image-response-serves-script-capable-legacy-content-inline), which
+   also states why no remedy fits inside this contract. A verifier reads rules 1–4; a human reading the
+   register needs this rule as well, because the contract's five fields are silent about what the bytes
+   are permitted to do.
 
 ### 11.1 Deviation 1: the never-settling file response
 
@@ -2496,20 +4955,24 @@ that outcome. **All of it has been removed** — 386 deleted lines, leaving the 
 above — and the `inlineImageDisposition` export was removed with it, so the delivered module exports
 exactly `uploadAvatar`, `upload`, `download`, `setThumbnail` and `legacyMimeExtension`.
 
-**It was not a third deviation; it was drift.** The argument it carried in-source — that the response
+**It was not a deviation at all; it was drift.** The argument it carried in-source — that the response
 did not exist at baseline, so nothing observable was being changed and the deviation's author was free
-to decide what the new response contained — is the one thing [§11.0](#110-the-register-is-closed-and-this-is-the-machine-readable-form-of-that)
+to decide what the new response contained — is the one thing [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)
 rules out: *"A deviation that a tool can declare for itself is not a deviation — it is drift with a
 label"*, and a comment in a source file has no more authority to approve one than a tool does. Two of
 the five approved fields were breached by it and two headers outside the contract were added: the
 content type became `application/octet-stream` for a metadata mismatch rather than the file document's
 own mime, `content-disposition` was **present** rather than absent, and `X-Content-Type-Options` and
 `Content-Security-Policy` were emitted on every outcome. Status, byte length and the timeout-to-answered
-outcome were the three it did keep. The register is closed at two, this is deviation 1, and deviation 1
+outcome were the three it did keep. The register is closed at four, this is deviation 1, and deviation 1
+outcome were the three it did keep. The register is closed at three, this is deviation 1, and deviation 1
 is the three calls above.
+outcome were the three it did keep. §11.0's register names its entries and does not admit an unargued
+one; this is deviation 1, and deviation 1 is the three calls above.
 
-**What that leaves unaddressed, stated rather than absorbed.** The extension was answering a real
-exposure: `file.type` and `file.mime` are independent legacy fields with no validation between them
+**What that leaves unaddressed, stated rather than absorbed — and the scope limit it puts on this
+approval.** The extension was answering a real exposure: `file.type` and `file.mime` are independent
+legacy fields with no validation between them
 `[T lib/models/file.js:6-9]`, so a legacy document carrying `type: 'image/png'` with
 `mime: 'text/html'` is served inline, as active content, on the application origin, from a route that
 inherits `mode: 'try'` and is reachable anonymously. **Preserving the approved response preserves that
@@ -2519,6 +4982,18 @@ carrying the measurement, why no source-local fix is available inside the closed
 shapes a real remedy can take. The same route's separate authorization gap is
 [§10.5](#105-a-stored-file-is-downloadable-by-anyone-who-knows-its-id-or-its-content-hash); §10.6
 explains why authorizing the route would not close §10.6.
+
+**The scope limit, recorded on the approval rather than only on the exposure.** Reason 2 above is an
+argument about an **image**: the sibling branch is adopted because this branch exists to render an image
+inline. It does not extend to a document whose `mime` is `text/html` or `image/svg+xml`, and the
+non-image case was **not analysed** when the deviation was approved — nothing in the approval record,
+in AAP §0.7 or in §0.4.1's row addresses it. So this approval is read as covering the *response
+construction*, not as a judgement that any byte sequence a legacy `File` document declares is safe to
+serve inline; rule 5 in [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) states that
+explicitly, and §10.6 carries what a human must do about it. This is not a retraction of the
+deviation: the branch must still serve, because R-b is why it exists and a hanging route is not an
+acceptable alternative. It is a statement that "serving is approved" and "serving as active content is
+approved" are different claims, and only the first was made.
 
 **Gate — driven, and this is what it produced.** Scenario
 `quirk.reply-chain.never-settles.image-download` carries the migration's only `expectedDeviation`
@@ -2535,7 +5010,7 @@ marker, and both halves of the comparison are now measured:
   `failing: false`, `verified: true`, with the report stating *"the change was checked field by field
   against what was approved"* and the single differing field
   `outcome: "timed-out" -> "answered"`. The verification is against the five-field contract in
-  [§11.0](#110-the-register-is-closed-and-this-is-the-machine-readable-form-of-that) rather than
+  [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) rather than
   against the presence of the marker, so a target that still timed out, or that answered differently,
   would be a failure that happens to carry a marker. Both cookie passes report it identically, and the
   four header-resolved chains in the same run compared as **matches**, so the deviation is bounded to
@@ -2574,6 +5049,21 @@ none of them is one. The distinction is not bookkeeping: an approved deviation i
 prohibition beats a target, which is what makes deviation 2 defensible — so re-using the word for an
 unmet target inverts the argument it rests on.
 
+"Closed" in this heading means what [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) says it
+means — the register does not grow by a tool's hand, and an entry is added only by an argued
+precedence case — **not** that its count is frozen. The count is six, and §11.7 to §11.10 are the
+four that were added by that route.
+**"Closed" survives the register having grown, and this section is why the two are not in tension.**
+§11.10 was admitted because R-b made preservation *impossible* — the baseline process exits — which is
+the one route in. What is closed is every other route: an unmet validation target (the three rows
+below), a tool's own marker, a source comment's own label, and a change that would merely be an
+improvement. Three findings raised against this delivery asked for the last of those and were
+**declined** on it, each with its citation: [§9.13](#913-two-more-routed-handlers-that-answer-500-where-their-author-intended-403),
+[§10.16](#1016-the-folder-name-contract-is-asymmetric-between-create-and-rename) and
+[§10.17](#1017-a-folder-name-is-stored-with-control-characters-intact-and-the-two-list-routes-disagree-about-owner).
+A register that admitted §11.10 and refused those three is a register applying a rule; one that admitted
+all four would be applying a preference.
+
 **Two of the three have since stopped being unmet, and that is the point rather than a reason to drop
 them.** Neither was closed by being called a deviation: one was closed by the declared dependency
 graph moving, the other by the harness ceasing to create the handle. The rows stay so that the
@@ -2582,8 +5072,24 @@ classification, and how each was actually settled, remain readable.
 | Item | What it is | Correct classification | Where it belongs |
 |---|---|---|---|
 | `[DEP0005]` `new Buffer()` from `compress-commons` 1.2.2, reached through the then-retained `archiver` 2.1.1 | A residual deprecation warning under `--pending-deprecation`, emitted once at module load | **Unresolved shortfall** against the zero-warning target of AAP §0.8 — it was discovered by measurement, not argued and approved in advance, and no decision was ever recorded against it. **No longer arises**: the declared graph moved to `archiver` 7.0.1 with `compress-commons` 6.0.2, and boot under `--pending-deprecation --trace-deprecation` emits no warning line at all | [`baseline-parity.md`](baseline-parity.md) §7.4 and §8, which already state this |
-| `FSEventWrap` handles from the test-mode template watcher | An open-handle inventory that would prevent self-exit; unclosable by a caller, so it can only be prevented ([§10.3](#103-the-test-mode-template-watcher-runs-on-an-optional-peer-the-root-no-longer-declares)) | **Unresolved shortfall** against the clean-teardown expectation whenever it arises — unexpected, unallowed, failing, with a measured reason and a named remedy. It does not arise in the worker gate, which withholds the watch option before the first application require and measures an empty inventory; what remains recorded is the application's own test-mode reliance | §10.3 here, and the worker harness's handle inventory |
+| `FSEventWrap` handles from the test-mode template watcher | An open-handle inventory that would prevent self-exit; unclosable by a caller, so it can only be prevented ([§10.3](#103-the-test-mode-template-watcher-requires-chokidar-which-is-a-declared-dependency-again)) | **Unresolved shortfall** against the clean-teardown expectation whenever it arises — unexpected, unallowed, failing, with a measured reason and a named remedy. It does not arise in the worker gate, which withholds the watch option before the first application require and measures an empty inventory; what remains recorded is the application's own test-mode reliance | §10.3 here, and the worker harness's handle inventory |
 | This process's own stdout/stderr `PipeWrap` handles | Not a leak and not an application observation — which of them exist depends only on how the process was invoked | **Invocation plumbing.** Correctly partitioned out of the assertion; it was never a deviation and stays classified as it is | The harness's `stdio` partition |
+
+**There is a third class, and one item is in it.** Neither of the two classes above fits a behaviour
+the **framework** removes: hapi 21 emits only cookie CLEARS on a response carrying a 500 error, so the
+yar session `Set-Cookie` the baseline sent on a 500 is not sent
+([§12](#12-the-register-of-framework-imposed-divergences--one-entry)). Placed honestly, it **is a
+departure from R-d's prohibition** — a header a client receives differs — and it is deliberately
+**not** downgraded to "an unmet validation target", which would be the comfortable misfiling and
+would invert the argument §11.1 and §11.2 rest on just as surely as calling a target a deviation
+does. What separates it from those two is the other half of the test: no application decision produces
+it, and no application change can prevent it within scope, so there is **nothing to repair**. That is
+what makes a permanently failing gate the wrong answer here and not merely an inconvenient one — the
+rule above ("while a validation target is unmet, the honest result is a failing gate") applies to
+items an application can close, and a gate that can never pass reports bookkeeping rather than a
+finding. So it is neither allowed in silence nor left failing: it is **registered**, with its
+measurement, its conflict, its precedence argument and its own fail-closed rule, in a register that
+holds one entry.
 
 **So a gate must fail on the first two rather than allow them, and it now does.** An allowance table
 that records an attribution and a decision is good discipline for something that *was* approved;
@@ -2607,7 +5113,7 @@ two — its rows are the cookie patch, the full-route deprecation surface, the B
 semantics, the four internal callback modules, the AWS notice suppression, the nine Dockerfiles,
 storage and archive parity, and the image digest — so an earlier revision of this section was wrong to
 say §0.9.6 lists both. The **`FSEventWrap`** observation is recorded in
-[§10.3](#103-the-test-mode-template-watcher-runs-on-an-optional-peer-the-root-no-longer-declares)
+[§10.3](#103-the-test-mode-template-watcher-requires-chokidar-which-is-a-declared-dependency-again)
 here and in the harness's own clean-close check, and nowhere else; it was found by measurement during
 this work rather than anticipated by the plan, which is exactly why it needed a home. The rule that
 governs both is unchanged: while a validation target is unmet, the honest result is a **failing gate**
@@ -2615,11 +5121,16 @@ and the item stays named, measured and unapproved — never relabelled a deviati
 
 **Nothing here is a proposal, and nothing here was repaired to make a gate pass.** The application's
 watching path is untouched: `lib/util/nunjucks.js` is unchanged by AAP §0.3.1, and §10.3 records the
-reliance rather than removing it. The `archiver` warning stopped occurring because the declared
+reliance rather than removing it — what §10.3 has since changed is the *declaration* that provides
+`chokidar`, not the watching behaviour. The `archiver` warning stopped occurring because the declared
 dependency graph moved, which is a dependency decision recorded and dispositioned in
 [`deferred-dependencies.md`](deferred-dependencies.md) §2.6 — this section neither approves nor
 disputes it, because classification is not authorization and treating the two as one is how an
-unapproved change acquires a label. What this section fixes is the **classification**, which is a
+unapproved change acquires a label. **Where that move's client-visible consequence *is* approved is
+[§11.7](#117-deviation-3--the-zip-container-bytes-both-archive-download-routes-emit)**, deviation 3:
+the graph move changed the ZIP container bytes both archive routes emit, and that half was missing from
+the delivery until it was registered there. The distinction this section draws holds unchanged — the
+warning was never a deviation, and the container change is one. What this section fixes is the **classification**, which is a
 documentation defect rather than a behaviour one — and the classification is what a gate reads.
 
 ### 11.4 An unapproved security policy that was added and has now been withdrawn
@@ -2697,7 +5208,7 @@ so the content of that log line changed as a consequence of the required port. I
 rather than among the divergences below because, unlike those, it is closable by a change confined to
 the log line and needs no transport decision.
 
-None of the eight is a deviation: a deviation is a prohibition argued away, and nothing here has been
+None of the nine is a deviation: a deviation is a prohibition argued away, and nothing here has been
 argued away — these are preserved, which is what R-d requires, and the exposure is the consequence.
 **Acknowledging an exposure is not settling it**, and no row below should be read as settled; each
 carries the follow-up that would close it, and each remains open until that follow-up is separately
@@ -2713,6 +5224,7 @@ approved and implemented.
 | 6 | **Provider access token retained in plaintext** (CWE-312) | `[T lib/controllers/auth.js:459]` and `[T lib/controllers/auth.js:483]` persist `token: profile.accessToken` under `profiles.google` on both the existing-user and new-user branches, with no expiry, no encryption and no retention rule | **static**; both sites **byte-identical** to `[B lib/controllers/auth.js:118,142]`, verified by `diff`. `lib/models/user.js` is byte-identical to baseline in full, so no schema change was made either | R-d. Dropping or encrypting the field changes what is persisted, which §0.2.2 protects as a data-format contract | Stop retaining after linking, or encrypt with access control, rotation and retention — a schema and migration change, separately approved |
 | 7 | **Unbounded remote transfer** (CWE-400) | The same route opens a temporary file and pipes the remote body to completion with no delivered-byte ceiling and no body deadline, so an authenticated caller can trickle indefinitely or fill the temporary filesystem. On a transport failure the temp file and its descriptor are also left behind, because the log-only arm cleans nothing up | **static**, `[T lib/controllers/users.js:809-906]`; baseline bounded neither, and `request` was configured with no timeout on this call | R-d, and §0.4.2 — the ceiling and the deadline are two of the ten policies withdrawn above, so restoring them is the change this section exists to undo | Approve a bounded duration and delivered-byte ceiling explicitly, aborting, cleaning up and settling once, with slow-body and oversized-body cases |
 | 8 | **Credential-bearing URL echoed into the log** (CWE-532) | `[T lib/controllers/users.js:903]` logs the error object with baseline's own `console.log('on error:', err)`, and printing a fetch error renders a message that embeds the whole URL, userinfo included — measured: `TypeError: Request cannot be constructed from a URL that includes credentials: http://u:p@127.0.0.1:80/x`. Query-string tokens in a source URL reach the log the same way | **probe**, Node 22.23.2 | R-d, and §0.4.2's `console.log('on error:', err)` line. The redaction that would prevent it is one of the ten policies withdrawn above | Approve redaction of userinfo, query and fragment in this one log line, leaving the route's selected response untouched |
+| 9 | **Forgeable email capability token, and the mail send it authorizes** (CWE-798/CWE-347) | `POST /api/trinkets/{trinketId}/email` accepts a `token` in its payload, and `helpers.verifyEmailToken` derives its HS256 key as `config.app.mail.secret + request.pre.trinket.shortCode` `[T lib/util/helpers.js:301]`. **`app.mail.secret` is declared in no tracked configuration file** — `config/default.yaml`'s `app.mail` block carries `from, host, port, user, pass, secure` and no `secret` — so under `NODE_ENV=test` the key is the literal string `"undefined"` concatenated with a short code that appears in the public share URL. Anyone can mint a token that verifies. | **Driven, anonymously, with no cookie**, against a seeded instance of the delivered tree, three requests to `/api/trinkets/000000000000000000000201/email` for short code `pyfixture001`: no token → **400**; a token whose `shortCode` claim is wrong → **403**; a token minted here with the derived key `"undefinedpyfixture001"` and the correct claim → **200**, the capability check passed and the handler proceeded into the mail path. On that instance the send itself was refused by mail configuration (`"Email is not configured"`), which is environmental: QA drove the same forged token on an instance with the mail fixture loaded and recorded one `trinket-share` send. | Nothing controls it as preservation — this is not a preserved quirk but an unremediated exposure, recorded here so it outlives the run. The token mechanism is baseline's; what makes it forgeable is a configuration key that was never declared, so no conversion introduced it and no conversion can close it. | **Declare `app.mail.secret` with the same shape the session password already uses** — a generated ephemeral value outside production and a fail-fast guard inside it, per AAP §0.6.1 — so the key stops being derivable, and re-drive the three cases above expecting **403** on the third. Every file that fix touches is owned elsewhere: the declaration and the guard are `config/default.yaml` and `app.js`, and the verification is `lib/util/helpers.js`. This document's own file set reaches only the three `jwt.sign` minting sites in `lib/controllers/trinket.js`, and changing how a token is minted cannot constrain what verification accepts — so the fix is named here rather than attempted, which is also what §11.4 and §11.5 exist to enforce: an unapproved security policy is withdrawn, not added. |
 
 #### The three divergences the withdrawal does not close, classified honestly
 
@@ -2757,8 +5269,14 @@ why this direction is not treated as a loss. A WHATWG-malformed value such as `h
 `ERR_INVALID_URL` out of `parseLegacy` into the Layer 1 catch-all and answers **500**, the funnel
 `[B lib/controllers/users.js:588]` reached.
 
-**One adjacent pre-existing defect, found while measuring this and left where it belongs.** With
-`features.assets: true` and an S3 upload that fails, the route **terminates the process**:
+**One adjacent pre-existing defect, found while measuring this — and since REPAIRED at the funnel it
+belongs to. Read the paragraph below as the measurement that motivated the repair, not as the
+delivered behaviour:** [§10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why)
+now routes an `Error` handed to `request.fail` as a Boom, so this path answers **500** with the process
+alive, and a handed-over scenario that reaches the upload with a failing storage fixture no longer
+takes the server down. QA finding `obs-requestfail-error-arg-process-kill` measured this exact
+instance (an `ENOTDIR` store fault through `lib/util/file.js:190`) and is what closed it. With
+`features.assets: true` and an S3 upload that fails, the route **terminated the process**:
 `[T lib/controllers/users.js:869]` calls `request.fail(err)` with an `Error` — which is
 `[B lib/controllers/users.js:612]`'s own call — and `request.fail` reaches
 `[T lib/util/routeParser.js:316]` `h.response(json)`, where hapi throws
@@ -2810,7 +5328,7 @@ covers the policy added to the two auth/user **controllers**. What follows was a
 `lib/util/routeParser.js` and to `config/log.js` — the response and logging **funnels** every route
 passes through — so its blast radius was the route surface rather than one upload path, and its removal
 is measurable in the route table rather than in one handler. It was never in
-[§11.0](#110-the-register-is-closed-and-this-is-the-machine-readable-form-of-that)'s register either,
+[§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)'s register either,
 and §11.0's register is the whole list. Rule **T-2** is what governs the file: it authorises exactly
 three categories of change inside `lib/util/routeParser.js` — removing the response emulation,
 replacing `optimist` while preserving all three CLI invocation forms, and reshaping the wrapper and
@@ -2876,7 +5394,7 @@ until its follow-up is separately approved.
 | # | Exposure | Reachable how | Evidence | What controls preservation | Named follow-up |
 |---|---|---|---|---|---|
 | 1 | **Off-origin redirect** (CWE-601) through the failure path, frozen for the process | `POST /users` declares `fail.redirect` as `/{formName}` and takes `formName` from the payload. A protocol-relative value matches `redirect()`'s own first branch and is emitted as an absolute off-origin URL — and because the interpolation is written back onto the parse-time object, **every later failing request in that process is sent to the same place** | **probe**, fresh process: `formName=//evil.example` on the first failing request answered `302 Location: http://evil.example/`, and the next failing request, carrying `formName=signup`, answered `http://evil.example/` as well | R-d and AAP §0.6.6, which freeze the in-place assignment; T-2, which does not authorise new rules in `redirect()`; and §0.9.3's exact `Location` comparison | Constrain the interpolated value at the `request.fail` sink under a separately approved security decision, with the corpus recaptured for the changed `Location` — and note that any such fix must keep the freeze itself observable, or it silently repairs §3 |
-| 2 | **Submitted values reach the failure flash and the info log unredacted** | `request.fail` logs `util.inspect(json)` at `[T lib/util/routeParser.js:283]` and flashes `failure`, `payload` and `query` verbatim at `[T lib/util/routeParser.js:288]`, `[T lib/util/routeParser.js:301]` and `[T lib/util/routeParser.js:302]`; the flash is read back into the rendered page and into the JSON body, so a failed credential-bearing submission is both logged and echoed | **static**, the four sites above; and the response-body half is what made the withdrawn redaction a body change on the three routes named in the table | R-d, and AAP §0.6.3, which makes the Layer 2 body shape a preserved contract | Approve a redaction whose scope is the **log line only**, leaving the flash — and therefore the compared body — untouched; a body-visible redaction needs the corpus recaptured |
+| 2 | **Submitted values reach the failure flash and the info log unredacted** | `request.fail` logs `util.inspect(json)` at `[T lib/util/routeParser.js:283]` and flashes `failure`, `payload` and `query` verbatim at `[T lib/util/routeParser.js:288]`, `[T lib/util/routeParser.js:301]` and `[T lib/util/routeParser.js:302]`; the flash is read back into the rendered page and into the JSON body, so a failed credential-bearing submission is both logged and echoed | **static**, the four sites above; and the response-body half is what made the withdrawn redaction a body change on the three routes named in the table | R-d, and AAP §0.6.3, which makes the Layer 2 body shape a preserved contract | Approve a redaction whose scope is the **log line only**, leaving the flash — and therefore the compared body — untouched; a body-visible redaction needs the corpus recaptured. **Delivered at the QA checkpoint that raised `obs-passwords-and-reset-tokens-logged-at-info`, in exactly that scope**: `[T lib/util/routeParser.js:283]` now redacts credential values in *both* of its arguments, `json` itself is untouched so the flash and the compared body are byte-identical, and no corpus recapture is required. The log-half of this row is therefore closed and the body-half stands open as written — see [`error-edge-inventory.md`](error-edge-inventory.md) §12.1 and §12.2 for the delivered scope and the measured evidence |
 | 3 | **Prerequisites still run before this file's hand-rolled validation** | Every `pre` entry naming a payload-fed lookup — for instance `file(payload.fileId)` on `POST /api/users/assets/restore` `[B config/api_routes.js:1276-1287]` — receives the raw submitted value, because the validation block runs inside the handler and the handler runs after the prerequisites | **probe**: an operator-shaped submission on that route (`fileId[$exists]=true` and `{"fileId":{"$exists":true}}`) answered **400** in both encodings, where a scalar absent id answered 404 — so on this route the lookup itself refuses the shape, and **no arbitrary-document match was observed**. The ordering is real; an exploitable match on this route is not evidenced | R-a and T-2: a pre-handler injected into 97 routes is not one of the three authorised changes, and AAP §0.6.2 fixes the accept/reject outcomes the handler's own block produces | Re-establish the ordering question as its own reviewed change — a validator registered where hapi expects one, or per-route schemas that reject non-scalars before a lookup — with the joi matrix re-driven, since 53 of its differences were this gate refusing drives before validation ran |
 
 #### Why this withdrawal needed no scenario handover
@@ -2902,6 +5420,1001 @@ what was removed from its path.
 
 ---
 
+### 11.6 A third unapproved policy, in the admin controller, and now withdrawn
+
+**Why there is a third register.** [§11.4](#114-an-unapproved-security-policy-that-was-added-and-has-now-been-withdrawn)
+covers the policy added to the two auth/user controllers and
+[§11.5](#115-a-second-unapproved-policy-in-the-route-parser-and-the-logger-and-now-withdrawn) the
+policy added to the response and logging funnels. What follows was added to
+`lib/controllers/admin.js`, and it is different from both in one respect that matters: **it was the only
+policy in the delivery that a route-level A/B could see.** Nine mechanisms were added around one
+anonymous route and one admin route, and the first of them changed a **status code** — which is why
+this is the one that three separate runtime checkpoints reported, and why the register's own claim to be
+closed at two could not be read as true while it stood. It was never in
+[§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)'s register, and
+§11.0's register is the whole list. Every mechanism below is now absent.
+
+#### What was withdrawn
+
+**Measured** (**static**, in this tree). A search over `lib/`, `config/` and `app.js` returns nothing
+for `sanitizeOhnoesField`, `sendOhnoesAlert`, `ohnoesMailAllowed`, `MAX_OHNOES_ENTRIES`,
+`MAX_OHNOES_FIELD_LENGTH`, `OHNOES_TRUNCATION_MARKER`, `OHNOES_MAIL_MAX_PER_WINDOW`,
+`OHNOES_MAIL_WINDOW_MS`, `ohnoesMailWindowStart` or `ohnoesMailWindowCount`, and
+`lib/controllers/admin.js` is 430 lines where it was 605.
+
+| # | Withdrawn policy | Mechanism that was added | Why it went |
+|---|---|---|---|
+| 1 | **Guest authentication requirement on `POST /api/ohnoes`** | `if (!request.auth \|\| !request.auth.isAuthenticated) return errors.unauthorized('Not logged in');`, placed after the payload dereference | Unauthorised, and the one mechanism here that changed a **status code**. The route is declared with **no `config` block** (`config/api_routes.js`, `POST /api/ohnoes admin.ohnoes`), so it inherits `server.auth.default` in `mode: 'try'` from `app.js`, and hapi hands guests to the handler precisely so that it can answer them. Guest error reporting is the route's purpose. Measured, this turned baseline's `200 {"flash":{},"context":null}` into `401 {"statusCode":401,"error":"Unauthorized","message":"Not logged in"}`, and with it lost the private `Cache-Control` and the `Set-Cookie` session — three compared fields on one route |
+| 2 | **Alert-body field reduction** | `var keys = "time,path,referrer,userAgent".split(",")` in place of baseline's six labels | Unauthorised. `user` and `sesh` are caller-supplied like the other four, and dropping them changed the rendered mail body for every mailable request |
+| 3 | **Server-derived identity line** | `msg += "\nuser\t\t" + (request.user && request.user.username ? … : 'anonymous')`, emitted once per request | Unauthorised, and it put a label in the body that no submitted entry produced, so the body no longer corresponded to the payload |
+| 4 | **Entry cap** | `MAX_OHNOES_ENTRIES = 25`, `count = Math.min(log.length, …)`, and a `note` line recording how many entries were submitted | Unauthorised. Baseline renders every entry the caller submitted, and the `note` line is a body field baseline never emits |
+| 5 | **Per-field sanitizer** | `sanitizeOhnoesField()` — `String(value)`, C0/DEL/C1 replaced with a space, then truncation to `MAX_OHNOES_FIELD_LENGTH = 512` with an `...[truncated]` marker | Unauthorised, and it defanged the framing characters (`"\n"`, `"\t"`) the body's own layout uses, which is a change to what the mail contains rather than to what the route answers |
+| 6 | **Mail shape gate** | `var mailable = Array.isArray(log)` plus a per-entry `!entry \|\| typeof entry !== 'object'` test, suppressing the send when either failed | Unauthorised. Baseline mails a `log` of primitives and a `log` that is a bare string; the gate answered 200 and silently sent nothing |
+| 7 | **Mail rate limiter** | `sendOhnoesAlert()`, `ohnoesMailAllowed()`, `OHNOES_MAIL_MAX_PER_WINDOW = 10`, `OHNOES_MAIL_WINDOW_MS = 60000`, two module-level window counters, and a once-per-window `log.warn` | Unauthorised. Measured, twelve rapid mailable requests answered 200 twelve times and produced **ten** mails, so the eleventh and twelfth reports were dropped with no indication to anyone. Nothing about it is visible in a response, which is exactly why it needed a register entry rather than a gate |
+| 8 | **Fire-and-forget rejection handler** | `Promise.resolve(mailer.send(…)).catch(function(err){ log.error(…) })` | Unauthorised. Baseline calls `mailer.send(…)` bare and un-awaited, and the exposure that creates is preserved and recorded below rather than closed here |
+| 9 | **`grantRole` response projection** | `user && typeof user.serialize === 'function' ? user.serialize() : JSON.parse(JSON.stringify(user))`, projecting the granted user through the model's `publicSpec` | Unauthorised, and **it changed a response body AAP §0.9.3 compares exactly**. Measured, baseline answers `POST /api/admin/user/{userId}/grant` with the whole document — `password` (a live `$2b$10$…` hash), `_id`, `verified`, `source`, `roles[]` — and the projection answered with seven keys and no `password`. Removing credential material from a response is a security improvement, and R-d prohibits improvements without an approved deviation; the exposure it was closing is preserved and recorded in [§9.11](#911-the-admin-controller-publishes-the-whole-user-document-bcrypt-hash-included) |
+
+**What controls, stated once.** Mechanisms 1 to 8 sit on a route AAP §0.9.1 compares by declared auth
+per entry and AAP §0.9.3 compares by exact status, body, `Cache-Control` and every `Set-Cookie`
+attribute; mechanism 9 sits on a body §0.9.3 compares exactly. AAP §0.2.2 excludes behaviour
+improvements "except where 0.7 decides a requirement other than R-d controls and records the deviation
+as approved", and §0.7 decides exactly two conflicts — the never-settling file response and the
+`marked` fork — neither of which is this. `lib/controllers/admin.js`'s own delivery directive is
+narrower still: "R-a. Requires: async conversion + the `csv` call-site verification, **and nothing
+else**", with "do NOT tidy the imports", "preserve every response field name exactly", and
+"`lib/models/**` → out of scope". A policy whose own source comments argue for it is the shape §11.4
+already caught once; the argument is not the approval.
+
+#### The shape that is delivered instead
+
+**Measured** (**static**, code-only diff against `2f8712a` with comments and blank lines stripped).
+`admin.ohnoes` is now baseline's body with the **T-1 conversion and nothing else** — three lines differ
+and they are the three T-1 requires:
+
+```text
+-    request.success();                          +    var response = request.success();
+-    if (!log || !log.length) return;            +    if (!log || !log.length) return response;
+                                                 +    return response;
+```
+
+Everything between them is baseline verbatim: the six labels, `var msg;` left undefined so the first
+`+=` coerces it and every body begins with the literal text `undefined`, `for (var i = 0; i <
+log.length; i++)` over the whole submitted array, `msg += "\n" + keys[j] + "\t\t" + log[i][keys[j]]`
+indexing straight off the entry, the `----------------------------------` separator, and a bare
+un-awaited `mailer.send(config.app.adminEmail, 'User Session Alert', {text: msg})`.
+`grantRole`'s body line is again `user : JSON.parse(JSON.stringify(user))`.
+
+**The rendered mail body was compared byte-for-byte, not inferred.** An in-process harness stubbed
+`mailer.send` in each tree and invoked `admin.ohnoes` with six payload shapes (**probe**). All six
+produce an **identical sha256** on the two trees, and the only difference the harness reports anywhere
+is the handler's return value — present on the delivered tree, absent on baseline, which is the T-1
+conversion itself:
+
+| Payload | Mails | Body length | Body sha256 (first 16) | Both trees |
+|---|---|---|---|---|
+| one full entry | 1 | 108 | `59eba35ac50ced13` | identical |
+| entry missing five fields | 1 | 142 | `612b86bd6f7dff7c` | identical — five labels render `undefined` |
+| thirty entries | 1 | 2959 | `f17c9b7ff35923fd` | identical — **all thirty rendered**, no cap, no `note` line |
+| `"a\nb\tc"` and a 600-character field | 1 | 706 | `b32d1d419dbfb216` | identical — framing characters pass through, nothing truncated |
+| `log: [1,2,3]` | 1 | 429 | `9a486e4cc482f65d` | identical — primitives still mail |
+| `log: []` | 0 | — | — | identical — the short circuit answers with the response |
+
+**And the route was re-driven against both live servers** (**probe**, two independently installed trees
+on Node 22.23.2, matched configuration, anonymous requests):
+
+| Request | Delivered | Baseline `2f8712a` |
+|---|---|---|
+| JSON with a `log` array | 200 · `{"flash":{},"context":null}` · full private `Cache-Control` · `Set-Cookie: session` | identical |
+| JSON with no `log` | 200 · same body · same headers · cookie | identical |
+| form `message=x` | 200 · same body · same headers · cookie | identical |
+| JSON `{"log":[{"a":1}]}` (non-conforming entries) | 200 · same body · same headers · cookie | identical |
+| JSON with thirty entries | 200 · same body · same headers · cookie | identical |
+| **no payload at all** | 500 · Boom's standard payload · `cache-control: no-cache` · no cookie | identical |
+| **twelve rapid mailable requests** | 12 × 200 and **12 mail attempts** | 12 × 200 and **12 mail attempts** |
+
+The last row is the limiter's epitaph: it was ten before the withdrawal and it is twelve on both trees
+now. The no-payload 500 is the outcome the committed corpus already records for this route
+(`route.post.api-ohnoes.json`, 500, 96 bytes) and it is unchanged — the `TypeError` from
+`request.payload.log` on a `null` payload is baseline's, and preserving the rest of the handler
+preserves it.
+
+#### What preservation leaves exposed — recorded, not repaired
+
+**This is the cost of R-d, on the same terms as §11.4's and §11.5's tables**: each row is reachable in
+the delivered code, none is a deviation, and naming an exposure is not settling it. Every row except 5
+is baseline behaviour at `2f8712a`; **none was introduced by this migration**, and rows 6 and 7 were
+found by the closing re-verification of this checkpoint rather than by the QA pass that prompted it.
+
+**Rows 6 and 7 are the two that most need a human decision.** Both are pre-existing, both are reachable
+with consequences worse than the information leak row 4 describes, and neither can be closed inside
+this unit: row 6's fix spans `config/api_routes.js`, `app.js` and `config/default.yaml` — two of which
+belong to other units — and row 7's true sink is a template this document does not alter. Recording
+them here is the only action available under R-d; **acting on either requires an AAP amendment, because
+§11.0's approved-deviation register is closed at two and any real defence rejects requests baseline
+accepts.**
+
+| # | Exposure | Reachable how | Evidence | What controls preservation | Named follow-up |
+|---|---|---|---|---|---|
+| 1 | **An anonymous caller can send unbounded mail to the administrator address, with a body it composes** | `POST /api/ohnoes` takes any body from any caller and mails one alert per request with no cap, no shape check and no size limit; the six labels are indexed straight off each submitted entry, and a value containing `"\n"` or `"\t"` forges extra labelled lines and entry separators inside the body | **probe**: twelve rapid requests produced twelve mail attempts; the 600-character field rendered in full at body length 706; `"a\nb\tc"` rendered raw | R-d, and AAP §0.9.3's exact comparison of this route's response — the response is what a gate can see, and none of these mechanisms is visible in one | Reinstate a bound and a shape check as a separately approved change. It needs no corpus recapture, because it changes no response — which is also why it must be **approved rather than reasoned into place**, as the withdrawal above demonstrates |
+| 2 | **A rejected alert send is an unhandled rejection, and Node 22 terminates on one** | `mailer.send` is `async` (`lib/util/mailer.js`, byte-identical to `2f8712a`) and is called bare and un-awaited, and no `unhandledRejection` or `uncaughtException` listener exists in `app.js`, `lib/**` or `config/**`. **Measured executable and fatal**: with `app.mail.host` set to a port where nothing listens, one anonymous `POST /api/ohnoes` carrying a mailable `log` kills the process — the un-awaited `send` rejects with `ESOCKET` / `connect ECONNREFUSED`, `triggerUncaughtException(err, true /* fromPromise */)` fires and Node 22 exits, after which the port stops answering. So **one unauthenticated request takes the whole application down**, and every other in-flight request dies with it. Whether the offending request itself gets its 200 first depends only on how fast the transport fails, so it is not a reliable 200: against a refused localhost connection the failure is immediate and **the client receives nothing at all** (measured `http=000` after 0.075 s, no body), whereas a transport that fails slowly would let the response flush before the exit It does not arise only under the committed default, where `isConfigured()` is false because `app.mail.host` is empty, so `send` short-circuits and resolves; that default is what makes the route survivable in this checkout and is not a property of the code. An earlier revision of this row described the configured case with "would", which understated a measured outcome | **static**, the three facts above; **probe**, the process exit under a refused SMTP connection, and the "Email not configured, skipping send" line the twelve-request count was read from | R-d: the `.catch` that closed this was itself the withdrawn mechanism 8, and baseline is byte-identical here — same `async` mailer, same bare call — so a configured baseline dies the same way and the fix is an improvement, not a repair | Register a process-level `unhandledRejection` policy, or await-and-swallow at this one call site, as a separately approved change — and note that awaiting would also change the response's timing, which §0.9.3 does not compare but a load test would. Until then, treat a configured `app.mail.host` on a deployment serving this route anonymously as a denial-of-service exposure |
+| 3 | **Whatever a caller puts in `user` and `sesh` is mailed to an administrator verbatim** | The only producer of this payload fills `sesh` from the raw `session` cookie value and `user` from the DOM (`public/js/debug.js`), so a genuine report mails a live session credential and an unverifiable identity claim — and any caller can put anything in either field | **probe**: the six-label body above renders both fields exactly as submitted | R-d, and the byte-identical mail body this section evidences | Drop the two labels, or replace them with a server-derived identity, as a separately approved change — this is precisely withdrawn mechanisms 2 and 3, and it is recorded here so that re-proposing them is a decision rather than a rediscovery |
+| 4 | **The `grantRole` response and the admin user page publish credential material** | Both serialize the whole `User` document, `password` included | [§9.11](#911-the-admin-controller-publishes-the-whole-user-document-bcrypt-hash-included), which carries the measurement and the follow-up | R-d, and AAP §0.9.3's exact body comparison | §9.11's named follow-up |
+| 5 | **The route's only in-tree caller is commented out** | `public/js/debug.js:31` holds the single `$.post('/api/ohnoes', …)` and it is commented out, so nothing in the application posts here | **static** | R-a — an unreferenced route is not a route to remove, and AAP §0.2.2 makes the route surface an invariant | None. Recorded so that "nothing calls it" is not mistaken for "nothing can call it": the route is registered and answers, which is exactly why the exposures above are reachable |
+| 6 | **A cross-origin HTML form can grant itself the site-admin role** | Every session-authenticated admin write is declared with `auth: 'session'` and an `isAdmin(user)` pre-handler and **nothing else**: no CSRF token is issued or checked anywhere in the tree, and no `Origin`, `Referer` or Fetch-Metadata check exists. The session cookie is `SameSite=Lax`, which does not restrain a **same-site** sibling origin, and committed configuration sets a parent-domain cookie (`config/default.yaml:38-46`), so any host under it is same-site. A plain auto-submitting form on such an origin, carrying only `role=admin`, is accepted while an administrator is signed in | **probe**, closing re-verification: a form served from an independent origin POSTed to `/api/admin/user/{id}/grant` with `Sec-Fetch-Site: same-site` and no token; the response was 200 `success:true` and a fresh read showed the target's roles as `user, admin`. CORS does not apply — a top-level form POST is not a preflighted request | R-d, and scope: any check rejects requests baseline accepts, and the declaration, the cookie and the extension points sit in `config/api_routes.js`, `config/default.yaml` and `app.js`, of which the latter two belong to other units | Add server-validated CSRF tokens to every session-authenticated state-changing route, reject untrusted `Origin`/`Referer`, and reconsider both the parent-domain session cookie and the hosting of untrusted sibling origins — as one approved security change with its own AAP amendment. **This is the highest-severity item in this document and it is not this unit's to close** |
+| 7 | **A persisted user field becomes executable markup in an administrator's session** | Row 4's wholesale projection is rendered by `lib/views/admin/includes/users.html` through Nunjucks' `\| safe`, so the pretty-printed JSON is emitted **unescaped** inside a `<pre>`. A persisted value containing `</pre>` therefore closes the element and whatever follows it is parsed as markup. A role name is enough: `admin.updateUser` writes `request.payload.roles` with no validation of the strings inside it, so an admin write — or row 6's cross-origin equivalent — plants it, and it executes on every later view of that user. `rolesData` is a second `\| safe` sink on the same page. No CSP is served | **probe**, closing re-verification: a quote-free `</pre><img src=x onerror=…><pre>` role value executed during parsing at `readyState=loading`, **while `#json` was still `display:none`**, incrementing a document-start tripwire and issuing a credentialed request. The Profile tab being active is no protection, for the reason row 4's note gives — the JSON is in the initial HTML either way | R-d, and scope: the sink is `\| safe` in a template this document does not alter and which belongs to another unit, and validating role strings in the controller would reject writes baseline accepts | Render the object as escaped text or through an HTML-safe JSON encoder that escapes `<`, `>`, `&`, U+2028 and U+2029; project only the fields the page uses (row 4's `publicSpec` follow-up closes most of the surface); validate role names; and serve a restrictive CSP as defence in depth. One approved change across the controller and the template together |
+
+#### Why this withdrawal needs no new scenario, and what it does need
+
+**Nothing here asks the corpus work for a new case.** `route.post.api-ohnoes.json` drives the route
+anonymously with **no payload** and records 500 at 96 bytes; that is measured unchanged on both trees,
+so the committed scenario is correct as it stands and replays clean. The payload-bearing 200 the
+withdrawal restores is not in the corpus, and it does not need to be for this section to hold — it is
+evidenced by the seven-row A/B table above, driven three times per shape. `docs/error-edge-inventory.md`
+observed the gap from its own side while the policy stood, recording of the withdrawn 401 that there
+was "**none in the corpus** — a new non-success scenario is required on this route"; **the withdrawal
+closes that requirement by removing the branch that created it** rather than by adding a scenario for
+it.
+
+**What it does need is two rows deleted.** `docs/error-edge-inventory.md` carried
+`id=admin.ohnoes.response.1` for the 401 and `id=admin.sendOhnoesAlert.handler.1` for mechanism 8's
+`.catch`, both **unchecked and both classified as new in the target with no baseline counterpart** —
+which is the inventory correctly declining to call them preserved. Both branches are gone, so both rows
+are gone with them; nothing else in that document's admin section changes its meaning, and its remaining
+`lib/controllers/admin.js` locators sit 44 to 45 lines lower than they read, because the withdrawal
+removed 175 lines from the file. `docs/conversion-inventory.md`'s row for the `sendOhnoesAlert` chain
+goes the same way, and its `ohnoes` row is unaffected — that row records the handler as already
+returning its response, which is still true, and is in fact the one thing this withdrawal did **not**
+touch.
+
+---
+
+
+---
+
+### 11.7 Deviation 3 — the ZIP container bytes both archive download routes emit
+
+**The conflict.** The bytes of a downloaded archive are observable behaviour, so R-d requires them
+preserved. Two of this migration's dependency moves change the *container* fields those bytes carry —
+one of the two is mandated by AAP §0.5.1.2 by name, and the other is what makes the mandated one
+readable at all. Both cannot hold, so this section records the decision, its precedence argument, and
+the gate that now holds the delivered container in place.
+
+**Two routes, two writers, and QA's attribution corrected.** The finding that raised this recorded the
+whole field-level list against `archiver` 2.1.1 → 7.0.1. Measured in source, that is half right: the
+two archive routes do not share a writer.
+
+| Route | Writer | Dependency change | Authorization |
+|---|---|---|---|
+| `GET /{userSlug}/courses/{courseSlug}/download.zip` | `adm-zip` — `[T lib/controllers/courses.js:16]` `zip = require('adm-zip')`, written at `[T lib/controllers/courses.js:426-432]` (`new zip()` · `addLocalFolder` · `writeZip`) | **`adm-zip` 0.4.16 → 0.6.0** | AAP §0.5.1.2 mandates it (high advisory, range `< 0.6.0`), and that row itself states archive-read behaviour is a changed surface |
+| `GET /{lang}/{shortCode}` in its `.zip` form | `archiver` — `[T lib/controllers/trinket.js:24]`, invoked at `[T lib/controllers/trinket.js:2044-2045]` as `archiver('zip', {zlib:{level:9}})` | **`archiver` 2.1.1 → 7.0.1** | [`dependency-inventory.md`](dependency-inventory.md) §3 row 17 with its §9.5, and [`deferred-dependencies.md`](deferred-dependencies.md) §2.6 |
+
+**Measured** (driven, on the delivered tree, by `test/parity/replay.js`'s archive reader over the live
+responses of all four archive scenarios, in **both** the non-secure and the secure cookie pass, the two
+passes agreeing field for field). The `baseline` column is the QA field-level measurement of the tree at
+the base commit and is **recorded, not compared**; `null` marks a field that measurement did not state.
+
+*Course archive — writer `course-download-adm-zip`, 200 `application/zip`, **538 bytes on both trees**,
+4 entries, canonical fingerprint `4f1c73376d54a1ebb7d0f6d63f4d2cf15a7f0ee5e0ff6314b6196fb4cf55a713`:*
+
+| Container field | Baseline `[B]` | Delivered `[T]` |
+|---|---|---|
+| general-purpose flags — UTF-8 name, bit 11 | `no-entry` (0x0000) | **`every-entry`** (0x0800) |
+| local `versionNeeded`, deflated entries | 10 | **20** |
+| central `versionMadeBy` | `0x000a` (MS-DOS v1.0) | **`0x0314`** (UNIX v2.0) |
+| directory external attributes | `0x41ed0010` (0o40755) | **`0x45ed0010`** (0o42755 — setgid now set) |
+| file external attributes | `0x01a40000` (0o644) | **`0x81a40000`** (`S_IFREG`\|0o644) |
+| declared crc32 and uncompressed size | every entry with content | every entry with content — unchanged |
+
+*Short-code archive — writer `short-code-download-archiver`, 200, **182 bytes on both trees**, one entry
+`main.txt`, canonical fingerprint `076ae4d6f0ffb51ce3c09ba731986b1fbb28fbf36bd81dabe837edf5e56f5377`:*
+
+| Container field | Baseline `[B]` | Delivered `[T]` |
+|---|---|---|
+| declared crc32 | `0x00000000` | **`0xf10614e3`** — the entry's real value |
+| declared uncompressed size | 0 | **61** — the entry's real length |
+| declared crc32 matches the content | `no-entry-with-content` | **`every-entry-with-content`** |
+| every other profile field — UTF-8 flag, data-descriptor flag, `versionMadeBy` `0x032d`, `versionNeeded` 20, file attributes `0x81a40020`, internal attributes `0x0000` | — | **identical on both trees** |
+
+**What did not change, stated because a container diff invites the assumption that everything did.**
+Status, `content-type`, `content-disposition`, byte length, entry names, entry order, entry count,
+compression method and every entry's content are identical on both trees, which the QA measurement
+states as well. On the course route the CRCs and sizes were already correct at baseline. The change is
+confined to the container metadata tabulated above.
+
+**The decision, and the precedence argument for each half.**
+
+- *Course route — R-d yields to an explicit AAP instruction, which is the highest precedence class there
+  is.* The container change is not one this migration chose; it is the consequence of the `adm-zip` 0.6.0
+  bump AAP §0.5.1.2 mandates by name for a high advisory, and that row's own words are that
+  "archive-read behaviour is a **changed surface**, so the storage contract and archive-layout cases
+  cover it rather than a call-site diff". Preserving the container would mean refusing a bump the AAP
+  requires. R-a's dependency-swap category authorizes the move, and §11.0's rule is satisfied because
+  the deviation is argued here rather than declared by the tool that measures it.
+- *Short-code route — R-b controls, for the same reason it controls in [§11.1](#111-deviation-1-the-never-settling-file-response).*
+  Baseline's `archiver` 2.1.1 declared `crc32 = 0` and uncompressed size `0` for a deflated entry, so the
+  archives it served were **structurally invalid**: the `adm-zip` 0.6.0 this migration installs throws
+  `ADM-ZIP: CRC32 checksum failed` on such an entry where 0.4.16 silently returned an empty buffer, and
+  2.1.1 additionally emitted `[DEP0005] new Buffer()` at module scope through `zip-stream` 1.2.0 →
+  `compress-commons` 1.2.2 on every boot, breaching the zero-deprecation-warning bar of AAP §0.8. An
+  archive the application's own reader rejects is not behaviour a client can depend on, which is exactly
+  §11.1's reasoning; and declaring the real checksum where the writer previously declared none is the
+  arithmetic the ZIP format defines rather than an improvement chosen for its own sake.
+- *Why this is a deviation and not one of [§11.3](#113-what-is-not-a-deviation-and-why-the-register-is-closed)'s
+  unmet targets.* §11.3's rule is that an approved deviation is a **prohibition** (R-d) argued away by a
+  stronger requirement, while its own rows are validation targets nobody had argued. This entry is the
+  first shape: R-d yielding to an explicit AAP instruction and to R-b. §11.3's `compress-commons` row
+  records that the DEP0005 warning stopped arising *because the declared graph moved*, and says that
+  section "neither approves nor disputes" the move — this section is where that move's client-visible
+  consequence is approved, which is the half that was missing from the delivery.
+
+**Replay-visible? No — and the reason is a measurement, not a convenience.** A ZIP embeds each entry's
+DOS modification time, so the **raw** digest of an archive response is a clock read and no recording can
+carry a comparable one. Proved twice: the committed `test/parity/corpus.json` records the *same* request
+(`GET /testing/courses/test-course/download.zip?format=md`, identity `user`) twice at the same 538-byte
+length with two different digests (`15d30b76931402f6…` and `006afd7264311bc0…`), and one tree's two
+cookie passes produce two more (`890fc0d578465b21…`, `a81f975ee3c6e0b5…`). So this change could never
+have surfaced as a digest difference, and a scenario-level approved-change marker would be meaningless
+for it. Like [§11.2](#112-deviation-2--the-marked-fork-is-retained-leaving-one-named-high-advisory),
+deviation 3 therefore carries **no scenario id**, and §11.0's allowlist stays at exactly one.
+
+**Gate — what replaced the digest, so this change is registered rather than normalized away.**
+`test/parity/replay.js` now **opens** every archive response in the same step that compares it, and both
+halves fail the run:
+
+1. **The writer profile against a frozen expectation.** `ARCHIVE_CONTAINER_REGISTER` pins, per writer,
+   the eleven container fields tabulated above — content-independent, so it does not move with seeded
+   content — with the baseline column recorded beside it as this deviation's machine-readable form. A
+   container whose profile no longer matches is a `body.archive.writerProfile.<field>` **difference** and
+   a non-zero exit; an archive served on a route the register does not name is a difference too.
+2. **An entry-table fingerprint, compared exactly — against the recording where there is one, and
+   otherwise against a pin frozen in the register.** sha256 over the
+   canonical JSON of the whole entry table — keys sorted at every depth, entries left in order —
+   which measures **28 fields per entry**: name and its encoding, directory flag, method (central and
+   local), flags (central and local), the UTF-8-name and data-descriptor bits, `versionNeeded` (central
+   and local), `versionMadeBy`, internal and external attributes, the unix mode, declared crc32 (central
+   and local), compressed size, declared uncompressed size (central and local), the computed crc32 and
+   the two "declared matches content" verdicts, and the content itself as the sha256 of the entry's
+   **inflated** bytes. **No mtime, date or time field appears in it** — verified by enumerating the
+   fields, which is the point, since the mtime is the whole reason the raw digest is a clock read. Note
+   the honest limit: `compressedSize` *is* in the table, so the value is stable across the clock but is
+   **not** claimed to be independent of the compression library; the entry *content* is compared as
+   inflated bytes and therefore is. Measured deterministic, in one run of this tree: the three course-archive scenarios
+   all fingerprint `4f1c73376d54a1eb…` while the corpus records **two different** raw digests for them
+   (`15d30b76931402f6…` for two of the three, `006afd7264311bc0…` for the third) and the run observes a
+   **third** value again (`da002b652c0ef63e…`) — the fingerprint holding still across exactly the
+   variation the digest cannot survive.
+
+   **The pin, and why it exists rather than a note saying the corpus will catch this later.** The
+   committed corpus records a binary body as a length and a digest and predates this field, so no
+   archive scenario carries a recorded fingerprint — measured, 4 of 4 in each pass. An earlier revision
+   of this gate therefore reported the fingerprint as an *observation* and only ever compared the writer
+   profile. That was not enough, and QA proved it: because the profile is content-**independent** by
+   design — which is what lets one frozen expectation cover a 4-entry course archive and a 1-entry
+   short-code archive — two valid containers on the same registered route, equal in byte length, entry
+   name and entry size and identical in all eleven profile fields but differing in inflated content and
+   crc32, produced **zero** differences. A comparator that cannot fail in a category is not comparing
+   it. So each writer in the register now carries a frozen `pinned` block — the entry-table
+   fingerprint, the entry count and the byte length — and the comparison is exact either way: the
+   recording decides where it carries a counterpart, and the pin decides where it does not. AAP §0.9.3
+   licenses exactly this, because seeding is deterministic and comparison here is exact. The pinned
+   values, measured on this tree and agreeing across both cookie passes:
+
+   | Writer | Pinned fingerprint | Entries | Bytes |
+   |---|---|---:|---:|
+   | `course-download-adm-zip` | `4f1c73376d54a1eb…a713` | 4 | 538 |
+   | `short-code-download-archiver` | `076ae4d6f0ffb51c…5377` | 1 | 182 |
+
+   Each archive scenario now records `fingerprintComparison: equal-to-register-pin` with
+   `fingerprintComparedAgainst: register-pin`, and **`recordingFingerprintState:
+   recording-predates-the-field` beside it** — so the artifact never reads as a corpus comparison it did
+   not make, and the re-capture that would supersede the pin stays visible rather than papered over.
+
+Driven evidence in this tree, from a run of both cookie passes over the four archive scenarios: the
+named check **`archive containers` — `ok: true`, `asserted: 4`, `failures: []`** in the non-secure pass
+**and** again in the secure pass, each pass reporting `{match: 4}`, and **0 field-for-field differences
+between the two passes** across all four scenarios (the eleven-field profile, the full per-entry table
+and the eight scalars — writer, container, byte length, state, entry count, fingerprint and its
+comparison state). All eight profile comparisons report `mismatches: []`; the short-code container
+additionally reports **one `undetermined` field**, `directoryExternalAttributes`, because a one-entry
+archive holds no directory entry to determine it — reported with its reason rather than counted as a
+pass, which is the same discipline the fingerprint state follows. `assertArchiveReader()` — **11 probes,
+allOk**, among them `every-registered-writer-declares-a-complete-content-pin` and
+`a-container-differing-only-in-content-is-rejected-by-the-pin`, which are what hold the paragraph above,
+and `fingerprint-ignores-the-clock`, which pins the clock argument by fingerprinting two
+containers that differ only in their DOS mtime identically (`531630bd8751bb0f…` both) while their raw
+digests differ (`b19e05183e862247…` vs `003212a0a2814fdf…`).
+
+**A comparator that cannot fail in a category is not comparing it, so this one was made to fail on
+purpose.** Nine adverse behaviours, all driven here. One is the content-drift discriminator that
+motivated the pin, built in process against a registered route: two valid containers, **equal in byte
+length, entry name and entry size and identical in all eleven profile fields**, differing only in
+inflated content and crc32. Before the pin the drifted container produced **0** differences; with the
+pin the comparison reports `fingerprintComparison: differs-from-register-pin`,
+`fingerprintComparedAgainst: register-pin` and a real **`body.archive.fingerprint`** difference whose
+note names the contents, distinguishes them from the clock, and gives both remedies — re-measure and
+re-approve the pin if the change is intended, or fix the seed if the fixtures moved. That the earlier
+revision could not fail this is not inferred: at the previous commit the file contains no `pinned`
+block, no `ARCHIVE_PIN_FIELDS` and no `compareArchivePin`, and its only fingerprint-difference branch is
+gated on `fingerprintComparison === 'differs'`, which requires a recorded fingerprint that 4 of 4
+scenarios in each pass do not have.
+
+Two more by perturbing the frozen register itself, each reverted afterwards and the file proved
+byte-identical to its pre-perturbation state by sha256:
+
+| Perturbation | Observed |
+|---|---|
+| short-code writer `pinned.fingerprint` `…5377` → a wrong digest | driven, and **exit 1** on `body.archive.fingerprint` with the observed value against the perturbed pin, `archive containers ok: false` |
+| course writer `directoryExternalAttributes` `0x45ed0010` → `0x45ed0011` | the run **refuses before driving a single request — exit 2** — on the startup probe `the-registered-target-profile-is-satisfiable`, reporting `mismatches=[{field: directoryExternalAttributes, expected: 0x45ed0011, observed: 0x45ed0010}]`. An expectation no passing container can meet is reported as an unusable expectation rather than as a route defect |
+| short-code writer `fileExternalAttributes` `0x81a40020` → `0x81a40021` | driven, and **exit 1**: `quirk.reply-chain.header-resolved.short-code-zip -> 1 DIFFERENCE(S): body.archive.writerProfile.fileExternalAttributes`, the named check turning to `FAIL archive containers (0 asserted)` with `does not match the writer profile registered for short-code-download-archiver` |
+
+And six more asserted by the startup probes in the unperturbed run above, each reported with its
+measurement rather than as a bare pass. Two are the pin's own:
+`every-registered-writer-declares-a-complete-content-pin`, which refuses the run when a registered
+writer lacks a fingerprint, entry count or byte length — so the gate cannot go vacuous again by
+omission — and `a-container-differing-only-in-content-is-rejected-by-the-pin`. The other four:
+`the-baseline-profile-is-rejected-on-exactly-the-registered-fields`
+— a **baseline**-shaped container is rejected on exactly six fields (`centralVersionMadeBy`,
+`directoryExternalAttributes`, `fileExternalAttributes`, `localVersionNeededByMethod.deflated`,
+`utf8NameFlag`, `versionNeededByMethod.deflated`), which is this deviation's own field list and the
+direct proof that the delivered container would not pass as the baseline one;
+`readable-but-empty-container-is-a-difference` (`state=no-entries`, 1 difference — an empty container
+cannot pass by having nothing to compare); `an-archive-on-an-unregistered-route-is-a-difference`; and
+`malformed-container-is-unparsed-not-empty`. One further control belongs to the implementing run rather
+than to this one and is attributed to it: a synthetic recorded fingerprint fails all four scenarios on
+`body.archive.fingerprint` (exit 1).
+
+The volatile set is **not** widened by any of it: still six
+categories and the same six exempt media types, and what the timestamps category now exempts is the
+**raw digest only**. `test/parity/storage.js` (35 of 35, `archive-layout` among them) and
+`test/parity/worker.js` (VERDICT PASS, 109 of 109) continue to assert the entry-level contract by
+opening the archives they build.
+
+**The cost, and why it is accepted.** The figures here are **not** measured by this repository's gates —
+they are the QA performance measurement of this move, recorded as it reported them and attributed to it,
+because no gate in this tree measures throughput and this document does not invent one. As measured
+there, the `archiver` move carries two reproducing single-entry slowdowns
+on the delivered tree — a one-entry 8-byte archive **+5.7…9.6 %** and a one-entry 1 MB archive
+**+7.7…8.5 %**, against same-window environmental envelopes of ±3.2 % and ±1.2 % with a stable control.
+The absolute magnitude is **+0.11 ms** and **+0.97 ms**, and it is more than offset by **−18.6…−24.6 %**
+on multi-entry archives (10, 50 and 200 entries all reproduce as improvements): 7.0.1 has a higher fixed
+per-entry deflate cost and much lower per-entry overhead than 2.1.1. It is accepted rather than tuned —
+the move is justified on the integrity and warning axes above, and R-a authorizes no performance work.
+
+**What a re-capture would change, so the next one is not a surprise — and why the gate no longer waits
+for it.** The pin above means content drift is caught **now**, and a coverage assertion enforces that:
+a scenario on a registered archive route that ends with its fingerprint compared against *neither* a
+recording nor a pin is a **gating failure of the run**, not an observation. Measured on the delivered
+tree, both passes: `pin 4, recording 0, notInRecording 4, uncompared 0`.
+
+When `test/parity/capture.js` does record `body.archive`, the recording becomes the authority and the
+pin defers to it — the precedence is deliberate and probe-covered, so a re-capture supersedes the pin
+rather than colliding with it. A recording taken from the **baseline** tree would then report a real
+`body.archive.fingerprint` difference, not because of the clock but because the 28 fields the
+fingerprint measures include `versionMadeBy`, `externalAttributes`, `flags`, `versionNeeded`,
+`crc32Declared` and `uncompressedSizeDeclared`, and this deviation changed every one of them. Verified
+two ways rather than asserted: by enumerating the fingerprint's own field list against the tables above,
+and by the startup probe `the-baseline-profile-is-rejected-on-exactly-the-registered-fields`, which
+rejects a baseline-shaped container on exactly six named fields.
+That is this deviation becoming visible rather than a new defect, and those two scenarios would then
+need the register marker
+[§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) point 2 requires.
+Owner: `test/parity/capture.js` and `test/parity/corpus.json`.
+
+### 11.8 Deviation 4 — the course archive is built in a per-request directory, so a concurrent download is no longer served another request's course
+
+**The baseline behaviour, and why it is not a behaviour a client can depend on.** `courses.download`
+assembled its export in `'/tmp/' + owner.username` with `'/' + course.slug` inside it
+— `[B lib/controllers/courses.js:147-148]`, unchanged in the delivered tree until this checkpoint —
+and answered by deleting **the whole of the owner half**: `rimraf(ownerDir, …)`
+`[B lib/controllers/courses.js:268]`, `fs.promises.rm(ownerDir, …)` in the converted form. Every
+segment of that path comes from the request, so two requests for the same owner and course — two
+concurrent requests to one instance, or two instances sharing a host — assembled their exports in the
+**same directory** and each deleted the other's tree. Separately, `fs.createReadStream`
+`[B lib/controllers/courses.js:267]` opens **asynchronously**, so the deletion on the next line raced
+the open; when the deletion won, the stream emitted `'error'` with `ENOENT`, nothing was listening, and
+an unhandled `'error'` event **terminates the process**, taking every in-flight request with it.
+
+**Measured, on this tree, by driving it.** Two instances of the delivered application on one host
+(ports 20092/20093), each on its own MongoDB database seeded with the **same** username and course slug
+but differently-named lesson trees (`alpha-*` and `beta-*`), sharing one `TMPDIR`, hit with 24 **paired
+concurrent** `GET /{userSlug}/courses/{courseSlug}/download.zip?format=md`. The two handlers were run
+under identical conditions, one after the other, and the only variable was the handler:
+
+| | Baseline-shaped handler (the committed pre-fix body) | Delivered handler |
+|---|---|---|
+| Status distribution over 48 requests | `200` ×12, no response ×35, stream error ×1 | `200` ×48 |
+| Successful responses carrying the **other** database's lesson tree | **12 of 12** | **0 of 48** |
+| Distinct entry sets observed | 3, every one of them mixing `alpha-` and `beta-` entries | 2, each exactly its own instance's | 
+| Instances alive at the end | **one dead** | both alive |
+| Unhandled `'error'` events in the instances' stderr | **1** — `Error: ENOENT … open '/tmp/qa_c9_owner/test-course.zip'`, `Emitted 'error' event on ReadStream instance` | **0** |
+| Work directories left on the host | 0 | 0 |
+
+The two failures are independent, and a second experiment separates them. With an external loop
+unlinking the archive the instant it appears — the exact window the open used to race — the
+baseline-shaped handler dies on the **first** occurrence with the unhandled `ENOENT` above, while the
+delivered handler **logged 21 stream failures and survived every one of them** (`0` unhandled events).
+
+**The conflict, and which requirement controls.** R-d requires that baseline behaviour be preserved,
+including where it is a defect. R-b requires that the application genuinely run with no route excluded.
+Both cannot hold: an archive assembled from another database and a process death are what baseline
+produces on this path. **R-b controls, and this is registered as a deviation rather than as
+preservation** — the same precedence this register already applies to
+[§11.1](#111-deviation-1-the-never-settling-file-response), for the same three reasons and one more.
+An archive built from another instance's database is not a behaviour a client can depend on; it is the
+wrong file, and R-d's protection is for clients that may rely on observable behaviour. The intended
+behaviour is not inferred: the handler's own comment states that the open descriptor is what keeps the
+unlinked archive readable while it streams, so the delivered code implements the intent the baseline
+code documented and failed to carry out. R-b is unqualified about the application running, and a
+process death is not one route failing but every in-flight request failing. And unlike
+[§11.2](#112-deviation-2--the-marked-fork-is-retained-leaving-one-named-high-advisory), this pits a
+prohibition against a prohibition rather than against a validation target, so the tie-break is the
+dependency one: preserving this defect costs correctness of a served file and the availability of the
+whole process, while deviating from it costs nothing a client can observe on the ordinary path.
+
+**What did *not* change, which is most of what this route does.** The archive's **bytes** are
+identical, and that is pinned rather than asserted: the container register in `test/parity/replay.js`
+pins this writer at fingerprint `4f1c73376d54a1eb…`, **4 entries, 538 bytes**, and all three course
+scenarios report `equal-to-register-pin` with **0 differences in both cookie passes**, entry table
+unchanged down to `attrs 0x45ed0010 (0o42755)` on the two directory entries and `0x81a40000` on the two
+files. The response is unchanged field for field — `application/zip`, `bytes(stats.size)`,
+`Content-Disposition: attachment; filename=<slug>.zip`. Both preserved quirks in this handler are
+untouched and were re-observed firing: the **`statFailed`** edge still ignores the stat error, still
+raises `TypeError: Cannot read properties of undefined (reading 'size')` from a **detached tick**
+(observed at `[T lib/controllers/courses.js:524]`, stack `process.processTicksAndRejections`) and still
+returns a promise that never settles, and a failed deletion is still swallowed.
+
+**One consequence worth naming, because it moves the source of a registered value.** Deviation 3's
+`directoryExternalAttributes: 0x45ed0010` is a setgid directory mode, and a directory acquires setgid
+only by inheriting it from its parent. Under the host-global root that bit came from `/tmp` itself
+being `drwxrwsrwx` (mode `2777`, measured on this host); a per-request root under `os.tmpdir()` follows
+`TMPDIR`, which both `test/parity/server.js` and a container point at a directory without it. The
+delivered code therefore sets the bit on its own work root, which is why the pinned fingerprint still
+holds under a non-setgid `TMPDIR` — verified, since the passing run above was served by an instance
+whose `TMPDIR` was mode `755`. The registered value did not change; **what changed is that it is now a
+property of this code rather than of the host's temp directory**, which is the stronger position for a
+pinned byte sequence to be in.
+
+**Replay-visible? No — and, as with deviations 2 and 3, that is a measurement rather than a
+convenience.** The difference this deviation makes appears only when two requests for the same owner
+and course overlap, and every committed scenario is driven serially against one instance. So there is
+nothing for a scenario marker to attach to: on the ordinary path the delivered response is **identical**
+to baseline's, which is exactly what the register pin above asserts. **Deviation 4 therefore carries no
+scenario id, and §11.0's allowlist stays at exactly one.** The honest limit is stated rather than
+implied: no committed gate drives two instances, so the evidence for this deviation is the driven
+reproduction recorded above and the register pin that holds the bytes it must not change. A harness that
+drives a second instance would belong with `test/parity/server.js`, which this document does not own.
+
+
+---
+
+### 11.9 Deviation 5: the bounded `zipCode` read, and the process death it no longer causes
+
+**This is the register entry [§10.7](#107-the-zipcode-branch-that-took-the-process-down-and-the-bounds-that-now-hold-it)
+was missing.** §10.7 carries the measurement, the two bounds, the nineteen unit cases and the
+field-by-field cost table, and it opened by describing itself as the one entry whose outcome is
+deliberately not preserved *without being one of the numbered deviations* — an accurate statement of a
+gap, not of a decision. The decision was made and argued there; what was absent was its registration,
+so a reader counting the register found two entries and a third change hiding inside a preservation
+catalogue. This section is that registration. §10.7 remains the owner of the mechanism and the
+evidence; **this section owns the approval**.
+
+**The sites.** `trinket.draft` `[T lib/controllers/trinket.js:1209]` and `trinket.autosave`
+`[T lib/controllers/trinket.js:1307]`, baseline `[B lib/controllers/trinket.js:986]` and
+`[B lib/controllers/trinket.js:1054]`. Both are authenticated (`auth: 'session'`), both accept a
+base64 ZIP in `request.payload.zipCode`, and both declare a 10 MB `payload.maxBytes`
+`[B config/api_routes.js:977-979,1004-1006]` that bounds the **compressed** input only.
+
+**The conflict.** **R-d requires that the outcome be preserved. R-b requires that the application
+genuinely run.** Baseline's outcome on this branch includes the termination of the server process: a
+malformed `zipCode` from any logged-in user answered the request and then killed the process, because
+the detached chain's `JSON.parse` threw with no downstream rejection handler and Node 22 defaults to
+`--unhandled-rejections=throw` (measured, §10.7). An unbounded expansion reaches the same end by
+exhausting the heap. Both cannot hold.
+
+**Decision: the read is bounded and the chain is terminated. R-b controls.** Two reasons, and the
+first is why this is a *stronger* case than [§11.1](#111-deviation-1-the-never-settling-file-response)
+rather than a weaker one:
+
+1. **What the crash destroys is not this branch's behaviour.** The client has *already* been answered
+   when the process dies — 200 from `draft`, 500 from `autosave` — so the response R-d protects is
+   emitted either way. What the death takes is every *other* request in flight and every request that
+   would have followed. R-d's protection is for a client that may rely on observable behaviour; no
+   client can rely on the server ceasing to exist after it has been served, and no other route consents
+   to it. §11.1 decided the comparable conflict on the ground that the absence of a response is not
+   behaviour a client can depend on; this is that argument applied to the absence of a *server*.
+2. **R-b is unqualified** — the application must genuinely run, with no route or module excluded. A
+   route that ends the process on an authenticated request excludes every module from running, which is
+   the plainest possible failure of that requirement.
+
+**This is a departure from the plan's own count, and it is recorded as one.** AAP §0.7 names exactly
+**two** conflicts inside the request and decides both; this is a **third**, found by measurement during
+the work rather than anticipated by the plan. It is registered rather than absorbed for the reason
+§11.0 gives: an argued conflict that stays out of the register is indistinguishable from drift, and the
+alternative — leaving a delivered behaviour change described only inside a preservation catalogue — is
+worse than a named departure from a count. Nothing about the decision is novel: the precedence rule it
+applies is AAP §0.7's own, used exactly as §11.1 uses it, on a conflict the plan did not reach. Two
+things follow. The plan's figure of two is superseded **only** as a count, not as a decision — both of
+the AAP's named conflicts are decided as the AAP decides them (§11.1, §11.2). And a fourth entry needs
+the same treatment this one got: an argument written out, a field-by-field statement of what changed,
+and a gate — not a source comment claiming approval, which §11.1 and §11.4 each record one of.
+
+**What is approved, field by field.** Not "hardening" in the abstract — these exact outcomes:
+
+| Input to `POST /api/trinkets/{trinketId}/draft` and `…/autosave` | Baseline | Approved target |
+|---|---|---|
+| No `zipCode`, or a legitimate one inside the bounds | `draft` 200; `autosave` 200, or 500 from its own chain | **identical** — unchanged, and not part of this deviation |
+| A malformed `zipCode` | `draft` **200**, `autosave` **500**, then **the process died** | `draft` **200**, `autosave` **500**, **process alive**. The two responses are byte-identical to baseline's; only the death is gone |
+| A crafted bomb, or a forged archive understating its own sizes | no dependable response; expansion attempted to the heap's limit | `draft` **200**, `autosave` **500** — the branch's own malformed-input disposition, at zero or bounded emitted bytes |
+| A **valid** archive expanding beyond the cap | 200, and the code stored | `draft` 200 **without storing**, `autosave` **500** — **the one input class whose observable outcome changes** |
+
+The last row is the whole of the behavioural cost, and it is stated here rather than left to be
+discovered. The other rows are response-identical by construction, for two independent reasons §10.7
+establishes: a promise settles once, so the terminal `.catch` is a no-op wherever the request has
+already been answered; and both bounds surface at the **existing** second-link `onRejected` —
+`request.success()` in `draft`, `legacyReply(err, h)` in `autosave` — so **no new status code was
+introduced anywhere in the file**. The chains remain neither returned nor awaited, deliberately:
+returning them would make `draft`'s malformed branch answer 500 instead of 200, which is the change
+R-d forbids and which this deviation does **not** authorize.
+
+**Not replay-visible, measured rather than assumed.** No committed scenario reaches either branch:
+zero of the 392 scenarios in `test/parity/corpus.json` mention `zipCode` (**probe**). Combined with the
+response identity above, the delivered tree therefore has **no replay-visible difference** for this
+deviation, so the allowlist rule in [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) is
+unchanged: it remains exactly one scenario id, deviation 1's, and this entry gives no marker anything
+to claim. That is why registering deviation 5 required no change to `test/parity/replay.js`.
+
+**Gate.** §10.7's, unchanged and not restated: the live probe on a running server (malformed, the
+64 MiB honest bomb and the 16 MiB forged archive each answering `draft` 200 and `autosave` 500, zero
+unhandled-rejection lines, the process still answering `GET /`), plus the nineteen unit cases over the
+two bounds. Re-driven on the delivered tree while registering this entry: `draft` **200** with
+`{"flash":{},"context":null}` and `autosave` **500** with the generic Boom body for a malformed
+`zipCode`, the process still answering `GET /` with 200 afterwards and no unhandled-rejection line in
+the server log (**probe**). What is still owed is a corpus case, which §10.7 specifies and which lives
+in `test/parity/capture.js`'s builders rather than here.
+
+**Cross-artifact obligation, named because this entry creates it.** Three artifacts state the size of
+this register in their own words, and each is owned elsewhere in the delivery: the deviation sections
+of [`baseline-parity.md`](baseline-parity.md) and
+[`deferred-dependencies.md`](deferred-dependencies.md) — both of which already declare that their
+numbering *follows this §11* — and the register comment in `test/parity/replay.js`, alongside the
+count in `docs/conversion-inventory.md`. **None of them is made incorrect in substance by this entry**:
+the replay allowlist is still one id and still the right one, and neither document's *argument* changes.
+What is superseded is the word "two" wherever it counts this table. This document is the canonical
+register and says so in §11.0, so the count here governs and the wording there is a documentation
+follow-up for the units that own those files.
+
+---
+
+### 11.10 Deviation 6: `POST /api/folders` answers where the baseline process died
+
+**Why this section exists at all, stated before the argument.** The delivered `folders.create` already
+behaved differently from baseline, and the only thing standing behind that difference was a source
+comment reading `APPROVED DEVIATION` — in a file, in a branch, with **nothing in this register**. That
+is the precise failure mode [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)
+was written to stop: a deviation a tool can declare for itself is drift with a label, and so is one a
+comment declares for itself. Either the difference had to be argued into this register with its
+precedence argument, or the baseline outcome had to be restored. It is argued in, because restoring the
+baseline outcome means restoring a route that takes the application down, and R-b forbids exactly that.
+The comment now cites this section instead of asserting approval, at **three** places in
+`lib/controllers/folders.js` — one on each of `create`'s two failure branches, and one in the note on
+`update`'s duplicate branch that marks where this deviation stops and preservation resumes. Those three
+are the only `§11.10` references in the file.
+
+**The route.** `POST /api/folders`, `auth: 'session'`, `payload.name` `Joi.string().min(1).max(140).required()`
+`[B config/api_routes.js:680-689]` — byte-identical to the delivered tree, verified by `git diff`. It has
+two failure branches inside the `folder.save` callback, selected by `err.code`, and **both are part of
+this deviation**. `lib/models/folder.js` declares the unique compound index on `{_owner, slug}`
+`[B lib/models/folder.js:164]` and derives the slug from the name, so a colliding name is what raises
+the duplicate-key error.
+
+#### Clause 1 — the duplicate name: the process no longer dies, and the conflict is reported as one
+
+**Measured, baseline** (driven against a running baseline server; recorded independently in
+`test/parity/corpus.json`'s scenario of the same name, and reproduced twice by QA, once collapsing an
+entire 800-request run). `[B lib/controllers/folders.js:71]` is `return request.catch({err: err, message: "You already have a folder with this name. Please choose another."})`.
+`request.catch` is **not a decoration this application defines** — `lib/util/routeParser.js` decorates
+`request.success` and `request.fail` and hapi's `Request` carries no `catch` member — so the expression
+throws a `TypeError` **inside a mongoose save callback**, where `Model.$handleCallbackError` re-emits it
+as an `'error'` event on the model. Nothing listens for it, and neither `app.js` nor anything under
+`lib/` or `config/` installs an `uncaughtException` handler, so **the process exits**: the client
+receives no response, and no route serves afterwards. One authenticated request with a colliding folder
+name takes the whole server down.
+
+**The conflict.** **R-d requires the outcome be preserved. R-b requires that the application genuinely
+run, with no route or module excluded. Both cannot hold** — a terminated process excludes every route.
+
+**Decision: the target answers 409 Conflict. R-b controls.** The three reasons §11.1 records apply
+here, and the first two apply *more strongly* rather than by analogy:
+
+1. **There is no observable behaviour to preserve, and less of it than in §11.1.** §11.1's baseline
+   leaves one request unanswered; this one destroys the process that would have answered every other
+   request too. R-d's protection is for clients that may rely on observable behaviour; a client cannot
+   rely on the server having exited.
+2. **The intended response is present in the same function, including its message.** The string
+   `"You already have a folder with this name. Please choose another."` is baseline's own, composed at
+   the dead `request.catch` call site, and the production client already reads a `message` off this
+   response (`public/js/library/components/folders/new-folder-directive.js`). The delivered response is
+   a reconstruction of what that expression was written to send, not a guess.
+3. **R-b is unqualified about the application running**, whereas the `marked` conflict in §11.2 pits a
+   prohibition against a validation *target* — the opposite balance, which is why §11.2's reasoning
+   does not transfer and this one does.
+
+**Why 409 and not the 500 an earlier revision of the delivered code chose.** The earlier code rejected
+the promise, so the preserved route catch-all mapped it to `Boom.badImplementation` and answered
+`500 {"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}`
+— which made a client-caused name collision indistinguishable from a server fault, and dropped the
+message the branch exists to deliver. That reasoning argued from the sibling `folders.update`, which
+answers 500 for the same collision. It does not carry: `update`'s 500 is **preserved baseline**
+(§9.13's neighbour case — its identical `request.catch` expression sits inside a *returned* promise
+chain, so the chain rejects, the request is answered and the process survives), whereas `create` has
+no baseline response at all. Where a response has to be invented because none exists, the choice is
+not "smallest diff from baseline" — every status is equally new — it is which status states the truth
+about the failure. `E11000` on a user-supplied name is a client conflict.
+
+**Delivered contract, field by field.** This is the shape a verifier must check, and the shape any
+future marker is approved for:
+
+| Field | Value |
+|---|---|
+| Outcome | changes **from** process termination / no response **to** an answered response |
+| Status | **409** |
+| `content-type` | `application/json; charset=utf-8` |
+| Body | exactly `{"statusCode":409,"error":"Conflict","message":"You already have a folder with this name. Please choose another."}` |
+| Process | **alive** — a subsequent request on the same instance is served |
+| Persistence | exactly **one** folder document for that `{_owner, slug}`, unchanged from baseline's own integrity outcome |
+
+The Boom is **returned**, never thrown: a thrown Boom is rewritten by the route catch-all into
+`Boom.badImplementation`, which would collapse the 409 back into a 500. `[T lib/controllers/folders.js]`
+`create` resolves its promise with `errors.conflict(...)` for this reason, `errors` being the module's
+existing `@hapi/boom` binding.
+
+#### Clause 2 — the unknown write failure: the branch answers instead of hanging
+
+**Measured, baseline** (static, from the shim's own source — and this correction matters, because the
+finding that raised it assumed the opposite). `[B lib/controllers/folders.js]`'s unknown-failure branch
+is `return reply({err: err, message: err.message})`. The shim's `reply(data)` for a plain object
+`[B lib/util/routeParser.js:360-408]` builds a **chainable builder** and settles the deferred response
+only from `.redirect()`, `.code()`, `.header()` or `.view()` — none of which this branch calls — while
+the handler itself returns `undefined`, so the wrapper takes
+`if (result === undefined) { result = await responsePromise; }` `[B lib/util/routeParser.js:567-570]`
+and awaits a promise nothing will settle. **So baseline never answered this branch either.** It is the
+same non-settlement §11.1 and §4.1 classify, reached by a different mechanism.
+
+The QA finding recorded this as *"TARGET ONLY … newly introduced rather than preserved"*, and reported
+honestly that it could not be exercised. It is **not** newly introduced; recording it as a regression
+would have been wrong in the other direction, and the correction is why this is a deviation clause
+rather than a repair. What *was* newly introduced is only the comment claiming approval for it.
+
+**Decision: the branch answers 500 through this file's own `legacyReply`. R-b and T-1 control**, on
+clause 1's reasoning: an unsettled request holds a socket open indefinitely and is the absence of a
+response, and T-1 (AAP §0.1.2) requires every function hapi invokes to produce one. The intended
+response is again present in the same function — `folders.update`'s unknown-error branch is
+`return legacyReply(err, h)`, and that branch **is** baseline-preserved, so this clause makes the two
+unknown-failure paths of one controller agree rather than inventing a third shape.
+
+| Field | Value |
+|---|---|
+| Outcome | changes **from** an unsettled request **to** an answered response |
+| Status | **500** |
+| Body | hapi's generic `{"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}` — the driving error's message stays on the Boom as internal detail and does not reach the client |
+| Selector | `err.code !== 11000`; `=== 11000` is clause 1 |
+
+#### Gate, stated as what it is rather than as what would be convenient
+
+**Clause 1 is verified at runtime and is not yet in a committed gate.** Driven on the delivered tree:
+`POST /api/folders {name:"dup folder"}` answered `200`, the same request repeated answered **409** with
+the contracted body, and `GET /` answered `200` afterwards, with exactly one folder persisted. What is
+**not** available is the paired comparison, and the reason is structural rather than an omission: the
+corpus scenario `client-contract.folder-duplicate-name.post-api-folders` is recorded
+`unreachableByDesign` because driving it on the **baseline** side terminates the baseline process and
+loses every case ordered after it. So there is no recorded baseline response to diff the 409 against,
+which is also why [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)'s
+rule 1 refuses to extend the replay allowlist yet.
+
+**Clause 2 is verified at runtime through an injected fault**, which is new capability rather than a
+claim: `test/parity/fixtures/model.js` now carries a `folder` entry able to fault the instance `save`,
+so arming a non-`11000` write failure and driving `POST /api/folders` answers **500** with the generic
+payload and the request settles. Before that entry existed the branch was unreachable in any harness —
+`WRAPPABLE` held only `User.findById` — which is exactly why the finding could only be reported
+untested.
+
+**What the corpus and replay work needs, handed over rather than done here** (`test/parity/capture.js`
+and `test/parity/replay.js` are owned elsewhere, and this section is the contract they should read):
+
+1. `capture.js`'s definition of `client-contract.folder-duplicate-name.post-api-folders` can become
+   **drivable** by giving it steps and running it in a `--only` selection, where nothing is ordered
+   after it and the baseline's death costs no other case. Its baseline outcome is then a *recorded
+   result* — a dead socket — in the same way §11.1's baseline timeout is a recorded result.
+2. With a recorded baseline side it takes an `expectedDeviation` marker with
+   `replayDisposition: 'approved-change'`, and `replay.js`'s allowlist takes the id plus **clause 1's
+   six-field contract above**, which is stated here so the tool copies it rather than paraphrasing it.
+3. A second scenario driving clause 2 needs no new baseline capture and no new fixture: it arms
+   `{model: 'folder', method: 'save'}` with any code other than `11000`.
+4. **The scenario's own `unreachableReason` needs correcting in the same pass**, and this is the text
+   it needs: the termination is a property of the **baseline** tree, not of the code in general, and
+   the delivered tree answers 409 and survives. As committed the reason reads as though it described
+   the delivered handler too, which is untrue of it and was raised as a defect in its own right.
+
+**Why that correction is a handover and not something this revision did.** It was made, measured, and
+then **withdrawn**, because `test/parity/corpus.json` is digest-bound: its own provenance block records
+a payload digest and a sidecar records an `artifactDigest`, and *any* hand-edit breaks both.
+**Measured**: with the prose corrected, `node test/parity/manifest.js --verify-provenance test/parity/corpus.json`
+reported `content bound NOTHING - no digest covers this artifact`, and `replay.js` refused before
+driving; with the bytes restored it reports `content bound payload-digest, sidecar-artifact-digest
+recomputed`. So the artifact can only carry this correction by being **re-captured together with its
+sidecar**, which is the same pass points 1 to 3 describe. Correcting the prose by hand would have traded
+a misleading sentence for an unrunnable gate. Until that pass happens the corpus scenario carries its
+original reason and no marker, and **this register — not the artifact, not the source comment, and not
+the tool — is where the approval and the corrected statement live.**
+
+---
+
+
+---
+
+## 12. The register of framework-imposed divergences — one entry
+
+**This register is separate from §11 on purpose, and it holds exactly one entry.** §11's two approved
+deviations are decisions the *application* took: something the migration could have preserved and
+deliberately does not. The entry below is not that. It is a behaviour the framework this migration is
+required to adopt removes, in a code path no application file can reach, so there is no application
+decision to approve and nothing in scope to repair. Recording it as a third approved deviation would
+have been the wrong shape twice over — it would claim a decision nobody made, and it would falsify the
+count that §11.0 and **ten** other records in this repository assert (**static**, one search over the
+tracked `*.md` and `*.js` files: `CHANGELOG.md`, `docs/baseline-parity.md`,
+`docs/deferred-dependencies.md`, `docs/dependency-inventory.md`, `docs/error-edge-inventory.md`, and
+`test/parity/{replay,storage,warning-policy,joi-matrix,error-edges}.js`). Recording it nowhere was the defect this section
+closes: the replay verifier already exempts the difference, and an exemption whose argument lives only
+in a source file is an exemption nobody audits.
+
+**The register is closed at one entry, and it is not extensible by a tool** — the same rule §11.0
+states for the approved deviations, for the same reason. A tool may *implement* the entry below; it
+may not mint another.
+
+### 12.1 hapi 21 emits only cookie CLEARS on a response carrying a 500 error
+
+**What a client sees.** On a response whose error is a 500, the delivered tree sends **no**
+`Set-Cookie` where the baseline sent the yar session cookie. Status, `content-type`,
+`content-length` and the response **body are byte-identical** between the two trees on every one of
+these responses, so there is no rendered-UI impact and nothing a page displays differs; the divergence
+is one header, on **500** error responses only — a 404 and a 400 still carry it, as the probe matrix
+below shows. A cookie **CLEAR** is never affected.
+
+**The framework cause** (**static**, read from the installed tree). `@hapi/hapi` 21's state header
+writer gates the whole of `request._states` on the response's error status
+`[T node_modules/@hapi/hapi/lib/headers.js:65-78]`:
+
+```javascript
+exports.state = async function (response) {
+
+    const request = response.request;
+    const states = [];
+
+    const clearOnly = response._error?.output.statusCode === 500;
+
+    for (const name in request._states) {
+        if (!clearOnly ||
+            (request._states[name].options?.ttl === 0 && request._core.states.cookies[name])) {
+
+            states.push(request._states[name]);
+        }
+    }
+```
+
+hapi 20.3.0's `headers.js` has **no such branch**: its `exports.state` pushes every `request._states`
+entry unconditionally (**static**, read from a 20.3.0 installation). `@hapi/yar` commits the session
+from an `onPreResponse` extension, which is exactly a `request._states` entry, so the session write
+reaches the wire on a 500 under hapi 20 and does not under hapi 21 unless it is a clear. The writer
+runs inside the framework's own marshal cycle — `this._marshalCycle.push(Headers.state)`
+`[T node_modules/@hapi/hapi/lib/route.js:335]` — which is **after** every `onPreResponse` extension
+has returned.
+
+**The two-major probe** (**probe**). One repository-code-free server — a state set from an
+`onPreResponse` extension, eight paths, a second extension that replaces the Boom with a rendered page
+for one of them — run under Node 22.23.2 against both majors, each from its own installation. The
+`Set-Cookie` names emitted:
+
+```text
+path          status  hapi 20.3.0        hapi 21.4.10
+/ok             200   probe              probe
+/throw          500   probe              (none)      <- handler threw
+/boom           500   probe              (none)      <- handler returned a Boom
+/marshal        500   probe              (none)      <- failure DURING marshalling
+/notfound       404   probe              probe
+/badrequest     400   probe              probe
+/replaced       500   probe              probe       <- Boom replaced by a rendered page
+/clear          500   probe+clearme      clearme     <- the CLEAR survives, the set does not
+```
+
+**The branch condition is the framework's own predicate, and stating it as anything narrower
+understates the surface.** It is not "a raw Boom 500": it is **any response whose
+`_error.output.statusCode` is 500**, which the matrix above shows covers a thrown 500 and a
+marshal-time 500 as well. Two things follow. A 500 that a later extension **replaces** with a
+different response carries no `_error`, which is why `/replaced` keeps its cookie — and why the
+application's own rendered `50x.html` pages are unaffected. And the surface is **systemic** rather
+than a list: the QA sweep's 21 route/scenario combinations (15 from the sweep, 4 from sequenced
+batches, and 2 found while closing quirk cells — `PUT /api/trinkets/{id}/metrics` and
+`POST /api/trinkets/{id}/folder`, outside the original 15) are **occurrences of the predicate, not an
+inventory of it**.
+
+**Live reproduction on the delivered tree** (**probe**, authenticated session, one running server).
+Three groups, and the third is the one no error funnel can reach:
+
+| Driven | Result | `Set-Cookie` | The app's `Pragma`/`Expires` |
+|---|---|---|---|
+| `GET /home`, `GET /admin/users` | 200 | `session=…` | present |
+| `GET /no-such-xyz` | 404 `text/html` | `session=…` | absent — the mapper returns before the header block |
+| `GET /login`, `GET /signup` authenticated (the [§5](#5-two-pages-handlers-that-answer-500-to-authenticated-visitors) quirk) | 500 `text/html`, `50x.html` | `session=…` | absent — same early return |
+| `PUT /api/trinkets/000000000000000000000000/metrics` with `{}` | 500 `application/json`, `content-length: 96` | **none** | **present** |
+| `GET /admin/search`, `/admin/user`, `/admin/roles`, `/admin/featured`, `/admin/upload-form`, `/admin/nosuch`, `/account/nosuchsubpage` — all seven | 500 `application/json`, `content-length: 96` | **none** | **absent** |
+
+**The on-wire discriminator between the two arrival paths is the app's own `Pragma`/`Expires` pair,
+and it is what lets a reader classify a future occurrence.** Both groups answer a 96-byte
+`application/json` 500 equal in status, media type, length and every field value — but the two are
+**not byte-identical**, and this entry does not claim they are: the handler-time body serializes as
+`{"statusCode":…,"error":…,"message":…}` and the marshal-time body as
+`{"message":…,"statusCode":…,"error":…}` (**probe**), one being Boom's own payload and the other
+rebuilt by `internals.fail`. Nothing here keys on body bytes and `compareJson`
+`[T test/parity/replay.js:5415-5497]` compares a flattened field map rather than an ordered
+document, so the difference changes no comparison — it is recorded because the word "identical"
+invites a byte comparison that would fail. Note also that the second row of the table above is a
+404 whose `Pragma`/`Expires` are **equally absent** and which **keeps** its cookie: the discriminator
+classifies the arrival path, and it is the 500 status alone — not the marshal-time rebuild, and not
+error responses in general — that costs the header. Where the app's `Pragma: no-cache` and
+`Expires: 0` **are**
+present, `app.js`'s Layer-3 mapper saw the Boom and stamped them, so the error arrived
+**handler-time**. Where they are **absent**, the response the mapper saw was not an error at all and
+the 500 on the wire was built afterwards: these seven are **marshal-time** failures — a nunjucks
+render failure inside marshalling, since `[T lib/views/admin/index.html:46]` includes
+`"admin/includes/" + subpage + ".html"` and Vision renders a view response during the marshal cycle.
+
+**One live result that looks like a counter-example and is not, recorded so the branch condition is
+not widened by the obvious next experiment** (**probe**). `POST /api/trinkets` with a malformed JSON
+body answers **400 with no `Set-Cookie` either**, on a session that a 404 on the same jar commits
+normally. That is application lifecycle ordering rather than this divergence: `internals.payload` is
+pushed into the route cycle **before** `onPostAuth` and therefore before `onPreHandler`
+`[T node_modules/@hapi/hapi/lib/route.js:229-275]`, so a payload-parse failure aborts before
+`app.js`'s `onPreHandler` extension calls `request.yar.touch()` `[T app.js:149-168]`, the session is
+never marked modified, and yar has nothing to commit. Nothing is suppressed because nothing was set —
+identical on both majors, where the probe's own `/badrequest` row sets its state unconditionally and
+so shows a 400 keeping the header on both.
+
+**Why no funnel owns the marshal-time subset, and why it cannot be given one** (**probe**, same
+repository-code-free server). On a marshal-time failure `onPreResponse` runs **exactly once**, and at
+that moment `request.response.isBoom` is `false` with `statusCode` 200. The 500 that reaches the wire
+is constructed afterwards by `internals.fail`
+`[T node_modules/@hapi/hapi/lib/transmit.js:46-70]`, reached from the catch in `exports.send`
+`[T node_modules/@hapi/hapi/lib/transmit.js:17-35]`, which re-runs the marshal cycle and **not** the
+request lifecycle. Proof on the wire: a header the extension set on the response does not appear at
+all, and what is delivered is hapi's own `cache-control: no-cache` with `content-length: 96`. So
+adding the state to the response in the error mapper — the first of the two fixes the finding
+offered — is **not implementable for this subset at all**: there is no extension invocation that can
+see the response the client receives.
+
+**The conflict, and which requirement controls.** AAP rule **T-6** governs this exact shape: where a
+requirement other than R-d makes preservation impossible, the conflict is named, one requirement is
+decided to control, the reason is stated, and the quirk record and the gate are aligned. Here
+**R-d** — preserve the baseline `Set-Cookie` — collides with **AAP §0.5.1's mandated `@hapi/hapi`
+21.4.10**, whose suppression is hardcoded in the header path with **no per-server, per-route or
+per-state option** to disable it. §0.9.3 makes every `Set-Cookie` attribute an exact-comparison field,
+which is the gate the collision surfaces through.
+
+**Decision: the framework's behaviour is adopted and registered here; no state is re-attached on
+5xx.** `app.js` gains comments recording the divergence at the two sites a reader will look —
+`[T app.js:203-236]`, above the Layer-3 mapper at `[T app.js:237]`, and `[T app.js:305-319]`, above
+the private-field cookie patch at `[T app.js:321]` — and **no code**: the file's non-comment content
+is byte-identical to the commit this section was written at (**probe**, comparing both revisions with
+comment lines stripped — 272 code lines each, and equal). Three reasons:
+
+1. **The marshal-time subset is unreachable, measured above.** A fix that covers only the handler-time
+   half of one predicate is not a preservation; it is a second divergence, differently shaped.
+2. **For the handler-time half the suppression also happens after both extensions**, in the marshal
+   cycle `[T node_modules/@hapi/hapi/lib/route.js:335]`, filtered at
+   `[T node_modules/@hapi/hapi/lib/headers.js:65-78]`. Restoring the header would mean `app.js`
+   hand-sealing a yar cookie through `server.states.format` and writing it into
+   `boom.output.headers` — authored behaviour no AAP requirement describes, outside **R-a**'s four
+   permitted diff categories (runtime bump, hapi API migration, async conversion, blocking dependency
+   swaps), and a deliberate defeat of an upstream security change whose whole point is that a server
+   error should not set cookies.
+3. **Both findings that measured this prefer registration**, and the MEDIUM one says outright that the
+   defect is the bookkeeping rather than the behaviour.
+
+**Classification, against [§11.3](#113-what-is-not-a-deviation-and-why-the-register-is-closed)'s
+two classes.** §11.3 separates an **approved deviation** — a prohibition (R-d) argued away by a
+stronger requirement — from an **unmet validation target**, which must keep failing and stay visible.
+This entry is honestly neither, and it is not downgraded to the second to make it comfortable: **it is
+a departure from R-d's prohibition**, on a header a client receives. What distinguishes it from
+§11.1 and §11.2 is that no application decision produces it and no application change can prevent it
+within scope, so there is **nothing to repair** — and a permanently failing gate would therefore be
+bookkeeping rather than a finding, which is exactly the inversion §11.3 warns about in the other
+direction. That is why the class gets its own register rather than a row in either of theirs.
+
+**What it costs, and what is retained.** Nothing the application decides, and — measured rather than
+reasoned, because the intuitive answer is the wrong way round — nothing a client loses. yar's commit
+re-sets the **same session id it received** — `h.state(name, {id: this.id})` on a repeat visit — so
+the header the baseline emitted carried the value and attributes the client already holds. The
+**server-side** half of the commit is untouched: the store write follows the `h.state` call and
+happens in both trees, so a flash cleared on a 500 is cleared on both.
+
+**There is no `Expires` horizon on a 500 header to lose, and of the two shapes the absent header is
+the safer one.** Three measurements, in that order. *The baseline's own 500 headers:* of the **13**
+recorded `application/json` 500 steps in the committed corpus that carry a baseline cookie, **all 13**
+carry the attribute set `httponly|path|samesite` and **not one** carries `Expires` or `Max-Age`; the
+five rendered `text/html` 500s are identical in that respect (**probe**, over
+`test/parity/corpus.json`). The baseline repeated a **session**-cookie header on a 500, never a
+persistent one. *What a real client does with the two shapes:* driven in Chrome against a 25-line
+standalone server holding no repository code, reading Chrome's own store through the Cookie Store API
+(**probe**), a record stored persistently from `Expires=<+1y>` is left **exactly as held** by a 500
+that sends no `Set-Cookie` (`Sun, 05 Sep 2027 20:53:29 GMT` before and after) and is **downgraded to
+session-only** — `expires: null` — by a 500 that repeats the same cookie **without** `Expires`, which
+is the baseline's exact shape; the cookie continues to be sent in both cases. So where the two majors
+differ for a client at all, hapi 21's suppression **preserves** a held expiry and the baseline's
+header **discards** it. *Why the practical cost is nil in either direction:* only the
+session-establishing response carries the attribute, and the very next response already removes it —
+`POST /login` emits `…; Expires=Sun, 05 Sep 2027 21:00:00 GMT` against a `Sat, 05 Sep 2026` request
+date, while the `GET /home` that same login redirects to, and every authenticated 200 after it such as
+`GET /admin/users`, re-set the same cookie with **no** `Expires` and **no** `Max-Age` (**probe**, real
+browser). A client does not reach a 500 holding a persistent record in the first place.
+
+An earlier revision of this entry recorded the cost as "the refresh of the cookie's one-year
+`Expires` horizon". That was wrong twice: no such attribute is on the header in question, and the
+direction of the difference is retention rather than loss. It is corrected here rather than quietly
+dropped, because a register whose cost column overstates the harm misleads exactly as much as one
+that understates it.
+
+The AAP §0.9.6 assertion that exists to detect
+`app.js`'s private-field patch going silently no-op is **retained in full**, because it runs on
+non-500 responses: three QA reports measured that patch **live** on hapi 21.4.10, and it is live here
+too — `POST /login` on the delivered tree emits
+`session=<SEALED>; HttpOnly; SameSite=Lax; Path=/; Expires=Sun, 05 Sep 2027 18:43:21 GMT` (**probe**),
+a 2027 horizon against a 2026 request, so §0.9.6's open item on it is **closed** and this entry does
+not put it at risk.
+
+**Gate.** `test/parity/replay.js` carries the mechanism, keyed to this section by its own `register`
+field. It is a **rule**, `hapi21-500-clear-only-states`, not a per-scenario marker: the
+approved-deviation marker allowlist stays exactly one scenario id (deviation 1's), and neither kind
+can be minted by a tool. The rule **fails closed** — both sides must have answered 500, the baseline
+must have set at least one cookie and the target none, no baseline cookie may be a CLEAR, and the
+differences it demotes must be *exactly* the three field kinds the header's absence produces
+(`header.set-cookie`, `cookies.count`, and one `cookie[<name>].present` per baseline cookie), or the
+whole demotion is declined rather than applied selectively. Those conditions are exercised at startup
+by `assertFrameworkCookieSuppression`, which **throws** on a condition that stopped holding, because a
+widened exemption is a broken tool rather than a finding about the application.
+
+**Two startup checks, not one, because "is the mechanism still authorized" and "does the mechanism
+still behave as declared" are different questions and a run can fail either alone.**
+`assertRegisterAuthority` runs **first** and **reads this section**, rather than citing it:
+it resolves `docs/preserved-quirks.md` from the tool file's own directory — never from the working
+directory, so the check reads the same document whichever directory the tool is driven from
+(**probe**: identical result from `/`, `/tmp` and `$HOME`) — and then requires the `register` pointer
+to be a non-empty string naming that document, the §12 section heading and this §12.1 entry heading
+to be present in it, this entry's own body to name the rule id `hapi21-500-clear-only-states`, and
+that body to be more than a heading. Any of those failing **throws before a request is driven**, and
+the verification is itself proved fail-closed against **eight** rejection branches — no rule id, a
+blank pointer, a pointer naming a document the check does not read, an unreadable register, a
+register missing the section, a register missing this entry, an entry not naming the rule id, and an
+entry reduced to its heading — each asserted to be rejected *for its own stated reason* rather than
+merely to fail (**probe**). End to end (**probe**, a copy of the tool in a separate tree): with this
+document absent it throws `cannot be read at`, with a §12.1 that registers something else it throws
+`does not carry the entry`, and with the entry emptied to its heading it throws `carries almost no
+body`. The mechanism's own comment has always said that a rule whose register entry does not exist
+has no authority at all; until this check existed, nothing enforced it, the pointer was carried into
+every artifact and printed in the report without ever being read, and a rule that lost its register
+rendered as `registered in undefined` — which reads as an exemption in force. Publication is now
+guarded too: `describeFrameworkExemption` **refuses** to emit an exemption missing either its rule id
+or its pointer, because an artifact naming an exemption and not its authority is worse than one
+naming neither — it looks audited.
+
+**What the gate still compares exactly** (**artifact**, measured over the committed
+`test/parity/corpus.json`): 392 scenarios, 404 recorded steps, of which **231 carry at least one
+recorded `Set-Cookie`**. The 24 status-500 steps split into **13 `application/json` 500s carrying a
+baseline cookie** — the only steps where the demotion can fire — **6** `application/json` 500s with no
+baseline cookie, so nothing to demote, and **5** `text/html` 500s carrying a cookie, which are the
+rendered pages the predicate does not reach and are compared exactly. So **218 of the 231
+cookie-bearing steps are compared exactly**, including all **39** cookie-bearing redirect steps of the
+65 redirects, and the rule reaches **13**. Those are corpus figures and they bound the *gate's*
+exposure, not the behaviour: the **scope** of the divergence is the framework predicate — every
+response carrying a 500 error, on any route — which is why a reader must not read 13 as a route count.
 
 ---
 
@@ -2937,21 +6450,33 @@ break the quirk.
 | Its two callback boundaries — `[B lib/controllers/users.js:591]`, `[B lib/controllers/users.js:611]`; delivered at `[T lib/controllers/users.js:820]`, `[T lib/controllers/users.js:868]` | Take the `await` at the call site **without** making the refused-connection path settle | a callback-boundary mandate that settles every path removes the unsettled outcome | [8.1](#81-the-streaming-asset-fetch) |
 | `lib/controllers/auth.js` `googleCallback` and its three callback boundaries — `[B lib/controllers/auth.js:49]`, `:69`, `:85`; delivered at `[T lib/controllers/auth.js:359]`, `:405`, `:426` | Persist the user, mutate the session, **then** report the generic failure — preserve the order and the absence of a login | a mandate to return a response on every path can silently drop the throw that produces the failure | [6](#6-google-oauths-new-user-path-saves-the-user-and-then-reports-failure) |
 | `lib/controllers/folders.js` `trinkets` | Pass **no** folder filter on the queryless path; pass it only when a query is present | "every path returns exactly once" is satisfiable while accidentally fixing the queryless path | [7](#7-folderstrinkets-builds-a-malformed-injected-url-when-no-query-is-present) |
-| `lib/controllers/courses.js` `download` | Keep the residual `reply(Boom.forbidden())` in the unauthorized branch, so it throws and answers 500 | "every `reply(...)` becomes a returned toolkit response" would convert the 500 into the 403 the expression names | [9.7](#97-a-routed-handler-that-answers-500-where-its-author-intended-403) |
+| `lib/controllers/courses.js` `download`, delivered at `[T lib/controllers/courses.js:432]` | Keep the delivered `return Boom.forbidden();` **as the expression it is**. The preserved 500 comes from `Boom` being unbound in this module — not from retaining a legacy `reply(...)`, which is already gone from this carrier, so an allow-list row phrased against the legacy syntax would protect nothing | Two different tidy-ups convert the 500 into the 403 the expression reads as: binding `Boom`, or rewriting the call as `errors.forbidden()` against the module's actual `@hapi/boom` alias. And the branch is **unreachable over the route** ([§10.14](#1014-a-private-courses-archive-is-downloadable-by-any-authenticated-user)), so no gate catches either one | [9.7](#97-a-routed-handler-that-answers-500-where-its-author-intended-403) |
 | `lib/controllers/users.js` `getExportStatus` and `downloadExport`, all 15 `Boom.*` sites in the module | Keep each expression **as written**, with `Boom` the first unresolvable identifier on its line, and keep `lib/models/model.js` byte-identical so the throwing callback is still re-invoked. The delivered response is a 200 carrying `{"error":"Boom is not defined"}` | Two generic mandates are wrong here at once: "resolve/return a response on every path" is already satisfied — by the *second* invocation — and any tidy-up that binds `Boom`, rewrites the calls as `errors.*`, reorders the identifiers on the line, or stops the finder re-entering a rejected callback changes both the status and the body. The message itself is client-visible, so even the identifier order is part of the contract | [9.9](#99-two-routed-handlers-that-answer-200-carrying-the-name-of-a-missing-identifier) |
-| `[T lib/controllers/admin.js:213]`, `:265`, `:272`, `:288`, `:337`; `[T lib/controllers/users.js:328]`, `:391`, `:724`, `:869` | Keep `request.fail(err)` passing the **`Error` itself**, and keep `request.fail`'s `h.response(json)` unchanged. These nine edges terminate the process, and that is the preserved outcome | A mandate to "map the error to a response" or "reach the funnel" would give nine edges a status and a body they have never produced — R-e per edge, R-d as an improvement — and `request.fail` is on T-2's preserved list | [10.11](#1011-requestfailerr-with-an-error-argument-terminates-the-process) |
+| `[T lib/controllers/admin.js:169]`, `:221`, `:228`, `:244`, `:292`; `[T lib/controllers/users.js:328]`, `:391`, `:724`, `:869` | Keep `request.fail(err)` passing the **`Error` itself**, and keep `request.fail`'s `h.response(json)` unchanged. These nine edges terminate the process, and that is the preserved outcome | A mandate to "map the error to a response" or "reach the funnel" would give nine edges a status and a body they have never produced — R-e per edge, R-d as an improvement — and `request.fail` is on T-2's preserved list | [10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why) |
+| `[T lib/controllers/admin.js:213]`, `:265`, `:272`, `:288`, `:337`; `[T lib/controllers/users.js:328]`, `:391`, `:724`, `:869` | Keep `request.fail(err)` passing the **`Error` itself** — the call sites are unchanged — and keep the redirect and `fail.html` branches of `request.fail` unchanged. **Superseded in one respect:** the `h.response(json)` branch now routes an `Error` as a Boom, so these edges ANSWER (500) instead of terminating the process. That is an approved repair, argued in §10.11, not a target action a generator may undo | A mandate to "preserve the process death" would reinstate a defect three QA findings raised as blocking; a mandate to change the redirect or `fail.html` branches, or the call sites, would change outcomes those branches already produced | [10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why) |
+| `lib/controllers/courses.js` `download` | Keep the residual `reply(Boom.forbidden())` in the unauthorized branch, so it throws and answers 500 | "every `reply(...)` becomes a returned toolkit response" would convert the 500 into the 403 the expression names | [9.7](#97-a-routed-handler-that-answers-500-where-its-author-intended-403) |
+| `lib/controllers/users.js` `getExportStatus` and `downloadExport`, all 15 `Boom.*` sites in the module | Keep each expression **as written**, with `Boom` the first unresolvable identifier on its line, and keep `lib/models/model.js` byte-identical so the throwing callback is still re-invoked. The delivered response is **not uniform across the 15**, and [10.20](#1020-the-rest-of-the-unbound-boom-family-in-libcontrollersusersjs) carries the per-branch measurement: six answer a 200 carrying `{"error":"Boom is not defined"}`, four answer a generic 500, one has no response of its own but is what converts the six, and four cannot be entered from an HTTP request at all | Two generic mandates are wrong here at once: "resolve/return a response on every path" is already satisfied — by the *second* invocation — and any tidy-up that binds `Boom`, rewrites the calls as `errors.*`, reorders the identifiers on the line, or stops the finder re-entering a rejected callback changes both the status and the body. The message itself is client-visible, so even the identifier order is part of the contract | [9.9](#99-two-routed-handlers-that-answer-200-carrying-the-name-of-a-missing-identifier) |
+| `[T lib/controllers/admin.js:213]`, `:265`, `:272`, `:288`, `:337`; `[T lib/controllers/users.js:328]`, `:391`, `:724`, `:869` | Keep `request.fail(err)` passing the **`Error` itself**, and keep `request.fail`'s `h.response(json)` unchanged. These nine edges terminate the process, and that is the preserved outcome | A mandate to "map the error to a response" or "reach the funnel" would give nine edges a status and a body they have never produced — R-e per edge, R-d as an improvement — and `request.fail` is on T-2's preserved list | [10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why) |
 | `lib/controllers/trinket.js` `updateMetrics`, its metric-free branch | Keep **both** halves of `return Trinket.findById(id, function (err, trinket) { return request.success({data:trinket}); });` — the callback **and** the returned `Query`. The callback's response is meant to go nowhere: it is the double execution that answers, with a 500 | A generic delivery mandate — return the value, settle the promise the method returns with it, or return it from the nested handler of a chain the method returns — is satisfiable in three ways that all turn the 500 into a 200 carrying the trinket state. The generated row is closed rather than open, and it reaches the same conclusion in its own words: the discarded call "is the BASELINE outcome, not an unfinished conversion", and "Do NOT reroute them to deliver" `[T docs/conversion-inventory.md:568]`. That row's diagnosis is correct and is the quirk, not a defect to close | [9.8](#98-a-routed-handler-whose-metric-free-branch-answers-500-where-its-comment-intends-the-trinket-state) |
 | `[B lib/util/helpers.js:182]` `findTrinket`, `[B lib/util/helpers.js:385]` `courseBySlug`; delivered at `[T lib/util/helpers.js:202]` and `[T lib/util/helpers.js:443]` | `return null` — the value the shim produced. The redirect construction is **removed, not converted** | converting the chain would emit a 301 the baseline never emitted | [2](#2-two-live-pre-handler-301-redirects-that-never-fire) |
 | `[B lib/controllers/trinket.js:1204]`, `:1246`, `:1259` — baseline coordinates, which is how the generated checklist keys these three rows, because the legacy chain is gone from each carrier and the category declares no target shape to locate | Reproduce what was captured at baseline — the specification is a measurement, not a rewrite rule, and it **has been taken**: the three recorded baseline statuses are in [§4.3](#43-builder-returned-to-hapi--three-chains), which is the value to reproduce. What is still absent is the replay result for the target, so the capture is the authority here rather than a re-derivation from the code | a mandate to return a toolkit response is right in form and silent about which response, which is the whole content of the quirk | [4.3](#43-builder-returned-to-hapi--three-chains) |
 | `[B lib/controllers/trinket.js:375]` — a baseline coordinate; the legacy construct is no longer in this tree | **Return** the mapped error — here the statement *must* change to preserve the outcome | the inverse case, listed so the allow-list is not read as "never change a statement": this one is a genuine rewrite | [4.4](#44-one-further-unreturned-reply-on-an-error-path) |
+| `lib/controllers/trinket.js` `draft` and `autosave`, the `request.payload.zipCode` chains — `[T lib/controllers/trinket.js:1240]` and `[T lib/controllers/trinket.js:1335]` | Leave both chains **neither returned nor awaited**, keep the terminal `.catch` on each, and keep both bounds ahead of the read. The responses are baseline's own — `draft` 200, `autosave` 500 | This is the one allow-list row protecting a **registered deviation** rather than a preserved quirk, and it needs protecting from both directions. A mandate to "return or await the chain" would make `draft`'s malformed branch answer 500 where baseline answered 200 — outside what §11.9 approves. A mandate to "remove the added guard as unauthorised policy" would restore the process death §11.9 exists to prevent. The approved shape is exactly the delivered one | [11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes), measured in [10.7](#107-the-zipcode-branch-that-took-the-process-down-and-the-bounds-that-now-hold-it) |
+| `lib/controllers/courses.js` `download`, the five-clause guard at `[T lib/controllers/courses.js:214-218]` | Keep all five clauses **as written**, including `create-private-course` | Not a conversion mandate this time but a *hardening* one: the clause admits every authenticated account, so the guard looks like a defect to close. It is baseline behaviour and R-d preserves it, and narrowing it here would also leave `course.copyCourse` admitting the same accounts | [10.14](#1014-a-private-courses-archive-is-downloadable-by-any-authenticated-user) |
+| `lib/controllers/users.js` `requestExport`, its success payload — `[B lib/controllers/users.js:977]`, delivered at `[T lib/controllers/users.js:1356]` | Keep `exportId: exportRecord._id` as the **raw ObjectId** it is, so `ObjectUtils.serialize` rebuilds it into a plain object whose detached `toJSON` makes hapi's marshal throw and the route answer 500 | Every generic mandate points the wrong way here at once: the handler already returns exactly once, the value it returns is well formed, and `.toString()` is a one-character "obvious correctness fix" that is MEASURED to work — which is why it must not be written. `lib/util/objectUtils.js` must also stay byte-identical, since the `for...in` rebuild is the mechanism | [10.18](#1018-post-apiexports-answers-500-after-saving-its-row-and-queueing-its-job) |
+| `lib/controllers/users.js` `requestExport`, its in-flight guard — `[T lib/controllers/users.js:1277]` and `[T lib/controllers/users.js:1309]` | Keep the deciding read and the create as **two separate steps**, and keep `lib/models/export.js` free of a unique index on `{_owner, status}` | "make the check atomic" and "add the index the comment implies" are both satisfiable and both change an observable outcome: the concurrent loser answers 500 today, not a duplicate-key error and not 200 "already in progress" | [10.19](#1019-the-in-flight-export-guard-reads-and-writes-in-two-steps) |
+| The two `if (err)` arms of the export finders — `[T lib/controllers/users.js:1414]` and `[T lib/controllers/users.js:1472]` | Keep the arm answering `request.fail({ error: err.message })` with the **message unmodified**, and do not validate `{exportId}` ahead of the finder. A `CastError` from an uncastable parameter arrives here and is answered **200** with the ODM's diagnostic and the supplied value echoed | Three generic mandates each break it in a different way: "validate the path parameter", "give the error edge its status", and "do not echo input in an error body" are all reasonable in the abstract and all change a client-visible status or body. This arm is also the one §9.9 and §10.11 reach, so narrowing it moves those entries too | [10.22](#1022-two-further-defects-surfaced-by-the-closing-verification-pass) |
 
-**Two deviations, two different roles — and generated prose must not collapse them to one.** A
+**Three deviations, three different roles — and generated prose must not collapse them to one.** A
 generated cross-reference that speaks of "the single approved deviation" is wrong on the count and, more
 usefully, wrong about the kind: [deviation 1](#111-deviation-1-the-never-settling-file-response) is a
-**response** deviation and is the one a conversion row can be affected by, while
+**response** deviation and is the one a conversion row can be affected by;
 [deviation 2](#112-deviation-2--the-marked-fork-is-retained-leaving-one-named-high-advisory) is an
-**audit** deviation that no conversion row touches. Naming the applicable one is what makes the
-reference useful; counting them is what makes it correct.
+**audit** deviation that no conversion row touches; and
+[deviation 5](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes) is an
+**availability** deviation that changes no response but does constrain two conversion rows, which is why
+it has an allow-list row of its own above. Naming the applicable one is what makes the reference useful;
+counting them is what makes it correct.
 
 ---
 
@@ -2969,14 +6494,35 @@ these own:
 
 ### Verification status of the cross-document alignment — **performed**
 
-The two approved deviations in §11 are required to read identically here, in
+The approved deviations in §11 are required to read identically here, in
+**Deviation 6 is new in this revision, and its cross-document alignment is deliberately incomplete —
+stated here rather than left for a reader to discover.** §11.10 above and `docs/baseline-parity.md` §7.6
+carry it. Three documents that count the deviations do **not** yet: `docs/deferred-dependencies.md`
+(§4 and its "exactly two" statements), `docs/dependency-inventory.md` (its role table) and
+`CHANGELOG.md` (which names "the two approved deviations from preservation"). Each is owned elsewhere in
+this delivery and each needs the same one-line correction — six, not two, with §11.7 to §11.10 as the canonical
+argument. Two tools also still carry the old count in prose: `test/parity/replay.js`'s off-allowlist
+message and `test/parity/capture.js`'s scenario comment. Neither tool is *wrong* to keep its allowlist
+at one id — [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) rule 1
+requires exactly that until the scenario is drivable — but the sentence explaining why should say
+"closed at three, one of them replay-visible" rather than "closed at exactly two".
+
+The two deviations §0.7 decided are required to read identically here, in
 `docs/deferred-dependencies.md` §4 and in `docs/baseline-parity.md` §7. All three documents are in the
 delivered tree, so that comparison has been **executed** and its result is recorded below
 (**static**, by direct reading of the three sections rather than by a generated diff). It found
-**two divergences, one on each deviation** — deviation 1's **evidence state**, since RESOLVED by
-measurement, and deviation 2's `highlight.js` attribution. Neither changes a decision, a version, a
+**three divergences** — deviation 1's **evidence state**, since RESOLVED by
+measurement; deviation 2's `highlight.js` attribution; and, added at this checkpoint, **the register
+count itself**, because deviations 3 and 4 were registered here while the two companion documents still
+carry two entries (divergence 3, below). Neither changes a decision, a version, a
 target expression or a gate; the first is settled below by the driven capture and replay, and the
 second is named rather than harmonised, because it lives in a sentence another subsection owns.
+measurement; deviation 2's `highlight.js` attribution; and, newly, the **count** itself, because
+deviation 5 ([§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes))
+is registered here while the two companion documents still say "two". None changes a decision, a
+version, a target expression or a gate; the first is settled below by the driven capture and replay,
+and the second and third are named rather than harmonised, because each lives in a sentence another
+document owns.
 
 **Deviation 1, the never-settling file response — three legs compared, one divergence.** §11.1 above,
 `docs/deferred-dependencies.md` §4.1 and `docs/baseline-parity.md` §7.1 carry the same conflict
@@ -3041,14 +6587,97 @@ while keeping the `lib/shared/trinket-markdown.js` consequence, which both docum
 same way; that sentence belongs to §11.2 and to §4.2 of the companion document, so it is recorded here
 rather than edited from this subsection.
 
+**Divergence 3, the register count — open, and named rather than papered over.** Deviation 3, the ZIP
+container change ([§11.7](#117-deviation-3--the-zip-container-bytes-both-archive-download-routes-emit)),
+was registered here at this checkpoint because §11 is the canonical register and §11.3's own rule places
+it there: it is an R-d prohibition argued away by an explicit AAP instruction and by R-b, not an unmet
+validation target. The two companion records have not yet been updated and still read "exactly two":
+`docs/deferred-dependencies.md` §1, §4 and §2.6 (which closes with "the two approved deviations remain
+the two in §4"), and `docs/baseline-parity.md` §4.5 and §7. Each of those sentences lives in a section
+those documents own, so the third row is theirs to add — the decision, the precedence argument, the
+measured field tables and the gate are complete here and need only be pointed at. Until they carry it,
+a reader counting deviations across the three documents will find **four** here and two there, and this
+line is what tells them which is current. The gap widened at this checkpoint rather than closing:
+deviation 4 (§11.7), the per-request course-archive work tree, was registered here for the same reason
+deviation 3 was — it is a departure from baseline behaviour with a precedence argument — so the two
+companions are now **two** rows short rather than one. Both rows are theirs to add and neither needs new
+analysis: the decision, the measured reproduction and the gate are complete here.
+Nothing in `test/parity/replay.js` is affected: its
+scenario-level allowlist is deviation 1's single id, and deviations 2, 3 and 4 have no scenario id by
+construction (§11.0).
+
 **Numbering agrees.** Deviation 1 then deviation 2, in that order, in all three documents — §11.1 and
 §11.2 here, §4.1 and §4.2 there, §7.1 and §7.2 in the parity record — each of which states that its
-numbering follows this section.
+numbering follows this section. Deviations 3 and 4 are §11.7 and §11.8 here and have no counterpart
+section in the two companions yet, which is divergence 3 above.
 
-`docs/error-edge-inventory.md` is not a fourth leg. It states neither deviation, and its ownership
-table assigns "the two approved deviations" to this document, which agrees with the canonical role
-claimed in §11.
+`docs/error-edge-inventory.md` is not a fourth leg. It states none of the deviations, and its
+ownership table assigns "the two approved deviations" to this document — a count now two short, and
+harmless in the way that matters: it agrees with the canonical role claimed in §11, which is the point
+of that line, and §11 is where the current count is read.
+
+**§12's alignment — two legs, compared, one divergence.** The framework-imposed divergence registered
+in [§12.1](#121-hapi-21-emits-only-cookie-clears-on-a-response-carrying-a-500-error) has exactly one
+other leg, and it is not a document: it is `test/parity/replay.js`'s `FRAMEWORK_COOKIE_SUPPRESSION`
+constant, whose `register` field names §12 by section and title and which is emitted whole into every
+replay artifact and printed in the rendered report. The two were read against each other rather than
+assumed to agree, and the comparison was made **mechanically** (**probe**): a check that loads the
+constant and this section together and asserts each of the eight probe rows with its per-major
+`Set-Cookie` outcome, each of the nine corpus figures, and each load-bearing locator and phrase — the
+`headers.js:65-78` cause, the `transmit.js:17-35` catch and `:46-70` rebuild, the framework predicate
+`_error.output.statusCode`, the replaced-response exception, T-6, the rule id
+`hapi21-500-clear-only-states`, the register pointer, the surviving CLEAR, the retained AAP §0.9.6
+horizon assertion, "no state is re-attached on 5xx", and the scope-is-the-predicate caveat. **29
+checks agree and none fails.** One divergence of wording was found and **harmonised rather than
+named**: the constant's `costs` field said the lost `Expires` refresh is "on error responses only",
+where the precise form — this section's — is **"on 500 error responses only"**, since the probe matrix
+above shows a 404 and a 400 keeping their cookie. The field now reads "on 500 error responses only",
+with the 404 and 400 named in it, so both legs state the same bound and neither record has to be read
+as the authority over the other. No decision, figure, locator or gate condition ever depended on the
+looser wording, and every field either record uses to *classify* or to *bound* the divergence agreed
+before that edit as well as after it.
+
+**One seam recorded rather than closed, because it crosses an ownership boundary.** No sibling
+document records this suppression today: `docs/baseline-parity.md`, `docs/deferred-dependencies.md`,
+`docs/dependency-inventory.md` and `docs/error-edge-inventory.md` are each silent on it, and all four
+are owned by other units at this checkpoint. **That silence leaves their count claim true rather than
+stale**: what each of them asserts is that there are exactly **two approved deviations**, and §12 adds
+none — it is a separate register, of a divergence no application decision produced, and §11.0 says so
+in the same words. So "exactly two approved deviations" reads correctly in all ten records that state
+it, before and after this section exists. What a future revision of those documents may want is a
+*pointer* to §12 beside their deviation sections, which is an addition to their text and not a
+correction of it.
+**Numbering agrees as far as it goes.** Deviation 1 then deviation 2, in that order, in all three
+documents — §11.1 and §11.2 here, §4.1 and §4.2 there, §7.1 and §7.2 in the parity record — each of
+which states that its numbering **follows this section**.
+
+**Divergence 3, the count — named, and resolved in this document's favour by the followers' own rule.**
+Deviation 6 is registered in §11.0's table and argued in §11.10; `docs/deferred-dependencies.md` §4 and
+`docs/baseline-parity.md` §7 still title themselves around **two**, as do
+`docs/conversion-inventory.md`'s ownership note and the register comment in `test/parity/replay.js`.
+Two things make that a wording gap rather than a contradiction of substance. First, both companion
+documents state that their numbering follows this §11, so the canonical count is the one here — that is
+the dependency they declare, and it is the reason a third row belongs here first rather than nowhere.
+Second, nothing they assert becomes false: neither carries an argument about the `zipCode` branch, and
+`test/parity/replay.js`'s allowlist is keyed by **scenario id** and still holds exactly the one id
+deviation 1 owns, which is correct precisely because deviations 2 and 3 are not replay-visible. The
+follow-up is therefore a count update in four sentences the units owning those files hold, and it is
+recorded here rather than reached into from this document.
+
+`docs/error-edge-inventory.md` is not a fourth leg. It states no deviation, and its ownership
+table assigns "the two approved deviations" to this document — the same count wording as the others,
+and the same canonical role claimed in §11.
+`docs/error-edge-inventory.md` is not a further leg of the deviation record. It states none of the
+three, and its ownership table assigns the approved deviations to this document, which agrees with the
+canonical role claimed in §11 — though that table still says "two", and it is one of the count
+corrections listed above. What that inventory **does** owe, and does not yet carry, is the per-edge
+consequence of §11.10: `folders.create`'s duplicate branch as an **answered 409** edge and its
+unknown-write-failure branch as an **answered 500** edge, in place of rows describing a swallow or a
+non-response, plus target rows for `folders.update`'s and `folders.deleteFolder`'s unbound-`Boom`
+branches as routed **500** edges, which §9.10 requires and which are currently recorded as missing from
+the target although both constructs are present and measured.
 
 One further note, recorded rather than acted on: `mkdocs.yml`'s `nav:` lists only `index.md`,
 `setup.md` and `overview.md`, so this document is not part of the rendered documentation site.
 Changing that navigation is outside the scope of this work and `mkdocs.yml` is not modified.
+

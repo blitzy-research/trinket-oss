@@ -15,10 +15,12 @@ The components come from a single pinned release asset, retrieved by `scripts/fe
 
 ## Components by Feature
 
+The `Version` column records what the pinned archive above actually carries, re-derivable per component from `public/components/<component>/.bower.json`: the tag or release (`_release` / `_resolution.tag`) for the components pinned to one, and the branch (`_target` / `_resolution.branch`) for the two rows that read `master`, where the archive records a fetched commit in `_release` instead of a tag.
+
 ### Python Embed (`/embed/python`)
 | Component | Repository | Version | Notes |
 |-----------|------------|---------|-------|
-| skulpt | [trinketapp/skulpt-dist](https://github.com/trinketapp/skulpt-dist) | 0.11.1.34 | Python-to-JS compiler (Trinket fork) |
+| skulpt | [trinketapp/skulpt-dist](https://github.com/trinketapp/skulpt-dist) | 0.11.1.33 | Python-to-JS compiler (Trinket fork) |
 | marked | [trinketapp/marked](https://github.com/trinketapp/marked) | master | Markdown parser (Trinket fork) |
 | jq-console | [trinketapp/jq-console](https://github.com/trinketapp/jq-console) | v2.13.2.1 | Console/REPL UI |
 | traqball.js | [trinketapp/traqball.js](https://github.com/trinketapp/traqball.js) | 1.0.3 | 3D rotation for turtle graphics |
@@ -36,14 +38,14 @@ Additional components:
 ### Blocks Embed (`/embed/blocks`)
 | Component | Repository | Version | Notes |
 |-----------|------------|---------|-------|
-| blockly | [trinketapp/blockly](https://github.com/trinketapp/blockly) | v20211018 | Visual block editor (Trinket fork) |
+| blockly | [trinketapp/blockly](https://github.com/trinketapp/blockly) | v20180924 | Visual block editor (Trinket fork) |
 | skulpt | (see above) | | |
 
 ### GlowScript Embed (`/embed/glowscript`)
 | Component | Repository | Version | Notes |
 |-----------|------------|---------|-------|
 | glowscript | [trinketapp/glowscript](https://github.com/trinketapp/glowscript) | 2.7.5 | 3D graphics (Trinket fork) |
-| vpython-glowscript | [trinketapp/vpython-glowscript](https://github.com/trinketapp/vpython-glowscript) | 3.2.2 | VPython bindings |
+| vpython-glowscript | [trinketapp/vpython-glowscript](https://github.com/trinketapp/vpython-glowscript) | 3.1.0 | VPython bindings |
 | glowscript-blocks | [txst-per-group/Glowscript-Blocks](https://github.com/txst-per-group/Glowscript-Blocks) | 0.1.11 | Block editor for GlowScript |
 
 ### Other Components
@@ -52,8 +54,8 @@ Additional components:
 | foundation | [trinketapp/bower-foundation](https://github.com/trinketapp/bower-foundation) | 5.5.3.1 | Base UI framework |
 | closure-library | [google/closure-library](https://github.com/google/closure-library) | v20180204 | Blockly dependency |
 | midi | [trinketapp/MIDI.js](https://github.com/trinketapp/MIDI.js) | master | Music embed |
-| Processing.js | ? | ? | Processing embed |
-| viewerjs | [nickvergessen/ViewerJS](https://github.com/nickvergessen/ViewerJS) | v0.2.1 | Document viewer |
+| Processing.js | [trinketapp/processing-js](https://github.com/trinketapp/processing-js) | 1.6.12 | Processing embed |
+| viewerjs | [kogmbh/ViewerJS_release](https://github.com/kogmbh/ViewerJS_release) | v0.2.1 | Document viewer |
 
 ### Skulpt Extension Modules (`.sk`)
 These are Python modules that run in Skulpt:

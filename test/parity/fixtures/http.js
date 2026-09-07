@@ -14,6 +14,12 @@
 //   Substitution is at the MODULE BOUNDARY - the application's own `request`
 //   export, resolved from the tree under test, and `globalThis.fetch` - so no
 //   proxy, socket or DNS is involved, and every served value is a literal.
+//   ONE call is handed back to the retained original: a `data:` URL declared in
+//   DIVERGENT_URLS. It carries its own payload, so it reaches no dispatcher and
+//   no socket, and letting the runtime resolve it is the only way that
+//   divergence is a driven result rather than a body this fixture invented. The
+//   delegation is gated on the scheme AND on membership of that table, so no
+//   http(s) URL and no undeclared data: URL can reach it.
 //
 // SURFACE AND ARTIFACT
 //   install/restore, status/handshake/assertReady, profile selection, the
@@ -39,11 +45,15 @@
 //   asset fetch's redirect, hop-limit, mid-stream and refused cases.
 //   Each mechanism fails in its own shape, because the shape decides which
 //   funnel the edge reaches: the `request` callback form calls back (err,
-//   undefined, undefined), which is what makes the reCAPTCHA call site throw
-//   on `response.statusCode`; the stream form emits 'error'; `fetch` rejects
-//   with TypeError('fetch failed') carrying `cause`. Three outcomes deliver no
-//   callback at all, and `asset:transport-refused` emits 'error' and NEVER
-//   'end', leaving the upload unstarted and the route unsettled.
+//   undefined, undefined), which is what the reCAPTCHA call site reads as an
+//   unreachable provider; the stream form emits 'error'; `fetch` rejects with
+//   TypeError('fetch failed') carrying `cause`. `asset:transport-refused`
+//   emits 'error' and NEVER 'end', leaving the upload unstarted and the route
+//   unsettled - it is now the only outcome here that answers nothing.
+//   The two reCAPTCHA faults and the null token body used to be three more:
+//   each dereferenced a value the provider controls and took the process down.
+//   All three are guarded in the delivered tree under the approved deviation at
+//   docs/preserved-quirks.md 10.7, and each record says what it now produces.
 //
 // FAIL CLOSED, AND CHECK WHAT WAS SENT
 //   An unrecorded endpoint fails with code PARITY_UNRECORDED in the calling
@@ -54,6 +64,19 @@
 //   headers, bearer scheme, body encoding, form fields and redirect mode a
 //   call must have; a breach is REFUSED rather than served, which is what
 //   keeps a drifted wire encoding visible.
+//
+// THE THREE URL SHAPES THAT ARE NOT RECORDINGS
+//   DIVERGENT_URLS names the three URLs where native fetch and the replaced
+//   library disagree about the URL ITSELF - a `data:` URL, a credential-bearing
+//   URL and a URL on a Fetch-forbidden port - which are the three divergences
+//   docs/preserved-quirks.md 11.4 declares at the asset call site. Each is
+//   decided in parityFetch BEFORE the registry is consulted, because that is
+//   where the runtime decides them: the credentialed URL is refused with
+//   fetch's own TypeError, the blocked port with TypeError('fetch failed')
+//   whose cause is Error('bad port'), and the data: URL is delegated. All three
+//   are recorded, with the shape named in `registration`, which is what
+//   separates a divergence the harness drove from a URL nobody recorded - both
+//   leave the asset route on the same log-only arm.
 //
 // NO CREDENTIAL REACHES THE EVIDENCE
 //   `authorization` and `proxy-authorization` keep their SCHEME alone, because
@@ -90,8 +113,10 @@ var crypto = require('crypto');
 
 // Node core. Used ONLY by the self-verifying harness below, which runs when
 // this file is executed directly: the two reCAPTCHA faults are process-level
-// signatures - an uncaught throw and no callback - so they can only be asserted
-// from outside the process they kill. Never touched on the preload path.
+// claims - the callback fires, it carries the fail-closed value, and the
+// process reaches its own exit rather than being taken down by the provider's
+// fault - and none of the three can be asserted from inside the process that
+// would have died. Never touched on the preload path.
 var childProcess = require('child_process');
 var os = require('os');
 var pathModule = require('path');
@@ -225,6 +250,105 @@ var UNRECORDED_URL = 'https://parity.example.com/unrecorded/never-recorded';
 // integration, or an SSRF payload reaching a host the application was never
 // meant to contact - and that call would read as a success.
 var UNREGISTERED_ORIGIN_URL = 'https://unregistered.invalid/some/path';
+
+// ---------------------------------------------------------------------------
+// The URL-SHAPE registry.
+//
+// Three URLs, and each one is a place where native fetch and the replaced
+// `request` library disagree about the URL ITSELF rather than about what is
+// served for it. docs/preserved-quirks.md 11.4 declares all three at the remote
+// asset call site (lib/controllers/users.js's assetUploadFromURL), and none of
+// them was reachable through this fixture: a data: URL classified as
+// `unsupported-protocol:data:` and a URL on a blocked port classified as
+// `unregistered-endpoint`, so both failed closed and reported THE FIXTURE's
+// refusal, which is a different event from the runtime's. The only evidence
+// either divergence had was a library probe run outside the harness.
+//
+// Named and exported for the same reason ASSET_URLS is: in all three the URL
+// string is the whole of the case, so a driver names a shape here rather than
+// typing a string at a call site - where a typo produces a different case that
+// still looks like a pass. These are shapes, not recordings: no profile serves
+// them and none of them consults the profile, because what each one exercises
+// is a decision fetch takes before any response is chosen.
+//
+// The three outcomes, MEASURED on Node 22.23.2 with a
+// net.Socket.prototype.connect tripwire in place - all three at ZERO sockets:
+//   data         fetch RESOLVES it: 200, content-type `text/plain`, body "hi".
+//                `request` threw `Invalid protocol: data:` synchronously.
+//   credentialed fetch REFUSES to construct the request:
+//                TypeError('Request cannot be constructed from a URL that
+//                includes credentials: <url>'), with NO `cause`. `request`
+//                moved the userinfo onto an Authorization header and fetched.
+//   blockedPort  fetch REFUSES the request: TypeError('fetch failed') whose
+//                `cause` is Error('bad port') with no own properties at all.
+//                Measured against the control: the same host on port 8080
+//                reaches DNS and fails ENOTFOUND, so the blocked-port refusal
+//                really does precede the dispatch. `request` constrained the
+//                port not at all.
+//
+// The credentialed and blockedPort entries are declared ON the registered
+// asset path, so a reader can see that the credential and the port are the
+// only things that differ from `ASSET_URLS.plain` - which is what makes them
+// the shape they are meant to be. Neither needs to be in the asset registry:
+// both are refused before it is consulted.
+// ---------------------------------------------------------------------------
+var DIVERGENT_URLS = {
+  data         : 'data:text/plain,hi',
+  credentialed : 'https://parity-user:parity-pass@parity.example.com/assets/fixture.gif',
+  blockedPort  : 'http://parity.example.com:6000/assets/fixture.gif'
+};
+
+// The ports refused as blocked, and deliberately ONLY these three.
+//
+// The Fetch specification's blocked list is roughly eighty entries and it moves;
+// transcribing it here would put a second, drifting copy of a browser policy in
+// a fixture, and a wrong long list is worse than a short accurate one - it would
+// refuse a port the runtime serves, or serve one the runtime refuses, and either
+// way the harness would stop being an oracle. These three are the ones the
+// divergence is pinned against and the ones measured above: 6000 (X11), 22
+// (ssh) and 9 (discard). Every other port classifies normally, so a URL on one
+// takes whichever arm its registration decides - which for an unregistered
+// origin is still the fail-closed refusal and still never a socket.
+var FETCH_BLOCKED_PORTS = {
+  9    : 'discard',
+  22   : 'ssh',
+  6000 : 'X11'
+};
+
+// The registered URLs whose scheme is `data:`, which are the only URLs this
+// file ever hands to the genuine fetch. Derived from the SCHEME rather than
+// from the key name, so an entry added under the `data` key with an http URL
+// would not become delegable - it would simply be an ordinary URL and would
+// fail closed like any other. Adding a second data: URL here is a deliberate
+// edit of this file, which is the level at which that decision belongs.
+function registeredDataUrls() {
+  return Object.keys(DIVERGENT_URLS)
+    .map(function(name) { return DIVERGENT_URLS[name]; })
+    .filter(function(url) { return url.indexOf('data:') === 0; });
+}
+
+// True only for a data: URL this file declares, compared as an EXACT string.
+// A data: URL carries its payload in the URL, so there is no origin and no path
+// to key on the way endpointKey() does for the http(s) registry: "the same
+// shape" and "the same bytes" are one question here, and an origin+pathname key
+// would admit any payload at all under text/plain.
+function isRegisteredDataUrl(rawUrl) {
+  return registeredDataUrls().indexOf(rawUrl) !== -1;
+}
+
+// The blocked port a parsed URL names, or 0. Only http(s) are considered: they
+// are the schemes the Fetch specification's port check applies to among the
+// ones anything here can reach, and the delegated data: URL has no authority to
+// carry a port at all.
+function blockedPortOf(parsed) {
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return 0;
+  }
+
+  var port = parseInt(parsed.port, 10);
+
+  return Object.prototype.hasOwnProperty.call(FETCH_BLOCKED_PORTS, port) ? port : 0;
+}
 
 // ---------------------------------------------------------------------------
 // Identities. The email decides the database branch, so these two values and
@@ -472,15 +596,61 @@ var RECAPTCHA_NON_200 = {
 };
 
 // reCAPTCHA outcome 5: a transport failure. `err` is never inspected, so
-// `response` stays undefined and reading `response.statusCode` throws an
-// uncaught TypeError. verify()'s callback is NEVER invoked.
+// `response` stays undefined.
+//
+// DELIVERED (measured, this tree): lib/util/recaptcha.js recognises the absent
+// response and calls back with `{status: false}` - the same value outcome 4
+// delivers - after logging one line naming the provider as unreachable. The
+// process survives, and POST /users answers 302 as it does under outcome 4.
+//
+// Baseline read `response.statusCode` off that undefined response, so the
+// TypeError escaped an event-emitter callback as an uncaught exception, `cb`
+// was never invoked, and the process exited 1. The guard that changed it is the
+// approved deviation recorded at docs/preserved-quirks.md 10.7: a remote,
+// unauthenticated path to process termination is not behaviour a client can
+// depend on. The record itself is unchanged - what the provider does is the
+// same event either way - so this response still drives the baseline outcome on
+// the baseline worktree, where the guard does not exist.
 var RECAPTCHA_TRANSPORT_FAILURE = {
   outcome   : 'recaptcha-transport-failure',
   transport : { code: 'ECONNREFUSED', host: 'www.google.com', port: 443 }
 };
 
-// reCAPTCHA outcome 6: a 200 whose body is not JSON. JSON.parse throws an
-// uncaught SyntaxError and verify()'s callback is NEVER invoked.
+// Structurally outcome 3 - a 200 the module parses successfully and delivers
+// verbatim - with a body that is valid JSON and NOT AN OBJECT.
+//
+// It is deliberately not one of the two guarded faults, and that is the whole
+// reason it is recorded separately. lib/util/recaptcha.js guards the response
+// and the parse; it does not inspect what the parse produced, so `null` is
+// delivered to the caller exactly as baseline delivered it. The read of
+// `success` then happens at the CALLER - lib/controllers/users.js:144, :379,
+// :1128 and lib/controllers/trinket.js:1033 - inside its own lifecycle method,
+// where a throw reaches the preserved Layer 1 catch-all in
+// lib/util/routeParser.js and answers 500 with the process alive. So this is
+// the boundary of the approved deviation, from the other side: a provider fault
+// that still throws, but throws somewhere a funnel already handles.
+//
+// Recorded so that boundary can be DRIVEN and its outcome recorded rather than
+// asserted from this comment. `null` is the clean case because it is the only
+// non-object a real siteverify body could plausibly be, and because a
+// property read off it throws rather than merely returning undefined - `42`
+// would read `undefined` and fail the verification quietly instead.
+var RECAPTCHA_NON_OBJECT_BODY = {
+  outcome : 'recaptcha-200-null-body',
+  status  : 200,
+  headers : JSON_HEADERS,
+  body    : 'null'
+};
+
+// reCAPTCHA outcome 6: a 200 whose body is not JSON - the HTML error page a
+// proxy answers with.
+//
+// DELIVERED (measured, this tree): the JSON.parse failure is caught at the call
+// site, which logs one line carrying a bounded excerpt of the body and calls
+// back with `{status: false}`. Same value as outcome 5, and deliberately: both
+// faults fail the verification closed on the outcome a rejected challenge
+// already produces. Baseline let the SyntaxError escape uncaught with `cb`
+// never invoked; the same approved deviation covers it.
 var RECAPTCHA_MALFORMED_JSON = {
   outcome : 'recaptcha-200-malformed-json',
   status  : 200,
@@ -521,12 +691,24 @@ var TOKEN_MALFORMED_BODY = {
   json    : { token_type: 'Bearer', expires_in: 3599 }
 };
 
-// A 200 whose body parses to a NON-OBJECT. Measured on the real library: a
-// body of 'null' arrives as null, and `!body.access_token` then throws a
-// TypeError out of the callback - an uncaught exception that leaves the
-// request unanswered rather than producing the generic failure. Recorded as a
-// separate profile because the outcome differs from the case above, and
-// preserved rather than tidied.
+// A 200 whose body parses to a NON-OBJECT. A body of 'null' arrives as null,
+// which is a value no object dereference survives.
+//
+// DELIVERED (measured, this tree): lib/controllers/auth.js's token guard tests
+// the body before it reads it - `if (err || !body || !body.access_token)` - so
+// this edge rejects with `Error('Failed to get access token')` and lands on the
+// generic authentication failure, which for a browser request is a 302 to
+// /signup with the message flashed. It is now the same route outcome the other
+// seven provider profiles produce, and the process survives.
+//
+// Baseline dereferenced it unguarded, so the TypeError escaped a next-tick
+// callback as an uncaught exception and one unauthenticated
+// GET /auth/google/callback ended the process. The guard is the approved
+// deviation recorded at docs/preserved-quirks.md 10.7. The record is kept
+// separate from TOKEN_MALFORMED_BODY even though the two now produce the same
+// response, because they are different provider faults - an object with a
+// field missing against a body that is not an object at all - and only this one
+// reaches the `!body` test.
 var TOKEN_NON_OBJECT_BODY = {
   outcome : 'token-200-null-body',
   status  : 200,
@@ -597,6 +779,31 @@ var USERINFO_MISSING_EMAIL = {
     picture     : PICTURE_URL,
     locale      : 'en'
   }
+};
+
+// A 200 whose body parses to a NON-OBJECT, mirroring TOKEN_NON_OBJECT_BODY on
+// the profile endpoint. This is the record for the SECOND OAuth guard, and it
+// existed for the first one only: `!profile ||` at
+// lib/controllers/auth.js:441 had no profile driving it, so the one edge that
+// reaches it was undrivable through this fixture.
+//
+// It is not the same case as USERINFO_MISSING_EMAIL. That one delivers an
+// object whose `email` is absent, so it reaches the SECOND half of the guard;
+// this one delivers a value that is not an object at all, so it reaches the
+// first. Both now produce the same route outcome - `Google OAuth error: Failed
+// to get user profile` logged at lib/controllers/auth.js:562, then the generic
+// authentication failure, which for a browser request is a 302 to /signup with
+// the message flashed - and that is exactly why both records exist: one
+// response cannot evidence two guards.
+//
+// Baseline dereferenced this value unguarded and the TypeError ended the
+// process, as it did at the token endpoint; the same approved deviation at
+// docs/preserved-quirks.md 10.7 covers both.
+var USERINFO_NON_OBJECT_BODY = {
+  outcome : 'userinfo-200-null-body',
+  status  : 200,
+  headers : JSON_HEADERS,
+  body    : 'null'
 };
 
 var USERINFO_TRANSPORT_FAILURE = {
@@ -755,16 +962,18 @@ var PROFILES = {
   'recaptcha:success'           : { description: 'siteverify 200, success true.', recaptcha: RECAPTCHA_SUCCESS },
   'recaptcha:rejected'          : { description: 'siteverify 200, success false - reaches the request.fail edges.', recaptcha: RECAPTCHA_REJECTED },
   'recaptcha:non-200'           : { description: 'siteverify 503 - verify() calls back with {status:false}.', recaptcha: RECAPTCHA_NON_200 },
-  'recaptcha:transport-failure' : { description: 'siteverify transport failure - uncaught TypeError, no callback.', recaptcha: RECAPTCHA_TRANSPORT_FAILURE },
-  'recaptcha:malformed-json'    : { description: 'siteverify 200 with a non-JSON body - uncaught SyntaxError, no callback.', recaptcha: RECAPTCHA_MALFORMED_JSON },
+  'recaptcha:non-object-body'   : { description: 'siteverify 200 whose body is valid JSON but not an object - verify() delivers `null` verbatim, so reading `success` throws in the CALLER\'s lifecycle method and reaches the Layer 1 catch-all: 500 with the process alive.', recaptcha: RECAPTCHA_NON_OBJECT_BODY },
+  'recaptcha:transport-failure' : { description: 'siteverify transport failure - the absent response is recognised and verify() calls back with {status:false}; the process survives and POST /users answers 302.', recaptcha: RECAPTCHA_TRANSPORT_FAILURE },
+  'recaptcha:malformed-json'    : { description: 'siteverify 200 with a non-JSON body - the parse failure is caught and verify() calls back with {status:false}; the process survives and POST /users answers 302.', recaptcha: RECAPTCHA_MALFORMED_JSON },
 
   'oauth:success-existing-user'    : { description: 'Token and profile succeed; the email is the seeded user.', token: TOKEN_SUCCESS, userinfo: userinfoExisting },
   'oauth:success-new-user'         : { description: 'Token and profile succeed; the email is unseeded, so the account is created and a generic failure is reported.', token: TOKEN_SUCCESS, userinfo: userinfoNew },
   'oauth:token-non-2xx'            : { description: 'Token endpoint 400 - generic authentication failure.', token: TOKEN_NON_2XX },
   'oauth:token-malformed-body'     : { description: 'Token endpoint 200 with no access_token - generic authentication failure.', token: TOKEN_MALFORMED_BODY },
-  'oauth:token-non-object-body'    : { description: 'Token endpoint 200 whose body parses to null - uncaught TypeError, request unanswered.', token: TOKEN_NON_OBJECT_BODY },
+  'oauth:token-non-object-body'    : { description: 'Token endpoint 200 whose body parses to null - the `!body` guard rejects with Error("Failed to get access token"), so it reaches the generic authentication failure and the process survives.', token: TOKEN_NON_OBJECT_BODY },
   'oauth:token-transport-failure'  : { description: 'Token endpoint transport failure - generic authentication failure.', token: TOKEN_TRANSPORT_FAILURE },
   'oauth:profile-missing-email'    : { description: 'Profile 200 with no email - generic authentication failure.', token: TOKEN_SUCCESS, userinfo: USERINFO_MISSING_EMAIL },
+  'oauth:profile-non-object-body'  : { description: 'Profile 200 whose body parses to null - the `!profile` guard rejects with Error("Failed to get user profile"), so it reaches the generic authentication failure and the process survives.', token: TOKEN_SUCCESS, userinfo: USERINFO_NON_OBJECT_BODY },
   'oauth:profile-transport-failure': { description: 'Profile endpoint transport failure - generic authentication failure.', token: TOKEN_SUCCESS, userinfo: USERINFO_TRANSPORT_FAILURE },
 
   'asset:success'           : { description: 'response, fixed bytes, end - the upload stores sha1 d5fceb6532643d0d84ffe09c40c481ecdf59e15a.', asset: ASSET_COMPLETE },
@@ -847,10 +1056,13 @@ function sha1(value) {
 
 // Appends one record and, when PARITY_HTTP_LOG is set, writes it through
 // immediately. Writing per call rather than only on flush() is deliberate:
+// `asset:transport-refused` never settles, the three delegated and refused URL
+// shapes return without a response, and on the BASELINE worktree
 // `recaptcha:transport-failure`, `recaptcha:malformed-json` and
-// `oauth:token-non-object-body` end in an uncaught throw and
-// `asset:transport-refused` never settles, so evidence buffered in memory
-// would be lost exactly where it is most needed.
+// `oauth:token-non-object-body` still end in an uncaught throw that ends the
+// process - so evidence buffered in memory would be lost exactly where it is
+// most needed. The delivered tree guards those three, and this file's own
+// child cases read their evidence from the appended log either way.
 function record(entry) {
   state.calls.push(entry);
 
@@ -1200,6 +1412,28 @@ function classify(rawUrl) {
     url      : rawUrl,
     reason   : 'unregistered-endpoint',
     registry : Object.keys(assetRegistry).length
+  };
+}
+
+// The classification one of the three URL-shape arms records: whatever
+// classify() decided, with the divergence named in the two fields recordCall
+// already writes at the top level of every record.
+//
+// It exists because the outcome name alone does not settle the question a
+// reviewer actually asks of this route. All three arms leave the asset call site
+// on its log-only failure arm, so the route hangs either way, and "refused
+// because the URL carried credentials" and "refused because nothing recorded
+// it" arrive at the same place; naming the shape in `registration` is what
+// separates a divergence the harness DROVE from an omission in the corpus.
+// classify()'s own decision is carried through untouched, so a shape on a
+// registered path still records the endpoint it belongs to.
+function divergentClassification(classified, shape, reason) {
+  return {
+    endpoint     : classified.endpoint,
+    url          : classified.url,
+    registration : 'divergence:' + shape,
+    reason       : reason,
+    hop          : classified.hop
   };
 }
 
@@ -1928,9 +2162,13 @@ function bodyStringFor(rec) {
 // The body-parsing rule `json: true` applied, reproduced from measurement
 // rather than from documentation: an empty body becomes undefined, a parseable
 // body becomes the parsed value INCLUDING null, and an unparseable body stays
-// the raw string. The first two are what make the application's
-// `!body.access_token` and `!profile.email` guards throw a TypeError instead
-// of rejecting, and that fault is preserved.
+// the raw string. The first two are the values the application's token and
+// profile guards have to survive, and in the delivered tree they do: both test
+// the body before they read a field off it, so `undefined` and `null` reject
+// the chain with the message it always carried instead of throwing a TypeError
+// out of a next-tick callback. Reproducing the values exactly is what makes
+// that testable at all - a fixture that coerced them to `{}` would exercise
+// neither guard.
 function legacyJsonBody(text) {
   if (text === '') {
     return undefined;
@@ -2022,9 +2260,13 @@ function normalizeArgs(defaultMethod, args) {
 
 // Delivers a callback-form response. The callback is dispatched on a next tick
 // rather than synchronously, which is what the original did from its own
-// emitter: a throw inside the callback then escapes as an uncaught exception,
-// which is the documented contract of reCAPTCHA outcomes 5 and 6 and of the
-// null-body token case.
+// emitter: a throw inside the callback then escapes as an uncaught exception
+// rather than becoming a rejected promise. That timing is why reCAPTCHA
+// outcomes 5 and 6 and the null-body token case ended the process on the
+// BASELINE worktree, which is the only tree this mechanism is live on - the
+// delivered call sites guard all three reads, so nothing there throws out of a
+// callback any more. The dispatch is retained because it still decides where
+// anything else that throws from a callback is reported.
 function serveRequestCallback(call) {
   var classified = classify(call.url);
   var rec = classified.endpoint ? recordFor(classified.endpoint) : null;
@@ -2501,8 +2743,9 @@ function buildFetchResponse(rec, classified, hops) {
   return response;
 }
 
-// The replacement for globalThis.fetch. It never calls the original and never
-// opens a socket.
+// The replacement for globalThis.fetch. It opens no socket, and the ONE call it
+// ever hands to the retained original is a data: URL this file declares, which
+// carries its own payload and reaches no dispatcher - see the delegation arm.
 function parityFetch(input, init) {
   refreshProfileFromFile();
 
@@ -2519,36 +2762,155 @@ function parityFetch(input, init) {
 
   var rec = classified.endpoint ? recordFor(classified.endpoint) : null;
 
-  // Native fetch REFUSES a URL carrying credentials in its authority, and it
-  // refuses it before any request is made. On Node 22:
-  //   TypeError('Request cannot be constructed from a URL that includes
-  //   credentials: <url>'), with no `cause`.
-  //
-  // Reproducing it matters because the replaced library ACCEPTED such a URL, so
-  // this is one of the behavioural differences the migration
-  // introduced at lib/controllers/users.js's asset upload - and a fixture that
-  // quietly stripped the credentials and served a 200 would report parity
-  // across exactly that difference. The URL is recorded redacted; the message
-  // must carry the URL as fetch does, so it carries the redacted form.
+  // What the three URL-shape arms below record. The same description the
+  // credential arm has always recorded, lifted into one place because all three
+  // return before the redirect-mode resolution the main path performs and would
+  // otherwise carry three copies of it.
+  function describeShapeCall() {
+    return describeRequest({
+      method   : method,
+      headers  : (init && init.headers) || null,
+      body     : init ? init.body : undefined,
+      redirect : init && init.redirect
+    });
+  }
+
+  // The URL as `new URL` sees it, or null. Parsed once for the two refusal arms
+  // below, both of which read the authority rather than the recording.
+  var authority = null;
   if (typeof rawUrl === 'string' && rawUrl) {
-    var authority = null;
     try {
       authority = new URL(rawUrl);
     }
     catch (e) {
       authority = null;
     }
+  }
 
-    if (authority && (authority.username || authority.password)) {
-      recordCall(classified, 'fetch',
-        describeRequest({ method: method, headers: (init && init.headers) || null, body: init ? init.body : undefined, redirect: init && init.redirect }),
-        'credential-url-refused');
+  // ------------------------------------------------------------------------
+  // URL-SHAPE ARM 1 of 3: credentials in the authority.
+  //
+  // Native fetch REFUSES a URL carrying credentials in its authority, and it
+  // refuses it before any request is made. Measured on Node 22.23.2:
+  //   TypeError('Request cannot be constructed from a URL that includes
+  //   credentials: <url>'), with no `cause`, and no socket opened.
+  //
+  // Reproducing it matters because the replaced library ACCEPTED such a URL -
+  // it moved the userinfo onto an Authorization header and fetched the resource
+  // - so this is one of the three divergences docs/preserved-quirks.md 11.4
+  // declares at lib/controllers/users.js's asset upload, and a fixture that
+  // quietly stripped the credentials and served a 200 would report parity
+  // across exactly that difference. The URL is recorded redacted; the message
+  // must carry the URL as fetch does, so it carries the redacted form.
+  //
+  // The outcome is unchanged. What is added is the shape's name in the record:
+  // this arm and the unrecorded arm both leave the call site on the same
+  // log-only path, so without it a reviewer cannot tell a driven refusal from a
+  // URL nobody recorded. DIVERGENT_URLS.credentialed is the declared shape, and
+  // the refusal fires for ANY credential-bearing URL, exactly as fetch's does.
+  // ------------------------------------------------------------------------
+  if (authority && (authority.username || authority.password)) {
+    recordCall(divergentClassification(classified, 'credentialed-url',
+      'fetch-refuses-url-credentials'), 'fetch', describeShapeCall(), 'credential-url-refused');
 
-      return Promise.reject(new TypeError(
-        'Request cannot be constructed from a URL that includes credentials: ' +
-        redactUrl(rawUrl)
-      ));
+    return Promise.reject(new TypeError(
+      'Request cannot be constructed from a URL that includes credentials: ' +
+      redactUrl(rawUrl)
+    ));
+  }
+
+  // ------------------------------------------------------------------------
+  // URL-SHAPE ARM 2 of 3: a Fetch-forbidden port.
+  //
+  // Measured on Node 22.23.2: TypeError('fetch failed') whose `cause` is
+  // Error('bad port') carrying no own properties at all - no `code`, no
+  // `errno`, no `syscall` - and no socket opened. The control measurement is
+  // what makes the ordering provable: the same host on port 8080 rejects with
+  // a cause of `getaddrinfo ENOTFOUND` and trips the socket counter, while
+  // 6000, 22 and 9 reject with `bad port` and leave it at zero - so the
+  // blocked-port refusal really does precede the dispatch.
+  //
+  // So the cause is a plain Error rather than transportError(), which attaches
+  // code/errno/syscall and would hand the call site a shape no real refusal
+  // has. fetchFailure() supplies the outer TypeError, which is the same
+  // construction every other transport failure in this file is built from.
+  //
+  // Unlike the two arms either side of it, this one had no reproduction at all
+  // before: the URL is http, so it reached the registry, missed, and rejected
+  // as PARITY_UNRECORDED - the fixture's refusal standing in for the runtime's
+  // and hiding the divergence behind it. It sits beside the credential arm so
+  // that it likewise precedes the registry lookup, which is where the runtime
+  // takes this decision too.
+  // ------------------------------------------------------------------------
+  if (authority) {
+    var blockedPort = blockedPortOf(authority);
+
+    if (blockedPort) {
+      recordCall(divergentClassification(classified, 'blocked-port',
+        'fetch-blocked-port:' + blockedPort + ':' + FETCH_BLOCKED_PORTS[blockedPort]),
+        'fetch', describeShapeCall(), 'blocked-port-refused');
+
+      return Promise.reject(fetchFailure(new Error('bad port')));
     }
+  }
+
+  // ------------------------------------------------------------------------
+  // URL-SHAPE ARM 3 of 3: a data: URL, and the ONE delegation in this file.
+  //
+  // Measured on Node 22.23.2: fetch('data:text/plain,hi') resolves 200 with
+  // content-type `text/plain` and the body "hi", and opens ZERO sockets - the
+  // measurement was taken with net.Socket.prototype.connect patched to count.
+  // The replaced library threw `Invalid protocol: data:` synchronously instead,
+  // which is the divergence docs/preserved-quirks.md 11.4 records first.
+  //
+  // This arm hands the call to the genuine fetch the fixture retains, and lets
+  // the runtime resolve it. THAT IS NOT A HOLE IN THE NO-NETWORK GUARANTEE, and
+  // the argument is the whole reason it is allowed: a data: URL carries its
+  // payload inside the URL, so resolving it involves no origin, no DNS, no
+  // dispatcher and no socket. There is nothing to record and nothing to
+  // intercept - a recorded body would be a body this fixture invented, and
+  // inventing it is precisely what would make the divergence unfalsifiable.
+  // Delegating is what makes the claim "the runtime resolves this" a driven
+  // result rather than a restatement of the recording.
+  //
+  // The gate is narrow on purpose, and both halves of it are tested here rather
+  // than trusted from the caller:
+  //   the scheme must be exactly `data:`, so no http(s) URL can ever reach the
+  //   original however it is spelled; and
+  //   the URL must be one this file DECLARES, so an exotic scheme is not
+  //   delegated merely for being exotic and a caller cannot widen the gate by
+  //   passing a data: URL of its own - an undeclared one falls through to the
+  //   unrecorded arm below and is refused with PARITY_UNRECORDED, carrying
+  //   classify()'s `unsupported-protocol:data:` as its reason. Measured.
+  // The profile is not consulted, because no profile serves this: what is
+  // exercised is the runtime's own decision.
+  // ------------------------------------------------------------------------
+  if (authority && authority.protocol === 'data:' && isRegisteredDataUrl(rawUrl)) {
+    if (typeof state.originalFetch !== 'function') {
+      // The fixture is in force without having retained a genuine fetch to
+      // delegate to, which is a fixture fault rather than a network event: it
+      // is reported through fetch's own failure shape so it cannot be read as
+      // a resolved payload, and named so it cannot be read as a refusal by the
+      // runtime either.
+      recordCall(divergentClassification(classified, 'data-url',
+        'no-retained-fetch-to-delegate-to'), 'fetch', describeShapeCall(),
+        'data-url-delegation-unavailable');
+
+      return Promise.reject(fetchFailure(new Error(
+        'test/parity/fixtures/http.js: the data: URL ' + JSON.stringify(rawUrl) +
+        ' is declared as a delegated URL shape, but no genuine fetch was retained to ' +
+        'resolve it. install() retains globalThis.fetch, so this means the fixture was ' +
+        'installed into a process that had none.'
+      )));
+    }
+
+    // Recorded BEFORE the delegation, like every other arm: the evidence is
+    // appended per call precisely so that it survives an outcome that does not
+    // return normally.
+    recordCall(divergentClassification(classified, 'data-url',
+      'delegated-to-retained-fetch'), 'fetch', describeShapeCall(), 'data-url-delegated');
+
+    return state.originalFetch(input, init);
   }
 
   // The redirect mode the caller asked for, defaulted the way fetch defaults
@@ -3134,6 +3496,15 @@ module.exports = {
   assetUrls     : ASSET_URLS,
   unrecordedUrl : UNRECORDED_URL,
   unregisteredOriginUrl : UNREGISTERED_ORIGIN_URL,
+
+  // The three URL SHAPES where fetch and the replaced library disagree about
+  // the URL itself, exported next to `assetUrls` for the same reason: a driver
+  // names the shape it means instead of typing the string, because in all three
+  // the string IS the case. `divergentBlockedPorts` is the pinned set the
+  // blocked-port arm enforces, so a driver asserts against the ports the
+  // fixture actually refuses rather than against a second copy of a spec list.
+  divergentUrls         : DIVERGENT_URLS,
+  divergentBlockedPorts : FETCH_BLOCKED_PORTS,
   accessToken   : ACCESS_TOKEN,
   pictureUrl    : PICTURE_URL,
   googleIds     : { existing: GOOGLE_ID_EXISTING, new: GOOGLE_ID_NEW },
@@ -3187,8 +3558,8 @@ module.exports = {
 // main() is called.
 //
 // It exists because a recorded response nothing requests is not evidence. The
-// catalogue above describes twenty-two outcomes across four call sites, and a
-// corpus that drives six of them leaves sixteen recordings that could be wrong
+// catalogue above describes twenty-four outcomes across four call sites, and a
+// corpus that drives six of them leaves eighteen recordings that could be wrong
 // in any way at all without a single artifact changing - which is exactly the
 // state the reCAPTCHA faults, the OAuth failures and the asset status and
 // redirect cases were in. Nor is "the profile was in force" the same claim as
@@ -3203,11 +3574,12 @@ module.exports = {
 //   they must be distinguishable from one another - so each runs in a child
 //   with a configuration that makes only one of the two branches possible.
 //
-//   reCAPTCHA outcomes 5 and 6 do not deliver a callback at all. Their whole
-//   contract is a process-level signature - an uncaught TypeError and an
-//   uncaught SyntaxError, each killing the process - so they are asserted by
-//   exit code and error type in a child, which is the only place a fatal throw
-//   can be observed rather than suffered.
+//   reCAPTCHA outcomes 5 and 6 are the two guarded provider faults, and what
+//   they have to establish is that the callback FIRES with the fail-closed
+//   value and that the process then exits normally. A child is where "the
+//   process survived its own provider fault" is a measurement rather than an
+//   inference, and it is also what keeps the case honest in the other
+//   direction: exit 0 alone would pass on a child that never called verify().
 //
 //   An unprotected install must terminate the process, which cannot be
 //   asserted in the process doing the asserting.
@@ -3222,8 +3594,9 @@ module.exports = {
 // other input to this file arrives.
 var SELFTEST_CHILD_VAR = 'PARITY_HTTP_SELFTEST_CHILD';
 
-// Printed by a child when the reCAPTCHA callback fires. Its ABSENCE is the
-// assertion for outcomes 5 and 6, so it is a marker rather than prose.
+// Printed by a child when the reCAPTCHA callback fires. Its PRESENCE is the
+// assertion for outcomes 5 and 6 - it used to be its absence, and the two
+// guards inverted it - so it is a marker rather than prose.
 var CHILD_CALLBACK_MARKER = 'PARITY-CHILD-CALLBACK ';
 var CHILD_RESULT_MARKER   = 'PARITY-CHILD-RESULT ';
 
@@ -3557,28 +3930,204 @@ async function registryCases(report, context) {
   });
 
   await runCase(report, 'registry', 'a credential-bearing URL is refused exactly as native fetch refuses it', async function() {
-    // On Node 22, fetch rejects a URL with userinfo before any request, with
-    // a TypeError naming the URL and no `cause`. The replaced
-    // library ACCEPTED such a URL, so this is one of the differences the
-    // migration introduced at the asset call site - and a fixture that stripped
-    // the credentials and served a 200 would report parity across it.
+    // Measured on Node 22.23.2: fetch rejects a URL with userinfo before any
+    // request, with a TypeError naming the URL, no `cause` and no socket. The
+    // replaced library ACCEPTED such a URL - it moved the userinfo onto an
+    // Authorization header - so this is one of the three divergences
+    // docs/preserved-quirks.md 11.4 declares at the asset call site, and a
+    // fixture that stripped the credentials and served a 200 would report
+    // parity across it.
+    //
+    // Driven from DIVERGENT_URLS rather than from a string typed here, which is
+    // the point of the shape being registered: the driver names the shape.
     var result = await underProfile('asset:success', function() {
-      return expectRejection(fetch('https://user:pass@parity.example.com/assets/fixture.gif'),
-        'a credential-bearing URL');
+      return expectRejection(fetch(DIVERGENT_URLS.credentialed), 'a credential-bearing URL');
     });
 
     expectEqual(result.value.constructor.name, 'TypeError', 'the rejection type');
     expect(result.value.message.indexOf('Request cannot be constructed from a URL that includes credentials') === 0,
       'the message must be the runtime\'s own, and is: ' + result.value.message);
     expectEqual(result.value.cause, undefined, 'native fetch attaches no cause to this refusal');
-    expect(result.value.message.indexOf('user:pass@') === -1,
-      'and the message must not carry the credentials it is refusing');
+    ['parity-user', 'parity-pass'].forEach(function(secret) {
+      expect(result.value.message.indexOf(secret) === -1,
+        'the message must not carry the ' + secret + ' half of the authority it is refusing');
+    });
 
     var call = expectOneCall(result, 'asset', 'credential-url-refused', 'fetch');
     expect(call.url.indexOf('userinfo-stripped:') === 0,
       'the record must mark the stripped authority, and carries: ' + call.url);
-    expect(call.url.indexOf('pass') === -1, 'and must not carry the credential');
-    return { message: result.value.message };
+    ['parity-user', 'parity-pass'].forEach(function(secret) {
+      expect(call.url.indexOf(secret) === -1, 'and must not carry ' + secret);
+    });
+
+    // The shape is NAMED in the record. Without this the refusal is
+    // indistinguishable in the evidence from a URL nothing recorded, because
+    // both leave the asset call site on the same log-only arm.
+    expectEqual(call.registration, 'divergence:credentialed-url',
+      'the record must name the divergence it drove');
+    expectEqual(call.reason, 'fetch-refuses-url-credentials', 'and why the URL was refused');
+    return { message: result.value.message, registration: call.registration };
+  });
+
+  await runCase(report, 'registry', 'a Fetch-forbidden port is refused as the runtime refuses it', async function() {
+    // The divergence that had NO reproduction before this: the URL is http, so
+    // it reached the registry, missed, and rejected as PARITY_UNRECORDED - the
+    // fixture's own refusal standing in for the runtime's.
+    //
+    // Measured on Node 22.23.2, with net.Socket.prototype.connect counting:
+    // ports 6000, 22 and 9 all reject with TypeError('fetch failed') whose
+    // cause is Error('bad port') carrying no own properties, at zero sockets,
+    // while the same host on 8080 reaches DNS and fails ENOTFOUND after one
+    // socket. So the refusal precedes the dispatch, which is why the arm
+    // precedes the registry lookup.
+    var result = await underProfile('asset:success', function() {
+      return expectRejection(fetch(DIVERGENT_URLS.blockedPort), 'a URL on a Fetch-forbidden port');
+    });
+
+    expectEqual(result.value.constructor.name, 'TypeError', 'the rejection type');
+    expectEqual(result.value.message, 'fetch failed', 'the rejection message');
+    expectEqual(result.value.cause.message, 'bad port', 'the cause message, which is the whole signature');
+    expectEqual(result.value.cause.code, undefined,
+      'the genuine cause carries no code, so neither may this one - a code would ' +
+      'make it read as a transport error');
+    expectEqual(result.value.cause.syscall, undefined, 'and no syscall, for the same reason');
+
+    var call = expectOneCall(result, 'unknown', 'blocked-port-refused', 'fetch');
+    expectEqual(call.registration, 'divergence:blocked-port',
+      'the record must name the divergence it drove');
+    expect(call.reason.indexOf('fetch-blocked-port:6000') === 0,
+      'and name the port and why it is blocked, and carries: ' + call.reason);
+
+    // Every pinned port behaves the same way, driven from the exported table
+    // rather than from a list repeated here.
+    var ports = Object.keys(FETCH_BLOCKED_PORTS);
+    for (var i = 0; i < ports.length; i++) {
+      var refused = await expectRejection(
+        fetch('http://parity.example.com:' + ports[i] + '/assets/fixture.gif'),
+        'port ' + ports[i]);
+      expectEqual(refused.cause.message, 'bad port', 'port ' + ports[i] + ': the cause message');
+    }
+
+    // And a port that is NOT pinned still classifies normally, which is what
+    // keeps this arm from becoming a blanket refusal: an unregistered origin is
+    // still refused, and refused as unrecorded rather than as a bad port.
+    var unpinned = await expectRejection(
+      fetch('http://parity.example.com:8081/assets/fixture.gif'), 'an unpinned port');
+    expectEqual(unpinned.cause.code, 'PARITY_UNRECORDED',
+      'a port this fixture does not pin must fail closed, not as a bad port');
+
+    return { ports: ports, registration: call.registration };
+  });
+
+  await runCase(report, 'registry', 'the declared data: URL is resolved by the RUNTIME, with no socket', async function() {
+    // The first of 11.4's three divergences, and the only one this file serves
+    // by delegation. `request` threw `Invalid protocol: data:` synchronously;
+    // fetch resolves the URL out of its own payload. Measured on Node 22.23.2
+    // with net.Socket.prototype.connect counting: 200, content-type
+    // `text/plain`, body "hi", ZERO sockets.
+    //
+    // A recorded 200 would prove nothing about the runtime - it would prove
+    // this fixture can invent a body - so the call is handed to the retained
+    // original and the response asserted is the runtime's own. The harness's
+    // tripwire counts that delegation separately from an escape, and the case
+    // below asserts both counters.
+    var delegationsBefore = context.tripwire.dataUrlDelegations;
+    var result = await underProfile('none', function() {
+      return fetch(DIVERGENT_URLS.data);
+    });
+
+    expect(!result.failure, 'the delegated data: URL must resolve: ' +
+      (result.failure && result.failure.message));
+    expectEqual(result.value.status, 200, 'the status the runtime produces');
+    expectEqual(result.value.headers.get('content-type'), 'text/plain', 'the content type');
+    expectEqual(await result.value.text(), 'hi', 'the body, which travels inside the URL');
+
+    // Driven under the `none` profile deliberately: `none` records nothing for
+    // any endpoint, so a fixture-served response is impossible here and the 200
+    // can only have come from the runtime.
+    var call = expectOneCall(result, 'unknown', 'data-url-delegated', 'fetch');
+    expectEqual(call.registration, 'divergence:data-url', 'the record must name the divergence');
+    expectEqual(call.reason, 'delegated-to-retained-fetch', 'and that it was delegated');
+    expectEqual(context.tripwire.dataUrlDelegations, delegationsBefore + 1,
+      'the delegation must have gone through the retained original');
+    expectEqual(context.tripwire.fetchCalls, 0,
+      'and it must not be counted as an escape');
+
+    return { status: 200, delegations: context.tripwire.dataUrlDelegations };
+  });
+
+  await runCase(report, 'registry', 'delegation is reachable ONLY for a declared data: URL', async function() {
+    // The gate, tested from both sides rather than trusted from the caller.
+    //
+    // An UNDECLARED data: URL fails closed exactly as it did before this
+    // registry existed, so the scheme alone buys nothing: a caller cannot widen
+    // the delegation by passing a data: URL of its own, and an exotic scheme is
+    // not delegated for being exotic.
+    var undeclared = await underProfile('asset:success', function() {
+      return expectRejection(fetch('data:text/plain,not-declared'), 'an undeclared data: URL');
+    });
+
+    expectEqual(undeclared.value.cause.code, 'PARITY_UNRECORDED', 'the cause code');
+    var undeclaredCall = expectOneCall(undeclared, 'unknown', 'unrecorded', 'fetch');
+    expectEqual(undeclaredCall.reason, 'unsupported-protocol:data:', 'the recorded reason');
+
+    // And the http(s) side of the gate: the two enumerated fail-closed controls
+    // are still refused, which is the invariant the delegation must not have
+    // loosened. Re-driven here rather than assumed from the cases above,
+    // because this is the case that would catch a scheme test written the wrong
+    // way round.
+    var controls = [UNRECORDED_URL, UNREGISTERED_ORIGIN_URL];
+    for (var i = 0; i < controls.length; i++) {
+      var refused = await expectRejection(fetch(controls[i]), controls[i]);
+      expectEqual(refused.cause.code, 'PARITY_UNRECORDED', controls[i] + ': the cause code');
+    }
+
+    expectEqual(context.tripwire.fetchCalls, 0,
+      'none of the four may have reached the retained original');
+    return { refused: controls.length + 1 };
+  });
+
+  await runCase(report, 'registry', 'the declared shapes cannot be smuggled into the ASSET registry', async function() {
+    // PARITY_HTTP_ASSET_URLS is the supported way to extend the ASSET registry,
+    // and it takes absolute http(s) URLs only. The URL-shape table is a
+    // different thing and must stay one: a data: URL declared through the
+    // environment must still be rejected there, or the two registries would
+    // merge and the delegation gate would be reachable from outside this file.
+    var before = process.env.PARITY_HTTP_ASSET_URLS;
+    var mark = state.calls.length;
+
+    try {
+      process.env.PARITY_HTTP_ASSET_URLS = JSON.stringify([DIVERGENT_URLS.data, 'not a url']);
+      var registered = Object.keys(buildAssetRegistry());
+
+      expect(registered.indexOf('nulltext/plain,hi') === -1,
+        'a data: URL must not enter the asset registry under any key');
+      registered.forEach(function(key) {
+        expect(key.indexOf('data:') === -1, 'no asset key may carry a data: URL, and one does: ' + key);
+      });
+
+      var rejections = state.calls.slice(mark).filter(function(entry) {
+        return entry.event === 'asset-registry-rejected';
+      });
+      expectEqual(rejections.length, 2, 'both entries must be rejected and both logged');
+      expect(rejections[0].detail.reason === 'unsupported-protocol:data:',
+        'the data: entry must be rejected for its scheme, and was: ' + rejections[0].detail.reason);
+      expect(rejections[1].detail.reason === 'unparseable-url',
+        'and the non-URL for being unparseable, and was: ' + rejections[1].detail.reason);
+
+      return { rejected: rejections.length };
+    }
+    finally {
+      if (before === undefined) {
+        delete process.env.PARITY_HTTP_ASSET_URLS;
+      }
+      else {
+        process.env.PARITY_HTTP_ASSET_URLS = before;
+      }
+      // Re-derive on the restored value, so the memoized registry the rest of
+      // the run uses is the one this case started from.
+      buildAssetRegistry();
+    }
   });
 
   await runCase(report, 'registry', 'no credential reaches the evidence, from a header, a query or an authority', async function() {
@@ -3632,7 +4181,17 @@ async function registryCases(report, context) {
       'the genuine fetch must never be called, and was called ' + context.tripwire.fetchCalls + ' time(s)');
     expectEqual(context.tripwire.requestCalls, 0,
       'the genuine request export must never be called, and was called ' + context.tripwire.requestCalls + ' time(s)');
-    return { fetchCalls: 0, requestCalls: 0 };
+
+    // The one exception, asserted rather than left implicit: the declared
+    // data: URL shape IS handed to the retained original, exactly once, by the
+    // delegation case above. Counted separately so that `fetchCalls` keeps
+    // meaning "a call this fixture should never have made" - and asserted at an
+    // exact number so a second, unexplained delegation is a failure rather
+    // than a widened allowance.
+    expectEqual(context.tripwire.dataUrlDelegations, 1,
+      'exactly one delegation is expected, for the declared data: URL, and there were ' +
+      context.tripwire.dataUrlDelegations);
+    return { fetchCalls: 0, requestCalls: 0, dataUrlDelegations: 1 };
   });
 }
 
@@ -3736,13 +4295,13 @@ async function readinessCases(report) {
 //
 // This is the group the header promised and nothing performed. It matters more
 // than its size suggests: under NODE_ENV=test `config.isTest` is true and
-// outcome 1 short-circuits before any HTTP, so these five recorded responses
+// outcome 1 short-circuits before any HTTP, so these six recorded responses
 // are unreachable through any route in the suite. Direct invocation is the only
-// way they are ever exercised, and until it existed the five records were
-// unexecuted code.
+// way they are ever exercised, and until it existed the records were unexecuted
+// code.
 //
-// Outcomes 3, 4 and the rejected variant run here. Outcomes 1, 2, 5 and 6 need
-// their own process, and childCases() drives them.
+// Outcomes 3 and 4, the rejected variant and the non-object body run here.
+// Outcomes 1, 2, 5 and 6 need their own process, and childCases() drives them.
 // ---------------------------------------------------------------------------
 async function recaptchaCases(report, context) {
   var recaptcha = context.recaptcha;
@@ -3812,6 +4371,42 @@ async function recaptchaCases(report, context) {
       'non-200 is a differently shaped object rather than a falsy success');
     expectOneCall(result, 'recaptcha', 'recaptcha-503', 'fetch');
     return { value: result.value };
+  });
+
+  await runCase(report, 'recaptcha', 'outcome 3 (non-object body): the parsed value is delivered VERBATIM', async function() {
+    // The boundary of the approved deviation, driven from this side rather
+    // than described. verify() guards the response and the parse; it does not
+    // inspect what the parse produced, so a body of `null` is delivered as
+    // `null` - which is what baseline delivered too, so nothing here deviates.
+    var result = await underProfile('recaptcha:non-object-body', function() {
+      return verifyOnce('parity-token');
+    });
+
+    expect(!result.failure, 'verify() must call back: ' + (result.failure && result.failure.message));
+    expectEqual(result.value, null,
+      'the parsed value must arrive verbatim and NOT be normalized to {status:false} - ' +
+      'that shape belongs to the two guarded faults, and conflating them would hide ' +
+      'the fact that this one still throws');
+
+    // Where it throws is the whole point, and it is not here: the read happens
+    // at the caller, inside its own lifecycle method, so it reaches the
+    // preserved Layer 1 catch-all and answers 500 with the process alive
+    // instead of ending it. Reproduced on the delivered value so the case
+    // states which fault the route will see; the route outcome itself belongs
+    // to a driver against a running server.
+    var threw = null;
+    try {
+      void (result.value.success);
+    }
+    catch (error) {
+      threw = error;
+    }
+
+    expect(threw && threw.constructor.name === 'TypeError',
+      'reading `success` off the delivered value must throw a TypeError, and produced ' +
+      (threw ? threw.constructor.name : 'no throw'));
+    expectOneCall(result, 'recaptcha', 'recaptcha-200-null-body', 'fetch');
+    return { value: result.value, callerFault: 'TypeError at the read' };
   });
 }
 
@@ -3905,25 +4500,50 @@ async function oauthCases(report) {
     return { status: 200 };
   });
 
-  await runCase(report, 'oauth', 'token 200 whose body parses to null: the guard THROWS', async function() {
+  await runCase(report, 'oauth', 'token 200 whose body parses to null: the guard REFUSES it', async function() {
     var token = await underProfile('oauth:token-non-object-body', exchangeToken);
     expectEqual(token.value.status, 200, 'the token status');
     expectEqual(token.value.body, null,
-      'a body of `null` must arrive as null - reading access_token off it is what throws a ' +
-      'TypeError out of the callback and leaves the request unanswered (preserved, R-d)');
+      'a body of `null` must arrive as null - that value is the whole of this case, and ' +
+      'the guard below is what the controller does with it');
 
+    // The guard the controller runs, on the value the fixture delivered, in the
+    // shape lib/controllers/auth.js delivers it in:
+    //   if (err || !body || !body.access_token) return reject(err || new Error(...));
+    //
+    // Re-pointed at the delivered behaviour. This case used to run baseline's
+    // unguarded `!body.access_token` and assert that it threw a TypeError,
+    // which was true of baseline and is no longer true of this tree: the `!body`
+    // test was added under the approved deviation at
+    // docs/preserved-quirks.md 10.7, because one unauthenticated
+    // GET /auth/google/callback under this profile ended the process. Measured
+    // against a running server, the same request now answers 302 to /signup
+    // with the process alive.
+    //
+    // What is asserted is therefore the delivered outcome and not merely the
+    // absence of the old one: the dereference does not happen, the guard
+    // produces the rejection value the chain has always carried, and that value
+    // is what reaches the generic authentication failure.
     var threw = null;
+    var rejection = null;
     try {
-      // The guard the controller runs, on the value the fixture delivered.
-      void (!token.value.body.access_token);
+      var body = token.value.body;
+      if (!body || !body.access_token) {
+        rejection = new Error('Failed to get access token');
+      }
     }
     catch (error) {
       threw = error;
     }
-    expect(threw && threw.constructor.name === 'TypeError',
-      'the preserved fault is a TypeError, and was ' + (threw ? threw.constructor.name : 'no throw'));
+
+    expect(!threw, 'the guard must not throw on a null body, and threw ' +
+      (threw ? threw.constructor.name + ': ' + threw.message : ''));
+    expect(rejection, 'the guard must refuse the body rather than pass it on');
+    expectEqual(rejection.constructor.name, 'Error', 'the rejection type');
+    expectEqual(rejection.message, 'Failed to get access token',
+      'the message the terminal catch logs and the generic failure is reported from');
     expectOneCall(token, 'token', 'token-200-null-body', 'fetch');
-    return { body: null, fault: 'TypeError' };
+    return { body: null, rejection: rejection.message };
   });
 
   await runCase(report, 'oauth', 'token transport failure: TypeError(fetch failed) with a cause', async function() {
@@ -3947,6 +4567,41 @@ async function oauthCases(report) {
     expectEqual(profile.value.body.id, GOOGLE_ID_EXISTING, 'the rest of the profile survives');
     expectOneCall(profile, 'userinfo', 'userinfo-200-missing-email', 'fetch');
     return { status: 200 };
+  });
+
+  await runCase(report, 'oauth', 'profile 200 whose body parses to null: the SECOND guard refuses it', async function() {
+    var profile = await underProfile('oauth:profile-non-object-body', fetchProfile);
+    expectEqual(profile.value.status, 200, 'the profile status');
+    expectEqual(profile.value.body, null, 'a body of `null` must arrive as null');
+
+    // The guard the controller runs, in the shape
+    // lib/controllers/auth.js:441 delivers it in:
+    //   if (err || !profile || !profile.email) return reject(err || new Error(...));
+    //
+    // This is the FIRST half of that test, and it is the half
+    // `oauth:profile-missing-email` cannot reach: that profile delivers an
+    // object, so it falls through to `!profile.email`. Both land on the same
+    // generic authentication failure, which is why each needs its own profile
+    // to be evidence of anything.
+    var threw = null;
+    var rejection = null;
+    try {
+      var body = profile.value.body;
+      if (!body || !body.email) {
+        rejection = new Error('Failed to get user profile');
+      }
+    }
+    catch (error) {
+      threw = error;
+    }
+
+    expect(!threw, 'the guard must not throw on a null profile, and threw ' +
+      (threw ? threw.constructor.name + ': ' + threw.message : ''));
+    expect(rejection, 'the guard must refuse the body rather than pass it on');
+    expectEqual(rejection.message, 'Failed to get user profile',
+      'the message logged as `Google OAuth error:` and reported as the generic failure');
+    expectOneCall(profile, 'userinfo', 'userinfo-200-null-body', 'fetch');
+    return { body: null, rejection: rejection.message };
   });
 
   await runCase(report, 'oauth', 'profile transport failure', async function() {
@@ -4708,10 +5363,11 @@ async function requestMechanismCases(report, context) {
 // ---------------------------------------------------------------------------
 // Group: the cases that can only be asserted from outside the process.
 //
-// Four of them, and each is a process-level signature rather than a value: two
+// Four of them, and each is a claim about the process rather than a value: two
 // reCAPTCHA short-circuits that need mutually exclusive configuration states,
-// two reCAPTCHA faults that KILL the process without ever calling back, and an
-// unprotected install that must terminate rather than serve.
+// two guarded reCAPTCHA faults that must call back and then let the process
+// exit normally, and an unprotected install that must terminate rather than
+// serve.
 // ---------------------------------------------------------------------------
 
 // Spawns this file with one case selected, bounded, and never inheriting the
@@ -4720,10 +5376,11 @@ async function requestMechanismCases(report, context) {
 // harness. NODE_CONFIG_PERSIST_ON_CHANGE stops node-config writing
 // config/runtime.json into the worktree.
 function spawnChild(context, caseName, overrides) {
-  // Each child writes its own evidence log, and the parent folds it in. That
-  // is what makes a child's intercepted call countable: two of these children
-  // die from an uncaught throw, and the per-call append - rather than a flush
-  // at exit - is why their evidence survives it.
+  // Each child writes its own evidence log, and the parent folds it in. That is
+  // what makes a child's intercepted call countable at all, and it is read
+  // rather than returned: the per-call append survives a child that does not
+  // get to report, which is what the two provider faults did on the baseline
+  // worktree and what an unprotected install still does here.
   var logPath = pathModule.join(context.scratch,
     'child-' + caseName.replace(/[^a-z0-9]+/gi, '-') + '-' + (context.childIndex = (context.childIndex || 0) + 1) + '.log');
 
@@ -4830,36 +5487,80 @@ async function childCases(report, context) {
     return { calls: 0, value: child.result.value };
   });
 
-  await runCase(report, 'recaptcha', 'outcome 5: a transport failure throws a TypeError and NEVER calls back', async function() {
+  // Outcomes 5 and 6 are RE-POINTED at the delivered behaviour, and both are
+  // still driven in a child rather than in-process.
+  //
+  // The assertion they used to make - exit 1, `cb` never invoked, TypeError or
+  // SyntaxError on stderr - was baseline's, and lib/util/recaptcha.js now
+  // guards both reads under the approved deviation at
+  // docs/preserved-quirks.md 10.7: a fault the PROVIDER controls, reachable
+  // from one unauthenticated POST /users, was ending the process and ending it
+  // again on every restart while the condition lasted. Measured against a
+  // running server, both faults now answer POST /users with 302 and leave the
+  // process alive.
+  //
+  // The child is retained because what has to be asserted is still a
+  // process-level claim, and it is now a stronger one than an exit code: the
+  // callback FIRES, the value it carries is the fail-closed shape, and the
+  // process reaches its own exit rather than being taken down by the
+  // dereference. None of those three can be observed from inside the process
+  // that would have died, and asserting only "exit 0" would pass on a child
+  // that never called verify() at all.
+  await runCase(report, 'recaptcha', 'outcome 5: a transport failure fails closed and the process survives', async function() {
     var child = spawnChild(context, 'recaptcha:verify', {
       NODE_CONFIG         : SELFTEST_SECRET_OVERLAY,
       PARITY_HTTP_PROFILE : 'recaptcha:transport-failure'
     });
 
     expect(!child.spawnError, 'the child must start: ' + child.spawnError);
-    expectEqual(child.status, 1, 'an uncaught exception exits 1');
-    expect(!child.calledBack,
-      'the callback must NEVER be invoked - that is the whole contract of this outcome (R-d)');
-    expect(child.stderr.indexOf('TypeError') !== -1,
-      'the fault must be a TypeError, and stderr says: ' + child.stderr.trim());
-    expect(child.stderr.indexOf('statusCode') !== -1,
-      'it must be the read of response.statusCode on an undefined response, and stderr says: ' +
-      child.stderr.trim());
-    return { exit: child.status, fault: 'TypeError' };
+    expectEqual(child.status, EXIT_OK,
+      'the guarded fault must let the process exit normally (stderr: ' + child.stderr.trim() + ')');
+    expect(child.calledBack,
+      'the callback MUST be invoked - that is what the guard changed, and the child printed: ' +
+      child.stdout.trim());
+    expect(child.result, 'the child must report a result, and printed: ' + child.stdout.trim());
+    expectEqual(JSON.stringify(child.result.value), '{"status":false}',
+      'the value must be the fail-closed shape, which is the value outcome 4 already delivers');
+    expectEqual(child.result.value.success, undefined,
+      'and it must carry no `success`, so every caller reads it as a failed verification');
+    expectEqual(child.result.noCallback, undefined,
+      'the bounded-wait arm must not have fired: the callback is what settles this outcome now');
+
+    // The fault really was the transport one, not a short-circuit: the child
+    // had a secret configured and `isTest` false, and the fixture recorded the
+    // intercepted call.
+    expectEqual(child.result.interceptedCalls, 1, 'exactly one siteverify call must have been made');
+    expect(child.calls.some(function(entry) {
+      return entry.outcome === 'recaptcha-transport-failure';
+    }), 'and it must have been served the transport failure, and the evidence carries: ' +
+      JSON.stringify(child.calls.map(function(entry) { return entry.outcome; })));
+
+    return { exit: child.status, value: child.result.value };
   });
 
-  await runCase(report, 'recaptcha', 'outcome 6: a malformed body throws a SyntaxError and NEVER calls back', async function() {
+  await runCase(report, 'recaptcha', 'outcome 6: a malformed body fails closed and the process survives', async function() {
     var child = spawnChild(context, 'recaptcha:verify', {
       NODE_CONFIG         : SELFTEST_SECRET_OVERLAY,
       PARITY_HTTP_PROFILE : 'recaptcha:malformed-json'
     });
 
     expect(!child.spawnError, 'the child must start: ' + child.spawnError);
-    expectEqual(child.status, 1, 'an uncaught exception exits 1');
-    expect(!child.calledBack, 'the callback must NEVER be invoked (R-d)');
-    expect(child.stderr.indexOf('SyntaxError') !== -1,
-      'the fault must be a SyntaxError out of JSON.parse, and stderr says: ' + child.stderr.trim());
-    return { exit: child.status, fault: 'SyntaxError' };
+    expectEqual(child.status, EXIT_OK,
+      'the guarded parse failure must let the process exit normally (stderr: ' +
+      child.stderr.trim() + ')');
+    expect(child.calledBack, 'the callback MUST be invoked, and the child printed: ' + child.stdout.trim());
+    expect(child.result, 'the child must report a result');
+    expectEqual(JSON.stringify(child.result.value), '{"status":false}',
+      'the value must be the same fail-closed shape the transport failure delivers: both faults ' +
+      'refuse the verification on the outcome a rejected challenge already produces');
+    expectEqual(child.result.noCallback, undefined, 'the bounded-wait arm must not have fired');
+    expectEqual(child.result.interceptedCalls, 1, 'exactly one siteverify call must have been made');
+    expect(child.calls.some(function(entry) {
+      return entry.outcome === 'recaptcha-200-malformed-json';
+    }), 'and it must have been served the non-JSON body, and the evidence carries: ' +
+      JSON.stringify(child.calls.map(function(entry) { return entry.outcome; })));
+
+    return { exit: child.status, value: child.result.value };
   });
 
   await runCase(report, 'install', 'a mechanism that cannot be intercepted terminates the process', async function() {
@@ -5002,8 +5703,11 @@ function runChildCase(name) {
   });
 
   // A bounded wait, so a child that is never called back exits rather than
-  // hanging the harness. Outcomes 5 and 6 never reach it: their uncaught throw
-  // ends the process first, which is exactly what they assert.
+  // hanging the harness. It is retained now that every outcome calls back,
+  // because it is the arm that tells "verify() answered" apart from "verify()
+  // did not": outcomes 5 and 6 assert that `noCallback` is ABSENT from what
+  // this child reports, which they could not do if the child simply timed out
+  // silently.
   setTimeout(function() {
     if (!settled) {
       process.stdout.write(CHILD_RESULT_MARKER + JSON.stringify({
@@ -5083,7 +5787,10 @@ async function selfTest(options) {
   var context = {
     appRoot        : report.appRoot,
     scratch        : fs.mkdtempSync(pathModule.join(os.tmpdir(), 'parity-http-report-')),
-    tripwire       : { fetchCalls: 0, requestCalls: 0 },
+    // `fetchCalls` counts ESCAPES and is asserted at zero. `dataUrlDelegations`
+    // is separate because the data: URL shape is a call the fixture is
+    // SUPPOSED to hand back - see the tripwire below.
+    tripwire       : { fetchCalls: 0, requestCalls: 0, dataUrlDelegations: 0 },
     recaptcha      : null,
     recaptchaError : null,
     // Every refusal the contract group drives ON PURPOSE. The count is what
@@ -5095,8 +5802,23 @@ async function selfTest(options) {
 
   // The tripwire becomes the "original" the fixture retains, so an escape to
   // the real network is a counted, failing case rather than a socket.
+  //
+  // It has two arms, because the fixture has exactly one legitimate reason to
+  // invoke the retained original: the `data:` URL shape, which the runtime
+  // resolves out of the URL's own payload with no dispatcher and no socket. A
+  // single-armed tripwire would leave that shape undrivable here - the case
+  // would receive a rejected promise instead of the runtime's 200 - and the
+  // alternative of moving the assertion to `fetchCalls <= 1` would stop the
+  // counter meaning anything. So the delegable URLs are served from the
+  // GENUINE fetch and counted separately, and `fetchCalls` still counts only
+  // what it counted before: a call this fixture should never have made.
   globalThis.__parityHttpTripwire = context.tripwire;
-  globalThis.fetch = function tripwireFetch() {
+  globalThis.fetch = function tripwireFetch(input, init) {
+    if (isRegisteredDataUrl(urlFrom(input))) {
+      context.tripwire.dataUrlDelegations++;
+      return genuineFetch(input, init);
+    }
+
     context.tripwire.fetchCalls++;
     return Promise.reject(new Error('the genuine fetch was invoked'));
   };
@@ -5162,9 +5884,10 @@ async function selfTest(options) {
     // it, which is the vacuous pass this harness exists to prevent.
     //
     // This process's evidence plus every child's: four outcomes can only be
-    // driven in a child, and two of those children die from the throw that IS
-    // their contract, so their evidence is read from the log they appended to
-    // per call rather than from a value they never got to return.
+    // driven in a child, and a child's evidence is read from the log it
+    // appended to per call rather than from a value it returns - which is what
+    // keeps the accounting correct for a child that does not get to report at
+    // all, as an unprotected install does not.
     state.calls.concat(context.childRecords || []).forEach(function(entry) {
       if (entry.event === undefined && entry.profile) {
         consumed[entry.profile] = true;

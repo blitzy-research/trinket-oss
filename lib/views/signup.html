@@ -3,9 +3,99 @@
 {% block body_class %}static-page{% endblock %}
 
 {% block content %}
+{#
+  Sign-up form.
+
+  Landing target: the hidden `formName` below is what `POST /users` interpolates
+  into its declared `fail: { redirect: '/{formName}' }` [config/routes.js:76-78,
+  applied by lib/util/routeParser.js request.fail], so the submitted value has to
+  name a route that exists. `GET /signup` [config/routes.js:23] is that route;
+  there is no `/sign-up` route, and the route surface is a fixed invariant
+  (AAP 0.2.2), so the value submitted here is what makes a validation failure
+  land back on this page with `flash.validation`, `flash.duplicates` and
+  `flash.payload` rendered on the very request that consumes them, instead of
+  302-ing to a 404 that leaves the flash to be mis-attributed to the visitor's
+  next visit.
+
+  Field errors: the server flashes joi's own developer-facing message per field
+  (lib/util/routeParser.js runValidation -> `flash.validation.<field>`). The
+  macro below is presentation only - it maps that message onto copy an end user
+  can act on and leaves the flash itself untouched - and every chain in it ends
+  in a generic fallback so no unmapped message can reach the page verbatim.
+
+  `label`       names the field in the sentence, lower case, mid-sentence.
+  `minLength` / `maxLength` are the schema's own bounds; pass 0 where the schema
+              declares none, and the corresponding branch degrades to copy that
+              states no number.
+  `patternHint` is the copy for a regex failure - joi's own message for that case
+              echoes the submitted value back, which for the password field would
+              print the password into the page.
+  `invalidHint` is the copy for joi `.invalid(...)`, which on `username` is the
+              reserved-name list [config/reserved.yaml].
+#}
+{% macro validationMessage(message, label, minLength, maxLength, patternHint, invalidHint) %}
+{%- if "is not allowed to be empty" in message or "is required" in message -%}
+Please enter your {{ label }}.
+{%- elif "length must be at least" in message -%}
+{% if minLength %}Please use at least {{ minLength }} characters for your {{ label }}.{% else %}Please enter your {{ label }}.{% endif %}
+{%- elif "length must be less than or equal" in message -%}
+{% if maxLength %}Please use {{ maxLength }} characters or fewer for your {{ label }}.{% else %}Please use a shorter {{ label }}.{% endif %}
+{%- elif "must be a valid email" in message -%}
+Please enter a valid email address.
+{%- elif "contains an invalid value" in message -%}
+{{ invalidHint }}
+{%- elif "fails to match the required pattern" in message -%}
+{{ patternHint }}
+{%- else -%}
+Please check your {{ label }} and try again.
+{%- endif -%}
+{% endmacro %}
 <div class="auth-page-wrapper">
   <div class="row">
-    <div class="medium-8 medium-offset-2 small-12 columns">
+    <div class="medium-8 medium-offset-2 small-12 columns">{% if flash.failure.message %}
+        <small class="error" role="alert">{{ flash.failure.message }}</small>{% endif %}{#
+        Renders the `failure` flash that request.fail stashed before redirecting
+        here [lib/util/routeParser.js:288], in the same markup and Foundation
+        classes login.html:7-8 uses, so that a failed OAuth callback -- which
+        302s to /signup with only a flash to show for itself -- is no longer
+        silent. The block tags deliberately hug the enclosing <div> and the
+        <small> instead of sitting on their own lines: Nunjucks does not trim
+        around block tags, so own-line tags would add an indent and a newline
+        to every render that carries no failure flash, and the no-flash body of
+        this page is compared byte for byte against
+        test/parity/corpus.json's route.get.signup.html capture.
+
+        `role="alert"` is what makes the message reach a screen reader. The
+        element arrives with the document after a redirect and never receives
+        focus, so without an alert role it is announced only if the user happens
+        to navigate onto it -- measured as a bare AX StaticText node with
+        tabIndex -1, skipped across all 18 tab positions on this page. The
+        attribute is safe to add here and is NOT a corpus change: replay.js
+        compares `role` alongside the data- and aria- attributes [:5660-5661],
+        but only within a RECORDED body, and no scenario in
+        test/parity/corpus.json records a body containing `small class="error"`
+        -- the recorded route.get.signup.html capture is the no-flash render,
+        which this block does not emit. R-d has nothing to preserve either: this
+        element does not exist at base commit 2f8712a, so there is no baseline
+        behaviour for the attribute to alter.
+
+        Two things are deliberately NOT done here, because their root cause sits
+        outside this file:
+          Focus is not moved to the message. Managed focus needs script, and
+          public/js/** is excluded from modification by AAP section 0.2.2;
+          adding `tabindex` instead would alter this page's keyboard order,
+          which IS client-visible behaviour. The alert role delivers the
+          announcement without either.
+          The colour pair is not changed. White on #f04124 computes 3.83:1,
+          below WCAG SC 1.4.3's 4.5:1, but that pair comes from Foundation's own
+          `span.error, small.error` rule with no application override, so every
+          error message in the application -- login.html:7-8 included -- has
+          carried it since baseline. The fix belongs to the design-system token
+          in static/scss/**, which AAP section 0.2.2 declares unmodified and
+          which is owned by another unit; overriding it for this one element
+          would hardcode a colour against the rule that fixed values come from
+          the design system, and would make signup's error inconsistent with
+          every other error surface. Reported rather than patched here. #}
       <h2 class="text-center">Sign Up for your Free Account!</h2>
     </div>
   </div>
@@ -15,16 +105,57 @@
   <form id="sign-up-short" action="/users" method="post">
     <div class="row">
       <div class="medium-6 medium-offset-3 small-10 small-offset-1 columns">
-        <input type="hidden" value="sign-up" name="formName">
+        {# Names the route the failure redirect resolves to - see the note above. #}
+        <input type="hidden" value="signup" name="formName">
+        <label
+          {% if flash.validation.fullname %}class="error"{% endif %}>Full Name
+          <input type="text" name="fullname" value="{{ flash.payload.fullname }}" placeholder="What's your name?" maxlength="50" required/>
+        </label>
+        {% if flash.validation.fullname %}
+          <small class="error">{{ validationMessage(flash.validation.fullname, 'full name', 0, 50, 'Please use letters, numbers and ordinary punctuation in your full name.', 'That name cannot be used. Please enter a different one.') }}</small>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="medium-6 medium-offset-3 small-10 small-offset-1 columns">
+        <label
+          {% if flash.validation.username %}class="error"{% endif %}>Username
+          <input type="text" name="username" value="{{ flash.payload.username }}" placeholder="Choose a username" minlength="3" maxlength="20" required/>
+        </label>
+        {% if flash.validation.username %}
+          <small class="error">{{ validationMessage(flash.validation.username, 'username', 3, 20, 'Usernames must begin with a letter and may contain letters, numbers, hyphens (-) and underscores (_).', 'That username is reserved for the site, so it cannot be used. Please choose another one.') }}</small>
+        {% endif %}
+        {% if flash.duplicates.username %}
+          <small class="error">That username is already taken. Please choose another one.</small>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="medium-6 medium-offset-3 small-10 small-offset-1 columns">
         <label
           {% if flash.validation.email %}class="error"{% endif %}>Email Address
-          <input type="text" name="email" value="{{ flash.payload.email }}" placeholder="What's your email address?" required/>
+          {#
+            The two visible controls on this form had no `id` at all, so
+            nothing could reference their error text. They get one here
+            purely so `aria-describedby` has a target; the `name`
+            attributes the server reads are untouched.
+
+            A validation failure and a duplicate address are separate
+            messages, and the control describes itself with whichever one
+            rendered.
+          #}
+          <input type="text" name="email" id="signup-email" value="{{ flash.payload.email }}" placeholder="What's your email address?" maxlength="254"
+                 autocomplete="email"
+                 {% if flash.validation.email %}class="input-error" aria-invalid="true" aria-describedby="signup-email-error" autofocus{% elif flash.duplicates.email %}class="input-error" aria-invalid="true" aria-describedby="signup-email-duplicate" autofocus{% endif %}
+                 required/>
         </label>
         {% if flash.validation.email %}
-          <small class="error">{{ flash.validation.email }}</small>
+          <small class="error" id="signup-email-error" role="alert">{{ validationMessage(flash.validation.email, 'email address', 0, 254, 'Please enter a valid email address.', 'That email address cannot be used. Please use a different one.') }}</small>
         {% endif %}
         {% if flash.duplicates.email %}
-          <small class="error">An account already exists with this email{% if emailEnabled %}, need to <a href='/forgot-pass'>recover your password?</a>{% endif %}</small>
+          <small class="error" id="signup-email-duplicate" role="alert">An account already exists with this email{% if emailEnabled %}, need to <a href='/forgot-pass'>recover your password?</a>{% endif %}</small>
         {% endif %}
       </div>
     </div>
@@ -33,10 +164,22 @@
       <div class="medium-6 medium-offset-3 small-10 small-offset-1 columns">
         <label
           {% if flash.validation.password %}class="error"{% endif %}>Password
-          <input type="password" name="password" placeholder="What password would you like?" required/>
+          {#
+            `new-password`, so a password manager offers to generate and
+            store one instead of filling the user's existing credential.
+            Chrome's own heuristic guesses `current-password` here, which is
+            exactly wrong on a registration form.
+
+            This field only takes focus when it is the first invalid one -
+            the email control above claims it otherwise.
+          #}
+          <input type="password" name="password" id="signup-password" placeholder="What password would you like?"
+                 autocomplete="new-password"
+                 {% if flash.validation.password %}class="input-error" aria-invalid="true" aria-describedby="signup-password-error"{% if not flash.validation.email and not flash.duplicates.email %} autofocus{% endif %}{% endif %}
+                 required/>
         </label>
         {% if flash.validation.password %}
-          <small class="error">{{ flash.validation.password }}</small>
+          <small class="error" id="signup-password-error" role="alert">{{ validationMessage(flash.validation.password, 'password', 3, 0, 'Passwords may contain letters, numbers, spaces and ordinary punctuation only.', 'That password cannot be used. Please choose a different one.') }}</small>
         {% endif %}
       </div>
     </div>

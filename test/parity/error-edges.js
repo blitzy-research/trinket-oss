@@ -17,10 +17,19 @@
 //   the USAGE constant beside the parser. Node core only, CommonJS, so it runs
 //   against a tree with no install. Artifacts go only to the paths the flags
 //   name and stdout carries nothing; a failure prints its reason on stderr and
-//   exits 1. Both gates run BEFORE anything is written, so a failed gate never
-//   leaves a document asserting its own failure, and --out resolves against
-//   THIS repository rather than --app, so generating the baseline inventory
-//   cannot write into the baseline worktree.
+//   exits 1, and --check exits 3 when the document at --out no longer matches
+//   the tree. Both gates, the downgrade refusal and --check all run BEFORE
+//   anything is written, so a failed gate never leaves a document asserting
+//   its own failure, and --out resolves against THIS repository rather than
+//   --app, so generating the baseline inventory cannot write into the baseline
+//   worktree.
+//
+//   --out DEFAULTS to the committed inventory, which is why the write path
+//   carries a downgrade refusal: a run with no --baseline and no --scenarios
+//   may not replace a document whose own provenance records that it had both,
+//   because the replacement is re-sealed on the way out and every mechanical
+//   check then passes on the weaker document. --allow-downgrade authorizes it
+//   loudly; --check compares without writing at all.
 //
 // ARTIFACT
 //   --out  the Markdown inventory (default docs/error-edge-inventory.md):
@@ -445,6 +454,22 @@ class AnalysisError extends Error {
   constructor(message) {
     super(message);
     this.name = 'AnalysisError';
+  }
+}
+
+// The one failure that is NOT an analysis failure: under --check the analysis
+// succeeded and what is wrong is the artifact, which no longer describes the
+// tree in front of the reader. It carries its own class so main() maps it to
+// its own exit code rather than folding it into the generic 1 - a caller
+// scripting this tool has to be able to tell "the tree could not be analysed"
+// from "the committed document is out of date", because only the second is
+// fixed by regenerating. test/parity/convert-inventory.js already gives that
+// meaning exit 3, and one convention across the two inventory generators is
+// worth more than a locally chosen code.
+class StaleDocumentError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'StaleDocumentError';
   }
 }
 
@@ -8701,7 +8726,17 @@ const EDGE_SCENARIO_BINDINGS = Object.freeze([
   {
     file: 'lib/controllers/users.js',
     carriers: ['users.assetUploadFromURL'],
-    subjects: ['shape:.on(\'error\') handler - logs only', 'shape:.on(\'error\') handler - absorbs'],
+    // Named by the log-and-continue spelling ALONE, and the alternative
+    // `- absorbs` spelling is deliberately not listed. The upload path now
+    // attaches a second listener, `writeStream.on('error', function () {})`,
+    // which absorbs by definition: with both spellings listed this binding
+    // matched two edges in the analysed tree and the generator refused it. The
+    // edge this binding means is the BODY listener - it logs and then ends the
+    // destination, which is DISPOSITION.LOG_CONTINUE and therefore
+    // `- logs only` - and on the baseline the same spelling names the
+    // transport listener, so matching stays exactly one per tree. The
+    // destination listener is a separate edge that no binding claims.
+    subjects: ['shape:.on(\'error\') handler - logs only'],
     scenarios: ['error-edge.asset-from-url.midstream-failure'],
     why: 'the fixture delivers a response and partial bytes, then errors, and ' +
       'still reaches `end`, so this body listener runs and the upload starts ' +
@@ -11052,6 +11087,350 @@ function resolveTreeArgument(value, flag) {
   return root;
 }
 
+// ---------------------------------------------------------------------------
+// The write path's own guards: --check, and the downgrade refusal
+// ---------------------------------------------------------------------------
+
+// The header rows that are a function of the CHECKOUT's commit state rather
+// than of the analysed content, normalized away before --check compares two
+// renderings. Committing the document moves the analysed HEAD and the
+// generator commit by one revision without changing a single row, so a --check
+// that compared them would report every committed document stale the moment it
+// was committed - and a check that always fails is a check nobody runs.
+//
+// The `provenance-json` line carries both of those facts AND the bodyDigest
+// over the very text being compared, so it is normalized for exactly the same
+// reason and no other.
+//
+// What is deliberately NOT normalized is the `Generator blob` row: it is the
+// content identity of the source that produced the document, and a document
+// whose rows happen to match while naming a different generator blob is a
+// document whose provenance is wrong. That distinction is the same one
+// convert-inventory draws when it normalizes the generator COMMIT and compares
+// the generator digest.
+const VOLATILE_PROVENANCE_LINES = Object.freeze([
+  /^(\| Analysed tree HEAD \|).*$/m,
+  /^(\| Generator commit \|).*$/m,
+  /^(<!-- provenance-json:).*$/m
+]);
+
+/** Blank the volatile provenance rows so two renderings compare on content. */
+function withoutVolatileProvenance(text) {
+  return VOLATILE_PROVENANCE_LINES.reduce(function (acc, pattern) {
+    return acc.replace(pattern, '$1 <normalized>');
+  }, text);
+}
+
+/**
+ * Read the document already at `--out`, for the two guards that need it.
+ *
+ * Never throws: a missing document is the ordinary first-run case, and an
+ * unreadable or provenance-less one must not turn a generation into a crash.
+ * The caller decides what each case means, because the two guards want
+ * different things from the same read - the downgrade guard wants the strength
+ * the document records, --check wants its bytes.
+ *
+ * @param {string} outPath The resolved destination.
+ * @returns {Object} { path, exists, text, block, note } where `note` is a
+ *   human-readable reason the strength could not be established, or null.
+ */
+function readExistingDocument(outPath) {
+  const resolved = path.resolve(outPath);
+  const result = { path: resolved, exists: false, text: null, block: null, note: null };
+
+  try {
+    result.text = fs.readFileSync(resolved, 'utf8');
+    result.exists = true;
+  }
+  catch (err) {
+    if (err && err.code === 'ENOENT') {
+      // Nothing on disk cannot be downgraded and cannot be current. Silent,
+      // because writing a new document at a new path is the normal case.
+      return result;
+    }
+    // Anything else - a directory at --out, a permission problem - is worth
+    // saying out loud and is not worth failing on here: the write itself will
+    // fail with the same errno and a message naming the destination, which is
+    // a better place to report it than a guard that has not decided anything
+    // yet.
+    result.note = 'cannot read the document already at ' + resolved + ': ' +
+      err.message + ' - so no downgrade guard could be applied to it';
+    return result;
+  }
+
+  result.block = provenance.extract(result.text);
+  if (!result.block) {
+    // A document with no machine-readable block, or one whose block does not
+    // parse: hand-written, produced by another tool, or mangled. The strength
+    // it was produced with is unknowable, so there is nothing to compare a
+    // downgrade against - reported, and then proceeded past, because refusing
+    // here would make a mangled document unrepairable by the generator that
+    // owns it.
+    result.note = 'the document already at ' + resolved + ' carries no ' +
+      'readable provenance block, so the run that produced it cannot be ' +
+      'compared with this one';
+  }
+  return result;
+}
+
+// The two strength dimensions, keyed off the exact strings generate() records
+// in `detail.closureMode` and `detail.coverageMode`. Prefix tests rather than
+// equality, because each dimension has a `, reported` and a `, gate enforced`
+// spelling and both mean the comparison RAN; the absent spellings begin
+// 'not run' and 'not joined'.
+const CLOSURE_RECORDED_PREFIX = 'run against the baseline worktree';
+const COVERAGE_RECORDED_PREFIX = 'joined to the capture corpus';
+
+/**
+ * What the document on disk says about how strong the run that produced it was.
+ *
+ * @param {(Object|null)} block A provenance block from readExistingDocument.
+ * @returns {Object} { closure, coverage, closureMode, coverageMode,
+ *   comparedAgainstHead, invocation, malformed }
+ */
+function documentStrength(block) {
+  const strength = {
+    closure: false,
+    coverage: false,
+    closureMode: null,
+    coverageMode: null,
+    comparedAgainstHead: null,
+    invocation: null,
+    malformed: null
+  };
+  if (!block) {
+    return strength;
+  }
+
+  const detail = block.detail;
+  if (!detail || typeof detail !== 'object') {
+    strength.malformed = 'its provenance block carries no `detail` object';
+    return strength;
+  }
+  if (typeof detail.closureMode !== 'string' || typeof detail.coverageMode !== 'string') {
+    // A block missing the two fields is either from a much older generator or
+    // hand-edited. Reported and treated as unknown strength: asserting a
+    // downgrade from a field that is not there would refuse runs on the
+    // strength of nothing.
+    strength.malformed = 'its provenance block records neither a closure nor ' +
+      'a coverage mode';
+    return strength;
+  }
+
+  strength.closureMode = detail.closureMode;
+  strength.coverageMode = detail.coverageMode;
+  strength.closure = detail.closureMode.indexOf(CLOSURE_RECORDED_PREFIX) === 0;
+  strength.coverage = detail.coverageMode.indexOf(COVERAGE_RECORDED_PREFIX) === 0;
+  strength.comparedAgainstHead = typeof detail.comparedAgainstHead === 'string'
+    ? detail.comparedAgainstHead
+    : null;
+  strength.invocation = typeof detail.invocation === 'string' ? detail.invocation : null;
+  return strength;
+}
+
+/**
+ * Refuse to replace a document with the output of a WEAKER run.
+ *
+ * The hazard this closes is not a wrong document, it is a quietly weaker one.
+ * `--out` defaults to the committed inventory, so a bare `node
+ * test/parity/error-edges.js` used to replace a two-tree, corpus-joined
+ * closure document with a single-tree one that closes no row and drives no
+ * edge - and, because the generator re-seals the provenance it writes, the
+ * degraded document then passed `--verify-provenance` and every other
+ * mechanical check. The only surviving signal was a human noticing that a
+ * header row now read "not run".
+ *
+ * So strength is compared before anything is written: a run with no
+ * `--baseline` may not replace a document that records a closure comparison,
+ * and a run with no `--scenarios` may not replace one that records a corpus
+ * join. The guard keys off the document's OWN provenance rather than off the
+ * path, because the hazard is the content being replaced and `--out
+ * copy-of-the-committed-document.md` carries exactly the same content.
+ *
+ * @param {Object} options The parsed options.
+ * @param {Object} existing The readExistingDocument result for `--out`.
+ * @returns {undefined}
+ * @throws {AnalysisError} When the run is weaker and --allow-downgrade is absent.
+ */
+function assertNotADowngrade(options, existing) {
+  if (existing.note) {
+    // Reported on stderr rather than thrown: stdout carries nothing from this
+    // tool, and a document whose strength cannot be established is a fact the
+    // caller should see even though it does not stop the run.
+    process.stderr.write('error-edges: ' + existing.note + '\n');
+  }
+
+  const strength = documentStrength(existing.block);
+  if (strength.malformed) {
+    process.stderr.write('error-edges: ' + existing.path + ': ' +
+      strength.malformed + ', so no downgrade guard could be applied to it\n');
+    return;
+  }
+
+  const losing = [];
+  if (strength.closure && !options.baselineRoot) {
+    losing.push({
+      dimension: 'the closure comparison',
+      records: '`Closure comparison | ' + strength.closureMode + '`' +
+        (strength.comparedAgainstHead
+          ? ' against `' + strength.comparedAgainstHead.slice(0, 7) + '`'
+          : ''),
+      missing: '--baseline <a worktree at ' + BASELINE_COMMIT.slice(0, 7) + '>'
+    });
+  }
+  if (strength.coverage && !options.scenariosPath) {
+    losing.push({
+      dimension: 'the corpus join',
+      records: '`Scenario coverage | ' + strength.coverageMode + '`',
+      missing: '--scenarios test/parity/corpus.json'
+    });
+  }
+
+  if (!losing.length) {
+    return;
+  }
+
+  if (options.allowDowngrade) {
+    // Loud on purpose. A force flag that printed nothing would rebuild the
+    // exact hazard the guard closes: the degraded document would still be
+    // sealed, still verify, and still say "not run" in a row nobody reads.
+    process.stderr.write(
+      'error-edges: --allow-downgrade: deliberately replacing a STRONGER ' +
+      'document at ' + existing.path + ' with the output of a weaker run.\n' +
+      losing.map(function (loss) {
+        return '  losing ' + loss.dimension + ' - the document records ' +
+          loss.records + ', and this run supplies no ' +
+          loss.missing.split(' ')[0] + '.\n';
+      }).join('') +
+      '  This run: ' + describeRunStrength(options) + '.\n'
+    );
+    return;
+  }
+
+  const dimensions = losing.map(function (loss) {
+    return loss.dimension;
+  }).join(' and ');
+
+  // --check gets the SAME refusal rather than a comparison, and this is the
+  // reason: a weaker rendering necessarily differs from a stronger document -
+  // the closure and coverage rows alone guarantee it, and the whole closure
+  // analysis is absent from the weaker one - so the comparison would report
+  // exit 3, "this document does not describe the tree". That is a false
+  // accusation against a correct document, and a caller acting on it would
+  // regenerate and destroy the very thing the guard protects.
+  const consequence = options.check
+    ? 'A weaker rendering cannot match a stronger document - the closure and ' +
+      'coverage rows differ by construction and the closure analysis is ' +
+      'absent - so comparing them would report the document as stale, which ' +
+      'would be a false accusation against a correct document and would ' +
+      'invite exactly the regeneration this guard exists to prevent. --check ' +
+      'has to be given the flags the document was produced with.'
+    : 'The document would still be freshly sealed afterwards, so ' +
+      '--verify-provenance and every other mechanical check would pass on the ' +
+      'weaker document and the only remaining signal would be a reader ' +
+      'noticing a header row that says "not run".';
+
+  throw new AnalysisError(
+    (options.check
+      ? 'refusing to --check ' + existing.path + ' against a WEAKER rendering'
+      : 'refusing to overwrite ' + existing.path + ' with the output of a ' +
+        'WEAKER run') +
+    ': it would lose ' + dimensions + '.\n\n' +
+    losing.map(function (loss) {
+      return '  ' + loss.dimension + ': the document records ' + loss.records +
+        ', and this run supplies no ' + loss.missing.split(' ')[0] + '.\n';
+    }).join('') +
+    '\nThis run: ' + describeRunStrength(options) + '.\n' +
+    '\n' + consequence + ' Two ways forward:\n' +
+    (strength.invocation
+      ? '  1. Re-run it with the flags the document itself records:\n       ' +
+        strength.invocation + '\n'
+      : '  1. Re-run it with ' + losing.map(function (loss) {
+          return loss.missing;
+        }).join(' and ') + '.\n') +
+    (options.check
+      ? '  2. There is no --allow-downgrade for --check: it would only buy a ' +
+        'guaranteed exit 3.'
+      : '  2. Pass --allow-downgrade to replace it deliberately, which prints ' +
+        'what was given up on stderr.')
+  );
+}
+
+/** One line naming what this run actually establishes, for the two messages above. */
+function describeRunStrength(options) {
+  return (options.baselineRoot
+    ? 'closure against ' + options.baselineRoot
+    : 'single-tree, so no row can be closed') +
+    '; ' +
+    (options.scenariosPath
+      ? 'joined to ' + options.scenariosPath
+      : 'no corpus, so no edge is driven');
+}
+
+/**
+ * Compare the document at `--out` against a fresh rendering, writing nothing.
+ *
+ * A provenance header is a claim the artifact makes about itself, and a stale
+ * artifact's header is exactly as confident as a current one's - so the only
+ * way to know whether a committed inventory still describes the tree is to
+ * render the tree again and compare. Both line counts and the first differing
+ * line from each side are reported because the caller may have no diff tool
+ * and no second copy of the document to diff against.
+ *
+ * @param {Object} existing The readExistingDocument result for `--out`.
+ * @param {string} document The fresh rendering.
+ * @returns {undefined} on a match.
+ * @throws {StaleDocumentError} When the document differs or is not readable.
+ */
+function checkDocument(existing, document) {
+  if (!existing.exists) {
+    throw new StaleDocumentError(
+      'error-edges --check: there is no document at ' + existing.path + ', so ' +
+      'it cannot be current. Run the same command without --check to write it.'
+    );
+  }
+
+  const committed = withoutVolatileProvenance(existing.text);
+  const fresh = withoutVolatileProvenance(document);
+  if (committed === fresh) {
+    return;
+  }
+
+  const committedLines = committed.split('\n');
+  const freshLines = fresh.split('\n');
+  let firstDifference = -1;
+  for (let i = 0; i < Math.max(committedLines.length, freshLines.length); i++) {
+    if (committedLines[i] !== freshLines[i]) {
+      firstDifference = i;
+      break;
+    }
+  }
+
+  const show = function (lines) {
+    return lines[firstDifference] === undefined
+      ? '(end of file)'
+      : lines[firstDifference].slice(0, 160);
+  };
+
+  throw new StaleDocumentError([
+    'error-edges --check: ' + existing.path + ' does not describe the analysed tree.',
+    '',
+    'Document on disk: ' + committedLines.length + ' lines.',
+    'Fresh rendering:  ' + freshLines.length + ' lines.',
+    'First difference at line ' + (firstDifference + 1) + ':',
+    '  on disk: ' + show(committedLines),
+    '  fresh:   ' + show(freshLines),
+    '',
+    'The analysed HEAD, the generator commit and the machine-readable ' +
+      'provenance line are normalized before comparing, because committing ' +
+      'the document moves all three without changing a row. Every other line, ' +
+      'including the generator blob, is compared as written.',
+    'Regenerate it with the exact command in its own provenance block. A ' +
+      'document that no longer describes the tree reads as a measurement of ' +
+      'code that has moved.'
+  ].join('\n'));
+}
+
 /**
  * Analyse a tree, evaluate every check and gate, and write the artifacts.
  * Returns a summary so a caller can assert on the run without parsing the
@@ -11059,12 +11438,21 @@ function resolveTreeArgument(value, flag) {
  *
  * @param {Object} options `appRoot` and `outPath`, the `countsCheck` mode, and
  *   optionally `baselineRoot`, `scenariosPath`, `edgeIndexPath`,
- *   `provenanceOutPath`, `closureGate` and `coverageGate`
+ *   `provenanceOutPath`, `closureGate`, `coverageGate`, `check` and
+ *   `allowDowngrade`
  * @returns {Object} { outPath, appRoot, rows, counts, check, selfTests,
- *   funnels, files, bytes }
+ *   funnels, files, bytes, checked }
  */
 function generate(options) {
   const selfTests = runSelfTests();
+
+  // The document already at --out is read FIRST, before the tree is even
+  // opened, for two reasons. The downgrade refusal is a decision about the
+  // destination rather than about the analysis, so it should cost a caller one
+  // file read rather than a full two-tree scan; and reading it once serves
+  // both guards, so --check compares against the same bytes the guard judged.
+  const existing = readExistingDocument(options.outPath);
+  assertNotADowngrade(options, existing);
 
   const appRoot = resolveTreeArgument(options.appRoot, '--app');
   const analysed = analyseTree(appRoot, 'analysed');
@@ -11375,6 +11763,31 @@ function generate(options) {
   const document = renderDocument(model);
 
   const outPath = path.resolve(options.outPath);
+
+  // ---- --check: compare and write NOTHING ---------------------------------
+  // Placed here, on the same line the write would occupy, so the two paths
+  // cannot drift: whatever the gates above admit is exactly what --check
+  // compares. It returns before the index and the sidecar as well - parseArgs
+  // already refuses those combinations, and a mode named "write nothing" must
+  // not depend on an argument check to keep that promise.
+  if (options.check) {
+    checkDocument(existing, document);
+    return {
+      outPath: outPath,
+      appRoot: appRoot,
+      checked: true,
+      rows: allEdges.length,
+      counts: counts,
+      check: check,
+      selfTests: selfTests,
+      funnels: funnels,
+      files: files.map(function (file) {
+        return { relPath: file.relPath, rows: file.edges.length };
+      }),
+      bytes: Buffer.byteLength(document, 'utf8')
+    };
+  }
+
   writeDocumentAtomically(outPath, document);
 
   // ---- The machine-readable index, when asked for -------------------------
@@ -11390,6 +11803,10 @@ function generate(options) {
   return {
     outPath: outPath,
     appRoot: appRoot,
+    // False on this path and true on the --check path, so a programmatic
+    // caller reads whether a document was written from the result rather than
+    // from the options it passed in.
+    checked: false,
     rows: allEdges.length,
     counts: counts,
     check: check,
@@ -11405,6 +11822,14 @@ function generate(options) {
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
+
+// The one exit code this tool carries beyond 0 and 1. It means "the analysis
+// succeeded and the document at --out does not match it", which is neither a
+// usage error nor an analysis failure, and a caller has to be able to
+// distinguish it mechanically: only this one is fixed by regenerating.
+// test/parity/convert-inventory.js already spells that meaning 3, so a caller
+// learns one convention across both inventory generators.
+const EXIT_STALE = 3;
 
 const USAGE = [
   'Usage: node ' + TOOL_RELATIVE_PATH + ' [options]',
@@ -11457,6 +11882,26 @@ const USAGE = [
   '  --coverage-gate           exit non-zero while any CHANGED edge has no',
   '                            scenario naming its id. Requires --baseline and',
   '                            --scenarios.',
+  '  --check                   write nothing: render the document in memory and',
+  '                            compare it with the one at --out, exiting 3 when',
+  '                            they differ and naming the first difference. The',
+  '                            analysed HEAD, the generator commit and the',
+  '                            machine-readable provenance line are normalized',
+  '                            first, because committing the document moves all',
+  '                            three without changing a row. Cannot be combined',
+  '                            with --edge-index, --provenance-out or',
+  '                            --allow-downgrade, and needs the same --baseline',
+  '                            and --scenarios the document was produced with.',
+  '  --allow-downgrade         permit a run that would replace a document whose',
+  '                            own provenance records a STRONGER run - one with',
+  '                            a closure comparison this run has no --baseline',
+  '                            for, or a corpus join it has no --scenarios for.',
+  '                            Without it such a run is refused with exit 1,',
+  '                            because the weaker document is re-sealed on the',
+  '                            way out and would then pass --verify-provenance',
+  '                            and every other mechanical check. With it the',
+  '                            run proceeds and says on stderr what was given',
+  '                            up.',
   '  -h, --help                print this and exit 0',
   '',
   'No option is repeatable: a second occurrence, in either the `--flag value`',
@@ -11466,9 +11911,15 @@ const USAGE = [
   'a value really begins with a dash.',
   '',
   'Writes the document, and the index and sidecar when asked for, and nothing to',
-  'stdout. Exits 0 on success, 1 with the reason on stderr on any failure. Both',
-  'gates are evaluated BEFORE anything is written, so a failed gate never leaves',
-  'a document on disk asserting its own failure.'
+  'stdout; every reason and every warning goes to stderr. Both gates, the',
+  'downgrade refusal and --check are all evaluated BEFORE anything is written, so',
+  'a failed gate never leaves a document on disk asserting its own failure and a',
+  'refused run leaves the previous document exactly as it found it.',
+  '',
+  'Exit codes:',
+  '  0  the document was written (or, with --check, it is already current)',
+  '  1  usage error, an analysis or gate failure, or a refused downgrade',
+  '  3  --check only: the document at --out does not match the analysed tree'
 ].join('\n');
 
 const COUNTS_CHECK_MODES = ['auto', 'strict', 'off'];
@@ -11496,6 +11947,8 @@ function parseArgs(argv) {
     provenanceOutPath: null,
     closureGate: false,
     coverageGate: false,
+    check: false,
+    allowDowngrade: false,
     countsCheck: 'auto',
     help: false
   };
@@ -11509,7 +11962,12 @@ function parseArgs(argv) {
     '--edge-index': 'edgeIndexPath',
     '--provenance-out': 'provenanceOutPath'
   };
-  const flags = { '--closure-gate': 'closureGate', '--coverage-gate': 'coverageGate' };
+  const flags = {
+    '--closure-gate': 'closureGate',
+    '--coverage-gate': 'coverageGate',
+    '--check': 'check',
+    '--allow-downgrade': 'allowDowngrade'
+  };
   const seen = {};
 
   for (let i = 0; i < argv.length; i++) {
@@ -11563,13 +12021,50 @@ function parseArgs(argv) {
     );
   }
 
+  // --check writes NOTHING, and the two artifact options are writes. Silently
+  // honouring them would make the mode a half-truth - the document compared,
+  // the index and the sidecar replaced - and a caller who asked for both is
+  // asking for two contradictory things, so they are told which rather than
+  // having one of them chosen for them.
+  if (options.check) {
+    const writesAnyway = [];
+    if (options.edgeIndexPath) {
+      writesAnyway.push('--edge-index');
+    }
+    if (options.provenanceOutPath) {
+      writesAnyway.push('--provenance-out');
+    }
+    if (writesAnyway.length) {
+      throw new AnalysisError('--check writes nothing, so it cannot be ' +
+        'combined with ' + writesAnyway.join(' or ') + ', which writes an ' +
+        'artifact. Run the comparison on its own, or drop --check to ' +
+        'regenerate everything.\n\n' + USAGE);
+    }
+    // --allow-downgrade authorizes REPLACING a stronger document. Under
+    // --check nothing is replaced, so all it could authorize is comparing a
+    // weaker rendering with a stronger document - which differs by
+    // construction and would report exit 3 against a document that is
+    // perfectly current. Refused, so a caller does not read that 3 as a
+    // finding.
+    if (options.allowDowngrade) {
+      throw new AnalysisError('--check cannot be combined with ' +
+        '--allow-downgrade: the flag authorizes replacing a stronger ' +
+        'document, --check replaces nothing, and a weaker rendering can only ' +
+        'ever compare as different - so the pair buys a guaranteed exit 3 ' +
+        'against a current document. Pass --check the same --baseline and ' +
+        '--scenarios the document was produced with.\n\n' + USAGE);
+    }
+  }
+
   return options;
 }
 
 /**
- * Entry point. Returns 0 on success and 1 on failure; nothing is written to
- * stdout in either case, and the document is written once, only after every
- * check has passed.
+ * Entry point. Returns 0 on success, 3 when --check finds the document at
+ * --out no longer describes the tree, and 1 on any other failure - including a
+ * refused downgrade, which is a refusal to act rather than a stale artifact.
+ * Nothing is written to stdout in any case, and the document is written once,
+ * only after every check has passed.
  */
 function main(argv) {
   let options;
@@ -11589,6 +12084,12 @@ function main(argv) {
     generate(options);
     return 0;
   } catch (err) {
+    if (err instanceof StaleDocumentError) {
+      // Already prefixed and formatted by checkDocument, which owns the whole
+      // report; a second prefix here would bury the first line.
+      process.stderr.write(err.message + '\n');
+      return EXIT_STALE;
+    }
     if (err instanceof AnalysisError) {
       process.stderr.write('error-edges: ' + err.message + '\n');
     } else {
@@ -11603,6 +12104,8 @@ function main(argv) {
 
 module.exports = {
   AnalysisError: AnalysisError,
+  StaleDocumentError: StaleDocumentError,
+  EXIT_STALE: EXIT_STALE,
   ANALYSIS_TARGETS: ANALYSIS_TARGETS,
   BASELINE_COMMIT: BASELINE_COMMIT,
   BASELINE_COUNTS: BASELINE_COUNTS,
@@ -11650,6 +12153,10 @@ module.exports = {
   findCarriers: findCarriers,
   findFunctions: findFunctions,
   generate: generate,
+  checkDocument: checkDocument,
+  documentStrength: documentStrength,
+  readExistingDocument: readExistingDocument,
+  withoutVolatileProvenance: withoutVolatileProvenance,
   locateFunnels: locateFunnels,
   main: main,
   parseArgs: parseArgs,

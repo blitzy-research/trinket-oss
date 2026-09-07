@@ -203,9 +203,9 @@ version and its reasoning in the same form.
 | **Reason** | Functional. v3 is a storage-layer rewrite, outside R-a's four categories |
 
 **Eight SDK call sites** (static): seven S3 operations — `putObject` at `[T lib/util/file.js:12]` and
-`[T lib/workers/exports.js:382]`; `getObject` at `[T lib/util/file.js:83]`,
-`[T lib/util/file.js:200]` and `[T lib/workers/exports.js:59]`; `deleteObject` at
-`[T lib/util/file.js:143]`; `getSignedUrl` at `[T lib/controllers/users.js:1299]` — plus the one
+`[T lib/workers/exports.js:527]`; `getObject` at `[T lib/util/file.js:83]`,
+`[T lib/util/file.js:200]` and `[T lib/workers/exports.js:70]`; `deleteObject` at
+`[T lib/util/file.js:143]`; `getSignedUrl` at `[T lib/controllers/users.js:1466]` — plus the one
 `AWS.config.update()` at `[T config/aws.js:8]`. Seven `new aws.S3()` client constructions sit across
 the same three modules.
 
@@ -255,8 +255,8 @@ suppression is set in `config/aws.js`, where the SDK is constructed:
 
 ```javascript
 // [T config/aws.js:4-6]
-// Suppress the SDK v2 end-of-support NOTE so the application runs warning-free while
-// aws-sdk remains deliberately deferred at v2 (see docs/deferred-dependencies.md).
+// Suppress the SDK v2 end-of-support NOTE. The flag is read from a `setTimeout(..., 0)`
+// the SDK schedules as it loads, so it takes effect only while set synchronously here.
 require('aws-sdk/lib/maintenance_mode_message').suppress = true;
 ```
 
@@ -394,7 +394,7 @@ The same rule is why this migration removed **three unused `require('@hapi/hapi'
 `lib/util/helpers.js`, `lib/controllers/courses.js` and `lib/controllers/files.js`. None was
 referenced, so all three read as cosmetic cleanups, and they are not: `config/app.config` requires
 those controllers while parsing routes, so any one of them was enough to make
-`lib/workers/exports.js` unrequirable. `[T app.js:21]` now holds the only live
+`lib/workers/exports.js` unrequirable. `[T app.js:23]` now holds the only live
 `require('@hapi/hapi')` in the repository (static), and `require('./lib/workers/exports')` loads
 cleanly (**probe**). `[T lib/controllers/courses.js:1-11]` and `[T lib/workers/exports.js:1-12]` carry
 the reasoning in code so that a later reader does not re-introduce an import that looks harmless.
@@ -483,18 +483,18 @@ occurrence, a supported suppression exists, and applying it belongs with the fol
 | | |
 |---|---|
 | **Resolved** | 3.6.0 — **unchanged** from baseline |
-| **Consumer** | `[T lib/controllers/trinket.js:32]`, with **four** call sites (static, `grep -rn JSZip lib/` and `grep -rn loadAsync lib/`, which between them return that `require`, one comment at `:1019`, and the four calls): archives are **constructed** with `new JSZip()` at `:1015` and `:1094`, and **read** with `zip.loadAsync(request.payload.zipCode, { base64: true })` at `:1028` and `:1102` |
+| **Consumer** | `[T lib/controllers/trinket.js:29]`, with **four** call sites (static, `grep -rn JSZip lib/` and `grep -rn loadAsync lib/`, which between them return that `require`, four comments — at `:84` and `:141` from the first grep and at `:1234` and `:1330` from the second — and the four calls): archives are **constructed** with `new JSZip()` at `:1228` and `:1325`, and **read** with `zip.loadAsync(request.payload.zipCode, { base64: true })` at `:1241` and `:1336` |
 | **Finding** | **moderate** ×2 — GHSA-jg8v-48h5-wgxg (prototype pollution) and GHSA-36fh-84j7-cv5h (path traversal via `loadAsync`), range `<= 3.7.1` |
 | **Reason** | Moderate-only, with a fix inside the same major (3.10.1) that the triage rule does not authorise |
 
 **The residual risk is request-reachable, and that is recorded rather than argued away**, because both
 advisories concern *reading* archives and this application does read them through `jszip`. Two of the
 four call sites call `loadAsync`, and both read a **request payload** — `request.payload.zipCode`, in
-`trinket.draft` at `:1028` and `trinket.autosave` at `:1102` — so GHSA-36fh-84j7-cv5h has a
+`trinket.draft` at `:1241` and `trinket.autosave` at `:1336` — so GHSA-36fh-84j7-cv5h has a
 call site reachable from request input, and GHSA-jg8v-48h5-wgxg (prototype pollution) is reached
 through the same parse. The `adm-zip` package the inventory moved to 0.6.0 does not bound this: its
 single use **writes** an archive (`new zip()`, `addLocalFolder`, `writeZip` at
-`[T lib/controllers/courses.js:351-353]`) and it reads none, so `jszip`'s two `loadAsync` calls are
+`[T lib/controllers/courses.js:337-339]`) and it reads none, so `jszip`'s two `loadAsync` calls are
 the only archive reads in the delivered tree (static).
 
 **The disposition is unchanged by that.** Both findings are **moderate**, so under
@@ -517,7 +517,7 @@ disposition rather than a gap.
 | | |
 |---|---|
 | **Resolved** | **7.0.1**, declared `^7.0.1`. Baseline was 2.1.1 under a `^2.0.0` declaration |
-| **Consumer** | `[T lib/controllers/trinket.js:26]` and `[T lib/workers/exports.js:23]`, both invocation sites: `archiver('zip', {zlib:{level:N}})` at `[T lib/workers/exports.js:273]`, `[T lib/controllers/trinket.js:1630]` and `[T lib/controllers/trinket.js:2045]`. Unchanged by the move |
+| **Consumer** | `[T lib/controllers/trinket.js:24]` and `[T lib/workers/exports.js:23]`, both invocation sites: `archiver('zip', {zlib:{level:N}})` at `[T lib/workers/exports.js:273]`, `[T lib/controllers/trinket.js:1630]` and `[T lib/controllers/trinket.js:2045]`. Unchanged by the move |
 | **Finding** | none at either version — no advisory qualified this package at any point, and none does now |
 | **Why it left this list** | Two measured failures against [§1](#1-the-deferral-rule): 2.1.1 emitted `[DEP0005] Buffer()` at module scope through `zip-stream` 1.2.0 → `compress-commons` 1.2.2, breaching the warning-free clause on every boot; and its writer declared `crc32 = 0` and uncompressed size 0 for every deflated entry, which the `adm-zip` 0.6.0 the inventory installs cannot read at all, so writer and reader could not be shipped together |
 
@@ -641,7 +641,7 @@ promises, and removing the patch would break those call sites. It is a prerequis
 | | |
 |---|---|
 | **Resolved** | 0.4.37 — **unchanged** from baseline |
-| **Consumer** | **43** `require('config')` sites (static): **29** under `lib/` — the controllers, models, utilities and the worker — **8** under `config/` including `[T config/app.config.js:1]`, and **6** under `test/`. `app.js` reaches it indirectly, through `[T app.js:26]`'s require of `config/app.config` |
+| **Consumer** | **43** `require('config')` sites (static): **29** under `lib/` — the controllers, models, utilities and the worker — **8** under `config/` including `[T config/app.config.js:1]`, and **6** under `test/`. `app.js` reaches it indirectly, through `[T app.js:28]`'s require of `config/app.config` |
 | **Finding** | none |
 | **Reason** | Functional, and no qualifying finding. Replacing it would touch all 43 |
 
@@ -660,10 +660,10 @@ each consumer below is an invocation site, not merely an import (static):
 | Package | Resolved | Live consumer | Purpose |
 |---|---|---|---|
 | `escape-string-regexp` | 1.0.5 | `[T lib/models/trinket.js:5]`, called at `:269` — `new RegExp(escStrRegexp(term), 'i')` | Escapes user search terms before regex construction |
-| `limax` | 1.4.1 | `[T lib/models/plugins/slug.js:4]` called at `:18`; `[T lib/controllers/files.js:9]` called at `:118`; `[T lib/controllers/trinket.js:31]` called at `:1324` — `sluggify(request.payload.slug, { separateNumbers : false })` in `updateSlug` | URL slug generation |
+| `limax` | 1.4.1 | `[T lib/models/plugins/slug.js:4]` called at `:18`; `[T lib/controllers/files.js:9]` called at `:334`; `[T lib/controllers/trinket.js:28]` called at `:1609` — `sluggify(request.payload.slug, { separateNumbers : false })` in `updateSlug` | URL slug generation |
 | `node-cryptojs-aes` | 0.4.0 | `[T lib/util/roles.js:2]`, called at `:11` — `CryptoJS.AES.encrypt(...)` | Role-token encryption |
 | `numeral` | 1.5.6 | `[T lib/util/nunjucks.js:6]`, exposed to the template environment at `:131` | Number formatting in rendered views |
-| `tab` | 0.1.0 | `[T lib/util/routeParser.js:3]`, called at `:515` — `mod_tab.emitTable(...)` | Renders the route-table CLI output, which is itself a parity gate |
+| `tab` | 0.1.0 | `[T lib/util/routeParser.js:3]`, called at `:609` — `mod_tab.emitTable(...)` | Renders the route-table CLI output, which is itself a parity gate |
 | `transliteration` | 0.1.1 | `[T lib/models/plugins/slug.js:5]`, called at `:21` | Transliterates non-Latin titles before slugging |
 
 `tab` deserves one note: its output is not incidental. The route-table CLI is gated for
@@ -722,9 +722,9 @@ repository's build configuration):
 
 | Package | Resolved | Declared | Live consumer | Why it did not move |
 |---|---|---|---|---|
-| `mocha` | **3.5.3** | `^3.4.1` | The suite runner itself: `[T package.json:scripts.test]` is `node test/parity/mongo.js -- mocha`, and `[T test/mocha.opts]` carries its six flags | **Retained deliberately, and a bump would break the harness silently.** `test/mocha.opts` stopped being read in Mocha 8, so a move past Mocha 7 would discard every flag in that file — the spec glob, `--require ./test/env.js`, `--recursive`, `--check-leaks`, `--reporter spec` and `--timeout` — without an error. Two further Mocha 3 behaviours are load-bearing: the glob's **sorted** file collection, which is the whole of why `[T test/lib/00-ready.js]` runs first and can publish the resolved server (its own comment records the `0x30` versus `0x61` ordering), and `--require` modules loading **before** the BDD globals exist, which is why `[T test/env.js]` registers no hooks and asserts as much at `[T test/env.js:18-20]` |
-| `chai` | **3.5.0** | `^3.5.0` | `[T test/env.js:71-73]` installs the `should` getter; **20** files read assertions through it, 19 under `test/lib/**` plus the preload | **A move the plan allowed for that did not materialise.** The plan permitted a `chai` bump only if the selected `sinon`'s assertion peer forced one. The delivered `sinon` 22.1.0 declares **no** `peerDependencies` at all (**probe** — measured `null`), so nothing forced it. Under [§1](#1-the-deferral-rule) that leaves no qualifying reason, and moving it would put 124 carried-through assertions at risk for no gain |
-| `redis-mock` | **0.2.0** | `~0.2.0` | `[T test/env.js:77]`, applied at `[T test/env.js:82]` — `sinon.stub(redis, 'createClient').callsFake(redismock.createClient)`, which keeps the suite off a live Redis | Functional, carries **no** advisory, and it is the mechanism by which `npm test` needs no Redis. The one accommodation made instead of a version move was at the call site, not the package: the legacy three-argument `sinon.stub` form became `.callsFake()` for the current `sinon` — a stub-syntax change with no assertion change |
+| `mocha` | **3.5.3** | `^3.4.1` | The suite runner itself: `[T package.json:scripts.test]` is `node test/parity/mongo.js -- mocha`, and `[T test/mocha.opts]` carries its **five** flags | **Retained deliberately, and a bump would break the harness silently.** `test/mocha.opts` stopped being read in Mocha 8, so a move past Mocha 7 would discard every flag in that file — the spec glob, `--require ./test/env.js`, `--recursive`, `--check-leaks` and `--reporter spec` — without an error. (Five, not six: an interim delivery carried a sixth, `--timeout 20000`, which was removed as unauthorized, as `CHANGELOG.md:94-95` records.) Two further Mocha 3 behaviours are load-bearing: the glob's **sorted** file collection, which is the whole of why `[T test/lib/00-ready.js]` runs first and can publish the resolved server — its own comment at `[T test/lib/00-ready.js:9-13]` records that the `00-` filename prefix is what makes it the first collected spec, because `test/mocha.opts` narrows the glob to `test/lib/**/*.js` and Mocha sorts the matches — and `--require` modules loading **before** the BDD globals exist, which is why `[T test/env.js]` registers no hooks and asserts as much at `[T test/env.js:17-19]`, a `typeof before !== 'undefined'` guard that throws |
+| `chai` | **3.5.0** | `^3.5.0` | `[T test/env.js:48-50]` installs the `should` getter; **18** files read assertions through it, **17** under `test/lib/**` plus the preload itself | **A move the plan allowed for that did not materialise.** The plan permitted a `chai` bump only if the selected `sinon`'s assertion peer forced one. The delivered `sinon` 22.1.0 declares **no** `peerDependencies` at all (**probe** — measured `null`), so nothing forced it. Under [§1](#1-the-deferral-rule) that leaves no qualifying reason, and moving it would put 124 carried-through assertions at risk for no gain |
+| `redis-mock` | **0.2.0** | `~0.2.0` | `[T test/env.js:54]`, applied at `[T test/env.js:58]` — `sinon.stub(redis, 'createClient').callsFake(redismock.createClient)`, which keeps the suite off a live Redis | Functional, carries **no** advisory, and it is the mechanism by which `npm test` needs no Redis. The one accommodation made instead of a version move was at the call site, not the package: the legacy three-argument `sinon.stub` form became `.callsFake()` for the current `sinon` — a stub-syntax change with no assertion change |
 | `supertest` | **0.8.3** | `^0.8.3` | `[T test/helpers/flow.js:2]`, called at `[T test/helpers/flow.js:447]` — the agent every API suite in `[T test/lib/api/index.js]`'s `sequence` array drives | **A move was made on a compatibility argument and withdrawn when the argument stopped holding.** 0.8.3 resolves `superagent` **0.16.0**, whose part builder writes `Content-Disposition: attachment` on a `multipart/form-data` part (`superagent/lib/node/part.js:119`), a form **RFC 7578 §4.2 forbids**. That only mattered while a route-level `multipart` flag was switching parsing on; with the flag withdrawn the request is rejected with **415** before any part header is read, on hapi 20.3.0 and 21.4.10 alike, so the two upload cases and the two downloads behind them answer 415 and 404 whichever agent is installed (**measured**). Under [§1](#1-the-deferral-rule) that leaves no qualifying reason, and AAP §0.5.1.6 holds this package unchanged, so the declaration is the baseline range and the resolution the baseline version. Its own dev-side findings are recorded below rather than being the reason |
 | `sass` | **1.98.0** | `^1.57.0` | The stylesheet build, through `[T vite.config.mjs]`'s `css.preprocessorOptions.scss` over `static/scss/base.scss` and `static/scss/embed/embed.scss`; invoked by `npm run build:css` | **Build tooling is deliberately out of scope** (AAP §0.2.2), precisely so that the output artifacts and their paths do not move: `public/css/base.css` and `public/css/embed.css`. It carries no advisory. Its ~435 deprecation warnings come from the vendored, gitignored Foundation SCSS under `public/components/**`, which is out of scope for the same reason and is not the application's warning stream |
 | `vite` | **4.5.14** | `^4.5.14` | The same build: `[T package.json:scripts.build:css]` is `vite build`, configured by `[T vite.config.mjs]` | Out of scope with `sass`, and for the same reason — the build's inputs, outputs and paths are an invariant of this migration. Its findings are dev-only and outside the `--omit=dev` gate; `npm` offers `vite@8.2.2`, four majors on, which would be a build-tooling replacement rather than a dependency swap |
@@ -951,8 +951,11 @@ gate it, so that a future team can pick it up without re-deriving the analysis.
   compatibility or parity analysis behind it. Clearing it deliberately, at whatever version, belongs
   to this migration.
 - **What would need to change.** Mongoose 7 removes callback support from every model and query
-  method, which is the idiom this codebase is written in across 30 consumer modules — and it is the
-  same idiom `Q.nsend` adapts in the worker, so [§3.3](#33-q--native-promises) is entangled with it.
+  method, which is the idiom this codebase is written in across 30 consumer modules. The export worker
+  is **not** among them and [§3.3](#33-q--native-promises) is therefore **not** entangled with this
+  item: its database stages are already awaited `Model.<method>(...).exec()` calls and a `.cursor()`
+  scan, so the `q` bridges that remain there wrap S3 callbacks and a stream event rather than Mongoose
+  ([§2.7](#27-q-101)).
   `strictQuery` becomes the default and the explicit `mongoose.set('strictQuery', true)` at
   `[T config/db.js:8]` becomes redundant. `mongoose-schema-extend` does not support Mongoose 7, so
   [§3.4](#34-removing-mongoose-schema-extend) is a **prerequisite**, not a parallel task.
@@ -961,24 +964,38 @@ gate it, so that a future team can pick it up without re-deriving the analysis.
 
 ### 3.3 `q` → native promises
 
-- **Why deferred.** Outside R-a. The `q` **library** is functional and carries no finding. This item
-  is **not** purely modernization, and [§2.7](#27-q-101) records why: the worker's `Q.nsend` bridge
-  onto Mongoose 6 rejects on its first call and its `.stream()` call throws, both measured, so this
-  conversion is also the fix for a delivered defect on the export path.
+- **Why deferred.** Outside R-a, and it is **purely** modernization. The `q` **library** is functional,
+  carries no finding and emits nothing, so all four axes of [§1](#1-the-deferral-rule)'s rule pass.
+  **A claim that used to sit here is corrected rather than quietly dropped**, in the same register
+  [§2.7](#27-q-101) uses for the same correction: earlier revisions of this item recorded that the
+  conversion was *also* the fix for a delivered defect on the export path — a `Q.nsend` bridge onto
+  Mongoose 6 rejecting on its first call and a `Query.prototype.stream` call throwing. Both
+  measurements were correct about the tree they were taken on, and neither shape is in the delivered
+  worker, which uses awaited `Model.<method>(...).exec()` throughout and a `.cursor()` scan
+  (`grep -c "Q\.nsend\|\.stream()" lib/workers/exports.js` → **0**; the transcript is in
+  [§2.7](#27-q-101)). So there is no delivered defect for this conversion to fix, and the reason to do
+  it is modernization alone.
 - **What would need to change.** The two consumers in [§2.7](#27-q-101) — principally the export
-  worker's control flow, where `Q.defer()` bridges S3 callbacks and `Q.nsend` adapts Mongoose's
-  callback methods at **eight** sites (`:125`, `:128`, `:137`, `:141`, `:162`, `:186`, `:244`,
-  `:270`). `[T lib/workers/exports.js:230]`'s removed `Query.prototype.stream` goes with them, to
-  `cursor`. Then the `Promise.prototype` patch at `[T app.js:3-16]` can be
-  removed, but **only after** every `.spread(...)` and `.fail(...)` call site on a native promise has
-  been converted; removing the patch first breaks them silently, since both would become
-  `undefined is not a function` at runtime rather than at load.
+  worker's control flow, where the **five** live `Q.` member calls all bridge something that is not a
+  promise into an `await` sequence, and **none of them is a Mongoose call**: `Q.defer()` at
+  `[T lib/workers/exports.js:58]` and `[T lib/workers/exports.js:521]` wrap the S3 `getObject` and
+  `putObject` callbacks, `Q.defer()` at `[T lib/workers/exports.js:272]` wraps the archive write
+  stream's `'close'` event, `Q.defer()` at `[T lib/workers/exports.js:417]` wraps the per-trinket asset
+  fan-in, and `Q.allSettled(...)` at `[T lib/workers/exports.js:468]` settles it — the last being the
+  behaviour a native replacement has to reproduce, since it is what lets one failed asset resolve
+  without cutting its trinket's archive entry short. `[T lib/workers/exports.js:18]`'s `require('q')`
+  and `[T test/helpers/mail.js:2]`'s `Q.resolve()` go with them. Then the `Promise.prototype` patch at
+  `[T app.js:3-18]` can be removed, but **only after** every `.spread(...)` and `.fail(...)` call site
+  on a native promise has been converted; removing the patch first breaks them silently, since both
+  would become `undefined is not a function` at runtime rather than at load.
 - **What would gate it.** The worker harness in `test/parity/worker.js`, which drives one successful
   and one failing export job and asserts status, progress and error persistence onto the `Export`
   document, the archive layout, the `s3Key`, the notification mail and cleanup on both paths. That
-  gate is the one whose success half the defect in [§2.7](#27-q-101) blocks, and it names this
-  conversion as the remedy while failing on it. The failure path matters most: `Q`'s rejection
-  propagation is what currently routes a failed job to its persisted `status: 'failed'`.
+  gate **passes on the delivered tree** — VERDICT PASS on 109 of 109 checks over 7 jobs
+  ([§2.7](#27-q-101)) — so it is the regression baseline this conversion has to hold, not a failing
+  gate waiting on it. The failure path matters most: `Q`'s rejection propagation is what currently
+  routes a failed job to its persisted `status: 'failed'`, and `Q.allSettled`'s settle-don't-reject
+  semantics are what a native `Promise.allSettled` has to match exactly.
 
 ### 3.4 Removing `mongoose-schema-extend`
 
@@ -1023,9 +1040,12 @@ serve. Both cannot hold.** The decision is that **the target serves the stream r
 controls** — an approved three-field contract,
 `h.response(<stream>).type(request.pre.file.mime).bytes(request.pre.file.size)`, with
 `Content-Disposition` still omitted. The delivered branch at
-`[T lib/controllers/files.js:738-742]` satisfies those three fields and is wider than the
-abbreviation — it serves `peeked.stream` and adds two hardening headers — which
-[`preserved-quirks.md`](preserved-quirks.md) §11.1 quotes in full and owns.
+`[T lib/controllers/files.js:395-397]` **is** exactly that three-call expression —
+`return h.response(stream).type(request.pre.file.mime).bytes(request.pre.file.size);`, with
+`Content-Disposition` omitted and nothing else on the branch — which
+[`preserved-quirks.md`](preserved-quirks.md) §11.1 quotes in full and owns, together with the record
+that an earlier delivery's stream-peeking and hardening-header extension of this same branch **has
+been removed** as unapproved drift.
 
 **How replay treats it — driven, and this is the result.** Scenario
 `quirk.reply-chain.never-settles.image-download` carries the migration's only `expectedDeviation`
@@ -1090,7 +1110,7 @@ applying one principle consistently, not of applying two.
 | | |
 |---|---|
 | **Package** | `marked`, a **private Git dependency** declared `git+https://github.com/trinketapp/marked.git` at `[T package.json:36]`, resolving to a fork of upstream **0.3.2** at commit `55ea824` |
-| **Consumer** | `[T lib/shared/trinket-markdown.js:1]`, the sole `require('marked')`. That module's sole requirer is `[T lib/controllers/courses.js:24]`, which renders authored course content |
+| **Consumer** | `[T lib/shared/trinket-markdown.js:1]`, the sole `require('marked')`. That module's sole requirer is `[T lib/controllers/courses.js:18]`, which renders authored course content |
 | **Finding** | **high** — range `<= 4.0.9`, `fixAvailable: false`. Eight advisories, of which four are high, the governing one being ReDoS in the inline-token regexes |
 | **Decision** | **Retained.** The residual high is a named, justified deviation from the request's audit gate |
 
@@ -1169,7 +1189,7 @@ CPU — through the eight advisories on `marked <= 4.0.9`.
 What bounds it:
 
 - **The input is authored, not anonymous.** The parse path is course content written by **course
-  creators**, reached through a single consumer at `[T lib/controllers/courses.js:24]`. It is not an
+  creators**, reached through a single consumer at `[T lib/controllers/courses.js:18]`. It is not an
   anonymous public submission endpoint, so an attacker needs course-authoring access.
 - **The consumer surface is one module.** `[T lib/shared/trinket-markdown.js]` is the only module that
   requires `marked`, so the exposure has exactly one entry point to reason about or to guard.
@@ -1236,7 +1256,7 @@ The seven remaining findings, each attributed to a named package with its risk n
 | `aws-sdk` | moderate | yes | Own advisory is **low** (GHSA-j965-2qgj-vjmq, `region` parameter validation); the moderate rating arrives via `uuid` | v3 is a storage-layer rewrite outside R-a ([§3.1](#31-aws-sdk-v2--v3)) | `region` comes from committed configuration at `[T config/aws.js:11]`, not from request input, so the low advisory has no request-reachable path. The real risk is the absence of future patches for an end-of-support SDK |
 | `bull` | moderate | yes | No own advisory; the finding arrives entirely via `uuid` | Already moved to 4.16.5 by the inventory; the residual is transitive and no further bump clears it | Bounded by the `uuid` note below. The queue is internal and not driven by request input |
 | `highlight.js` | moderate | yes | GHSA-7wwv-vh3v-89cq, ReDoS across multiple grammars, range `9.0.0 - 10.4.0` | Moderate-only, so the triage rule defers it; an upgrade also changes token classes ([§2.4](#24-highlightjs-9185)) | ReDoS on the same authored-content path as `marked`, reached only for fenced code blocks in a language `hljs` recognises |
-| `jszip` | moderate | yes | GHSA-jg8v-48h5-wgxg (prototype pollution) and GHSA-36fh-84j7-cv5h (path traversal via `loadAsync`), range `<= 3.7.1` | Moderate-only ([§2.5](#25-jszip-360)) | Four delivered call sites: two **construct** archives, and two **read** one with `loadAsync` on `request.payload.zipCode` at `[T lib/controllers/trinket.js:1028]` and `[T lib/controllers/trinket.js:1102]`, so both advisories are reachable from request input. The fix is 3.10.1, inside the same major, which the moderate-only triage rule does not authorise |
+| `jszip` | moderate | yes | GHSA-jg8v-48h5-wgxg (prototype pollution) and GHSA-36fh-84j7-cv5h (path traversal via `loadAsync`), range `<= 3.7.1` | Moderate-only ([§2.5](#25-jszip-360)) | Four delivered call sites: two **construct** archives, and two **read** one with `loadAsync` on `request.payload.zipCode` at `[T lib/controllers/trinket.js:1241]` and `[T lib/controllers/trinket.js:1336]`, so both advisories are reachable from request input. The fix is 3.10.1, inside the same major, which the moderate-only triage rule does not authorise |
 | `mongoose` | moderate | yes | GHSA prototype pollution in update casting, reached through a `__proto__`-prefixed dotted path in an update document, range `< 6.13.10` | Moderate-only, so the triage rule defers it, and it is pinned at its baseline 6.13.9 rather than floated ([§2.2](#22-mongoose-6139)); clearing it belongs to the Mongoose 7+ migration in [§3.1](#31-aws-sdk-v2--v3)'s companion [§3.2](#32-mongoose-6--7) | Requires an update document whose keys the caller does not control. The application builds its update objects from named fields rather than passing request bodies through, so the dotted-path form has no request-controlled path here; the standing risk is that a future handler passing a payload straight into an update would acquire one |
 | `uuid` | moderate | **no** — via `aws-sdk` and `bull` | GHSA-w5hq-g745-h8pq, missing buffer bounds check in v3/v5/v6 when `buf` is provided, range `< 11.1.1` | Transitive to two deferred packages; `npm` offers only a breaking downgrade of `aws-sdk` to 1.18.0 | The advisory requires the caller to pass a `buf` argument to v3/v5/v6. Neither consumer's use is request-controlled, and no application code calls `uuid` directly |
 
@@ -1308,7 +1328,7 @@ set; these are the six that bear on the deferred set.
 | 1 | 6 moderate findings, including `mongoose` | **6 moderate**, `mongoose` among them — after the correction below | Resolved, not a disagreement. An interim delivery measured **5** because lockfile regeneration had floated `mongoose` 6.13.9 → 6.13.11 inside its unchanged `^6.0.0` declaration, and 6.13.11 is outside the `< 6.13.10` advisory range. The float was reverted rather than reported: the resolution is pinned back to 6.13.9, the advisory is listed in [§5](#5-audit-result), and the figure agrees with the plan again ([§2.2](#22-mongoose-6139)) |
 | 2 | `mongoose` 6.13.9 | **6.13.9** | Was 6.13.11 by caret float in an interim delivery; corrected. The declaration remains `^6.0.0`, so a future `npm install` will float it again unless the lockfile entry is re-checked |
 | 2a | `archiver` deferred at 2.1.1 with no residual finding | **moved 2.1.1 → 7.0.1 and off this list**, with both shortfalls closed at source | Substantive, and the largest correction in this document. The deferral was measured on the advisory axis alone, where it was right and stays right — no advisory qualifies this package at either version. Measurement on the other axes then found two failures on Node 22: `DEP0005` at module scope, and zero crc32 and zero uncompressed size in every deflated entry, which the delivered `adm-zip` 0.6.0 cannot read. AAP §0.5.1's triage rule authorizes a change for "a runtime warning", so the disposition is a version move rather than a documented exception. Two intermediate readings are recorded because both were published: an interim delivery moved the package to **6.0.2**, and a later revision restored 2.1.1 and carried both shortfalls open. The delivered tree resolves **7.0.1** under a `^7.0.1` declaration. [§2.6](#26-archiver-211--701--moved-not-deferred) records the departure and [`dependency-inventory.md`](dependency-inventory.md) §9.5 keeps the measurement, the rejected narrow remedy and the post-move gate results |
-| 3 | `marked`'s sole consumer at `lib/controllers/courses.js:13` | The `require('marked')` is at **`lib/shared/trinket-markdown.js:1`**; `lib/controllers/courses.js` requires *that* module at **`:24`** | Locator correction. Both facts are recorded in [§4.2](#42-deviation-2--the-marked-fork-is-retained) so the two-step chain is visible rather than collapsed |
+| 3 | `marked`'s sole consumer at `lib/controllers/courses.js:13` | The `require('marked')` is at **`lib/shared/trinket-markdown.js:1`**; `lib/controllers/courses.js` requires *that* module at **`:18`** | Locator correction. Both facts are recorded in [§4.2](#42-deviation-2--the-marked-fork-is-retained) so the two-step chain is visible rather than collapsed |
 | 4 | `mongoose-schema-extend` required at `lib/models/model.js:190-191` | The `require` is at **`config/db.js:4`**; `lib/models/model.js:190-191` is where the **capability** is consumed | Locator correction. The distinction matters, because the require site is what determines load order and therefore the hazard in [§2.3](#23-mongoose-schema-extend-022) |
 | 5 | `supertest` deferred at 0.8.3 as a functional harness package | **deferred at 0.8.3, as expected** — after a move to `^7.1.4` was made and then **withdrawn** | Resolved, and the deferral was right. The move was taken on a compatibility axis the deferral had not checked, and the mechanism it named is real — `superagent` 0.16.0 writes `Content-Disposition: attachment` on multipart parts, which RFC 7578 §4.2 forbids. It is also unreachable: the shipped routes never enable `payload.multipart`, so hapi answers **415** before any part header is read, and **measured**, the two upload cases and the two downloads behind them answer 415 and 404 whichever agent is installed. With no qualifying reason the package is back in [§2.11](#211-six-development-dependencies-retained-behind-their-current-lines) at its baseline resolution, and its five dev-side findings are back with it |
 
@@ -1365,7 +1385,7 @@ harmonised. **Deviation 1 agrees on
 every element that decides it**: the conflict statement, the decision that the target serves the
 stream response and that R-b controls, the target expression
 `h.response(stream).type(request.pre.file.mime).bytes(request.pre.file.size)` at
-`[T lib/controllers/files.js:738-742]`, `Content-Disposition` still omitted, and the assignment of the
+`[T lib/controllers/files.js:395-397]`, `Content-Disposition` still omitted, and the assignment of the
 three reasons to `preserved-quirks.md` §11.1 — which §11.1 enumerates and `baseline-parity.md` §7.1
 restates in the same order. What it does **not** agree on is the state of the evidence behind the
 gate. **Deviation 2 agrees** on the decision to retain the fork and on the residual advisory being a
@@ -1391,7 +1411,7 @@ and a replay against the delivered tree records `timedOut: false` with `status: 
 becomes prospective, or a capture is driven with its provenance — **the capture was driven**, so all
 three legs now state the measured result and none is prospective. It was an **evidence-state**
 disagreement rather than a disagreement about the deviation throughout: the conflict statement, the
-decision that R-b controls, the target expression at `[T lib/controllers/files.js:738-742]`, the
+decision that R-b controls, the target expression at `[T lib/controllers/files.js:395-397]`, the
 omitted `Content-Disposition` and the precedence argument read the same in all three records before
 and after, and it changes no deferral, no version and no figure in [§5](#5-audit-result).
 

@@ -81,6 +81,10 @@ var os           = require('os');
 var path         = require('path');
 var crypto       = require('crypto');
 var childProcess = require('child_process');
+// For one thing only: inflating a ZIP entry so an archive container can be
+// compared by its STRUCTURE instead of by a digest that is a clock read. See
+// the ARCHIVE CONTAINERS section, which is the whole of this dependency.
+var zlib         = require('zlib');
 // For one thing only: asking the application's port whether anything is still
 // listening. See `serverAlive` for why the process record is not enough.
 var net          = require('net');
@@ -321,6 +325,18 @@ var JSON_TYPE = 'application/json';
 // alive. Only ever paid after a transport failure, and only to decide
 // whether the application is still there.
 var LIVENESS_PROBE_MS = 2000;
+
+// How many times an ALIVE reading has to repeat before `serverAlive` believes
+// it, and how long it waits between readings. A child that has just taken
+// itself down is exited-but-unreaped for a moment and its listening socket can
+// accept one more connection on the way out, so a single reading taken inside
+// that window reports a dead application as alive. Only a DEAD reading is
+// returned on the first pass; the delay is therefore paid only where a
+// transport failure has already happened AND the application looks alive, and
+// it is bounded at two further readings so a genuinely alive application costs
+// this branch a fixed fraction of a second rather than a retry loop.
+var LIVENESS_CONFIRM_READINGS = 3;
+var LIVENESS_CONFIRM_DELAY_MS = 250;
 
 var PHASE_READ_ONLY = 'read-only';
 var PHASE_MUTATING = 'mutating';
@@ -842,18 +858,29 @@ var VOLATILE_SET = Object.freeze([
       }),
       Object.freeze({
         // `hashify` [lib/models/trinket.js:119-120] mints
-        // sha1(seed + Date.now()).substring(0, 12), so a trinket created by a
-        // scenario echoes twelve hex characters no seeder can pin. Every
-        // SEEDED short code is a readable label ('pyfixture001'), not hex, so
-        // the exemption below cannot fire today - it is kept because a seeded
-        // code that happened to look like hex must be compared, not scrubbed,
-        // and the same guard is what makes the ObjectId rule narrow. An
-        // all-digits token is left alone: twelve decimal digits is a number,
-        // and this rule has no business rewriting one.
+        // sha1(seed + Date.now()).substring(0, 10), so a trinket created by a
+        // scenario echoes ten hex characters no seeder can pin.
+        //
+        // The range covers TWO lengths on purpose. Ten is what the generator
+        // mints now; twelve is what it minted when this corpus was captured,
+        // and seven recorded bodies in test/parity/corpus.json still carry a
+        // twelve-character code (the assignment-submission and remix
+        // scenarios). Both sides of a comparison are normalized, so a rule
+        // that matched only one of the two lengths would scrub the recorded
+        // body and leave the fresh one intact, and every scenario that creates
+        // a trinket would report a diff that is nothing but the length change.
+        //
+        // Every SEEDED short code is a readable label ('pyfixture001'), not
+        // hex, so the exemption below cannot fire today - it is kept because a
+        // seeded code that happened to look like hex must be compared, not
+        // scrubbed, and the same guard is what makes the ObjectId rule narrow.
+        // An all-digits token is left alone: ten to twelve decimal digits is a
+        // number - ten in particular is an epoch-seconds timestamp - and this
+        // rule has no business rewriting one.
         name: 'generated trinket short code',
-        expression: /\b[0-9a-f]{12}\b/g,
+        expression: /\b[0-9a-f]{10,12}\b/g,
         replace: function(match) {
-          if (SEEDED_SHORT_CODES[match.toLowerCase()] || /^\d{12}$/.test(match)) {
+          if (SEEDED_SHORT_CODES[match.toLowerCase()] || /^\d{10,12}$/.test(match)) {
             return match;
           }
 
@@ -950,11 +977,19 @@ var VOLATILE_SET = Object.freeze([
       'literal itself is still compared, and so is the rest of every asset ' +
       'URL, so a changed asset path or a prefix that became configured is ' +
       'still a difference. Last-Modified is compared for PRESENCE, so a ' +
-      'static route that stopped sending it still fails. For an archive body, ' +
-      'the byte length is compared exactly and the entry-level contract - the ' +
-      'archive\'s internal layout, its object key and its download url - is ' +
-      'asserted by test/parity/storage.js and test/parity/worker.js, which ' +
-      'open the archive instead of hashing it.',
+      'static route that stopped sending it still fails. For an archive body ' +
+      'the only thing lost is the RAW digest: the byte length is compared ' +
+      'exactly, and the container is opened and compared in the same step by ' +
+      'the ARCHIVE CONTAINERS section of this file - its writer profile ' +
+      'against the frozen expectation in ARCHIVE_CONTAINER_REGISTER, and its ' +
+      'entry-table fingerprint, which excludes the mtime fields and digests ' +
+      'each entry\'s INFLATED bytes, against the recording where the ' +
+      'recording carries one and against the register\'s pinned measurement ' +
+      'where it does not - and an archive on a registered route compared ' +
+      'against neither fails the run. Either comparison is a difference that ' +
+      'fails the run, so a changed entry, a changed layout or a changed ' +
+      'writer is caught here rather than only by test/parity/storage.js and ' +
+      'test/parity/worker.js.',
     // `date` is NOT listed here: it has a category of its own below, and one
     // header removed by two rules would make the report ambiguous about which
     // weakening covers it.
@@ -966,11 +1001,23 @@ var VOLATILE_SET = Object.freeze([
     // headers, so its content digest changes on every build while its LENGTH
     // does not - the timestamp fields are fixed-width. MEASURED: two captures
     // of the identical tree produced two digests for the same 182-byte zip and
-    // the same length both times. The corpus records a binary body as a length
-    // and a digest and never as bytes, so there is no archive to open here and
-    // no way to compare entry names or CRCs from a recording; the length is
-    // therefore compared exactly and the digest is demoted to an observation
-    // for these content types only.
+    // the same length both times, and the committed corpus records the SAME
+    // 538-byte course archive twice with two different digests. So the RAW
+    // digest is exempt for these content types, and only the raw digest.
+    //
+    // THE CONTAINER IS NOT EXEMPT, and this list must not be read as saying so.
+    // The ARCHIVE CONTAINERS section of this file opens each of these bodies
+    // and compares it in the same step: its writer profile against the frozen
+    // expectation in ARCHIVE_CONTAINER_REGISTER, and its entry-table
+    // fingerprint - the ordered entries with the mtime fields excluded and
+    // each entry's content taken as the sha256 of its inflated bytes - against
+    // the recording where the recording carries one and against the frozen
+    // register's PINNED measurement where it does not. Both produce real
+    // differences. Until that section existed this exemption had nothing
+    // behind it, and a measured container change on two client-facing routes
+    // was reported as `match`; until the pin existed the fingerprint half was
+    // inert on the committed corpus, which carries no recorded fingerprint at
+    // all, and content drift on a registered route produced zero differences.
     binaryDigestExemptTypes: [
       'application/zip',
       'application/x-zip-compressed',
@@ -1223,8 +1270,21 @@ var NORMALIZATION_PROBES = Object.freeze([
     id: 'run-minted-short-code-normalized',
     category: 'generated-ids',
     rule: 'generated trinket short code',
-    what: 'the twelve hex characters hashify mints for a trinket created ' +
+    what: 'the ten hex characters hashify mints for a trinket created ' +
       'during the run are replaced',
+    input: '{"shortCode":"a1b2c3d4e5"}',
+    expected: '{"shortCode":"<generated-shortcode>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    // The corpus was captured while hashify still cut twelve characters, and
+    // seven recorded bodies carry a twelve-character code. Both lengths have to
+    // normalize or those bodies would diff against a fresh ten-character one.
+    id: 'captured-twelve-char-short-code-normalized',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'a twelve-character code recorded in the committed corpus, from ' +
+      'before hashify cut ten, is replaced by the same placeholder',
     input: '{"shortCode":"a1b2c3d4e5f6"}',
     expected: '{"shortCode":"<generated-shortcode>"}',
     mustNormalize: true
@@ -1237,6 +1297,18 @@ var NORMALIZATION_PROBES = Object.freeze([
       'short-code rule cannot reach a count or an amount',
     input: '{"total":123456789012}',
     expected: '{"total":123456789012}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    // Ten decimal digits is an epoch-seconds timestamp, which is the one false
+    // positive widening the rule from twelve characters to ten could create.
+    id: 'ten-digit-number-left-alone',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'ten decimal digits are a number - an epoch-seconds timestamp among ' +
+      'them - and are still compared',
+    input: '{"seconds":1757097600}',
+    expected: '{"seconds":1757097600}',
     mustNormalize: false
   }),
   Object.freeze({
@@ -1401,6 +1473,66 @@ var NORMALIZATION_PROBES = Object.freeze([
     input: '<script src="/js/jquery.validate.min.js"></script>',
     expected: '<script src="/js/jquery.validate.min.js"></script>',
     mustNormalize: false
+  }),
+
+  // THE JWS HEADER KEY ORDER, pinned as a pair. jsonwebtoken 5.7.0 serialized
+  // the header as {"typ":"JWT","alg":"HS256"} and 9.0.3 serializes it as
+  // {"alg":"HS256","typ":"JWT"}, so the token rendered into
+  // `input#emailToken` [lib/views/includes/shareModals.html:132, signed at
+  // lib/controllers/trinket.js:542,596,884] is a different STRING on the two
+  // trees for the same payload - MEASURED by QA as exactly two differing lines
+  // out of 997, with identical payload segments and cross-version
+  // verification succeeding in both directions.
+  //
+  // The rule above already covers it, because it keys on the structure of a
+  // compact JWS rather than on the header's contents - MEASURED against the
+  // installed 9.0.3 and a hand-built 5.7.0-order token, both of which
+  // normalize to the same placeholder. So no rule and no category is added
+  // here. What was missing is that NOTHING PINNED IT: the three token probes
+  // above cover idempotence, an ordinary JWS and a `{}` payload, and a later
+  // revision that anchored the rule on the 9.x header prefix would have
+  // passed every one of them while turning every emailToken-bearing page into
+  // a difference.
+  //
+  // Declared as a `mustMatch` pair so the two orders cannot be edited apart,
+  // and inside the real hidden-input markup so the surrounding attributes are
+  // shown to survive. Both payloads are cryptographically nothing - the
+  // signature segment is a run of one character, as the neighbouring token
+  // probes do - so no probe commits a usable credential.
+  Object.freeze({
+    id: 'emailtoken-jwt-9x-header-order-normalized',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'the token jsonwebtoken 9.x renders into the emailToken hidden ' +
+      'input - header {"alg":"HS256","typ":"JWT"} - is replaced, and the ' +
+      'input\'s id, name, type and surrounding markup are left to be compared',
+    input: '<input id="emailToken" name="emailToken" type="hidden" ' +
+      'value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
+      'eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEiLCJpYXQiOjE3MzU2ODk2MDB9.' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" />',
+    expected: '<input id="emailToken" name="emailToken" type="hidden" ' +
+      'value="<generated-token>" />',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'emailtoken-jwt-570-header-order-normalized',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'the token jsonwebtoken 5.7.0 rendered into the same input - header ' +
+      '{"typ":"JWT","alg":"HS256"}, the SAME payload, a different string - ' +
+      'normalizes to the same placeholder as the 9.x form, so the header key ' +
+      'order the dependency bump changed cannot make an emailToken-bearing ' +
+      'page a difference',
+    input: '<input id="emailToken" name="emailToken" type="hidden" ' +
+      'value="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.' +
+      'eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEiLCJpYXQiOjE3MzU2ODk2MDB9.' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" />',
+    expected: '<input id="emailToken" name="emailToken" type="hidden" ' +
+      'value="<generated-token>" />',
+    mustNormalize: true,
+    // The relation is the assertion: these two inputs differ only in their
+    // header key order and must normalize to one value.
+    mustMatch: 'emailtoken-jwt-9x-header-order-normalized'
   }),
   Object.freeze({
     id: 'upload-path-placeholder-is-idempotent',
@@ -1876,6 +2008,393 @@ function assertFrameworkCookieSuppression() {
   });
 }
 
+// The archive-reader probe fixtures: three hand-built ZIP containers as byte
+// literals, so the reader is exercised on bytes this file controls rather than
+// on whatever a server happened to serve.
+//
+// A and B hold the SAME two entries and differ ONLY in their DOS modification
+// time and date fields. That pair is the whole argument for the fingerprint:
+// their raw digests differ and their fingerprints must not.
+//
+// C holds the same two entries with the container fields the QA measurement
+// recorded for the BASELINE tree - flags 0x0000, versionMadeBy 0x000a,
+// versionNeeded 10 on the deflated entry, directory attributes 0x41ed0010 and
+// file attributes 0x01a40000. It is the permanent negative control: the
+// registered course profile must REJECT it, on exactly the fields the register
+// says moved. A comparator that passed C would be the comparator this section
+// replaced.
+var ARCHIVE_PROBE_TARGET_A = 'UEsDBAoAAAgAACFDeFYAAAAAAAAAAAAAAAAHAAAAbGVzc' +
+  '29uL1BLAwQUAAAICAAhQ3hWxKYkiBEAAAAPAAAADwAAAGxlc3Nvbi9wcm9iZS5tZFNWKEgsyi' +
+  'ypVCgoyk9K5QIAUEsBAhQDCgAACAAAIUN4VgAAAAAAAAAAAAAAAAcAAAAAAAAAAAAQAO1FAAA' +
+  'AAGxlc3Nvbi9QSwECFAMUAAAICAAhQ3hWxKYkiBEAAAAPAAAADwAAAAAAAAAAAAAApIElAAAA' +
+  'bGVzc29uL3Byb2JlLm1kUEsFBgAAAAACAAIAcgAAAGMAAAAAAA==';
+var ARCHIVE_PROBE_TARGET_B = 'UEsDBAoAAAgAABERIiIAAAAAAAAAAAAAAAAHAAAAbGVzc' +
+  '29uL1BLAwQUAAAICAARESIixKYkiBEAAAAPAAAADwAAAGxlc3Nvbi9wcm9iZS5tZFNWKEgsyi' +
+  'ypVCgoyk9K5QIAUEsBAhQDCgAACAAAEREiIgAAAAAAAAAAAAAAAAcAAAAAAAAAAAAQAO1FAAA' +
+  'AAGxlc3Nvbi9QSwECFAMUAAAICAARESIixKYkiBEAAAAPAAAADwAAAAAAAAAAAAAApIElAAAA' +
+  'bGVzc29uL3Byb2JlLm1kUEsFBgAAAAACAAIAcgAAAGMAAAAAAA==';
+var ARCHIVE_PROBE_BASELINE_SHAPED = 'UEsDBAoAAAAAACFDeFYAAAAAAAAAAAAAAAAHAAA' +
+  'AbGVzc29uL1BLAwQKAAAACAAhQ3hWxKYkiBEAAAAPAAAADwAAAGxlc3Nvbi9wcm9iZS5tZFNW' +
+  'KEgsyiypVCgoyk9K5QIAUEsBAgoACgAAAAAAIUN4VgAAAAAAAAAAAAAAAAcAAAAAAAAAAAAQA' +
+  'O1BAAAAAGxlc3Nvbi9QSwECCgAKAAAACAAhQ3hWxKYkiBEAAAAPAAAADwAAAAAAAAAAAAAApA' +
+  'ElAAAAbGVzc29uL3Byb2JlLm1kUEsFBgAAAAACAAIAcgAAAGMAAAAAAA==';
+// D is A with ONE thing changed: the deflated entry's content. Same two entry
+// names, same compressed and uncompressed sizes, same 235 total bytes, the
+// same eleven writer-profile fields - and a different crc32 (declared AND
+// computed, so the container stays internally valid) and a different inflated
+// content digest.
+//
+// It is the permanent discriminator for the CONTENT half of the register, and
+// it is the QA verifier's own construction: while the fingerprint was compared
+// only against a recorded value, this container and A produced the same
+// verdict - zero differences - on a registered route. The pin is what
+// separates them, and the probe below requires that separation to hold.
+var ARCHIVE_PROBE_CONTENT_DRIFT = 'UEsDBAoAAAgAACFDeFYAAAAAAAAAAAAAAAAHAAAA' +
+  'bGVzc29uL1BLAwQUAAAICAAhQ3hWWTLYYREAAAAPAAAADwAAAGxlc3Nvbi9wcm9iZS5tZFNW' +
+  'KEgsyiypVEgpykwr4QIAUEsBAhQDCgAACAAAIUN4VgAAAAAAAAAAAAAAAAcAAAAAAAAAAAAQ' +
+  'AO1FAAAAAGxlc3Nvbi9QSwECFAMUAAAICAAhQ3hWWTLYYREAAAAPAAAADwAAAAAAAAAAAAAA' +
+  'pIElAAAAbGVzc29uL3Byb2JlLm1kUEsFBgAAAAACAAIAcgAAAGMAAAAAAA==';
+// A valid end-of-central-directory record declaring no entries at all.
+var ARCHIVE_PROBE_EMPTY = 'UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==';
+// The fingerprint of A and B, pinned. It moves if the entry table gains or
+// loses a field, if the canonicalization changes, or if an mtime field ever
+// reaches the fingerprint - each of which is a change to what this file
+// compares and none of which should pass unnoticed.
+var ARCHIVE_PROBE_FINGERPRINT =
+  '531630bd8751bb0f6d8fe4680dc9dc9c364b3cf96bc83064ddaf7820dfcf2a47';
+// The fingerprint of D, the content-drift container, pinned for the same
+// reason: the probe below asserts that it differs from A's, and a value pinned
+// here is what makes "differs" mean "differs from this measured value" rather
+// than "differs from whatever the reader happens to produce today".
+var ARCHIVE_PROBE_CONTENT_DRIFT_FINGERPRINT =
+  '145309966c466a1d2d6cc3b22ae4e6a084bf3cd8eff0a7a4f1da182d77cb5fc2';
+// The three fields every registered writer must pin, so the content half of
+// the register cannot be left half-declared. Named here rather than spelled
+// out inside the probe, for the same reason ARCHIVE_PROFILE_FIELDS is.
+var ARCHIVE_PIN_FIELDS = Object.freeze([
+  'byteLength',
+  'entryCount',
+  'fingerprint'
+]);
+// The fields the baseline-shaped container must be REJECTED on, exactly.
+var ARCHIVE_PROBE_BASELINE_MISMATCHES = Object.freeze([
+  'centralVersionMadeBy',
+  'directoryExternalAttributes',
+  'fileExternalAttributes',
+  'localVersionNeededByMethod.deflated',
+  'utf8NameFlag',
+  'versionNeededByMethod.deflated'
+]);
+
+/**
+ * Exercises the archive reader and the frozen register at startup.
+ *
+ * Called beside the volatile set's own integrity check, and it THROWS for the
+ * same reason: the structural comparison is what stands behind the raw-digest
+ * exemption, so a reader that stopped reading, or a register that stopped being
+ * comparable, would turn every archive response into a silent pass - and a
+ * silent pass is indistinguishable, from outside this file, from the hole this
+ * section was written to close. That is a broken tool, not a finding about the
+ * application, and it says so before it drives a request.
+ *
+ * Eleven probes, each driven through the real functions rather than a
+ * restatement of them, and each with a distinct failure mode: that a known
+ * container reads as its known entries; that the fingerprint ignores the
+ * clock; that a malformed container is UNPARSED rather than empty; that a
+ * readable but empty container is not a pass; that an exempt type this reader
+ * does not open is reported uncovered rather than compared; that the
+ * registered target profile is satisfiable; that the BASELINE profile is
+ * rejected, on exactly the fields the register says moved; that an archive on
+ * an unregistered route fails; that the register declares every profile field
+ * the reader produces; that every registered writer declares a COMPLETE
+ * content pin, since a writer without one would have its contents compared
+ * against nothing; and that a container built to differ from a pinned shape
+ * ONLY in content is rejected by the pin on the fingerprint alone while its
+ * content-independent writer profile still passes - the discriminator the pin
+ * exists for, and the case that produced zero differences before it.
+ *
+ * @returns {Array.<Object>} one record per probe, for the artifacts
+ * @throws {ToolError} if any of them no longer holds
+ */
+function assertArchiveReader() {
+  var targetA = Buffer.from(ARCHIVE_PROBE_TARGET_A, 'base64');
+  var targetB = Buffer.from(ARCHIVE_PROBE_TARGET_B, 'base64');
+  var contentDrift = Buffer.from(ARCHIVE_PROBE_CONTENT_DRIFT, 'base64');
+  var baselineShaped = Buffer.from(ARCHIVE_PROBE_BASELINE_SHAPED, 'base64');
+  var empty = Buffer.from(ARCHIVE_PROBE_EMPTY, 'base64');
+  var readA = readArchiveContainer(targetA, 'application/zip');
+  var readB = readArchiveContainer(targetB, 'application/zip');
+  var readDrift = readArchiveContainer(contentDrift, 'application/zip');
+  var readBaseline = readArchiveContainer(baselineShaped, 'application/zip');
+  var readEmpty = readArchiveContainer(empty, 'application/zip');
+  var readMalformed = readArchiveContainer(
+    Buffer.from('PK\u0003\u0004 and then nothing that follows the format'),
+    'application/zip');
+  var readGzip = readArchiveContainer(Buffer.from([0x1f, 0x8b, 0x08]),
+    'application/gzip');
+  var courseWriter = ARCHIVE_CONTAINER_REGISTER.writers[0];
+  var baselineVerdict = compareArchiveProfile(readBaseline.writerProfile,
+    courseWriter.expected);
+  var targetVerdict = compareArchiveProfile(readA.writerProfile,
+    courseWriter.expected);
+  var emptyComparison = compareArchive(null, { archive: readEmpty }, {
+    contentType: 'application/zip',
+    routeKey: courseWriter.routes[0]
+  });
+  var gzipComparison = compareArchive(null, { archive: readGzip }, {
+    contentType: 'application/gzip',
+    routeKey: null
+  });
+  var unregisteredComparison = compareArchive(null, { archive: readA }, {
+    contentType: 'application/zip',
+    routeKey: 'GET /a-route-nobody-registered'
+  });
+  var registerFields = [];
+  var registerPins = [];
+  // The probe pin: A's own measured shape, so the content comparison is
+  // exercised on bytes this file owns and NOT against the register's pins,
+  // which are measurements of the application's archives. Coupling this probe
+  // to those would mean a legitimate re-measurement of a route's pin could
+  // only be landed by regenerating a byte literal here, and a startup probe
+  // that fails on a legitimate change is a probe that gets deleted.
+  var probePin = Object.freeze({
+    fingerprint: ARCHIVE_PROBE_FINGERPRINT,
+    entryCount: 2,
+    byteLength: targetA.length
+  });
+  var pinnedShapeVerdict = compareArchivePin(readA, probePin);
+  var contentDriftVerdict = compareArchivePin(readDrift, probePin);
+  var contentDriftProfile = compareArchiveProfile(readDrift.writerProfile,
+    ARCHIVE_CONTAINER_REGISTER.writers[0].expected);
+  var probes;
+  var failures = [];
+
+  ARCHIVE_CONTAINER_REGISTER.writers.forEach(function(writer) {
+    var declared = Object.keys(writer.expected).sort().join(',');
+    var pin = writer.pinned || null;
+    var pinDeclared = pin
+      ? Object.keys(pin).filter(function(key) {
+        return ARCHIVE_PIN_FIELDS.indexOf(key) >= 0;
+      }).sort().join(',')
+      : '';
+
+    registerFields.push({
+      writer: writer.id,
+      declared: declared,
+      ok: declared === ARCHIVE_PROFILE_FIELDS.slice().sort().join(',')
+    });
+
+    registerPins.push({
+      writer: writer.id,
+      declared: pinDeclared,
+      fingerprint: pin ? pin.fingerprint : null,
+      entryCount: pin ? pin.entryCount : null,
+      byteLength: pin ? pin.byteLength : null,
+      // Each field is checked for the SHAPE that makes it comparable, not
+      // merely for being present: a fingerprint that is not a sha256 literal,
+      // or a count that is not a positive integer, is a pin that cannot fail
+      // a comparison honestly.
+      ok: !!pin && pinDeclared === ARCHIVE_PIN_FIELDS.join(',') &&
+        /^[0-9a-f]{64}$/.test(String(pin.fingerprint)) &&
+        typeof pin.entryCount === 'number' && pin.entryCount > 0 &&
+        pin.entryCount === Math.floor(pin.entryCount) &&
+        typeof pin.byteLength === 'number' && pin.byteLength > 0 &&
+        pin.byteLength === Math.floor(pin.byteLength)
+    });
+  });
+
+  probes = [
+    {
+      id: 'known-container-reads-as-its-known-entries',
+      what: 'a hand-built two-entry container reads as those two entries, ' +
+        'with their names, methods, declared crc32 and inflated content ' +
+        'digests, and the pinned fingerprint',
+      ok: readA.parsed && readA.entryCount === 2 &&
+        readA.entries[0].name === 'lesson/' &&
+        readA.entries[0].directory === true &&
+        readA.entries[0].method === 'stored' &&
+        readA.entries[1].name === 'lesson/probe.md' &&
+        readA.entries[1].method === 'deflated' &&
+        readA.entries[1].crc32Declared === '0x8824a6c4' &&
+        readA.entries[1].contentDigest ===
+          'c4d19b19eeef2578791313d749bb87534c0b9a377a73aab411d4b7eb7f3568dd' &&
+        readA.entries[1].crc32DeclaredMatchesContent === true &&
+        readA.fingerprint === ARCHIVE_PROBE_FINGERPRINT,
+      detail: 'parsed=' + readA.parsed + ' entries=' + readA.entryCount +
+        ' fingerprint=' + readA.fingerprint
+    },
+    {
+      id: 'fingerprint-ignores-the-clock',
+      what: 'two containers holding the same entries and differing ONLY in ' +
+        'their DOS modification time fingerprint identically, while their raw ' +
+        'digests differ - which is the whole reason the raw digest is exempt ' +
+        'and the fingerprint is not',
+      ok: sha256Hex(targetA) !== sha256Hex(targetB) &&
+        readA.fingerprint === readB.fingerprint,
+      detail: 'raw ' + sha256Hex(targetA).slice(0, 16) + ' vs ' +
+        sha256Hex(targetB).slice(0, 16) + ', fingerprint ' +
+        readA.fingerprint.slice(0, 16) + ' vs ' + readB.fingerprint.slice(0, 16)
+    },
+    {
+      id: 'malformed-container-is-unparsed-not-empty',
+      what: 'bytes that are not a ZIP are reported as UNPARSED with a reason ' +
+        'and a null entry count - never as a container that held no entries, ' +
+        'which would make every comparison built on this reader vacuous',
+      ok: readMalformed.parsed === false && readMalformed.entryCount === null &&
+        !!readMalformed.unparsedReason && readMalformed.fingerprint === null,
+      detail: 'parsed=' + readMalformed.parsed + ' entryCount=' +
+        readMalformed.entryCount + ' reason=' + readMalformed.unparsedReason
+    },
+    {
+      id: 'readable-but-empty-container-is-a-difference',
+      what: 'a container that reads cleanly and declares no entries is a ' +
+        'DIFFERENCE rather than a pass: without entries every profile field ' +
+        'is undetermined, so a comparison would compare nothing',
+      ok: readEmpty.parsed === true && readEmpty.entryCount === 0 &&
+        emptyComparison.comparison.state === 'no-entries' &&
+        emptyComparison.differences.length === 1 &&
+        emptyComparison.differences[0].field === 'body.archive.parsed',
+      detail: 'state=' + emptyComparison.comparison.state + ' differences=' +
+        emptyComparison.differences.length
+    },
+    {
+      id: 'an-exempt-type-this-reader-does-not-open-is-reported-uncovered',
+      what: 'a gzip body is not silently treated as a compared container: the ' +
+        'reader says it opens ZIP only, and the comparison records an ' +
+        'observation that the digest exemption is uncovered for that type ' +
+        'rather than a difference nobody can act on',
+      ok: readGzip.parsed === false &&
+        gzipComparison.comparison.state === 'not-a-zip' &&
+        gzipComparison.differences.length === 0 &&
+        gzipComparison.observations.length === 1,
+      detail: 'state=' + gzipComparison.comparison.state + ' differences=' +
+        gzipComparison.differences.length + ' observations=' +
+        gzipComparison.observations.length
+    },
+    {
+      id: 'the-registered-target-profile-is-satisfiable',
+      what: 'the container shaped like this tree\'s course archive MATCHES ' +
+        'the frozen expectation registered for that route, so the ' +
+        'expectation is one a passing container can meet',
+      ok: targetVerdict.ok && !targetVerdict.mismatches.length,
+      detail: 'mismatches=' + JSON.stringify(targetVerdict.mismatches)
+    },
+    {
+      id: 'the-baseline-profile-is-rejected-on-exactly-the-registered-fields',
+      what: 'the container shaped like the BASELINE tree\'s course archive is ' +
+        'REJECTED by the frozen expectation, on exactly the fields the ' +
+        'register says moved. This is the negative control: it proves the ' +
+        'comparison can fail, and that it would have caught the change QA ' +
+        'measured instead of recording it as an observation',
+      ok: !baselineVerdict.ok && baselineVerdict.mismatches.map(function(entry) {
+        return entry.field;
+      }).sort().join(',') === ARCHIVE_PROBE_BASELINE_MISMATCHES.join(','),
+      detail: 'rejected on ' + baselineVerdict.mismatches.map(function(entry) {
+        return entry.field;
+      }).sort().join(', ')
+    },
+    {
+      id: 'an-archive-on-an-unregistered-route-is-a-difference',
+      what: 'a well-formed container served on a route the register does not ' +
+        'name fails, because an archive route nobody registered is an ' +
+        'archive nobody pinned an expectation for',
+      ok: unregisteredComparison.differences.length === 1 &&
+        unregisteredComparison.differences[0].field ===
+          'body.archive.writerProfile.registered',
+      detail: 'differences=' + unregisteredComparison.differences.map(
+        function(record) { return record.field; }).join(', ')
+    },
+    {
+      id: 'the-register-declares-every-profile-field-the-reader-produces',
+      what: 'each registered writer declares an expectation for every field ' +
+        'in ARCHIVE_PROFILE_FIELDS, so a field added to the reader cannot ' +
+        'become an uncompared one',
+      ok: registerFields.every(function(record) { return record.ok; }),
+      detail: JSON.stringify(registerFields)
+    },
+    {
+      id: 'every-registered-writer-declares-a-complete-content-pin',
+      what: 'each registered writer declares a `pinned` block carrying all ' +
+        'three of ARCHIVE_PIN_FIELDS - a sha256 entry-table fingerprint, a ' +
+        'positive integer entry count and a positive integer byte length. ' +
+        'The writer profile is content-INDEPENDENT, so a writer registered ' +
+        'without a pin would have its container\'s CONTENTS compared against ' +
+        'nothing while every profile field passed',
+      ok: registerPins.length > 0 && registerPins.every(function(record) {
+        return record.ok;
+      }),
+      detail: JSON.stringify(registerPins)
+    },
+    {
+      id: 'a-container-differing-only-in-content-is-rejected-by-the-pin',
+      what: 'two containers equal in byte length, entry names, entry sizes ' +
+        'and all eleven writer-profile fields, differing ONLY in their ' +
+        'inflated content and therefore in their crc32, are separated by the ' +
+        'pin and by nothing else: the pinned shape matches its pin, the ' +
+        'drifted one is rejected on the fingerprint ALONE, and the writer ' +
+        'profile passes the drifted container. This is the discriminator the ' +
+        'content pin exists for - before it, both produced zero differences ' +
+        'on a registered route',
+      ok: readDrift.parsed && readDrift.entryCount === readA.entryCount &&
+        readDrift.byteLength === readA.byteLength &&
+        readDrift.entries[1].name === readA.entries[1].name &&
+        readDrift.entries[1].compressedSize ===
+          readA.entries[1].compressedSize &&
+        readDrift.entries[1].uncompressedSizeDeclared ===
+          readA.entries[1].uncompressedSizeDeclared &&
+        readDrift.entries[1].crc32Declared !== readA.entries[1].crc32Declared &&
+        readDrift.entries[1].crc32DeclaredMatchesContent === true &&
+        readDrift.entries[1].contentDigest !== readA.entries[1].contentDigest &&
+        readDrift.fingerprint === ARCHIVE_PROBE_CONTENT_DRIFT_FINGERPRINT &&
+        readDrift.fingerprint !== readA.fingerprint &&
+        // The profile half is blind to this, and must be: that is what makes
+        // the pin the only thing between content drift and a passing gate.
+        contentDriftProfile.ok &&
+        // The pinned shape passes its pin, so the comparison is satisfiable.
+        pinnedShapeVerdict.ok &&
+        pinnedShapeVerdict.compared.slice().sort().join(',') ===
+          ARCHIVE_PIN_FIELDS.join(',') &&
+        // And the drift fails it on the fingerprint alone - not on the count
+        // and not on the length, which is what makes the failure legible.
+        !contentDriftVerdict.ok &&
+        contentDriftVerdict.mismatches.length === 1 &&
+        contentDriftVerdict.mismatches[0].field === 'fingerprint',
+      detail: 'pinned-shape ok=' + pinnedShapeVerdict.ok + ' compared=' +
+        pinnedShapeVerdict.compared.join('/') + '; drift ' +
+        readDrift.byteLength + ' bytes, ' + readDrift.entryCount +
+        ' entries, crc ' + readDrift.entries[1].crc32Declared + ' vs ' +
+        readA.entries[1].crc32Declared + ', profile ok=' +
+        contentDriftProfile.ok + ', rejected on ' +
+        contentDriftVerdict.mismatches.map(function(entry) {
+          return entry.field;
+        }).join(', ')
+    }
+  ];
+
+  probes.forEach(function(probe) {
+    if (!probe.ok) {
+      failures.push(probe.id + ': ' + probe.what + '. MEASURED: ' +
+        probe.detail);
+    }
+  });
+
+  if (failures.length) {
+    throw new ToolError('the archive-container reader or its frozen register ' +
+      'does not behave as this file declares, so the structural comparison ' +
+      'that stands behind the raw-digest exemption cannot be relied on:\n  - ' +
+      failures.join('\n  - '));
+  }
+
+  return probes.map(function(probe) {
+    return {
+      id: probe.id,
+      what: probe.what,
+      ok: probe.ok,
+      measured: probe.detail
+    };
+  });
+}
+
 /**
  * Runs every declared normalization probe and returns their results.
  *
@@ -1978,6 +2497,42 @@ function assertNormalizationRules() {
     }
   });
 
+  // The cross-probe assertions, run after every probe has a measured value.
+  //
+  // `mustMatch` is the mirror of `mustDifferFrom` and exists for one shape of
+  // question: two inputs that a rule has to collapse to the SAME value. Stating
+  // each one's expected output separately would already assert it, but not
+  // VISIBLY - a later revision that narrowed the rule and updated both expected
+  // strings together would pass while the property the pair exists to pin was
+  // gone. Declared as a relation, the pair cannot be edited apart.
+  NORMALIZATION_PROBES.forEach(function(probe) {
+    var mine;
+    var other;
+
+    if (!probe.mustMatch) {
+      return;
+    }
+
+    mine = byId[probe.id];
+    other = byId[probe.mustMatch];
+
+    if (!other) {
+      mine.ok = false;
+      failures.push(probe.id + ' compares itself against the probe ' +
+        JSON.stringify(probe.mustMatch) + ', which is not declared');
+      return;
+    }
+
+    if (mine.observed !== other.observed) {
+      mine.ok = false;
+      failures.push(probe.id + ': ' + probe.what + '. It normalized to ' +
+        JSON.stringify(mine.observed) + ' while ' + probe.mustMatch +
+        ' normalized to ' + JSON.stringify(other.observed) + ', so the two ' +
+        'no longer compare equal and every response carrying the second form ' +
+        'is now a difference.');
+    }
+  });
+
   NORMALIZATION_PROBES.forEach(function(probe) {
     var mine;
     var other;
@@ -2018,22 +2573,30 @@ function assertNormalizationRules() {
 /**
  * The comparison contract for binary and stream bodies, as it is APPLIED.
  *
- * Emitted into the result and rendered into the report because the two halves
- * of it are not the same, and a document that states only the first half
- * overstates the gate. The length is compared exactly for every binary body.
- * The digest is compared exactly for every binary body EXCEPT the enumerated
- * archive container types, where it is recorded as an observation: those
+ * Emitted into the result and rendered into the report because the halves of it
+ * are not the same, and a document that states only the first half overstates
+ * the gate. The length is compared exactly for every binary body. The digest is
+ * compared exactly for every binary body EXCEPT the enumerated archive
+ * container types, where the RAW digest is recorded as an observation: those
  * containers embed each entry's modification time in their own headers, so the
  * digest is a clock read while the length - the timestamp fields being
  * fixed-width - is not. Measured: two captures of the identical tree produced
- * two digests for the same 182-byte zip.
+ * two digests for the same 182-byte zip, and the committed corpus holds the
+ * same 538-byte course archive twice with two different digests.
  *
- * The exemption is not a hole left open. It is bounded by the enumerated list,
- * it comes from the timestamps category of the volatile set and from nowhere
- * else, and the entry-level contract those archives carry - the internal
- * layout, the object key, the download url - is asserted by
- * test/parity/storage.js and test/parity/worker.js, which open the archive
- * rather than hashing it.
+ * WHAT THIS DESCRIPTION MUST NOT SAY is that the container is uncompared,
+ * because it no longer is and once was. For each of those six types the
+ * container is opened in the same step and compared structurally - the writer
+ * profile against the frozen expectation in ARCHIVE_CONTAINER_REGISTER, and
+ * the entry-table fingerprint against the recording where the recording
+ * carries one and against that register's PINNED measurement where it does
+ * not - and both produce real differences. The pin is what makes the second
+ * half able to fail on the committed corpus, which carries no recorded
+ * fingerprint: without it, content drift on a registered route was measured
+ * to produce zero differences, because the writer profile is
+ * content-independent by design. The storage and worker harnesses still
+ * assert the object key and the download url, which an HTTP response does not
+ * carry; they are no longer what the archive's structure rests on.
  *
  * @returns {Object}
  */
@@ -2044,24 +2607,71 @@ function describeBinaryBodyContract() {
       'archive container types, exactly',
     digestObservationOnly: ARCHIVE_DIGEST_EXEMPT.slice(),
     digestObservationOnlyReason: 'these containers embed each entry\'s ' +
-      'modification time, so the content digest is a clock read while the ' +
+      'modification time, so the RAW content digest is a clock read while the ' +
       'byte length is not - the timestamp fields are fixed-width. Measured: ' +
       'two captures of the identical tree produced two digests for the same ' +
-      '182-byte zip and the same length both times. The corpus records a ' +
-      'binary body as a length and a digest and never as bytes, so there is ' +
-      'no archive to open from a recording.',
+      '182-byte zip and the same length both times, and the committed corpus ' +
+      'records the same 538-byte course archive twice with two different ' +
+      'digests. Restoring raw-digest comparison would therefore produce a ' +
+      'gate that can never pass, which is why the container is compared ' +
+      'structurally instead.',
     digestObservationOnlyDeclaredBy: 'the timestamps category of the volatile set',
+    // The half that replaced the hole. Emitted in full, register included, so
+    // the artifact carries the frozen expectation and the registered
+    // before-and-after rather than a pointer to a document.
+    archiveStructureCompared: 'For every one of those content types this file ' +
+      'OPENS the container and compares it in the same step. Two comparisons, ' +
+      'both of which produce real differences and exit non-zero: ' +
+      '`body.archive.writerProfile` against the frozen expectation registered ' +
+      'for the route, which is what fails on a writer change even when the ' +
+      'entries are identical; and `body.archive.fingerprint` - sha256 over ' +
+      'the canonical ordered entry table with the mtime fields excluded and ' +
+      'each entry\'s content taken as the sha256 of its INFLATED bytes - ' +
+      'compared exactly against the recording where the recording carries ' +
+      'one, and against the `pinned.fingerprint` registered for the route ' +
+      'where it does not. A container that cannot be read, that holds no ' +
+      'entries, that is served on a route the register does not name, or ' +
+      'whose entry count or byte length moved from the registered pin is a ' +
+      'difference as well - and so is an archive on a registered route whose ' +
+      'fingerprint ends up compared against neither a recording nor a pin.',
+    archiveStructureNotCompared: 'What remains genuinely uncompared, stated ' +
+      'as narrowly as it is true. A recording that carries no ' +
+      '`body.archive.fingerprint` - the committed corpus records a binary ' +
+      'body as a length and a digest and predates the field - is no longer a ' +
+      'gap in what is COMPARED, because the register\'s pinned measurement ' +
+      'takes that side of the comparison and a mismatch against it is a real ' +
+      'difference that fails the run. What is still open there is the ' +
+      'PROVENANCE of the expected value: it is a measurement of this tree ' +
+      'recorded in this file rather than a value a baseline capture produced, ' +
+      'and every artifact says which of the two decided each container ' +
+      '(`fingerprintComparedAgainst`) alongside what the corpus holds ' +
+      '(`recordingFingerprintState`). A corpus captured with the archive ' +
+      'block present is compared against the recording instead and the pin ' +
+      'stands aside. A registered writer that declared no pin would leave the ' +
+      'contents compared against nothing, which the startup probe ' +
+      '`every-registered-writer-declares-a-complete-content-pin` refuses and ' +
+      'the archive-containers check fails. An exempt content type this reader ' +
+      'does not open - gzip, tar, the compressed types - is genuinely ' +
+      'uncovered and is reported as such rather than presented as compared.',
+    archiveRegister: ARCHIVE_CONTAINER_REGISTER,
     entryLevelAssertedBy: Object.freeze([
+      'test/parity/replay.js (this file: the writer profile and the entry-table ' +
+        'fingerprint, per response)',
       'test/parity/storage.js',
       'test/parity/worker.js'
     ]),
-    coverageLost: 'For those six content types only: that two archives with ' +
-      'the same byte length hold the same bytes. A changed entry name, a ' +
-      'changed entry body or a changed layout is caught by the storage and ' +
-      'worker harnesses, which open the archive; a changed length is caught ' +
-      'here. For every other binary type - images, PDFs, streamed files - ' +
-      'both the length and the digest are compared exactly and a single ' +
-      'changed byte fails.'
+    coverageLost: 'For those six content types: that two archives with the ' +
+      'same length and the same structure hold the same BYTES - which is a ' +
+      'statement about two clock reads. Everything the container declares is ' +
+      'compared: every entry name, order, compression method, general-purpose ' +
+      'flags, versionNeeded, versionMadeBy, internal and external attributes, ' +
+      'declared crc32 and size, and the digest of each entry\'s inflated ' +
+      'content. A changed entry name, a changed entry body, a changed layout ' +
+      'or a changed writer is a difference here. What is genuinely uncovered ' +
+      'is a non-ZIP exempt container, where the reader reports that it opens ' +
+      'ZIP only; no route in the corpus serves one. For every other binary ' +
+      'type - images, PDFs, streamed files - both the length and the digest ' +
+      'are compared exactly and a single changed byte fails.'
   };
 }
 
@@ -2989,8 +3599,18 @@ function validateArtifactProvenance(block, parsed, target, label, expect) {
   }
 
   if (beside) {
+    // Scoped to what was actually compared, because the shared contract's
+    // `sidecar-agrees-with-embedded` check compares the PAYLOAD DIGEST and
+    // nothing else. An unqualified "agrees with the artifact beside it" read
+    // as a statement about the whole record, and it was printed directly above
+    // a refusal for a sidecar whose generator identity contradicted the
+    // embedded block - measured, on a sidecar whose digests were untouched and
+    // whose `generator.commit` was replaced with an object that does not
+    // exist. The identity halves are compared in `validateCorpusProvenance`,
+    // which is where the corpus's own embedded block is available to compare
+    // them against.
     note(label + ': the provenance sidecar ' + beside.path + ' agrees with ' +
-      'the artifact beside it');
+      'the artifact beside it on the digests it declares');
   }
 
   return verdict;
@@ -3229,6 +3849,7 @@ function validateCorpusProvenance(artifact, label, context) {
   var declaredDigest;
   var expectedBaseline;
   var identity;
+  var embedded;
   var treeHead;
   var toolHead;
   var toolPath;
@@ -3299,6 +3920,77 @@ function validateCorpusProvenance(artifact, label, context) {
     failures.push('it records schema ' + JSON.stringify(identity.corpusSchema) +
       ' and the corpus declares schema ' +
       JSON.stringify(artifact.parsed.schema));
+  }
+
+  // The sidecar and the artifact's own embedded block are two copies of one
+  // identity, and this is where they are held to that.
+  //
+  // The reason it is here rather than left to the shared verifier: that
+  // verifier's `sidecar-agrees-with-embedded` compares the PAYLOAD DIGEST and
+  // nothing else, so a sidecar whose digests are untouched but whose
+  // `generator.commit` names a different - even a nonexistent - object passes
+  // it. Measured: with the corpus bytes and both digests left alone and only
+  // the sidecar's `generator.commit` changed to an object that does not exist,
+  // the shared verifier reported the artifact OK against the EMBEDDED identity
+  // while this replay read the SIDECAR one, started the database and the
+  // application, drove the selection, and recorded the fabricated commit into
+  // its own result document as the corpus's capture origin. Two consumers of
+  // one artifact then asserted two different provenances, which is the state
+  // the provenance contract exists to make impossible.
+  //
+  // So every field both records carry is compared, and only the two the
+  // sidecar alone owns are exempt: `artifactDigest`, which describes the
+  // artifact's bytes from outside them and therefore cannot be embedded in
+  // them, and `note`, which is prose. A field absent from either side is not
+  // compared here - `readSidecarIdentity` and the checks above are what
+  // require the ones that must be present - because a missing field and a
+  // contradicted one are different findings and reporting the first as the
+  // second would send a reader looking for a forgery that is not there.
+  embedded = manifest.provenance.extract(artifact.text);
+
+  if (embedded) {
+    [
+      ['role', sidecar.role, embedded.role],
+      ['baselineCommit', sidecar.baselineCommit, embedded.baselineCommit],
+      ['generator.path', pluck(sidecar.generator, 'path'),
+        pluck(embedded.generator, 'path')],
+      ['generator.blob', pluck(sidecar.generator, 'blob'),
+        pluck(embedded.generator, 'blob')],
+      ['generator.commit', pluck(sidecar.generator, 'commit'),
+        pluck(embedded.generator, 'commit')],
+      ['generator.commitState', pluck(sidecar.generator, 'commitState'),
+        pluck(embedded.generator, 'commitState')],
+      ['generator.deliveredHead', pluck(sidecar.generator, 'deliveredHead'),
+        pluck(embedded.generator, 'deliveredHead')],
+      ['analysedTree.head', pluck(sidecar.analysedTree, 'head'),
+        pluck(embedded.analysedTree, 'head')],
+      ['delivered.head', pluck(sidecar.delivered, 'head'),
+        pluck(embedded.delivered, 'head')],
+      ['payloadDigest.value', pluck(sidecar.payloadDigest, 'value'),
+        pluck(embedded.payloadDigest, 'value')]
+    ].forEach(function(entry) {
+      var field = entry[0];
+      var fromSidecar = entry[1];
+      var fromEmbedded = entry[2];
+
+      if (fromSidecar === null || fromSidecar === undefined ||
+          fromEmbedded === null || fromEmbedded === undefined) {
+        return;
+      }
+
+      if (String(fromSidecar) === String(fromEmbedded)) {
+        return;
+      }
+
+      failures.push('it records ' + field + ' as ' +
+        JSON.stringify(String(fromSidecar)) + ' and the corpus\'s own ' +
+        'embedded provenance block records ' +
+        JSON.stringify(String(fromEmbedded)) + '. The sidecar and the ' +
+        'embedded block are two copies of one identity written by one run, ' +
+        'so a disagreement means one of them was edited afterwards and ' +
+        'neither can be trusted to say which tree or which generator this ' +
+        'corpus describes');
+    });
   }
 
   if (!treeHead || !/^[0-9a-f]{40}$/i.test(treeHead)) {
@@ -4232,6 +4924,18 @@ function drive(spec, timeoutMs) {
           }
         }
 
+        // THE ARCHIVE SUMMARY, taken here because this is the only place the
+        // raw bytes still exist: everything downstream sees the record. It is
+        // attached for exactly the content types whose raw digest the
+        // timestamps category exempts, and it is what replaces that exemption
+        // with a comparison - see the ARCHIVE CONTAINERS section. A container
+        // this reader cannot open is recorded as unparsed with its reason, so
+        // the artifact never presents an unread container as a compared one.
+        if (isArchiveDigestExempt(response.headers['content-type'])) {
+          body.archive = readArchiveContainer(buffer,
+            response.headers['content-type']);
+        }
+
         record = {
           ok: true,
           timedOut: false,
@@ -4827,42 +5531,451 @@ function compareHeaders(baseline, target, context) {
 // extension - which is exactly how @hapi/yar commits a session - reaches the
 // wire on a 500 under hapi 20 and does not under hapi 21, unless it is a
 // cookie CLEAR.
+//
+// THE PREDICATE IS THE FRAMEWORK'S OWN, AND IT IS WIDER THAN "A RAW BOOM 500".
+// `response._error` is set on any response built from an error - a handler that
+// threw, a handler that returned a Boom, AND the rebuild hapi performs when
+// marshalling fails - so all three lose the header. A 500 that a later
+// extension REPLACES with its own response carries no `_error`, which is why
+// the application's rendered 50x.html pages keep the cookie.
+//
+// THIS EXEMPTION IS A RULE, NOT A MARKER, AND ITS AUTHORITY IS THE REGISTER
+// NAMED IN `register` BELOW. It demotes a field on any response meeting that
+// predicate; the approved-deviation allowlist elsewhere in this file stays
+// exactly one scenario id and is a different mechanism. Neither may be minted
+// by a tool: a rule whose register entry does not exist has no authority at
+// all, which is why the pointer is carried in the constant, emitted into every
+// artifact and printed in the report rather than left in this comment.
 var FRAMEWORK_COOKIE_SUPPRESSION = Object.freeze({
   id: 'hapi21-500-clear-only-states',
   framework: '@hapi/hapi 21.x lib/headers.js exports.state',
-  measurement: 'One 30-line server containing no repository code, run under ' +
-    'Node 22.23.2 against both installed trees: a state set from an ' +
-    'onPreResponse extension, a route throwing Boom.badImplementation, and a ' +
-    'second extension that replaces the Boom with a rendered page for one ' +
-    'path. hapi 20.3.0 emitted Set-Cookie on all three of 200, the 500 Boom ' +
-    'and the replaced 500. hapi 21.4.10 emitted it on the 200 and the ' +
-    'replaced 500 and NOT on the 500 Boom.',
+  register: 'docs/preserved-quirks.md 12.1 - "hapi 21 emits only cookie ' +
+    'CLEARS on a response carrying a 500 error", the single entry of that ' +
+    'document\'s section 12 register of framework-imposed divergences. That ' +
+    'entry owns the decision, the T-6 conflict argument and the ' +
+    'classification; this constant carries the mechanism and must agree with ' +
+    'it field for field.',
+  measurement: 'One server containing no repository code - a state set from an ' +
+    'onPreResponse extension, eight paths, and a second extension that ' +
+    'replaces the Boom with a rendered page for one of them - run under Node ' +
+    '22.23.2 against both majors, each from its own installation. Set-Cookie ' +
+    'names emitted, hapi 20.3.0 then hapi 21.4.10: /ok 200 probe, probe; ' +
+    '/throw (handler threw) 500 probe, NONE; /boom (returned Boom) 500 ' +
+    'probe, NONE; /marshal (JSON marshalling failed AFTER onPreResponse) 500 ' +
+    'probe, NONE; /notfound 404 probe, probe; /badrequest 400 probe, probe; ' +
+    '/replaced (Boom 500 replaced by a rendered page in a later extension) ' +
+    '500 probe, probe; /clear (a set plus a ttl-0 clear on a 500) 500 ' +
+    'probe+clearme, clearme only. So hapi 21 drops the set on a thrown 500 ' +
+    'and on a marshal-time 500 as well as on a returned Boom, and a cookie ' +
+    'CLEAR always survives. The branch condition is therefore the ' +
+    'framework\'s own predicate - any response whose _error.output.statusCode ' +
+    'is 500 - and not "a raw Boom 500"; a 500 a later extension REPLACES ' +
+    'carries no _error, which is why /replaced keeps its cookie and why the ' +
+    'application\'s rendered 50x.html pages are unaffected.',
   why: 'The suppression is deliberate upstream behaviour - a server error ' +
     'should not set cookies - and it is hardcoded in the framework\'s header ' +
     'path with no per-server, per-route or per-state option to disable it. ' +
     'The AAP requires @hapi/hapi 21.4.10 (0.5.1) AND exact Set-Cookie parity ' +
-    '(0.9.3); on a 500 carrying a session write the two cannot both hold, and ' +
-    'nothing in the application decides which wins. Preserving the baseline ' +
-    'header would mean re-appending a Set-Cookie onto 5xx responses from ' +
-    'app.js\'s onPreResponse - authored behaviour that defeats a security ' +
-    'change and that no AAP requirement describes.',
-  costs: 'Nothing the application decides, and nothing a client can act on. ' +
-    'yar\'s commit re-sets the SAME session id it received - ' +
+    '(0.9.3); on a 500 carrying a session write the two cannot both hold. ' +
+    'AAP rule T-6 governs that shape - name the conflict, decide which ' +
+    'requirement controls, record it, align the quirk record and the gate - ' +
+    'and the decision lives in the register named above, not here: R-d\'s ' +
+    'preservation of the baseline header yields to the mandated framework ' +
+    'version, and no state is re-attached on 5xx. Preserving the header would ' +
+    'mean re-appending a Set-Cookie onto 5xx responses from app.js\'s ' +
+    'onPreResponse - authored behaviour that defeats a security change and ' +
+    'that no AAP requirement describes. For the marshal-time subset it is not ' +
+    'implementable at all: onPreResponse runs exactly once and sees a ' +
+    'response whose isBoom is false, and the 500 that reaches the wire is ' +
+    'built afterwards by internals.fail in node_modules/@hapi/hapi/lib/' +
+    'transmit.js (the catch at :17-35 calls it, the rebuild is at :46-70), ' +
+    'which re-runs the marshal cycle and not the request lifecycle - measured ' +
+    'on the wire, where a header that extension set does not appear.',
+  costs: 'Nothing the application decides, and - measured rather than ' +
+    'reasoned, because the intuitive answer is the wrong way round - nothing ' +
+    'a client loses. yar\'s commit re-sets the SAME session id it received - ' +
     '`h.state(name, {id: this.id})` on a repeat visit - so the header the ' +
     'baseline emitted carried the value and attributes the client already ' +
     'holds. The server-side half of the commit is unaffected: the store write ' +
     'follows the h.state call and happens in both trees, so a flash cleared ' +
-    'on a 500 is cleared in both. What is lost is the refresh of the ' +
-    'cookie\'s one-year Expires horizon on error responses only.',
-  retained: 'Cookie parity is compared EXACTLY on every response that is not ' +
-    'a 500, which is 210 of the 214 cookie-bearing steps in this corpus, ' +
-    'including all 37 redirects and the four 500s app.js replaces with a ' +
-    'rendered page. The Expires-horizon assertion that detects the ' +
-    'private-field patch going silently no-op (AAP 0.9.6) is therefore ' +
-    'retained in full. A cookie CLEAR is never demoted, because hapi 21 keeps ' +
-    'clears on a 500, so a logout that stopped clearing its cookie still ' +
-    'fails.'
+    'on a 500 is cleared in both. THERE IS NO EXPIRES HORIZON ON A 500 HEADER ' +
+    'TO LOSE: of the 13 recorded application/json 500 steps in the committed ' +
+    'corpus that carry a baseline cookie, all 13 carry the attribute set ' +
+    'httponly|path|samesite and NOT ONE carries Expires or Max-Age, and the ' +
+    'five rendered text/html 500s are identical in that respect - the ' +
+    'baseline repeated a SESSION-cookie header on a 500, never a persistent ' +
+    'one. Read from Chrome\'s own store through the Cookie Store API, against ' +
+    'a 25-line standalone server holding no repository code: a record stored ' +
+    'persistently from Expires=<+1y> is left exactly as held by a 500 that ' +
+    'sends no Set-Cookie, and is downgraded to session-only (expires: null) ' +
+    'by a 500 that repeats the same cookie WITHOUT Expires, which is the ' +
+    'baseline\'s exact shape; the cookie is still sent in both cases. So ' +
+    'where the two majors differ for a client at all, this suppression ' +
+    'PRESERVES a held expiry and the baseline\'s header DISCARDS it. The ' +
+    'practical cost is nil in either direction because only the ' +
+    'session-establishing response carries the attribute and the very next ' +
+    'authenticated 200 re-sets the same cookie without it. A 404 and a 400 ' +
+    'keep the header entirely, as the measurement above shows.',
+  retained: 'Measured over the committed corpus: 392 scenarios, 404 recorded ' +
+    'steps, 231 of them carrying at least one recorded Set-Cookie. The 24 ' +
+    'status-500 steps are 13 application/json 500s carrying a baseline ' +
+    'cookie - the only steps where this rule can fire - plus 6 ' +
+    'application/json 500s with no baseline cookie, so nothing to demote, ' +
+    'plus 5 text/html 500s carrying a cookie, which are the rendered pages ' +
+    'the predicate does not reach and are compared exactly. So 218 of the 231 ' +
+    'cookie-bearing steps are compared EXACTLY, including all 39 ' +
+    'cookie-bearing steps among the 65 redirects, and the rule reaches 13. ' +
+    'The Expires-horizon assertion that detects the private-field patch going ' +
+    'silently no-op (AAP 0.9.6) is therefore retained in full, because it ' +
+    'runs on non-500 responses. A cookie CLEAR is never demoted, because hapi ' +
+    '21 keeps clears on a 500, so a logout that stopped clearing its cookie ' +
+    'still fails. Read those figures as the GATE\'S exposure and not as the ' +
+    'behaviour\'s bound: the SCOPE of the divergence is the framework ' +
+    'predicate - every response carrying a 500 error, on any route - so 13 is ' +
+    'a count of corpus steps this run can demote, never a count of affected ' +
+    'routes.'
 });
+
+// The register document the exemption above defers to, resolved from THIS
+// FILE's own location and never from the working directory. The distinction is
+// the whole point of the check below: a cwd-relative read passes when the tool
+// happens to be driven from the repository root and silently finds nothing
+// when it is driven from anywhere else, which would turn a fail-closed
+// precondition into a coin toss decided by the caller's shell.
+var REGISTER_DOCUMENT = path.join(TOOL_ROOT, 'docs', 'preserved-quirks.md');
+
+// What the register has to actually contain for the exemption to have the
+// authority it claims. The section heading proves the register exists, the
+// entry heading proves THIS divergence is the one it registered, the rule id
+// inside that entry's own body proves the entry and the constant are talking
+// about the same rule, and the length floor rejects an entry reduced to a
+// heading - which would satisfy every string search while approving nothing.
+var REGISTER_ANCHORS = Object.freeze({
+  relativePath: 'docs/preserved-quirks.md',
+  section: '## 12. The register of framework-imposed divergences',
+  entry: '### 12.1 hapi 21 emits only cookie CLEARS on a response carrying ' +
+    'a 500 error',
+  minimumEntryLength: 2000
+});
+
+/**
+ * Verifies that the register a framework exemption cites actually exists and
+ * actually registers that rule, and THROWS if it does not.
+ *
+ * This closes the gap between what the exemption's own comment asserts - that a
+ * rule whose register entry does not exist has no authority at all - and what
+ * the tool previously did about it, which was nothing: the pointer was carried
+ * in the constant, emitted into every artifact and printed in the report, and
+ * never once read. A rule that demotes real difference records on the strength
+ * of an unread citation is a rule that can outlive the argument that approved
+ * it, and the failure is silent in the direction that matters, because a
+ * missing register makes the exemption look MORE authoritative in the artifact
+ * (it names a document) rather than less.
+ *
+ * Pure, and parameterised on its reader, so every failure branch can be
+ * exercised in memory with no temporary file and no filesystem damage.
+ *
+ * @param {Object} rule the exemption constant, needing `id` and `register`
+ * @param {string} documentPath absolute path of the register document
+ * @param {Function} read reader taking a path and returning the document text
+ * @param {Object} anchors {relativePath, section, entry, minimumEntryLength}
+ * @returns {Object} {documentPath, register, id, entryLength}
+ * @throws {ToolError} If the pointer is absent, points elsewhere, or the
+ *   document does not carry the section, the entry, the rule id or a body.
+ */
+function verifyRegisterAuthority(rule, documentPath, read, anchors) {
+  var register;
+  var text;
+  var entryAt;
+  var nextSectionAt;
+  var body;
+
+  if (!rule || typeof rule.id !== 'string' || !rule.id.trim()) {
+    throw new ToolError('a framework exemption carries no rule id, so there ' +
+      'is nothing to look up in a register. An exemption that removes ' +
+      'difference records must name both the rule and the entry that ' +
+      'approved it.');
+  }
+
+  register = typeof rule.register === 'string' ? rule.register.trim() : '';
+
+  if (!register) {
+    throw new ToolError('the framework exemption ' + JSON.stringify(rule.id) +
+      ' carries no register pointer. Its own contract is that a rule whose ' +
+      'register entry does not exist has no authority at all, so it may not ' +
+      'demote a difference on the strength of a pointer nobody wrote.');
+  }
+
+  if (register.indexOf(anchors.relativePath) === -1) {
+    throw new ToolError('the framework exemption ' + JSON.stringify(rule.id) +
+      ' points at a register this check does not read: its pointer does not ' +
+      'name ' + anchors.relativePath + ', which is the document verified ' +
+      'here. The pointer and the check must name one document, or the ' +
+      'pointer can drift onto a file nothing validates.');
+  }
+
+  try {
+    text = read(documentPath);
+  } catch (err) {
+    throw new ToolError('the register the framework exemption ' +
+      JSON.stringify(rule.id) + ' cites cannot be read at ' + documentPath +
+      ' (' + ((err && err.message) || String(err)) + '). The exemption ' +
+      'removes real difference records, so its register is a precondition of ' +
+      'running rather than a citation to be taken on trust.');
+  }
+
+  if (typeof text !== 'string' || !text.length) {
+    throw new ToolError('the register at ' + documentPath + ' is empty, so ' +
+      'the framework exemption ' + JSON.stringify(rule.id) + ' is authorized ' +
+      'by nothing.');
+  }
+
+  if (text.indexOf(anchors.section) === -1) {
+    throw new ToolError('the register at ' + documentPath + ' does not carry ' +
+      'the section heading ' + JSON.stringify(anchors.section) + ', so the ' +
+      'register of framework-imposed divergences the exemption ' +
+      JSON.stringify(rule.id) + ' cites does not exist in it.');
+  }
+
+  entryAt = text.indexOf(anchors.entry);
+
+  if (entryAt === -1) {
+    throw new ToolError('the register at ' + documentPath + ' does not carry ' +
+      'the entry ' + JSON.stringify(anchors.entry) + '. The register exists ' +
+      'but this divergence is not the one it registered, which is exactly ' +
+      'the drift the pointer is supposed to make impossible.');
+  }
+
+  nextSectionAt = text.indexOf('\n## ', entryAt);
+  body = nextSectionAt === -1 ? text.slice(entryAt) :
+    text.slice(entryAt, nextSectionAt);
+
+  if (body.indexOf(rule.id) === -1) {
+    throw new ToolError('the register entry at ' + documentPath + ' does not ' +
+      'name the rule id ' + JSON.stringify(rule.id) + ' anywhere in its own ' +
+      'body. A heading that matches while the entry describes a differently ' +
+      'keyed rule is a pointer to the wrong argument.');
+  }
+
+  if (body.length < anchors.minimumEntryLength) {
+    throw new ToolError('the register entry for ' + JSON.stringify(rule.id) +
+      ' at ' + documentPath + ' carries almost no body (' + body.length +
+      ' characters, floor ' + anchors.minimumEntryLength + '). A heading ' +
+      'satisfies every string search above while approving nothing, so an ' +
+      'entry emptied out is treated as an entry absent.');
+  }
+
+  return {
+    documentPath: documentPath,
+    register: register,
+    id: rule.id,
+    entryLength: body.length
+  };
+}
+
+/**
+ * Verifies the delivered exemption against the delivered register, and proves
+ * the verification fails closed, at startup.
+ *
+ * Deliberately SEPARATE from `assertFrameworkCookieSuppression`, which probes
+ * the rule's firing conditions. The two answer different questions - "does the
+ * mechanism still behave as declared" and "is the mechanism still authorized" -
+ * and a run can fail either one on its own, so collapsing them would hide
+ * which. This one runs FIRST, because probing the conditions of a rule nobody
+ * approved is work in the wrong order.
+ *
+ * The negative probes construct their own document text and their own rule
+ * objects in memory; nothing on disk is written or moved.
+ *
+ * @returns {Object} the verification record, with its probe results
+ * @throws {ToolError} If the delivered pair does not verify, or if any failure
+ *   branch stopped rejecting what it exists to reject.
+ */
+function assertRegisterAuthority() {
+  var anchors = REGISTER_ANCHORS;
+  var rule = FRAMEWORK_COOKIE_SUPPRESSION;
+
+  function readFromDisk(target) {
+    return fs.readFileSync(target, 'utf8');
+  }
+
+  function reader(text) {
+    return function() {
+      return text;
+    };
+  }
+
+  var verified = verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+    readFromDisk, anchors);
+  var text = readFromDisk(REGISTER_DOCUMENT);
+  var entryAt = text.indexOf(anchors.entry);
+  var afterEntry = text.indexOf('\n## ', entryAt);
+  var probes = [
+    {
+      id: 'rejects-a-rule-with-no-id',
+      because: 'an exemption with no id names nothing a register could ' +
+        'approve',
+      expect: 'carries no rule id',
+      run: function() {
+        return verifyRegisterAuthority({ id: '  ', register: rule.register },
+          REGISTER_DOCUMENT, readFromDisk, anchors);
+      }
+    },
+    {
+      id: 'rejects-a-blank-register-pointer',
+      because: 'a blank pointer is the case the constant\'s own comment says ' +
+        'has no authority at all',
+      expect: 'carries no register pointer',
+      run: function() {
+        return verifyRegisterAuthority({ id: rule.id, register: '   ' },
+          REGISTER_DOCUMENT, readFromDisk, anchors);
+      }
+    },
+    {
+      id: 'rejects-a-pointer-naming-a-document-this-check-does-not-read',
+      because: 'a pointer and a check that name different documents leave the ' +
+        'cited one unvalidated',
+      expect: 'points at a register this check does not read',
+      run: function() {
+        return verifyRegisterAuthority(
+          { id: rule.id, register: 'docs/somewhere-else.md 4.2' },
+          REGISTER_DOCUMENT, readFromDisk, anchors);
+      }
+    },
+    {
+      id: 'rejects-a-register-that-cannot-be-read',
+      because: 'a deleted or renamed register must stop the run rather than ' +
+        'be assumed',
+      expect: 'cannot be read at',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT, function() {
+          var err = new Error('ENOENT: no such file or directory');
+          err.code = 'ENOENT';
+          throw err;
+        }, anchors);
+      }
+    },
+    {
+      id: 'rejects-a-register-without-its-section-heading',
+      because: 'the section heading is what proves the register of ' +
+        'framework-imposed divergences exists at all',
+      expect: 'does not carry the section heading',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+          reader(text.split(anchors.section).join('## 12. Something else')),
+          anchors);
+      }
+    },
+    {
+      id: 'rejects-a-register-without-this-entry',
+      because: 'a register that exists but registered a different divergence ' +
+        'authorizes nothing here',
+      expect: 'does not carry the entry',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+          reader(text.split(anchors.entry).join('### 12.1 something else')),
+          anchors);
+      }
+    },
+    {
+      id: 'rejects-an-entry-that-does-not-name-the-rule-id',
+      because: 'a matching heading over a differently keyed rule points at ' +
+        'the wrong argument',
+      expect: 'does not name the rule id',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+          reader(text.split(rule.id).join('some-other-rule-id')), anchors);
+      }
+    },
+    {
+      id: 'rejects-an-entry-reduced-to-its-heading',
+      because: 'an emptied entry satisfies every string search while ' +
+        'approving nothing',
+      expect: 'carries almost no body',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+          reader(text.slice(0, entryAt) + anchors.entry + '\n\n' + rule.id +
+            '\n' + (afterEntry === -1 ? '' : text.slice(afterEntry))),
+          anchors);
+      }
+    }
+  ];
+  var results = [];
+
+  probes.forEach(function(probe) {
+    var threw = false;
+    var message = '';
+
+    try {
+      probe.run();
+    } catch (err) {
+      threw = true;
+      message = (err && err.message) || String(err);
+    }
+
+    if (!threw) {
+      throw new ToolError('the register-authority check stopped rejecting ' +
+        JSON.stringify(probe.id) + ', and it must reject it: ' +
+        probe.because + '. A check that accepts its own failure cases is not ' +
+        'a check, and this one is the only thing standing between an ' +
+        'unapproved exemption and a demoted difference.');
+    }
+
+    if (message.indexOf(probe.expect) === -1) {
+      throw new ToolError('the register-authority check rejected ' +
+        JSON.stringify(probe.id) + ' for the wrong reason: it was expected to ' +
+        'report ' + JSON.stringify(probe.expect) + ' and reported ' +
+        JSON.stringify(message) + '. A probe that passes on an unrelated ' +
+        'failure stops covering the branch it names.');
+    }
+
+    results.push({
+      id: probe.id,
+      rejected: true,
+      because: probe.because,
+      reported: probe.expect
+    });
+  });
+
+  return {
+    id: verified.id,
+    register: verified.register,
+    documentPath: verified.documentPath,
+    documentRelativePath: anchors.relativePath,
+    entryHeading: anchors.entry,
+    entryLength: verified.entryLength,
+    resolvedFrom: 'this file\'s own directory, not the working directory',
+    probes: results
+  };
+}
+
+/**
+ * The exemption as a sidecar reader sees it, refusing to describe one whose
+ * register metadata is absent.
+ *
+ * The previous form read the two fields straight off the constant, so a rule
+ * that lost its pointer was published as an exemption pointing at `undefined` -
+ * which reads, to anything consuming the sidecar, as an exemption in force.
+ *
+ * @param {Object} rule the exemption constant
+ * @returns {Object} {id, register}
+ * @throws {ToolError} If either field is missing or blank.
+ */
+function describeFrameworkExemption(rule) {
+  var id = (rule && typeof rule.id === 'string') ? rule.id.trim() : '';
+  var register = (rule && typeof rule.register === 'string') ?
+    rule.register.trim() : '';
+
+  if (!id || !register) {
+    throw new ToolError('a framework exemption cannot be published without ' +
+      'both its rule id and its register pointer (id ' + JSON.stringify(id) +
+      ', register ' + JSON.stringify(register) + '). An artifact that names ' +
+      'an exemption and not its authority is worse than one that names ' +
+      'neither: it looks audited.');
+  }
+
+  return { id: id, register: register };
+}
 
 /**
  * Demotes the Set-Cookie a 500 lost to the framework, and nothing else.
@@ -5163,6 +6276,1918 @@ function has(value, key) {
 }
 
 // ---------------------------------------------------------------------------
+// ARCHIVE CONTAINERS - the structural comparison behind the digest exemption
+// ---------------------------------------------------------------------------
+//
+// The timestamps category exempts six archive container types from the binary
+// DIGEST comparison, and the reason it gives is true: a ZIP writes each entry's
+// DOS modification time into the entry's own local and central headers, so a
+// digest over the whole container is a clock read. MEASURED from the committed
+// corpus itself - the same request (GET
+// /testing/courses/test-course/download.zip?format=md as the seeded user) is
+// recorded twice, 538 bytes both times, with two different digests:
+// 15d30b76931402f6... on route.get.userSlug-courses-courseSlug-download-zip
+// and 006afd7264311bc0... on
+// quirk.reply-chain.header-resolved.course-download-zip. Restoring raw-digest
+// comparison would therefore produce a gate that can never pass.
+//
+// WHAT THAT REASON DOES NOT LICENSE is leaving the container uncompared, and
+// until this section existed it was: `compareBody` demoted the digest to an
+// observation and no other comparator in this file opened an archive, so the
+// binary comparator could not fail for an archive at all. The consequence was
+// measured by QA on the archiver 2.1.1 -> 7.0.1 bump - every entry's
+// general-purpose flags, the version needed to extract, the central
+// versionMadeBy, the directory and file external attributes and, on the
+// short-code archive, the declared crc32 and uncompressed size all changed on
+// two client-facing routes while the gate reported `match`. A comparator that
+// cannot fail in a category is not comparing it, and the same hole would have
+// hidden every future archive change.
+//
+// So the container is OPENED here and compared structurally, and only the raw
+// digest stays exempt. Two comparisons, with different failure modes:
+//
+//   body.archive.fingerprint    sha256 over the canonical JSON of the ordered
+//                               entry table with the mtime fields
+//                               DELIBERATELY EXCLUDED and each entry's content
+//                               taken as the sha256 of its INFLATED bytes. Two
+//                               responses holding the same entries fingerprint
+//                               identically however far apart their clock
+//                               reads are, which is exactly what the raw
+//                               digest cannot do. Inflated rather than
+//                               compressed bytes so the value does not move
+//                               with a zlib or Node patch release that
+//                               re-encodes the same content. COMPARED against
+//                               the recording where the recording carries a
+//                               fingerprint, and against the writer's PINNED
+//                               measurement in ARCHIVE_CONTAINER_REGISTER
+//                               where it does not - which is every archive
+//                               scenario of the committed corpus, because
+//                               that corpus records a binary body as a length
+//                               and a digest and predates this field. A
+//                               recording is always the authority when it
+//                               carries one, so a re-capture supersedes the
+//                               pin with no edit here; and each artifact
+//                               states which side decided, so a pin
+//                               comparison is never reported as a corpus one.
+//   body.archive.writerProfile  the content-INDEPENDENT container fields - the
+//                               UTF-8 name flag, the data-descriptor flag,
+//                               versionNeeded per compression method, the
+//                               central versionMadeBy, the directory and file
+//                               external attributes, and whether crc32 and the
+//                               uncompressed size are declared and agree with
+//                               the content - compared against the FROZEN
+//                               expectation in ARCHIVE_CONTAINER_REGISTER.
+//                               This is the half that fails on a writer change
+//                               even when the entries are identical, which is
+//                               what a future dependency bump trips over.
+//
+// WHY THE FINGERPRINT IS PINNED IN THE REGISTER RATHER THAN LEFT TO THE
+// CORPUS. The two halves have to be able to fail INDEPENDENTLY, and for a
+// while only one of them could. The profile half is content-independent by
+// design - that is what lets one frozen expectation cover a four-entry course
+// archive and a single-entry short-code archive - and the fingerprint half was
+// compared only against a RECORDED value, which the committed corpus does not
+// carry. So every archive scenario landed in the observation branch, and a
+// change to what a container HOLDS escaped both halves: MEASURED, two valid
+// ZIPs on one registered route with the same byte length, the same entry name,
+// the same entry sizes and an identical eleven-field profile but different
+// inflated content and a different crc32 produced ZERO differences. The pin
+// closes that with an exact comparison, which AAP 0.9.3 licenses in terms
+// ("Because seeding is deterministic, comparison is exact on..."), and it
+// removes the dependency on a corpus re-capture that lives in another unit.
+// The startup probe `a-container-differing-only-in-content-is-rejected-by-the-
+// pin` holds the discriminator permanently, and
+// `every-registered-writer-declares-a-complete-content-pin` is what keeps a
+// newly registered writer from reopening the hole.
+//
+// The volatile set is NOT widened by any of this: it stays at six categories,
+// the exempt type list stays exactly as declared in the timestamps category,
+// and what changes is that the exemption now has a comparator behind it and
+// every description of it says so.
+//
+// Nothing here reaches outside this file: the reader is buffer arithmetic over
+// the bytes the response delivered, `zlib` is the only dependency it adds, and
+// it neither requires the application tree nor defers to ./storage or ./worker.
+// `assertArchiveReader` exercises it against hand-built containers at startup,
+// because a reader that silently found no entries would make both comparisons
+// vacuous - and, for the same reason, because a fingerprint compared against
+// nothing would make the content half vacuous while every profile field
+// passed.
+// ---------------------------------------------------------------------------
+
+var ZIP_LOCAL_SIGNATURE     = 0x04034b50;
+var ZIP_CENTRAL_SIGNATURE   = 0x02014b50;
+var ZIP_EOCD_SIGNATURE      = 0x06054b50;
+var ZIP_EOCD_LENGTH         = 22;
+var ZIP_CENTRAL_LENGTH      = 46;
+var ZIP_LOCAL_LENGTH        = 30;
+// A ZIP comment is at most 0xffff bytes, so the record cannot begin further
+// back than that from the end of the body.
+var ZIP_MAX_COMMENT         = 0xffff;
+var ZIP_UTF8_NAME_FLAG      = 0x0800;
+var ZIP_DATA_DESCRIPTOR_FLAG = 0x0008;
+var ZIP_METHOD_STORED       = 0;
+var ZIP_METHOD_DEFLATED     = 8;
+var ARCHIVE_SUMMARY_SCHEMA  = 1;
+// The fingerprint and the profile are computed over EVERY entry; this bounds
+// only how many appear in the artifact, so a large export archive cannot turn
+// one step's evidence into megabytes. `entriesTruncated` says when it applied.
+var ARCHIVE_MAX_RECORDED_ENTRIES = 64;
+// An inflation budget, so a hostile or accidental declaration cannot make this
+// reader allocate without limit. An entry over the budget keeps every declared
+// field and records its content digest as skipped, with the reason.
+var ARCHIVE_MAX_INFLATE_BYTES = 8 * 1024 * 1024;
+
+// The CRC-32 table, built once. Present so the DECLARED crc32 can be checked
+// against the entry's actual content: the archiver 2.1.1 short-code archive
+// declared crc32 0 and uncompressed size 0 for an entry whose real values are
+// 0xf10614e3 and 61 bytes, which is a container-level defect no digest
+// comparison would ever have named.
+var CRC32_TABLE = (function() {
+  var table = new Int32Array(256);
+  var value;
+  var i;
+  var bit;
+
+  for (i = 0; i < 256; i++) {
+    value = i;
+
+    for (bit = 0; bit < 8; bit++) {
+      value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+    }
+
+    table[i] = value;
+  }
+
+  return table;
+}());
+
+/**
+ * The CRC-32 of a buffer, as an unsigned 32-bit number.
+ *
+ * @param {Buffer} buffer
+ * @returns {number}
+ */
+function crc32Of(buffer) {
+  var crc = -1;
+  var i;
+
+  for (i = 0; i < buffer.length; i++) {
+    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ buffer[i]) & 0xff];
+  }
+
+  return (crc ^ -1) >>> 0;
+}
+
+/**
+ * A fixed-width hex literal, so a comparison and a report read the same.
+ *
+ * @param {number} value
+ * @param {number} digits
+ * @returns {string}
+ */
+function hexWord(value, digits) {
+  var text = (value >>> 0).toString(16);
+
+  while (text.length < digits) {
+    text = '0' + text;
+  }
+
+  return '0x' + text;
+}
+
+/**
+ * Which container a content type declares, for this reader's purposes.
+ *
+ * Only `zip` is opened. The other exempt types are named rather than guessed
+ * at, because a reader that treated a gzip stream as a ZIP would report it
+ * unparsed for the wrong reason and a reader that returned no entries would
+ * make the comparison vacuous.
+ *
+ * @param {*} contentType
+ * @returns {string} 'zip', or the media type this reader does not open
+ */
+function archiveContainerKind(contentType) {
+  var media = String(typeWithoutCharset(contentType) || '').trim().toLowerCase();
+
+  if (media === 'application/zip' || media === 'application/x-zip-compressed') {
+    return 'zip';
+  }
+
+  return media || 'unknown';
+}
+
+/**
+ * Opens an archive container and summarizes its structure.
+ *
+ * The one entry point. It never throws: a container it cannot read is reported
+ * as `parsed: false` with the reason and `entryCount: null` - never as a
+ * container that happened to hold no entries, which is the failure mode that
+ * would make every comparison built on it vacuous.
+ *
+ * The mtime fields are read past deliberately and appear nowhere in the
+ * summary. That is the whole point: they are the reason the raw digest cannot
+ * be compared, and excluding them is what makes everything else comparable.
+ *
+ * @param {Buffer} buffer the exact bytes the response delivered
+ * @param {*} contentType the response content type
+ * @returns {Object} the archive summary recorded as `body.archive`
+ */
+function readArchiveContainer(buffer, contentType) {
+  var summary = {
+    schema: ARCHIVE_SUMMARY_SCHEMA,
+    container: archiveContainerKind(contentType),
+    parsed: false,
+    unparsedReason: null,
+    empty: !buffer || !buffer.length,
+    byteLength: buffer ? buffer.length : 0,
+    entryCount: null,
+    entriesRecorded: 0,
+    entriesTruncated: false,
+    entries: [],
+    writerProfile: null,
+    fingerprint: null,
+    excludes: 'the DOS modification time and date of every entry, in both the ' +
+      'local and the central header - they are the reason the raw digest is a ' +
+      'clock read, so excluding them is what makes the rest comparable'
+  };
+  var read;
+
+  if (summary.empty) {
+    summary.unparsedReason = 'the response carried no body, so there is no ' +
+      'container to read. The byte length is compared exactly either way, ' +
+      'which is what covers this case';
+    return summary;
+  }
+
+  if (summary.container !== 'zip') {
+    summary.unparsedReason = 'this reader opens ZIP containers only and the ' +
+      'response declares ' + JSON.stringify(summary.container) + '. No ' +
+      'structural comparison covers that container type, so for it the digest ' +
+      'exemption is uncovered and is reported as such rather than presented ' +
+      'as compared';
+    return summary;
+  }
+
+  read = readZipEntries(buffer);
+
+  if (!read.ok) {
+    summary.unparsedReason = read.reason;
+    return summary;
+  }
+
+  summary.parsed = true;
+  summary.entryCount = read.entries.length;
+  // Over EVERY entry, before the artifact list is bounded, so a truncated
+  // record still carries a fingerprint that covers the whole container.
+  summary.writerProfile = archiveWriterProfile(read.entries);
+  summary.fingerprint = archiveFingerprint(read.entries);
+  summary.entries = read.entries.slice(0, ARCHIVE_MAX_RECORDED_ENTRIES);
+  summary.entriesRecorded = summary.entries.length;
+  summary.entriesTruncated = summary.entriesRecorded < summary.entryCount;
+
+  return summary;
+}
+
+/**
+ * Reads every central-directory entry of a ZIP, with its local header.
+ *
+ * The central directory is the authority for the compressed size, because a
+ * streaming writer emits local headers with the size and crc32 zeroed and the
+ * data-descriptor flag set - which is precisely the difference the archiver
+ * bump changed on the short-code archive, so a reader that trusted the local
+ * header would have read the entry's bytes from the wrong offsets.
+ *
+ * @param {Buffer} buffer
+ * @returns {Object} {ok, entries} or {ok: false, reason}
+ */
+function readZipEntries(buffer) {
+  var eocd = findZipEocd(buffer);
+  var declared;
+  var directorySize;
+  var directoryOffset;
+  var offset;
+  var entries = [];
+  var record;
+  var index;
+
+  if (eocd < 0) {
+    return {
+      ok: false,
+      reason: 'no end-of-central-directory record was found in the last ' +
+        Math.min(buffer.length, ZIP_MAX_COMMENT + ZIP_EOCD_LENGTH) + ' bytes ' +
+        'of the ' + buffer.length + '-byte body, so these bytes are not a ' +
+        'readable ZIP container. The first four bytes are ' +
+        hexWord(buffer.length >= 4 ? buffer.readUInt32LE(0) : 0, 8)
+    };
+  }
+
+  declared = buffer.readUInt16LE(eocd + 10);
+  directorySize = buffer.readUInt32LE(eocd + 12);
+  directoryOffset = buffer.readUInt32LE(eocd + 16);
+
+  if (declared === 0xffff || directorySize === 0xffffffff ||
+      directoryOffset === 0xffffffff) {
+    return {
+      ok: false,
+      reason: 'the end-of-central-directory record carries the ZIP64 escape ' +
+        'values and this reader does not read the ZIP64 directory. Reported ' +
+        'unparsed deliberately: parsing it wrongly would produce a ' +
+        'fingerprint over the wrong bytes'
+    };
+  }
+
+  if (directoryOffset + directorySize > buffer.length) {
+    return {
+      ok: false,
+      reason: 'the central directory is declared at byte ' + directoryOffset +
+        ' for ' + directorySize + ' bytes, which runs past the end of the ' +
+        buffer.length + '-byte body'
+    };
+  }
+
+  offset = directoryOffset;
+
+  for (index = 0; index < declared; index++) {
+    record = readZipCentralEntry(buffer, offset, index);
+
+    if (!record.ok) {
+      return record;
+    }
+
+    entries.push(record.entry);
+    offset = record.next;
+  }
+
+  return { ok: true, entries: entries };
+}
+
+/**
+ * The offset of the end-of-central-directory record, or -1.
+ *
+ * Scanned backwards from the end, because the record is the last thing in the
+ * file except for an optional comment of up to 0xffff bytes.
+ *
+ * @param {Buffer} buffer
+ * @returns {number}
+ */
+function findZipEocd(buffer) {
+  var floor = Math.max(0, buffer.length - ZIP_EOCD_LENGTH - ZIP_MAX_COMMENT);
+  var offset;
+
+  if (buffer.length < ZIP_EOCD_LENGTH) {
+    return -1;
+  }
+
+  for (offset = buffer.length - ZIP_EOCD_LENGTH; offset >= floor; offset--) {
+    if (buffer.readUInt32LE(offset) === ZIP_EOCD_SIGNATURE) {
+      // The declared comment length has to account for the remaining bytes, or
+      // this is a signature that happens to appear inside the data.
+      if (buffer.readUInt16LE(offset + 20) ===
+          buffer.length - offset - ZIP_EOCD_LENGTH) {
+        return offset;
+      }
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * One central-directory record, joined to its local header and its content.
+ *
+ * @param {Buffer} buffer
+ * @param {number} offset
+ * @param {number} index the entry's position, for the message
+ * @returns {Object} {ok, entry, next} or {ok: false, reason}
+ */
+function readZipCentralEntry(buffer, offset, index) {
+  var versionMadeBy;
+  var versionNeeded;
+  var flags;
+  var method;
+  var declaredCrc;
+  var compressedSize;
+  var uncompressedSize;
+  var nameLength;
+  var extraLength;
+  var commentLength;
+  var internalAttributes;
+  var externalAttributes;
+  var localOffset;
+  var name;
+  var local;
+  var content;
+  var entry;
+
+  if (offset + ZIP_CENTRAL_LENGTH > buffer.length) {
+    return {
+      ok: false,
+      reason: 'central-directory entry ' + index + ' is declared at byte ' +
+        offset + ', which leaves fewer than the ' + ZIP_CENTRAL_LENGTH +
+        ' bytes a record header needs'
+    };
+  }
+
+  if (buffer.readUInt32LE(offset) !== ZIP_CENTRAL_SIGNATURE) {
+    return {
+      ok: false,
+      reason: 'the bytes at ' + offset + ' are not central-directory entry ' +
+        index + ': the signature is ' + hexWord(buffer.readUInt32LE(offset), 8) +
+        ' and a record begins ' + hexWord(ZIP_CENTRAL_SIGNATURE, 8)
+    };
+  }
+
+  versionMadeBy      = buffer.readUInt16LE(offset + 4);
+  versionNeeded      = buffer.readUInt16LE(offset + 6);
+  flags              = buffer.readUInt16LE(offset + 8);
+  method             = buffer.readUInt16LE(offset + 10);
+  // offset + 12 and offset + 14 are the DOS modification time and date. They
+  // are READ PAST and never recorded - see this section's header.
+  declaredCrc        = buffer.readUInt32LE(offset + 16);
+  compressedSize     = buffer.readUInt32LE(offset + 20);
+  uncompressedSize   = buffer.readUInt32LE(offset + 24);
+  nameLength         = buffer.readUInt16LE(offset + 28);
+  extraLength        = buffer.readUInt16LE(offset + 30);
+  commentLength      = buffer.readUInt16LE(offset + 32);
+  internalAttributes = buffer.readUInt16LE(offset + 36);
+  externalAttributes = buffer.readUInt32LE(offset + 38);
+  localOffset        = buffer.readUInt32LE(offset + 42);
+
+  if (offset + ZIP_CENTRAL_LENGTH + nameLength + extraLength + commentLength >
+      buffer.length) {
+    return {
+      ok: false,
+      reason: 'central-directory entry ' + index + ' declares a ' + nameLength +
+        '-byte name, ' + extraLength + ' bytes of extra and ' + commentLength +
+        ' bytes of comment, which runs past the end of the ' + buffer.length +
+        '-byte body'
+    };
+  }
+
+  name = decodeZipName(buffer.slice(offset + ZIP_CENTRAL_LENGTH,
+    offset + ZIP_CENTRAL_LENGTH + nameLength), flags);
+
+  local = readZipLocalHeader(buffer, localOffset, index, compressedSize);
+
+  if (!local.ok) {
+    return local;
+  }
+
+  content = inflateZipEntry(local.data, method);
+
+  entry = {
+    index: index,
+    name: name,
+    nameEncoding: (flags & ZIP_UTF8_NAME_FLAG) ? 'utf-8' : 'cp437',
+    directory: /\/$/.test(name) || isZipDirectoryMode(externalAttributes),
+    method: zipMethodName(method),
+    methodCode: method,
+    localMethodCode: local.method,
+    flags: hexWord(flags, 4),
+    localFlags: hexWord(local.flags, 4),
+    utf8NameFlag: !!(flags & ZIP_UTF8_NAME_FLAG),
+    dataDescriptorFlag: !!(flags & ZIP_DATA_DESCRIPTOR_FLAG),
+    versionNeeded: versionNeeded,
+    localVersionNeeded: local.versionNeeded,
+    versionMadeBy: hexWord(versionMadeBy, 4),
+    internalAttributes: hexWord(internalAttributes, 4),
+    externalAttributes: hexWord(externalAttributes, 8),
+    unixMode: externalAttributes >>> 16
+      ? '0o' + ((externalAttributes >>> 16) & 0xffff).toString(8)
+      : null,
+    crc32Declared: hexWord(declaredCrc, 8),
+    localCrc32Declared: hexWord(local.crc32, 8),
+    compressedSize: compressedSize,
+    uncompressedSizeDeclared: uncompressedSize,
+    localUncompressedSizeDeclared: local.uncompressedSize,
+    contentLength: content.length,
+    contentDigest: content.digest,
+    contentError: content.error,
+    crc32Computed: content.crc32 === null ? null : hexWord(content.crc32, 8),
+    // The check the archiver bump's short-code case turns on: 2.1.1 declared
+    // crc32 0 and size 0 for an entry whose content hashes to neither.
+    crc32DeclaredMatchesContent: content.crc32 === null
+      ? null
+      : content.crc32 === declaredCrc,
+    uncompressedSizeMatchesContent: content.length === null
+      ? null
+      : content.length === uncompressedSize
+  };
+
+  return {
+    ok: true,
+    entry: entry,
+    next: offset + ZIP_CENTRAL_LENGTH + nameLength + extraLength + commentLength
+  };
+}
+
+/**
+ * The local header of one entry, and the slice of compressed bytes it heads.
+ *
+ * The data length comes from the CENTRAL directory, for the reason
+ * `readZipEntries` gives: a streaming writer zeroes the local sizes.
+ *
+ * @param {Buffer} buffer
+ * @param {number} offset
+ * @param {number} index
+ * @param {number} compressedSize from the central record
+ * @returns {Object} {ok, flags, method, versionNeeded, crc32, uncompressedSize,
+ *   data} or {ok: false, reason}
+ */
+function readZipLocalHeader(buffer, offset, index, compressedSize) {
+  var nameLength;
+  var extraLength;
+  var dataStart;
+
+  if (offset + ZIP_LOCAL_LENGTH > buffer.length) {
+    return {
+      ok: false,
+      reason: 'entry ' + index + ' names a local header at byte ' + offset +
+        ', which leaves fewer than the ' + ZIP_LOCAL_LENGTH + ' bytes a local ' +
+        'header needs'
+    };
+  }
+
+  if (buffer.readUInt32LE(offset) !== ZIP_LOCAL_SIGNATURE) {
+    return {
+      ok: false,
+      reason: 'entry ' + index + ' names a local header at byte ' + offset +
+        ' and the signature there is ' + hexWord(buffer.readUInt32LE(offset), 8) +
+        ' rather than ' + hexWord(ZIP_LOCAL_SIGNATURE, 8)
+    };
+  }
+
+  nameLength  = buffer.readUInt16LE(offset + 26);
+  extraLength = buffer.readUInt16LE(offset + 28);
+  dataStart   = offset + ZIP_LOCAL_LENGTH + nameLength + extraLength;
+
+  if (dataStart + compressedSize > buffer.length) {
+    return {
+      ok: false,
+      reason: 'entry ' + index + ' declares ' + compressedSize +
+        ' compressed bytes at ' + dataStart + ', which runs past the end of ' +
+        'the ' + buffer.length + '-byte body'
+    };
+  }
+
+  return {
+    ok: true,
+    versionNeeded: buffer.readUInt16LE(offset + 4),
+    flags: buffer.readUInt16LE(offset + 6),
+    method: buffer.readUInt16LE(offset + 8),
+    // offset + 10 and offset + 12 are the DOS modification time and date, read
+    // past for the same reason as the central pair.
+    crc32: buffer.readUInt32LE(offset + 14),
+    uncompressedSize: buffer.readUInt32LE(offset + 22),
+    data: buffer.slice(dataStart, dataStart + compressedSize)
+  };
+}
+
+/**
+ * The inflated content of one entry, as a length, a digest and its crc32.
+ *
+ * A digest over the INFLATED bytes rather than the stored ones, so the value
+ * describes what a client would extract and does not move when a zlib or Node
+ * patch release re-encodes the same content at a different compression level.
+ *
+ * @param {Buffer} data the compressed bytes
+ * @param {number} method the compression method from the central record
+ * @returns {Object} {length, digest, crc32, error}
+ */
+function inflateZipEntry(data, method) {
+  var content;
+
+  if (data.length > ARCHIVE_MAX_INFLATE_BYTES) {
+    return {
+      length: null,
+      digest: null,
+      crc32: null,
+      error: 'the entry holds ' + data.length + ' compressed bytes, over this ' +
+        'reader\'s ' + ARCHIVE_MAX_INFLATE_BYTES + '-byte inflation budget, ' +
+        'so its content was not read. Every declared field above is still ' +
+        'compared'
+    };
+  }
+
+  if (method === ZIP_METHOD_STORED) {
+    content = data;
+  }
+  else if (method === ZIP_METHOD_DEFLATED) {
+    try {
+      content = zlib.inflateRawSync(data);
+    }
+    catch (err) {
+      return {
+        length: null,
+        digest: null,
+        crc32: null,
+        error: 'the deflated entry did not inflate: ' + reasonOf(err)
+      };
+    }
+  }
+  else {
+    return {
+      length: null,
+      digest: null,
+      crc32: null,
+      error: 'compression method ' + method + ' is not one this reader ' +
+        'inflates, so the entry\'s content was not read'
+    };
+  }
+
+  return {
+    length: content.length,
+    digest: sha256Hex(content),
+    crc32: crc32Of(content),
+    error: null
+  };
+}
+
+/**
+ * An entry name, decoded the way its own flag says it was encoded.
+ *
+ * @param {Buffer} raw
+ * @param {number} flags
+ * @returns {string}
+ */
+function decodeZipName(raw, flags) {
+  return raw.toString((flags & ZIP_UTF8_NAME_FLAG) ? 'utf8' : 'latin1');
+}
+
+/**
+ * A compression method's name, for the report.
+ *
+ * @param {number} method
+ * @returns {string}
+ */
+function zipMethodName(method) {
+  if (method === ZIP_METHOD_STORED) {
+    return 'stored';
+  }
+
+  if (method === ZIP_METHOD_DEFLATED) {
+    return 'deflated';
+  }
+
+  return 'method-' + method;
+}
+
+/**
+ * Whether an external-attributes word carries the UNIX directory bit.
+ *
+ * @param {number} externalAttributes
+ * @returns {boolean}
+ */
+function isZipDirectoryMode(externalAttributes) {
+  // S_IFDIR is 0o040000 in the high half of the word, which is where a UNIX
+  // writer puts the mode.
+  return (((externalAttributes >>> 16) & 0xf000) === 0x4000);
+}
+
+/**
+ * The deterministic fingerprint of an ordered entry table.
+ *
+ * sha256 over canonical JSON, so a key added to an entry record changes it and
+ * a key REORDERED does not. It covers every entry, including the ones the
+ * artifact's bounded list leaves out.
+ *
+ * @param {Array.<Object>} entries
+ * @returns {string}
+ */
+function archiveFingerprint(entries) {
+  return sha256Hex(archiveCanonicalJson({
+    schema: ARCHIVE_SUMMARY_SCHEMA,
+    entryCount: entries.length,
+    entries: entries
+  }));
+}
+
+/**
+ * Canonical JSON: object keys sorted at every depth, arrays left in order.
+ *
+ * `serialize` and `sortedKeys` are not enough here - the first preserves
+ * insertion order and the second is shallow, and a fingerprint that depended on
+ * either would move when a field was inserted somewhere else in this file.
+ *
+ * @param {*} value
+ * @returns {string}
+ */
+function archiveCanonicalJson(value) {
+  if (Array.isArray(value)) {
+    return '[' + value.map(archiveCanonicalJson).join(',') + ']';
+  }
+
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(function(key) {
+      return JSON.stringify(key) + ':' + archiveCanonicalJson(value[key]);
+    }).join(',') + '}';
+  }
+
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+/**
+ * The container's WRITER profile: what the writer did, not what it held.
+ *
+ * Every field here is decided by the library that produced the container
+ * rather than by the content it was given, which is what lets one frozen
+ * expectation cover a four-entry course archive and a single-entry short-code
+ * archive alike. A field these entries cannot determine - directory attributes
+ * in an archive with no directories, for instance - is `null`, and
+ * `compareArchiveProfile` reports it as undetermined instead of comparing it
+ * against nothing.
+ *
+ * @param {Array.<Object>} entries
+ * @returns {Object}
+ */
+function archiveWriterProfile(entries) {
+  var files = entries.filter(function(entry) { return !entry.directory; });
+  var directories = entries.filter(function(entry) { return entry.directory; });
+  var sized = entries.filter(function(entry) {
+    // An entry with no content declares nothing about whether its writer
+    // declares crc32 and size, so the crc32 and size questions are asked of
+    // the entries that carry bytes.
+    return entry.contentLength !== null && entry.contentLength > 0;
+  });
+
+  return {
+    determinable: entries.length > 0,
+    entriesConsidered: entries.length,
+    fileEntries: files.length,
+    directoryEntries: directories.length,
+    methods: entries.map(function(entry) { return entry.method; })
+      .filter(function(name, at, all) { return all.indexOf(name) === at; })
+      .sort(),
+    utf8NameFlag: archiveFlagSpread(entries, function(entry) {
+      return entry.utf8NameFlag;
+    }),
+    dataDescriptorFlag: archiveFlagSpread(entries, function(entry) {
+      return entry.dataDescriptorFlag;
+    }),
+    centralVersionMadeBy: archiveUniform(entries, function(entry) {
+      return entry.versionMadeBy;
+    }),
+    versionNeededByMethod: archiveByMethod(entries, function(entry) {
+      return entry.versionNeeded;
+    }),
+    localVersionNeededByMethod: archiveByMethod(entries, function(entry) {
+      return entry.localVersionNeeded;
+    }),
+    directoryExternalAttributes: archiveUniform(directories, function(entry) {
+      return entry.externalAttributes;
+    }),
+    fileExternalAttributes: archiveUniform(files, function(entry) {
+      return entry.externalAttributes;
+    }),
+    internalAttributes: archiveUniform(entries, function(entry) {
+      return entry.internalAttributes;
+    }),
+    crc32Declared: archiveFlagSpread(sized, function(entry) {
+      return entry.crc32Declared !== hexWord(0, 8);
+    }, ARCHIVE_CONTENT_SPREAD_LABELS),
+    uncompressedSizeDeclared: archiveFlagSpread(sized, function(entry) {
+      return entry.uncompressedSizeDeclared > 0;
+    }, ARCHIVE_CONTENT_SPREAD_LABELS),
+    crc32DeclaredMatchesContent: archiveFlagSpread(sized, function(entry) {
+      return entry.crc32DeclaredMatchesContent === true;
+    }, ARCHIVE_CONTENT_SPREAD_LABELS)
+  };
+}
+
+// The default labels a spread reports, and the ones for the three fields asked
+// only of entries that carry bytes - a directory entry declares nothing about
+// whether its writer declares a crc32, so saying `every-entry` there would
+// overstate what was looked at.
+var ARCHIVE_SPREAD_LABELS = Object.freeze({
+  all: 'every-entry',
+  some: 'some-entries',
+  none: 'no-entry'
+});
+var ARCHIVE_CONTENT_SPREAD_LABELS = Object.freeze({
+  all: 'every-entry-with-content',
+  some: 'some-entries-with-content',
+  none: 'no-entry-with-content'
+});
+
+/**
+ * How a boolean property is spread across a set of entries.
+ *
+ * Three-valued on purpose: `some-entries` is its own answer, because a writer
+ * that set the UTF-8 flag on half its entries is a different writer from one
+ * that set it on all of them, and collapsing the two into a boolean would hide
+ * exactly that.
+ *
+ * @param {Array.<Object>} entries
+ * @param {function(Object): boolean} pick
+ * @param {Object} [labels] as ARCHIVE_SPREAD_LABELS
+ * @returns {(string|null)}
+ */
+function archiveFlagSpread(entries, pick, labels) {
+  var names = labels || ARCHIVE_SPREAD_LABELS;
+  var set;
+
+  if (!entries.length) {
+    return null;
+  }
+
+  set = entries.filter(pick).length;
+
+  if (set === entries.length) {
+    return names.all;
+  }
+
+  return set ? names.some : names.none;
+}
+
+/**
+ * One value if every entry agrees on it, `mixed:` and the values if not.
+ *
+ * @param {Array.<Object>} entries
+ * @param {function(Object): *} pick
+ * @returns {(string|null)}
+ */
+function archiveUniform(entries, pick) {
+  var values = entries.map(pick).map(function(value) {
+    return value === null || value === undefined ? 'null' : String(value);
+  }).filter(function(value, at, all) { return all.indexOf(value) === at; })
+    .sort();
+
+  if (!values.length) {
+    return null;
+  }
+
+  return values.length === 1 ? values[0] : 'mixed:' + values.join(',');
+}
+
+// ---------------------------------------------------------------------------
+// THE ARCHIVE CONTAINER REGISTER - the frozen expectation, and the change it
+// registers
+// ---------------------------------------------------------------------------
+//
+// The gate half. `archiveWriterProfile` reads what the writer did; this is what
+// it is held to, and a container whose profile stops matching produces a real
+// difference and a non-zero exit. It is what makes the comparison able to fail
+// on a FUTURE archive change rather than only on the one QA measured.
+//
+// THE PROFILE IS PER ROUTE, and it has to be: the two archive routes do not
+// share a writer. MEASURED on the delivered tree, in both cookie passes -
+//
+//   GET /{userSlug}/courses/{courseSlug}/download.zip  is written by ADM-ZIP
+//   [lib/controllers/courses.js:14,337-339 - `new zip(); addLocalFolder;
+//   writeZip`], and emits versionMadeBy 0x0314 with the UTF-8 name flag on
+//   every entry and no data descriptor.
+//
+//   GET /{lang}/{shortCode} in its `.zip` form is written by ARCHIVER
+//   [lib/controllers/trinket.js:24,2044-2045 - `downloadZip` ->
+//   `archiver('zip', ...)`], and emits versionMadeBy 0x032d with NO UTF-8 name
+//   flag and a data descriptor on every entry.
+//
+// So one frozen expectation cannot cover both, and a single merged profile
+// would have had to be loose enough to accept either - which is the shape of an
+// expectation that cannot fail. Each writer is registered on its own, keyed by
+// the route the archive came from, and an archive served on a route this
+// register does not name is a DIFFERENCE: a new archive route is registered
+// here deliberately, or it is not covered.
+//
+// EACH ENTRY CARRIES BOTH COLUMNS. `expected` is what this tree measurably
+// does and is what the comparison enforces. `baseline` is what the tree at the
+// base commit did, taken from the QA field-level measurement rather than
+// re-derived here - it is not compared against anything, and it is carried so
+// the artifact holds the registered before-and-after instead of pointing at a
+// document. `changed` names the fields that moved and the dependency bump that
+// moved them; note that the two routes' changes come from two different bumps,
+// which the QA finding's single attribution to archiver does not separate.
+// ---------------------------------------------------------------------------
+
+// The profile fields the comparison covers, in one list so a field added to the
+// reader without being registered fails at startup rather than being silently
+// uncompared. `assertArchiveReader` holds that invariant.
+var ARCHIVE_PROFILE_FIELDS = Object.freeze([
+  'utf8NameFlag',
+  'dataDescriptorFlag',
+  'centralVersionMadeBy',
+  'versionNeededByMethod',
+  'localVersionNeededByMethod',
+  'directoryExternalAttributes',
+  'fileExternalAttributes',
+  'internalAttributes',
+  'crc32Declared',
+  'uncompressedSizeDeclared',
+  'crc32DeclaredMatchesContent'
+]);
+
+// The two fields whose expectation is a MAP keyed by compression method: a ZIP
+// declares versionNeeded 10 for a stored entry and 20 for a deflated one, so a
+// single number would compare one method against the other.
+var ARCHIVE_PROFILE_METHOD_FIELDS = Object.freeze([
+  'versionNeededByMethod',
+  'localVersionNeededByMethod'
+]);
+
+var ARCHIVE_CONTAINER_REGISTER = Object.freeze({
+  what: 'the ZIP container fields each archive route\'s writer emits, frozen. ' +
+    'A container whose profile no longer matches is a DIFFERENCE and exits ' +
+    'non-zero, which is what covers the raw-digest exemption in the ' +
+    'timestamps category of the volatile set.',
+  registered: 'The container bytes a client downloads changed on both archive ' +
+    'routes. On GET /{userSlug}/courses/{courseSlug}/download.zip the change ' +
+    'is adm-zip 0.4.16 -> 0.6.0 (AAP 0.5.1.2): the UTF-8 name flag is now set ' +
+    'on every entry, versionMadeBy moved from MS-DOS to UNIX, deflated ' +
+    'entries now declare versionNeeded 20, and the external attributes gained ' +
+    'the setgid bit on directories and S_IFREG on files. On GET ' +
+    '/{lang}/{shortCode}.zip the change is archiver 2.1.1 -> 7.0.1: every ' +
+    'header field is unchanged and the declared crc32 and uncompressed size ' +
+    'moved from zero to the entry\'s real values, because 2.1.1 with a ' +
+    'buffered append wrote both as zero. Entry names, order and content are ' +
+    'identical on both routes.',
+  measurement: 'The `expected` column was measured on the delivered tree by ' +
+    'this file, from the live archive responses of the four archive ' +
+    'scenarios, in both the non-secure and the secure cookie pass, and the ' +
+    'two passes agreed field for field. The `baseline` column is the QA ' +
+    'field-level measurement of the tree at the base commit and is recorded, ' +
+    'not compared.',
+  pins: 'Each writer also carries a `pinned` block - the entry-table ' +
+    'fingerprint, the entry count and the byte length, measured the same way ' +
+    'as `expected`. It exists because the writer profile is ' +
+    'content-INDEPENDENT: a container that holds different bytes on the same ' +
+    'route matches every profile field, so without a pinned fingerprint a ' +
+    'change to what an archive HOLDS is invisible. MEASURED before the pin ' +
+    'existed: two valid containers on one registered route, equal in byte ' +
+    'length, entry names, entry sizes and all eleven profile fields but ' +
+    'differing in inflated content and crc32, produced zero differences. ' +
+    'The pin is a FALLBACK and never an override: a recording that carries a ' +
+    'fingerprint is compared against, and the pin stands aside and reports ' +
+    'that it did, so a re-captured corpus takes over with no edit here.',
+  measuredFrom: Object.freeze([
+    'route.get.userSlug-courses-courseSlug-download-zip.html',
+    'route.get.userSlug-courses-courseSlug-download-zip.json',
+    'quirk.reply-chain.header-resolved.course-download-zip',
+    'quirk.reply-chain.header-resolved.short-code-zip'
+  ]),
+  writers: Object.freeze([
+    Object.freeze({
+      id: 'course-download-adm-zip',
+      writer: 'adm-zip [lib/controllers/courses.js:14,337-339]',
+      dependencyChange: 'adm-zip 0.4.16 -> 0.6.0',
+      routes: Object.freeze(['GET /{userSlug}/courses/{courseSlug}/download.zip']),
+      // THE CONTENT PIN, and why it is a compared field rather than the
+      // comment it used to be. The writer profile above is
+      // content-INDEPENDENT by design - that is what lets one frozen
+      // expectation cover a four-entry course archive and a single-entry
+      // short-code archive - so a change to what the container HOLDS moves
+      // nothing in it. The fingerprint is the half that moves, and until this
+      // block existed it was compared only against a RECORDED fingerprint,
+      // which the committed corpus does not carry: every archive scenario
+      // landed in the observation branch, and two valid containers on the same
+      // route with the same byte length, the same entry names, the same entry
+      // sizes and an identical profile but different inflated content and
+      // different crc32 produced ZERO differences. Measured, before this
+      // block: 0.
+      //
+      // So the measurement is pinned here and compared exactly. AAP 0.9.3
+      // licenses it in terms - "Because seeding is deterministic, comparison
+      // is exact on..." - and pinning removes the dependency on a corpus
+      // re-capture this file does not own. The pin is the FALLBACK, never the
+      // authority: a recording that carries a fingerprint is compared against
+      // and the pin stands aside, so a re-captured corpus takes over without
+      // an edit here.
+      //
+      // MEASURED on the delivered tree by this file, from the live archive
+      // responses of the three course-download scenarios, in both cookie
+      // passes: 538 bytes, 4 entries - two directories and two deflated
+      // markdown files. A run that moves any of the three values is either an
+      // intended change to the archive, in which case the pin is re-measured
+      // and re-approved here, or a seed that moved, in which case
+      // test/parity/seed.js is what needs fixing.
+      pinned: Object.freeze({
+        fingerprint:
+          '4f1c73376d54a1ebb7d0f6d63f4d2cf15a7f0ee5e0ff6314b6196fb4cf55a713',
+        entryCount: 4,
+        byteLength: 538,
+        holds: 'draft-lesson/ and test-lesson/ as stored directory entries, ' +
+          'and test-lesson/parity-assignment.md and ' +
+          'test-lesson/test-material.md as deflated files of 26 and 12 ' +
+          'inflated bytes',
+        measuredFrom: 'the three course-download scenarios of the committed ' +
+          'corpus, in both the non-secure and the secure cookie pass, which ' +
+          'agreed on all three values'
+      }),
+      expected: Object.freeze({
+        utf8NameFlag: 'every-entry',
+        dataDescriptorFlag: 'no-entry',
+        centralVersionMadeBy: '0x0314',
+        versionNeededByMethod: Object.freeze({ deflated: 20, stored: 10 }),
+        localVersionNeededByMethod: Object.freeze({ deflated: 20, stored: 10 }),
+        directoryExternalAttributes: '0x45ed0010',
+        fileExternalAttributes: '0x81a40000',
+        internalAttributes: '0x0000',
+        crc32Declared: 'every-entry-with-content',
+        uncompressedSizeDeclared: 'every-entry-with-content',
+        crc32DeclaredMatchesContent: 'every-entry-with-content'
+      }),
+      // The QA measurement of the base-commit tree, field for field as it was
+      // reported. Fields its diff did not state are `null` and say so rather
+      // than being guessed at from the target column.
+      baseline: Object.freeze({
+        utf8NameFlag: 'no-entry',
+        dataDescriptorFlag: null,
+        centralVersionMadeBy: '0x000a',
+        versionNeededByMethod: null,
+        localVersionNeededByMethod: Object.freeze({ deflated: 10, stored: 10 }),
+        directoryExternalAttributes: '0x41ed0010',
+        fileExternalAttributes: '0x01a40000',
+        internalAttributes: null,
+        crc32Declared: 'every-entry-with-content',
+        uncompressedSizeDeclared: 'every-entry-with-content',
+        crc32DeclaredMatchesContent: null
+      }),
+      baselineNote: 'measured by QA at the base commit: 200 application/zip, ' +
+        '538 bytes on both trees, identical content-disposition, identical ' +
+        'entry names, CRCs and sizes, and sha256 5603ba5babf7c169 (baseline) ' +
+        'against 9198237d2c6da699 (target). `null` marks a field the ' +
+        'field-level diff did not state.',
+      changed: Object.freeze([
+        'local general-purpose flags 0x0000 -> 0x0800 (UTF-8 name, bit 11) on ' +
+          'every entry',
+        'local versionNeeded 10 -> 20 on deflated entries',
+        'central versionMadeBy 0x000a (MS-DOS v1.0) -> 0x0314 (UNIX v2.0)',
+        'directory external attributes 0x41ed0010 -> 0x45ed0010 ' +
+          '(0o40755 -> 0o42755, setgid now set)',
+        'file external attributes 0x01a40000 -> 0x81a40000 ' +
+          '(0o644 -> S_IFREG|0o644)'
+      ])
+    }),
+    Object.freeze({
+      id: 'short-code-download-archiver',
+      writer: 'archiver [lib/controllers/trinket.js:24,2044-2045]',
+      dependencyChange: 'archiver 2.1.1 -> 7.0.1',
+      routes: Object.freeze(['GET /{lang}/{shortCode}']),
+      // THE CONTENT PIN. Same contract as the course writer's above, and the
+      // same reason: this profile is content-independent, so without a pinned
+      // fingerprint a changed entry body on this route is invisible. MEASURED
+      // on the delivered tree by this file, from the live archive response of
+      // the short-code scenario, in both cookie passes: 182 bytes, one
+      // deflated `main.txt` entry of 61 inflated bytes.
+      pinned: Object.freeze({
+        fingerprint:
+          '076ae4d6f0ffb51ce3c09ba731986b1fbb28fbf36bd81dabe837edf5e56f5377',
+        entryCount: 1,
+        byteLength: 182,
+        holds: 'main.txt as a single deflated entry, 52 compressed bytes ' +
+          'over 61 inflated bytes, crc32 0xf10614e3 - the seeded python ' +
+          'trinket source',
+        measuredFrom: 'the short-code archive scenario of the committed ' +
+          'corpus, in both the non-secure and the secure cookie pass, which ' +
+          'agreed on all three values'
+      }),
+      // `directoryExternalAttributes` is declared null because this writer
+      // emits no directory entry on this route - a directory appearing here
+      // would be a difference, not a gap.
+      expected: Object.freeze({
+        utf8NameFlag: 'no-entry',
+        dataDescriptorFlag: 'every-entry',
+        centralVersionMadeBy: '0x032d',
+        versionNeededByMethod: Object.freeze({ deflated: 20 }),
+        localVersionNeededByMethod: Object.freeze({ deflated: 20 }),
+        directoryExternalAttributes: null,
+        fileExternalAttributes: '0x81a40020',
+        internalAttributes: '0x0000',
+        crc32Declared: 'every-entry-with-content',
+        uncompressedSizeDeclared: 'every-entry-with-content',
+        crc32DeclaredMatchesContent: 'every-entry-with-content'
+      }),
+      baseline: Object.freeze({
+        utf8NameFlag: 'no-entry',
+        dataDescriptorFlag: 'every-entry',
+        centralVersionMadeBy: '0x032d',
+        versionNeededByMethod: Object.freeze({ deflated: 20 }),
+        localVersionNeededByMethod: Object.freeze({ deflated: 20 }),
+        directoryExternalAttributes: null,
+        fileExternalAttributes: '0x81a40020',
+        internalAttributes: '0x0000',
+        crc32Declared: 'no-entry-with-content',
+        uncompressedSizeDeclared: 'no-entry-with-content',
+        crc32DeclaredMatchesContent: 'no-entry-with-content'
+      }),
+      baselineNote: 'measured by QA at the base commit: 200, 182 bytes on ' +
+        'both trees, EVERY header field identical, sha256 403636a7b891fa71 ' +
+        '(baseline) against eaa4ecd3b3304c7d (target), and a byte-diff ' +
+        'isolating ten offsets - the data-descriptor and central-directory ' +
+        'crc32 and uncompressed-size fields, where the baseline declared 0 ' +
+        'and 0 for an entry whose real values are 0xf10614e3 and 61 bytes. ' +
+        'Every other field of this profile is therefore the same on both ' +
+        'trees.',
+      changed: Object.freeze([
+        'declared crc32 0x00000000 -> 0xf10614e3, the entry\'s real value',
+        'declared uncompressed size 0 -> 61, the entry\'s real length',
+        'so crc32DeclaredMatchesContent no-entry-with-content -> ' +
+          'every-entry-with-content: the baseline\'s archives were ' +
+          'structurally invalid, which is what adm-zip 0.6.0 rejects with ' +
+          '"CRC32 checksum failed" and adm-zip 0.4.16 silently read as ""'
+      ])
+    })
+  ])
+});
+
+/**
+ * The registered writer for the route an archive came from.
+ *
+ * With a route key, the writer is selected by it and a route the register does
+ * not name resolves to nothing, which the comparison reports as a difference -
+ * an archive route that is not registered is not covered, and saying so is the
+ * point. Without one - a harness calling the comparator directly - every
+ * registered writer is tried and the best match is returned, so the check
+ * still means "this container matches a registered writer".
+ *
+ * @param {(string|null)} routeKey as manifest.routeKey produces
+ * @param {(Object|null)} profile the observed writer profile
+ * @returns {Object} {writer, selectedBy, candidates}
+ */
+function selectArchiveWriter(routeKey, profile) {
+  var byRoute = null;
+  var best = null;
+
+  ARCHIVE_CONTAINER_REGISTER.writers.forEach(function(writer) {
+    if (routeKey && writer.routes.indexOf(routeKey) >= 0) {
+      byRoute = writer;
+    }
+  });
+
+  if (routeKey) {
+    return {
+      writer: byRoute,
+      selectedBy: byRoute ? 'route' : 'route-not-registered',
+      candidates: ARCHIVE_CONTAINER_REGISTER.writers.map(function(writer) {
+        return writer.id;
+      })
+    };
+  }
+
+  ARCHIVE_CONTAINER_REGISTER.writers.forEach(function(writer) {
+    var verdict = compareArchiveProfile(profile, writer.expected);
+
+    if (!best || verdict.mismatches.length < best.verdict.mismatches.length) {
+      best = { writer: writer, verdict: verdict };
+    }
+  });
+
+  return {
+    writer: best ? best.writer : null,
+    selectedBy: 'best-match',
+    candidates: ARCHIVE_CONTAINER_REGISTER.writers.map(function(writer) {
+      return writer.id;
+    })
+  };
+}
+
+/**
+ * Holds one observed writer profile against a registered expectation.
+ *
+ * A field the container cannot determine - directory attributes in an archive
+ * with no directories - is UNDETERMINED rather than compared against nothing,
+ * and is reported as such: it is not a pass. A field the observed profile
+ * carries and the expectation does not declare is a MISMATCH, because an
+ * unregistered field is an uncompared one.
+ *
+ * @param {(Object|null)} observed as archiveWriterProfile produces
+ * @param {(Object|null)} expected the register's `expected` block
+ * @returns {Object} {ok, mismatches, undetermined}
+ */
+function compareArchiveProfile(observed, expected) {
+  var mismatches = [];
+  var undetermined = [];
+
+  if (!observed || !expected) {
+    return {
+      ok: false,
+      mismatches: [{
+        field: 'writerProfile',
+        expected: expected ? '(a profile)' : '(no registered expectation)',
+        observed: observed ? '(a profile)' : '(no readable container)'
+      }],
+      undetermined: undetermined
+    };
+  }
+
+  ARCHIVE_PROFILE_FIELDS.forEach(function(field) {
+    var want = has(expected, field) ? expected[field] : undefined;
+    var got = has(observed, field) ? observed[field] : undefined;
+
+    if (want === undefined) {
+      mismatches.push({
+        field: field,
+        expected: '(the register declares no value for this field)',
+        observed: got === undefined ? null : got
+      });
+      return;
+    }
+
+    if (ARCHIVE_PROFILE_METHOD_FIELDS.indexOf(field) >= 0) {
+      compareArchiveMethodMap(field, want, got, mismatches, undetermined);
+      return;
+    }
+
+    if (got === undefined || got === null) {
+      undetermined.push({
+        field: field,
+        expected: want,
+        why: 'this container\'s entries do not determine the field, so it was ' +
+          'not compared. It is reported rather than counted as a pass.'
+      });
+      return;
+    }
+
+    if (want === null) {
+      mismatches.push({
+        field: field,
+        expected: '(the register declares that this writer emits none)',
+        observed: got
+      });
+      return;
+    }
+
+    if (String(got) !== String(want)) {
+      mismatches.push({ field: field, expected: want, observed: got });
+    }
+  });
+
+  return {
+    ok: !mismatches.length,
+    mismatches: mismatches,
+    undetermined: undetermined
+  };
+}
+
+/**
+ * The per-method half of the profile comparison.
+ *
+ * @param {string} field
+ * @param {(Object|null)} want the registered map
+ * @param {(Object|null)} got the observed map
+ * @param {Array.<Object>} mismatches collected in place
+ * @param {Array.<Object>} undetermined collected in place
+ * @returns {undefined}
+ */
+function compareArchiveMethodMap(field, want, got, mismatches, undetermined) {
+  var observed = got || {};
+  var expected = want || {};
+
+  if (!want) {
+    // The register carries no map for this field on this writer, which is a
+    // registration gap rather than a container fault - and an uncompared field
+    // either way, so it is reported as a mismatch.
+    mismatches.push({
+      field: field,
+      expected: '(the register declares no per-method expectation)',
+      observed: sortedKeys(observed)
+    });
+    return;
+  }
+
+  Object.keys(observed).sort().forEach(function(method) {
+    if (!has(expected, method)) {
+      mismatches.push({
+        field: field + '.' + method,
+        expected: '(the register declares no ' + field + ' for the ' + method +
+          ' method, so this container carries a method nobody registered)',
+        observed: observed[method]
+      });
+      return;
+    }
+
+    if (String(observed[method]) !== String(expected[method])) {
+      mismatches.push({
+        field: field + '.' + method,
+        expected: expected[method],
+        observed: observed[method]
+      });
+    }
+  });
+
+  Object.keys(expected).sort().forEach(function(method) {
+    if (!has(observed, method)) {
+      undetermined.push({
+        field: field + '.' + method,
+        expected: expected[method],
+        why: 'this container holds no ' + method + ' entry, so the field was ' +
+          'not compared'
+      });
+    }
+  });
+}
+
+/**
+ * Holds one observed container against a registered CONTENT pin.
+ *
+ * The content half of the register, and the counterpart to
+ * `compareArchiveProfile`: that one asks what the writing library did, this
+ * one asks what the container holds. Three fields, each compared exactly and
+ * each a mismatch on its own - the entry-table fingerprint, the entry count
+ * and the byte length.
+ *
+ * A pin field the register does not declare is reported as UNPINNED rather
+ * than passed: an undeclared pin is an uncompared one, and the startup probe
+ * `every-registered-writer-declares-a-complete-content-pin` is what keeps that
+ * report from ever being reachable through the committed register. A field the
+ * container did not produce - a fingerprint on a container that would not
+ * parse - is reported the same way, because the caller has already turned that
+ * state into a difference of its own.
+ *
+ * @param {(Object|null)} summary as readArchiveContainer produces
+ * @param {(Object|null)} pin a register writer's `pinned` block
+ * @returns {Object} {ok, compared, mismatches, unpinned}
+ */
+function compareArchivePin(summary, pin) {
+  var fields = [
+    { field: 'fingerprint', observed: summary ? summary.fingerprint : null },
+    { field: 'entryCount', observed: summary ? summary.entryCount : null },
+    { field: 'byteLength', observed: summary ? summary.byteLength : null }
+  ];
+  var mismatches = [];
+  var unpinned = [];
+  var compared = [];
+
+  fields.forEach(function(entry) {
+    var want = pin ? pin[entry.field] : null;
+
+    if (want === null || want === undefined) {
+      unpinned.push({
+        field: entry.field,
+        observed: entry.observed,
+        why: 'the register declares no ' + entry.field + ' pin for this ' +
+          'writer, so the observed value was recorded rather than compared'
+      });
+      return;
+    }
+
+    if (entry.observed === null || entry.observed === undefined) {
+      unpinned.push({
+        field: entry.field,
+        observed: null,
+        why: 'this container produced no ' + entry.field + ', so the pin had ' +
+          'nothing to compare against. The container\'s own state is reported ' +
+          'as a difference of its own'
+      });
+      return;
+    }
+
+    compared.push(entry.field);
+
+    if (entry.observed !== want) {
+      mismatches.push({
+        field: entry.field,
+        expected: want,
+        observed: entry.observed
+      });
+    }
+  });
+
+  return {
+    ok: !mismatches.length,
+    compared: compared,
+    mismatches: mismatches,
+    unpinned: unpinned
+  };
+}
+
+/**
+ * The whole archive comparison for one step, as facts rather than records.
+ *
+ * ONE implementation, two consumers: `compareArchive` turns this into
+ * difference and observation records, and `accountArchives` writes it into the
+ * artifact verbatim. A second derivation would be a second answer to the same
+ * question, and the two would drift.
+ *
+ * @param {(Object|null)} recorded the baseline body from the corpus
+ * @param {(Object|null)} observed the body this run measured
+ * @param {Object} context {contentType, routeKey}
+ * @returns {(Object|null)} null when no archive comparison applies
+ */
+function describeArchiveComparison(recorded, observed, context) {
+  var summary = observed ? observed.archive : null;
+  var recordedArchive = recorded ? recorded.archive : null;
+  var selection;
+  var verdict;
+  var pin;
+  var pinVerdict;
+  var out;
+
+  if (!isArchiveDigestExempt(context && context.contentType)) {
+    return null;
+  }
+
+  out = {
+    contentType: typeWithoutCharset(context && context.contentType) || null,
+    routeKey: (context && context.routeKey) || null,
+    container: summary ? summary.container : null,
+    byteLength: summary ? summary.byteLength : null,
+    state: 'no-summary',
+    reason: null,
+    entryCount: summary ? summary.entryCount : null,
+    recordedEntryCount: recordedArchive ? recordedArchive.entryCount : null,
+    // The recording's own byte length, so the comparison below can say which
+    // side gated it. When a recording carries one, `compareBody` has already
+    // compared the same quantity against it exactly as `body.length`, which is
+    // why the pin defers rather than reporting the same fact twice.
+    recordedByteLength: recordedArchive &&
+      recordedArchive.byteLength !== undefined
+      ? recordedArchive.byteLength
+      : null,
+    fingerprint: summary ? summary.fingerprint : null,
+    recordedFingerprint: recordedArchive ? (recordedArchive.fingerprint || null) : null,
+    // THE REGISTER PIN, carried beside the recorded values so the artifact
+    // shows what the fallback was as well as which side decided.
+    pinnedFingerprint: null,
+    pinnedEntryCount: null,
+    pinnedByteLength: null,
+    fingerprintComparison: 'not-compared',
+    // The CORPUS-side truth, reported whatever the comparison ended up using:
+    // a run that fell back to the pin must not read as a corpus comparison it
+    // did not make, and the re-capture that would supersede the pin must stay
+    // visible in the evidence.
+    recordingFingerprintState: recordedArchive
+      ? (recordedArchive.fingerprint
+        ? 'recorded'
+        : 'recording-carries-no-fingerprint')
+      : 'recording-predates-the-field',
+    // Which side each of the three content comparisons was decided against:
+    // 'recording', 'register-pin' or 'nothing'.
+    fingerprintComparedAgainst: 'nothing',
+    entryCountComparedAgainst: 'nothing',
+    byteLengthComparedAgainst: 'nothing',
+    // The pin verdict, computed whenever a pin exists - including when the
+    // recording is the authority. Recorded rather than gated in that case, so
+    // the pin can neither override nor shadow a recording.
+    pinComparison: null,
+    writer: null,
+    writerSelectedBy: null,
+    profile: summary ? summary.writerProfile : null,
+    profileComparison: null,
+    entries: summary ? summary.entries : [],
+    entriesTruncated: summary ? !!summary.entriesTruncated : false,
+    entryDivergence: []
+  };
+
+  if (!summary) {
+    // The exempt content type was served and no summary was taken, which can
+    // only mean this file did not produce one. Reported as its own state so it
+    // cannot pass for a compared container.
+    out.reason = 'the response declares an exempt archive content type and no ' +
+      'structural summary was taken, so nothing covers its digest exemption';
+    return out;
+  }
+
+  if (!summary.parsed) {
+    out.state = summary.empty
+      ? 'empty'
+      : (summary.container === 'zip' ? 'unreadable' : 'not-a-zip');
+    out.reason = summary.unparsedReason;
+    return out;
+  }
+
+  if (!summary.entryCount) {
+    // A container that read cleanly and holds nothing. Its own state, because
+    // every field of a writer profile is undetermined without entries: left as
+    // `parsed` it would pass every comparison here while comparing nothing,
+    // which is the vacuity this whole section exists to avoid. Both registered
+    // archive routes always emit at least one entry, so a route that begins
+    // serving an empty container is registered here deliberately or it is a
+    // difference.
+    out.state = 'no-entries';
+    out.reason = 'the container read cleanly and declares no entries, so ' +
+      'every field of its writer profile is undetermined and nothing about it ' +
+      'can be compared';
+    return out;
+  }
+
+  out.state = 'parsed';
+  selection = selectArchiveWriter(out.routeKey, summary.writerProfile);
+  out.writer = selection.writer ? selection.writer.id : null;
+  out.writerSelectedBy = selection.selectedBy;
+
+  if (!selection.writer) {
+    out.profileComparison = {
+      ok: false,
+      mismatches: [{
+        field: 'registered',
+        expected: 'a writer profile registered for this route in ' +
+          'ARCHIVE_CONTAINER_REGISTER (' + selection.candidates.join(', ') + ')',
+        observed: 'no registered writer for ' + (out.routeKey || '(no route)')
+      }],
+      undetermined: []
+    };
+  }
+  else {
+    verdict = compareArchiveProfile(summary.writerProfile,
+      selection.writer.expected);
+    out.profileComparison = verdict;
+  }
+
+  // THE CONTENT COMPARISON, and the precedence that governs it. A RECORDED
+  // value is the authority wherever the recording carries one: the corpus is
+  // what a baseline capture measured, and a pin that overrode it would turn a
+  // real parity difference into a pass. Where the recording carries nothing -
+  // which is every archive scenario of the committed corpus, because it
+  // records a binary body as a length and a digest and predates the archive
+  // block - the register PIN is compared instead, and the state says so.
+  pin = selection.writer ? (selection.writer.pinned || null) : null;
+  out.pinnedFingerprint = pin ? (pin.fingerprint || null) : null;
+  out.pinnedEntryCount = pin && pin.entryCount !== undefined
+    ? pin.entryCount
+    : null;
+  out.pinnedByteLength = pin && pin.byteLength !== undefined
+    ? pin.byteLength
+    : null;
+
+  if (pin) {
+    // Computed whatever decides the verdict, so a recording that disagrees
+    // with the pin is visible in the evidence without the pin gating it.
+    pinVerdict = compareArchivePin(summary, pin);
+    out.pinComparison = pinVerdict;
+  }
+
+  if (out.recordedFingerprint) {
+    out.fingerprintComparedAgainst = 'recording';
+    out.fingerprintComparison = out.recordedFingerprint === out.fingerprint
+      ? 'equal'
+      : 'differs';
+
+    if (out.fingerprintComparison === 'differs') {
+      out.entryDivergence = describeArchiveEntryDivergence(
+        recordedArchive.entries || [], summary.entries || []);
+    }
+  }
+  else if (out.pinnedFingerprint) {
+    // A DISTINCT state, deliberately not 'equal' or 'differs': the artifact
+    // must never claim a corpus comparison it did not make, and
+    // `recordingFingerprintState` beside it still says what the corpus holds.
+    out.fingerprintComparedAgainst = 'register-pin';
+    out.fingerprintComparison = out.pinnedFingerprint === out.fingerprint
+      ? 'equal-to-register-pin'
+      : 'differs-from-register-pin';
+  }
+  else {
+    // Neither side carries a fingerprint. On a REGISTERED route this is a
+    // gating failure rather than an observation - a category the comparator
+    // cannot fail in is a category it is not comparing - and `compareArchive`
+    // and `accountArchiveCheck` both hold it. On an unregistered route the
+    // missing writer is already the difference.
+    out.fingerprintComparedAgainst = 'nothing';
+    out.fingerprintComparison = 'uncompared-no-recording-and-no-pin';
+  }
+
+  if (out.recordedEntryCount !== null) {
+    out.entryCountComparedAgainst = 'recording';
+  }
+  else if (out.pinnedEntryCount !== null) {
+    out.entryCountComparedAgainst = 'register-pin';
+  }
+
+  if (out.recordedByteLength !== null) {
+    // `compareBody` compares the recorded body length exactly in this same
+    // step, so the recording is already gating this quantity.
+    out.byteLengthComparedAgainst = 'recording';
+  }
+  else if (out.pinnedByteLength !== null) {
+    out.byteLengthComparedAgainst = 'register-pin';
+  }
+
+  return out;
+}
+
+/**
+ * Where two entry tables differ, field by field, for the report.
+ *
+ * Only reached when the fingerprints already differ, so this narrows the
+ * report; it never decides the verdict. Bounded, because one re-generated
+ * archive should not fill an artifact.
+ *
+ * @param {Array.<Object>} recorded
+ * @param {Array.<Object>} observed
+ * @returns {Array.<Object>}
+ */
+function describeArchiveEntryDivergence(recorded, observed) {
+  var out = [];
+  var byName = Object.create(null);
+
+  recorded.forEach(function(entry) {
+    byName[entry.name] = entry;
+  });
+
+  observed.forEach(function(entry) {
+    var other = byName[entry.name];
+
+    if (!other) {
+      out.push({
+        entry: entry.name,
+        field: '(present)',
+        recorded: null,
+        observed: 'an entry the recording does not carry'
+      });
+      return;
+    }
+
+    delete byName[entry.name];
+
+    Object.keys(entry).sort().forEach(function(field) {
+      if (field === 'index') {
+        return;
+      }
+
+      if (String(other[field]) !== String(entry[field])) {
+        out.push({
+          entry: entry.name,
+          field: field,
+          recorded: other[field] === undefined ? null : other[field],
+          observed: entry[field]
+        });
+      }
+    });
+  });
+
+  Object.keys(byName).forEach(function(name) {
+    out.push({
+      entry: name,
+      field: '(present)',
+      recorded: 'an entry the recording carries',
+      observed: null
+    });
+  });
+
+  return out.slice(0, MAX_DIFFERENCES_PER_STEP);
+}
+
+/**
+ * The archive comparison as difference and observation records.
+ *
+ * WHAT FAILS HERE, and it is the whole reason this section exists: a container
+ * whose writer profile no longer matches the frozen register, a container
+ * served on a route the register does not name, a ZIP that cannot be read, an
+ * entry count or byte length that moved, a fingerprint that differs from a
+ * recorded one, a fingerprint that differs from the REGISTERED PIN where the
+ * recording carries none, and an archive on a registered route that ends with
+ * its fingerprint compared against nothing at all. Each is a DIFFERENCE and
+ * each exits non-zero.
+ *
+ * WHY THE PIN IS HERE. The writer profile is content-independent by design, so
+ * a container that holds different bytes on the same route matches every one
+ * of its eleven fields. While the fingerprint was compared only against a
+ * recorded value - and the committed corpus records a binary body as a length
+ * and a digest, carrying no archive block at all - content drift produced
+ * ZERO differences: measured, on two valid containers equal in byte length,
+ * entry names, entry sizes and profile and differing only in inflated content
+ * and crc32. The pin closes that, and it defers to a recording wherever one
+ * exists so a re-captured corpus supersedes it without an edit.
+ *
+ * WHAT IS AN OBSERVATION, stated rather than passed off as compared: a
+ * fingerprint compared against the register pin rather than against a
+ * recording, where the value is now gated but the corpus-side gap is real and
+ * is reported so the re-capture that would close it stays visible; a field
+ * this container's entries cannot determine; and an exempt content type this
+ * reader does not open, where the digest exemption remains uncovered.
+ *
+ * @param {(Object|null)} recorded the baseline body
+ * @param {(Object|null)} observed the measured body
+ * @param {Object} context {contentType, routeKey}
+ * @returns {Object} {differences, observations, comparison}
+ */
+function compareArchive(recorded, observed, context) {
+  var comparison = describeArchiveComparison(recorded, observed, context);
+  var differences = [];
+  var observations = [];
+
+  if (!comparison) {
+    return { differences: differences, observations: observations,
+      comparison: null };
+  }
+
+  if (comparison.state === 'no-summary' || comparison.state === 'unreadable' ||
+      comparison.state === 'no-entries') {
+    differences.push(difference('body.archive.parsed',
+      'a readable container with at least one entry', comparison.state, {
+        note: comparison.reason + '. The raw digest of this content type is ' +
+          'exempt as a clock read, so the structural read is what covers it: ' +
+          'a container that cannot be read, or that holds nothing, is not a ' +
+          'container that matched.'
+      }));
+
+    return { differences: differences, observations: observations,
+      comparison: comparison };
+  }
+
+  if (comparison.state === 'empty' || comparison.state === 'not-a-zip') {
+    observations.push(observation('body.archive.parsed', true, false,
+      comparison.reason));
+
+    return { differences: differences, observations: observations,
+      comparison: comparison };
+  }
+
+  (comparison.profileComparison.mismatches || []).forEach(function(record) {
+    differences.push(difference('body.archive.writerProfile.' + record.field,
+      record.expected, record.observed, {
+        note: 'the container\'s writer profile no longer matches the frozen ' +
+          'expectation registered for ' +
+          (comparison.writer || comparison.routeKey || 'this route') +
+          ' in ARCHIVE_CONTAINER_REGISTER. This field is decided by the ' +
+          'writing library rather than by the content, so it moves when the ' +
+          'writer changes - which is the change this comparison exists to ' +
+          'register rather than normalize away.'
+      }));
+  });
+
+  (comparison.profileComparison.undetermined || []).forEach(function(record) {
+    observations.push(observation('body.archive.writerProfile.' + record.field,
+      record.expected, null, record.why));
+  });
+
+  if (comparison.entryCountComparedAgainst === 'recording' &&
+      comparison.recordedEntryCount !== comparison.entryCount) {
+    differences.push(difference('body.archive.entryCount',
+      comparison.recordedEntryCount, comparison.entryCount, {
+        note: 'the container holds a different number of entries than the ' +
+          'recording did'
+      }));
+  }
+  else if (comparison.entryCountComparedAgainst === 'register-pin' &&
+      comparison.pinnedEntryCount !== comparison.entryCount) {
+    differences.push(difference('body.archive.entryCount',
+      comparison.pinnedEntryCount, comparison.entryCount, {
+        note: 'the recording carries no entry count, so the count was ' +
+          'compared against the `pinned.entryCount` registered for ' +
+          (comparison.writer || comparison.routeKey || 'this route') + ' in ' +
+          'ARCHIVE_CONTAINER_REGISTER, and it moved. Either the archive is ' +
+          'intended to hold a different number of entries, in which case the ' +
+          'pin is re-measured and re-approved in the register, or the seeded ' +
+          'fixtures moved and test/parity/seed.js is what needs fixing.',
+        comparedAgainst: 'register-pin'
+      }));
+  }
+
+  if (comparison.byteLengthComparedAgainst === 'register-pin' &&
+      comparison.pinnedByteLength !== comparison.byteLength) {
+    differences.push(difference('body.archive.byteLength',
+      comparison.pinnedByteLength, comparison.byteLength, {
+        note: 'the recording carries no archive byte length, so the length ' +
+          'was compared against the `pinned.byteLength` registered for ' +
+          (comparison.writer || comparison.routeKey || 'this route') + ' in ' +
+          'ARCHIVE_CONTAINER_REGISTER, and it moved. The timestamp fields of ' +
+          'a ZIP are fixed-width, so this length does NOT move with the ' +
+          'clock: it moved because the container is built from different ' +
+          'input or by a different writer. Either the change is intended and ' +
+          'the pin is re-measured and re-approved in the register, or the ' +
+          'seeded fixtures moved and test/parity/seed.js is what needs fixing.',
+        comparedAgainst: 'register-pin'
+      }));
+  }
+
+  if (comparison.fingerprintComparison === 'differs') {
+    differences.push(difference('body.archive.fingerprint',
+      comparison.recordedFingerprint, comparison.fingerprint, {
+        note: 'sha256 over the canonical entry table with the mtime fields ' +
+          'excluded and each entry\'s content taken as the sha256 of its ' +
+          'inflated bytes. Two archives of the same entries fingerprint ' +
+          'identically however far apart their clock reads are, so this ' +
+          'difference is a change in what the archive HOLDS.',
+        comparedAgainst: 'recording',
+        entryDivergence: comparison.entryDivergence
+      }));
+  }
+  else if (comparison.fingerprintComparison === 'differs-from-register-pin') {
+    // THE CONTENT-DRIFT FAILURE. The recording carries no fingerprint, so
+    // this was held against the register's pinned measurement - and it moved.
+    // The message has to say three things, because whoever reads only the
+    // failure has to be able to act on it: that the CONTENTS of the container
+    // changed, that this is not the clock, and what the two legitimate
+    // remedies are.
+    differences.push(difference('body.archive.fingerprint',
+      comparison.pinnedFingerprint, comparison.fingerprint, {
+        note: 'the container\'s CONTENTS changed. sha256 over the canonical ' +
+          'entry table with every mtime field DELIBERATELY EXCLUDED and each ' +
+          'entry\'s content taken as the sha256 of its INFLATED bytes, so ' +
+          'this value cannot move with a clock read: the raw digest of an ' +
+          'archive is exempt precisely because it IS a clock read, and this ' +
+          'fingerprint is what replaced it. The recording carries no ' +
+          'fingerprint - the committed corpus records a binary body as a ' +
+          'length and a digest and predates the field - so the comparison ' +
+          'was against the `pinned.fingerprint` registered for ' +
+          (comparison.writer || comparison.routeKey || 'this route') + ' in ' +
+          'ARCHIVE_CONTAINER_REGISTER. Two remedies, and exactly one of them ' +
+          'is right: either this archive is INTENDED to hold different ' +
+          'content, in which case the pin is re-measured from a driven run ' +
+          'and re-approved in the register with the change recorded; or the ' +
+          'seeded fixtures moved under it, in which case the pin is correct ' +
+          'and test/parity/seed.js is what needs fixing. The entry table of ' +
+          'both sides is in the artifact under passes[].archives, which is ' +
+          'where the changed entry is identified. Note that the writer ' +
+          'profile above is content-INDEPENDENT and still matches, so this ' +
+          'difference is the only thing standing between a changed archive ' +
+          'and a passing gate.',
+        comparedAgainst: 'register-pin',
+        pinnedEntryCount: comparison.pinnedEntryCount,
+        pinnedByteLength: comparison.pinnedByteLength,
+        recordingState: comparison.recordingFingerprintState
+      }));
+  }
+  else if (comparison.fingerprintComparison ===
+      'uncompared-no-recording-and-no-pin') {
+    // THE COVERAGE FAILURE, at the scenario level. On a registered route this
+    // is a gating failure and not an observation: a fingerprint compared
+    // against nothing is the exact hole this section closed, and it would
+    // otherwise reopen silently the moment a writer were registered without a
+    // pin. On an unregistered route the absent writer is already the
+    // difference, so this is reported rather than counted twice.
+    if (comparison.writer) {
+      differences.push(difference('body.archive.fingerprint',
+        'a fingerprint compared against a recording or against the ' +
+          'register pin', 'compared against nothing', {
+          note: 'the recording carries no fingerprint for this archive and ' +
+            'the writer registered for ' + comparison.writer + ' in ' +
+            'ARCHIVE_CONTAINER_REGISTER declares no `pinned.fingerprint`, so ' +
+            'nothing compares what this container HOLDS. The writer profile ' +
+            'is content-independent, so on its own it passes a container with ' +
+            'entirely different contents. Register a pin measured from a ' +
+            'driven run, or re-capture the corpus with the archive block ' +
+            'present.',
+          comparedAgainst: 'nothing',
+          recordingState: comparison.recordingFingerprintState
+        }));
+    }
+    else {
+      observations.push(observation('body.archive.fingerprint', null,
+        comparison.fingerprint, 'no writer is registered for this route, so ' +
+          'there is no pin to compare against and the recording carries no ' +
+          'fingerprint either. The unregistered route is itself the ' +
+          'difference reported above; the measured fingerprint is recorded ' +
+          'here so registering the route does not need another run.'));
+    }
+  }
+  else if (comparison.fingerprintComparison === 'equal-to-register-pin') {
+    // COMPARED, and gating - but not against the corpus, and the artifact
+    // must not read as though it were. The corpus-side gap is real and the
+    // re-capture that closes it is a sibling's work, so it is reported here
+    // rather than papered over by a passing comparison.
+    observations.push(observation('body.archive.fingerprint',
+      comparison.pinnedFingerprint, comparison.fingerprint,
+      'compared EXACTLY, and against the `pinned.fingerprint` registered for ' +
+        (comparison.writer || 'this route') + ' in ' +
+        'ARCHIVE_CONTAINER_REGISTER rather than against the recording: the ' +
+        'recording state is ' +
+        JSON.stringify(comparison.recordingFingerprintState) + ', because the ' +
+        'committed corpus records a binary body as a length and a digest and ' +
+        'predates the archive block. A mismatch against the pin is a real ' +
+        'difference that fails the run - it is not an observation - so this ' +
+        'container\'s contents ARE gated. What remains open is the corpus ' +
+        'side: a corpus captured with the archive block present would be ' +
+        'compared against the recording instead, and the pin would stand ' +
+        'aside without an edit to this file.'));
+  }
+
+  // The five branches above are exhaustive for a `parsed` container: the
+  // fingerprint state is 'equal' or 'differs' against a recording,
+  // 'equal-to-register-pin' or 'differs-from-register-pin' against a pin, or
+  // 'uncompared-no-recording-and-no-pin'. A recording that carries an archive
+  // block with no fingerprint in it reaches the pin like any other, which is
+  // why it needs no branch of its own here - `recordingFingerprintState`
+  // carries that distinction into the artifact instead.
+  return { differences: differences, observations: observations,
+    comparison: comparison };
+}
+
+/**
+ * A numeric field collected per compression method.
+ *
+ * versionNeeded is the field this exists for: a ZIP declares 10 for a stored
+ * entry and 20 for a deflated one, so a single expected number would compare
+ * one method against the other. The map is keyed by method name and a method
+ * the frozen expectation does not declare is a difference rather than a gap.
+ *
+ * @param {Array.<Object>} entries
+ * @param {function(Object): number} pick
+ * @returns {Object}
+ */
+function archiveByMethod(entries, pick) {
+  var out = {};
+
+  entries.forEach(function(entry) {
+    var key = entry.method;
+    var value = pick(entry);
+
+    if (!has(out, key)) {
+      out[key] = value;
+      return;
+    }
+
+    if (out[key] !== value && String(out[key]).indexOf('mixed:') !== 0) {
+      out[key] = 'mixed:' + out[key] + ',' + value;
+    }
+  });
+
+  return sortedKeys(out);
+}
+
+// ---------------------------------------------------------------------------
 // Body comparison
 // ---------------------------------------------------------------------------
 
@@ -5190,14 +8215,21 @@ function has(value, key) {
  * reviewer can act on the report without re-running the tool. They narrow the
  * report; they never narrow the gate.
  *
+ * An ARCHIVE container - one of the six content types whose raw digest the
+ * timestamps category exempts - is additionally compared by its STRUCTURE, in
+ * this same step and independently of the digest: the writer profile against
+ * the frozen register and the entry-table fingerprint against the recording.
+ * That is what stands behind the exemption, and it fails the run.
+ *
  * @param {Object} baseline recorded body
  * @param {Object} target observed body
- * @param {Object} context {contentType, normalizationApplied}
+ * @param {Object} context {contentType, normalizationApplied, routeKey}
  * @returns {Object} {differences, observations}
  */
 function compareBody(baseline, target, context) {
   var differences = [];
   var observations = [];
+  var archive;
   var left;
   var right;
   var divergence;
@@ -5232,6 +8264,15 @@ function compareBody(baseline, target, context) {
       differences.push(difference('body.length', baseline.length, target.length));
     }
 
+    // THE ARCHIVE COMPARISON, before the digest and independently of it. It
+    // runs whether or not the digests agree, because the digest agreeing is a
+    // coincidence of two clock reads and says nothing about the container -
+    // and it is what carries the exemption below from an assertion to a
+    // comparison. See the ARCHIVE CONTAINERS section.
+    archive = compareArchive(baseline, target, context);
+    differences = differences.concat(archive.differences);
+    observations = observations.concat(archive.observations);
+
     if (baseline.digest === target.digest) {
       return { differences: differences, observations: observations };
     }
@@ -5239,10 +8280,16 @@ function compareBody(baseline, target, context) {
     if (isArchiveDigestExempt(context.contentType)) {
       observations.push(observation('body.digest', baseline.digest,
         target.digest, 'this content type embeds each entry\'s modification ' +
-        'time, so its digest is a clock read - see the timestamps category of ' +
-        'the volatile set. The byte length IS compared, and the archive\'s ' +
-        'internal layout is asserted by the storage and worker harnesses, ' +
-        'which open it rather than hashing it.'));
+        'time in the entry\'s own headers, so the RAW digest is a clock read ' +
+        '- see the timestamps category of the volatile set. It is the only ' +
+        'part of this body that is not compared. The byte length is compared ' +
+        'exactly, and the container itself is compared structurally in this ' +
+        'same step: body.archive.writerProfile against the frozen ' +
+        'expectation in ARCHIVE_CONTAINER_REGISTER, and ' +
+        'body.archive.fingerprint - the canonical entry table with the mtime ' +
+        'fields excluded - against the recording where the recording carries ' +
+        'one and against the register\'s pinned measurement where it does ' +
+        'not. Either of those is a difference that fails the run.'));
 
       return { differences: differences, observations: observations };
     }
@@ -5836,12 +8883,20 @@ function transportCodeOf(record) {
 /**
  * Compares one step's recorded response with what was just observed.
  *
+ * `scenario` carries the one thing a step does not know about itself and one
+ * comparator needs: the route key, which selects the registered writer profile
+ * for an archive container. It is optional - a harness comparing two records
+ * directly passes none, and the archive comparison then holds the container
+ * against every registered writer rather than against the one its route
+ * declares.
+ *
  * @param {Object} step the planned step, carrying its baseline
  * @param {Object} observed the response record just driven
  * @param {Object} [expectation] {differential} for the derived secure pass
+ * @param {Object} [scenario] {routeKey} of the scenario this step belongs to
  * @returns {Object} {outcome, baselineOutcome, differences, observations}
  */
-function compareStep(step, observed, expectation) {
+function compareStep(step, observed, expectation, scenario) {
   var baseline = step.baseline;
   var baselineOutcome = outcomeOf(baseline);
   var observedOutcome = outcomeOf(observed);
@@ -5957,7 +9012,10 @@ function compareStep(step, observed, expectation) {
     expectation);
   bodyResult = compareBody(baseline.body, observed.body, {
     contentType: contentType,
-    normalizationApplied: normalizationApplied
+    normalizationApplied: normalizationApplied,
+    // Read by the archive comparison only, to select the registered writer for
+    // the route this response came from.
+    routeKey: (scenario && scenario.routeKey) || null
   });
 
   differences = differences
@@ -5970,11 +9028,13 @@ function compareStep(step, observed, expectation) {
     .concat(cookieResult.observations)
     .concat(bodyResult.observations);
 
-  // The one framework-imposed difference this file recognises. Applied here
-  // rather than inside `compareCookies` because it is decided by the status of
-  // BOTH sides together, and it removes difference records the header and
-  // cookie comparators have already produced. It fails closed - see
-  // `frameworkCookieSuppression` for every condition, and for the measurement.
+  // The one framework-imposed difference this file recognises, registered as
+  // the single entry of docs/preserved-quirks.md section 12 and authorized by
+  // nothing else. Applied here rather than inside `compareCookies` because it
+  // is decided by the status of BOTH sides together, and it removes difference
+  // records the header and cookie comparators have already produced. It fails
+  // closed - see `frameworkCookieSuppression` for every condition, and
+  // FRAMEWORK_COOKIE_SUPPRESSION for the measurement and the register pointer.
   suppression = frameworkCookieSuppression(baseline, observed, differences);
 
   if (suppression.applies) {
@@ -10023,20 +13083,62 @@ function collectEvidence(info) {
  * @returns {Promise<boolean>}
  */
 async function serverAlive(info) {
+  var reading;
+  var gone;
+
   if (!info || !info.pid) {
     return false;
   }
 
-  try {
-    process.kill(info.pid, 0);
-  }
-  catch (err) {
-    if (!(err && err.code === 'EPERM')) {
+  // An ALIVE answer is CONFIRMED rather than taken once, and the reason is the
+  // detection lag described above: both questions can answer "alive" for a
+  // child that is already on its way out, because the process record outlives
+  // the process and the listening socket accepts one more connection while it
+  // closes. One reading inside that window is indistinguishable from a healthy
+  // application.
+  //
+  // Measured, on a 50-iteration stress of two asset failure-path scenarios: on
+  // the iteration whose LAST selected scenario took the application down, the
+  // child's stderr held Node's fatal termination and this returned ALIVE, so
+  // `died` was never set and the pass serialized `applicationDied.died: false`
+  // over a dead child. Mid-pass the next scenario's refused connection
+  // eventually exposes it; after the last selected scenario nothing re-asks, so
+  // the false claim is what the gate evidence keeps.
+  //
+  // A DEAD reading still returns immediately and unchanged, so the conservative
+  // direction is preserved and the cost is bounded: the delay is paid only when
+  // a transport failure has already happened and the application still looks
+  // alive.
+  for (reading = 0; reading < LIVENESS_CONFIRM_READINGS; reading += 1) {
+    if (reading) {
+      await pause(LIVENESS_CONFIRM_DELAY_MS);
+    }
+
+    gone = false;
+
+    try {
+      process.kill(info.pid, 0);
+    }
+    catch (err) {
+      // EPERM is a process that exists and is not ours to signal, which is
+      // alive for this purpose. Anything else - ESRCH above all - is a process
+      // that has been reaped, and that is decisive on its own: an exited child
+      // cannot be serving whatever a port probe says next.
+      if (!(err && err.code === 'EPERM')) {
+        gone = true;
+      }
+    }
+
+    if (gone) {
+      return false;
+    }
+
+    if (!(await portAccepting(info.probeHost || info.host, info.port))) {
       return false;
     }
   }
 
-  return await portAccepting(info.probeHost || info.host, info.port);
+  return true;
 }
 
 /**
@@ -10077,6 +13179,37 @@ function portAccepting(host, port) {
       finish(!(err && err.code === 'ECONNREFUSED'));
     });
   });
+}
+
+/**
+ * Waits, so a liveness reading can be re-taken rather than believed once.
+ *
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
+function pause(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * One field of an object that may not be there, without throwing.
+ *
+ * Returns `null` for an absent container and for an absent field alike,
+ * because the caller comparing two provenance records treats both the same
+ * way: a field one side does not carry is not a contradiction.
+ *
+ * @param {(Object|null|undefined)} source
+ * @param {string} key
+ * @returns {*} the value, or null
+ */
+function pluck(source, key) {
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+
+  return source[key] === undefined ? null : source[key];
 }
 
 // ---------------------------------------------------------------------------
@@ -10203,7 +13336,7 @@ async function runScenario(item, context) {
     }
 
     observedRecords.push(driven.response);
-    comparison = compareStep(step, driven.response, context.expectation);
+    comparison = compareStep(step, driven.response, context.expectation, item);
 
     result.steps.push({
       label: step.label,
@@ -11691,6 +14824,9 @@ function accountPass(pass, plan, manifestDocument, options, selectionComplete,
   var counts = {};
   var checks = [];
   var coverage = accountCoverage(manifestDocument.entries, scenarios);
+  // The archive containers this pass opened, collected before the checks below
+  // so the named check and the artifact read from one list.
+  var archives = accountArchives(scenarios);
   var failing = 0;
 
   scenarios.forEach(function(item) {
@@ -11782,6 +14918,7 @@ function accountPass(pass, plan, manifestDocument, options, selectionComplete,
     selectionComplete, readWorkerEvidence(options.workerEvidence,
       pass.appHead, options.diagnostic || options.allowUnreviewedCorpus));
   checks.push(pass.warnings);
+  checks.push(accountArchiveCheck(archives));
   checks.push(accountCoverageCheck(coverage, selectionComplete));
   checks.push(accountManifestCardinality(manifestDocument, corpus,
     selectionComplete));
@@ -11790,6 +14927,7 @@ function accountPass(pass, plan, manifestDocument, options, selectionComplete,
   return {
     pass: pass,
     coverage: coverage,
+    archives: archives,
     scenarios: classified,
     counts: sortedKeys(counts),
     failingScenarios: failing,
@@ -11802,6 +14940,229 @@ function accountPass(pass, plan, manifestDocument, options, selectionComplete,
     }).map(function(check) {
       return check.name;
     })
+  };
+}
+
+/**
+ * Every archive container this pass opened, as committed evidence.
+ *
+ * WHY IT IS IN THE ARTIFACT. The raw digest of these containers is exempt as a
+ * clock read, so the evidence that they were compared at all is the structural
+ * read - and a reviewer asked to accept a registered container change should be
+ * able to diff the entry table and the writer profile out of two artifacts
+ * rather than re-run the tool and take its word for it. The record is bounded
+ * by the number of archive responses in the corpus, which is small, and by the
+ * reader's own entry cap.
+ *
+ * The comparison verdicts here come from `describeArchiveComparison`, the same
+ * function `compareBody` reports from, so the evidence and the verdict cannot
+ * disagree.
+ *
+ * @param {Array.<Object>} scenarios the planned scenarios, driven
+ * @returns {Array.<Object>}
+ */
+function accountArchives(scenarios) {
+  var records = [];
+
+  scenarios.forEach(function(item) {
+    var driven = item.result ? item.result.steps : [];
+
+    (item.steps || []).forEach(function(step, index) {
+      var observedStep = driven[index] || null;
+      var observed = observedStep ? observedStep.observed : null;
+      var contentType = observed && observed.headers
+        ? observed.headers['content-type']
+        : null;
+      var comparison;
+
+      if (!observed || !observed.body) {
+        return;
+      }
+
+      // The BODIES, not the response records: `describeArchiveComparison`
+      // reads `archive` off the body, which is where `drive` attaches it.
+      comparison = describeArchiveComparison(
+        step.baseline ? step.baseline.body : null, observed.body, {
+          contentType: contentType,
+          routeKey: item.routeKey
+        });
+
+      if (!comparison) {
+        return;
+      }
+
+      records.push(Object.assign({
+        scenario: item.id,
+        group: item.group,
+        route: item.routeKey,
+        identity: step.identity || item.identity,
+        step: step.label,
+        stepIndex: index,
+        target: step.target,
+        recordedDigest: step.baseline && step.baseline.body
+          ? step.baseline.body.digest
+          : null,
+        observedDigest: observed.body.digest,
+        digestExempt: true
+      }, comparison));
+    });
+  });
+
+  return records;
+}
+
+/**
+ * The archive-container gate, as a named check.
+ *
+ * Separate from the difference list on purpose: the differences say what moved
+ * and this says whether the containers this pass served were structurally
+ * compared at all. A pass that served an archive nobody could read, or one on a
+ * route the register does not name, fails here as well as there - and a pass
+ * that served archives and compared every one of them says so, which is what
+ * makes the raw-digest exemption auditable from the artifact.
+ *
+ * @param {Array.<Object>} archives as accountArchives produces
+ * @returns {Object}
+ */
+function accountArchiveCheck(archives) {
+  var failures = [];
+  var compared = 0;
+  var againstRecording = 0;
+  var againstPin = 0;
+  var unrecorded = 0;
+  var uncompared = 0;
+
+  archives.forEach(function(record) {
+    if (record.state === 'no-summary' || record.state === 'unreadable') {
+      failures.push(record.scenario + ' served an archive this run could not ' +
+        'read (' + record.state + '): ' + record.reason);
+      return;
+    }
+
+    if (record.state !== 'parsed') {
+      return;
+    }
+
+    if (record.recordingFingerprintState !== 'recorded') {
+      unrecorded++;
+    }
+
+    if (!record.profileComparison || !record.profileComparison.ok) {
+      failures.push(record.scenario + '\'s container does not match the ' +
+        'writer profile registered for ' +
+        (record.writer || record.route || '(no route)') + ': ' +
+        (record.profileComparison
+          ? record.profileComparison.mismatches.map(function(entry) {
+            return entry.field;
+          }).join(', ')
+          : '(no comparison)'));
+      return;
+    }
+
+    if (record.fingerprintComparison === 'differs') {
+      failures.push(record.scenario + '\'s archive fingerprint differs from ' +
+        'the recording');
+      return;
+    }
+
+    if (record.fingerprintComparison === 'differs-from-register-pin') {
+      // BOTH DIGESTS IN FULL, not the 16-character prefix a report elsewhere
+      // uses for a raw digest: two fingerprints that differ in their last
+      // byte share every leading character, so a truncated pair reads as
+      // identical and the failure becomes unactionable. Measured on the
+      // negative control, which perturbed exactly those two digits.
+      failures.push(record.scenario + '\'s archive fingerprint differs from ' +
+        'the pin registered for ' + (record.writer || record.route) + ' in ' +
+        'ARCHIVE_CONTAINER_REGISTER: pinned ' + record.pinnedFingerprint +
+        ', measured ' + record.fingerprint + '. The container\'s CONTENTS ' +
+        'changed, which the content-independent writer profile cannot see ' +
+        'and the exempt raw digest cannot distinguish from the clock. ' +
+        'Re-measure and re-approve the pin if the change is intended, or fix ' +
+        'test/parity/seed.js if the fixtures moved');
+      return;
+    }
+
+    // THE COVERAGE ASSERTION, and the reason it is a failure rather than a
+    // note. This check exists to say the containers were compared; a
+    // container on a REGISTERED archive route whose fingerprint was held
+    // against neither a recording nor a pin was not compared in the one
+    // category that moves with content, and a comparator that cannot fail in
+    // a category is not comparing it. The startup probe
+    // `every-registered-writer-declares-a-complete-content-pin` makes this
+    // unreachable through the committed register, which is exactly why it is
+    // asserted here too: a writer added without a pin fails the run instead
+    // of quietly widening the gate.
+    if (record.fingerprintComparedAgainst !== 'recording' &&
+        record.fingerprintComparedAgainst !== 'register-pin') {
+      uncompared++;
+
+      if (record.writer) {
+        failures.push(record.scenario + ' served an archive on the registered ' +
+          'route ' + record.route + ' (writer ' + record.writer + ') and its ' +
+          'entry-table fingerprint was compared against NOTHING - the ' +
+          'recording carries none and the register declares no pin. The raw ' +
+          'digest of this content type is exempt as a clock read, so with no ' +
+          'fingerprint comparison the container\'s contents are uncovered. ' +
+          'Register a `pinned` block measured from a driven run, or ' +
+          're-capture the corpus with the archive block present');
+      }
+      else {
+        failures.push(record.scenario + ' served an archive on ' + record.route +
+          ', which ARCHIVE_CONTAINER_REGISTER does not name, so neither its ' +
+          'writer profile nor its contents are pinned. An archive route ' +
+          'nobody registered is an archive nobody covered');
+      }
+
+      return;
+    }
+
+    compared++;
+
+    if (record.fingerprintComparedAgainst === 'recording') {
+      againstRecording++;
+    }
+    else {
+      againstPin++;
+    }
+  });
+
+  return {
+    name: 'archive containers',
+    ok: !failures.length,
+    // The number the report prints: how many containers were structurally
+    // compared, which is the claim this check makes.
+    asserted: compared,
+    what: 'Every archive container served in this pass was opened and ' +
+      'compared structurally - its writer profile against the frozen ' +
+      'expectation in ARCHIVE_CONTAINER_REGISTER, and its entry-table ' +
+      'fingerprint against the recording where the recording carries one and ' +
+      'against the register\'s pinned measurement where it does not. Both ' +
+      'produce a real difference and a non-zero exit, and an archive on a ' +
+      'registered route that ends compared against neither fails here. This ' +
+      'is what covers the raw-digest exemption the timestamps category ' +
+      'declares for these content types.',
+    archives: archives.length,
+    structurallyCompared: compared,
+    fingerprintComparedAgainstRecording: againstRecording,
+    fingerprintComparedAgainstRegisterPin: againstPin,
+    // The corpus-side truth, kept as its own number: it says how many
+    // containers the committed corpus holds no fingerprint for, which is what
+    // a re-capture would change. It is NOT a count of uncompared containers -
+    // those are `fingerprintUncompared`, and any of them fails this check.
+    fingerprintNotInRecording: unrecorded,
+    fingerprintUncompared: uncompared,
+    note: unrecorded
+      ? unrecorded + ' of the ' + archives.length + ' container(s) carry no ' +
+        'fingerprint in the recording - the committed corpus records a binary ' +
+        'body as a length and a digest and predates the field - so their ' +
+        'fingerprints were compared against the pinned measurement in ' +
+        'ARCHIVE_CONTAINER_REGISTER instead, exactly, with a mismatch failing ' +
+        'this check. ' + againstPin + ' of them were gated that way. The ' +
+        'corpus-side gap is real and remains open: a corpus captured with the ' +
+        'archive block present is compared against the recording instead, and ' +
+        'the pin stands aside with no change to this file.'
+      : null,
+    failures: failures
   };
 }
 
@@ -11880,6 +15241,8 @@ async function replay(options) {
   var secureProvenance = null;
   var normalizationProbes;
   var suppressionProbes;
+  var archiveProbes;
+  var registerAuthority;
   var passes = [];
   var plans = {};
   var passName;
@@ -11892,7 +15255,15 @@ async function replay(options) {
   normalizationProbes = assertNormalizationRules();
   // Beside them, and for the same reason: an exemption that removes real
   // difference records is checked before a request is driven, not trusted.
+  // Authority first, mechanism second - probing the firing conditions of a
+  // rule whose register entry does not exist is work in the wrong order, and
+  // the two failures are reported separately so a run says which one it is.
+  registerAuthority = assertRegisterAuthority();
   suppressionProbes = assertFrameworkCookieSuppression();
+  // And the third of them: the raw digest of an archive container is exempt,
+  // so the structural read is the only thing comparing it. A reader that
+  // stopped reading would turn every archive response into a silent pass.
+  archiveProbes = assertArchiveReader();
 
   // One identity contract, applied before any fixture is used, in this process
   // and in the application this run launches. The two artifacts state the same
@@ -12087,7 +15458,9 @@ async function replay(options) {
       corpus: corpusProvenance,
       secureCorpus: secureProvenance,
       normalizationProbes: normalizationProbes,
-      suppressionProbes: suppressionProbes
+      suppressionProbes: suppressionProbes,
+      archiveProbes: archiveProbes,
+      registerAuthority: registerAuthority
     });
 
   // The one thing this tool writes outside its own two artifacts, and only
@@ -12333,9 +15706,12 @@ function targetReplayEvidence(result, options, plan, entry) {
       .map(function(category) {
         return category.id;
       }),
-    // The one framework-imposed exemption in force, by id, so a reader of the
-    // committed sidecar sees it without opening the tool.
-    frameworkExemptions: [FRAMEWORK_COOKIE_SUPPRESSION.id],
+    // The one framework-imposed exemption in force, by id AND by the register
+    // entry that authorizes it, so a reader of the committed sidecar sees both
+    // without opening the tool. An exemption a reader has to discover from a
+    // source file is an exemption nobody audits, and one whose register entry
+    // is not named cannot be checked against the argument that approved it.
+    frameworkExemptions: [describeFrameworkExemption(FRAMEWORK_COOKIE_SUPPRESSION)],
     // THE WORKER ARTIFACT THIS QUALIFICATION RESTS ON, by identity rather
     // than by claim. AAP 0.9.3 measures the zero-warning condition over the
     // server, the route surface AND the standalone worker; this tool drives
@@ -12438,7 +15814,14 @@ function targetResponseRecord(observed) {
         digest: body.digest,
         normalizedDigest: typeof body.text === 'string'
           ? sha256Hex(normalized(body.text))
-          : null
+          : null,
+        // The archive container's structure, for the content types whose raw
+        // digest the timestamps category exempts. Carried in full - the entry
+        // table, the writer profile and the fingerprint - because it is the
+        // evidence that replaced that exemption with a comparison, and a
+        // reviewer diffing two deliveries should not have to re-run the tool
+        // to see which container field moved.
+        archive: body.archive || null
       }
       : null
   };
@@ -12871,15 +16254,29 @@ function buildResult(options, corpus, annotations, secureCorpus,
     volatileSet: describeVolatileSet(evidence.normalizationProbes),
     comparisonContract: {
       binaryBodies: describeBinaryBodyContract(),
+      // The archive reader and its frozen register, as EXERCISED at startup
+      // rather than as described. A reviewer auditing the raw-digest exemption
+      // reads what actually fired - including the negative control, which
+      // holds a baseline-shaped container against the frozen expectation and
+      // requires it to be rejected on exactly the registered fields.
+      archiveContainerProbes: evidence.archiveProbes || [],
       // The one framework-imposed difference this run will not fail on, with
-      // its measurement, its conditions and what it costs. Emitted into every
-      // artifact for the same reason the volatile set is: an exemption a reader
-      // has to discover from a source file is an exemption nobody audits.
+      // its measurement, its conditions, what it costs and the register entry
+      // that authorizes it. Emitted whole - the `register` field included -
+      // into every artifact for the same reason the volatile set is: an
+      // exemption a reader has to discover from a source file is an exemption
+      // nobody audits, and one that names no register cannot be reconciled
+      // against the argument that approved it.
       frameworkCookieSuppression: Object.assign({},
         FRAMEWORK_COOKIE_SUPPRESSION,
         // The conditions, as exercised at startup rather than as described.
         // A reader auditing the exemption reads what actually fired.
-        { probes: evidence.suppressionProbes || [] })
+        { probes: evidence.suppressionProbes || [] },
+        // And the register that authorizes it, as VERIFIED at startup
+        // rather than as cited: which document was read, resolved from
+        // where, how long the entry was, and the rejection branches that
+        // were exercised to prove the verification fails closed.
+        { registerVerified: evidence.registerAuthority || null })
     },
     sources: {
       appRoot: options.appRoot,
@@ -13090,6 +16487,24 @@ function describeVolatileSet(probes) {
     appliedCookieFields: VOLATILE_COOKIE_FIELDS.slice(),
     appliedRecordedFields: VOLATILE_RESPONSE_FIELDS.slice(),
     appliedArchiveDigestExempt: ARCHIVE_DIGEST_EXEMPT.slice(),
+    // The exemption above is the RAW DIGEST of those content types and nothing
+    // else, and this field says so beside it: a reader of the artifact alone
+    // should not conclude from a list of archive media types that the archives
+    // went uncompared. `comparisonContract.binaryBodies` carries the frozen
+    // register and both halves of the contract, and every pass carries the
+    // containers it opened under `archives`.
+    appliedArchiveDigestExemptCoveredBy: 'the raw digest only. Each of these ' +
+      'containers is opened in the same step and compared structurally - ' +
+      '`body.archive.writerProfile` against the frozen expectation in ' +
+      'ARCHIVE_CONTAINER_REGISTER, and `body.archive.fingerprint`, the ' +
+      'canonical entry table with the mtime fields excluded, against the ' +
+      'recording where the recording carries one and against that ' +
+      'register\'s pinned measurement where it does not - and either ' +
+      'comparison produces a difference that fails the run, as does an ' +
+      'archive on a registered route whose fingerprint was compared against ' +
+      'neither. See comparisonContract.binaryBodies for the contract and the ' +
+      'register, and passes[].archives for what was measured, including ' +
+      'which side decided each container.',
     normalizationProbes: (probes || []).map(function(record) {
       return {
         id: record.id,
@@ -13159,6 +16574,10 @@ function summarizePass(entry) {
     undriven: entry.pass.undriven,
     evidence: entry.pass.evidence,
     coverage: entry.coverage,
+    // The opened archive containers: entry table, writer profile and
+    // fingerprint per archive response, so the structural comparison behind
+    // the raw-digest exemption is in the evidence and not only in the source.
+    archives: entry.archives,
     checks: entry.checks,
     approvedDeviations: entry.approvedDeviations,
     differences: entry.differences,
@@ -13673,33 +17092,236 @@ function renderGateQualification(lines, result, heading) {
 function renderBinaryContract(lines, result, heading, bullet) {
   var contract = result.comparisonContract.binaryBodies;
   var suppression;
+  var published;
 
   heading('BINARY AND STREAM BODIES - what is compared, exactly');
 
   bullet('length        ' + contract.lengthCompared);
   bullet('digest        ' + contract.digestCompared);
   bullet('exception     ' + contract.digestObservationOnly.join(', '));
-  lines.push('                for those content types the digest is RECORDED ' +
-    'AS AN OBSERVATION and does');
-  lines.push('                not fail the gate. ' +
+  lines.push('                for those content types the RAW digest is ' +
+    'RECORDED AS AN OBSERVATION and');
+  lines.push('                does not fail the gate. ' +
     contract.digestObservationOnlyReason);
   bullet('declared by   ' + contract.digestObservationOnlyDeclaredBy);
-  bullet('made up for by ' + contract.entryLevelAssertedBy.join(' and ') +
-    ', which open the archive rather than hashing it');
+  bullet('structure     ' + contract.archiveStructureCompared);
+  bullet('not compared  ' + contract.archiveStructureNotCompared);
+  bullet('asserted by   ' + contract.entryLevelAssertedBy.join('; '));
   bullet('coverage lost ' + contract.coverageLost);
+
+  renderArchiveRegister(lines, contract.archiveRegister, heading, bullet);
+  renderArchiveProbes(lines, result, heading);
+  renderArchiveMeasurements(lines, result, heading, bullet);
 
   suppression = result.comparisonContract.frameworkCookieSuppression;
 
   if (suppression) {
-    heading('SET-COOKIE ON A 500 - the one framework-imposed exemption');
+    heading('SET-COOKIE ON A 500 - the one framework-imposed exemption, ' +
+      'REGISTERED');
 
     bullet('rule          ' + suppression.framework +
-      ' emits only cookie CLEARS when the response is a 500');
+      ' emits only cookie CLEARS when the response carries a 500 error');
+    // Not read straight off the record: an exemption whose register metadata
+    // went missing used to render as `registered in undefined`, which reads as
+    // an exemption in force and is the one failure this section exists to
+    // surface. The guard refuses to describe it at all instead.
+    published = describeFrameworkExemption(suppression);
+
+    bullet('rule id       ' + published.id +
+      ' - a RULE over a framework predicate, not a per-scenario marker');
+    bullet('registered in ' + published.register);
+
+    if (suppression.registerVerified) {
+      bullet('register READ ' + suppression.registerVerified.documentPath +
+        ', resolved from ' + suppression.registerVerified.resolvedFrom +
+        '; entry ' + JSON.stringify(suppression.registerVerified.entryHeading) +
+        ' present, ' + suppression.registerVerified.entryLength +
+        ' characters, naming this rule id. Verified at startup, and the ' +
+        'verification proved fail-closed against ' +
+        suppression.registerVerified.probes.length + ' rejection branches.');
+    } else {
+      bullet('register READ no - this record carries no startup verification ' +
+        'of its register, so the pointer above is a citation and not a ' +
+        'checked fact');
+    }
+
     bullet('measured      ' + suppression.measurement);
     bullet('why exempt    ' + suppression.why);
     bullet('what it costs ' + suppression.costs);
     bullet('still exact   ' + suppression.retained);
   }
+}
+
+/**
+ * The frozen archive register: what each writer is held to, and what moved.
+ *
+ * In the report because the register IS the registered change: a reader
+ * accepting that the downloaded ZIP bytes are different should see both
+ * columns and the field list without opening a source file, and a reader
+ * auditing the raw-digest exemption should see what replaced it.
+ *
+ * @param {Array.<string>} lines
+ * @param {(Object|null)} register
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderArchiveRegister(lines, register, heading, bullet) {
+  if (!register) {
+    return;
+  }
+
+  heading('ARCHIVE CONTAINERS - the frozen writer profiles, and the ' +
+    'registered change');
+
+  bullet('registered    ' + register.registered);
+  bullet('measurement   ' + register.measurement);
+
+  register.writers.forEach(function(writer) {
+    lines.push('');
+    lines.push('  ' + writer.id + '  [' + writer.routes.join(', ') + ']');
+    bullet('writer       ' + writer.writer + '  (' + writer.dependencyChange +
+      ')');
+    bullet('baseline     ' + writer.baselineNote);
+
+    writer.changed.forEach(function(entry) {
+      lines.push('        changed  ' + entry);
+    });
+
+    ARCHIVE_PROFILE_FIELDS.forEach(function(field) {
+      var expected = writer.expected[field];
+      var baseline = writer.baseline[field];
+
+      lines.push('        ' + field + ': ' +
+        (baseline === null || baseline === undefined
+          ? '(not stated by the baseline measurement)'
+          : JSON.stringify(baseline)) +
+        ' -> ' + JSON.stringify(expected === undefined ? null : expected));
+    });
+  });
+}
+
+/**
+ * The archive reader's startup probes, as measured.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @returns {undefined}
+ */
+function renderArchiveProbes(lines, result, heading) {
+  var probes = result.comparisonContract.archiveContainerProbes || [];
+
+  if (!probes.length) {
+    return;
+  }
+
+  heading('ARCHIVE READER EXERCISED AT STARTUP (' + probes.length +
+    ' probes, all of which must hold or the run refuses to start)');
+
+  probes.forEach(function(probe) {
+    lines.push('    ' + (probe.ok ? 'ok  ' : 'FAIL') + '  ' + probe.id);
+    lines.push('          ' + probe.what);
+    lines.push('          ' + probe.measured);
+  });
+}
+
+/**
+ * Every archive container the run opened, per pass.
+ *
+ * The evidence a reviewer diffs instead of re-running the tool: the entry
+ * table, the writer profile verdict and the fingerprint of each archive
+ * response, beside the raw digest that is exempt.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderArchiveMeasurements(lines, result, heading, bullet) {
+  var any = result.passes.some(function(pass) {
+    return (pass.archives || []).length;
+  });
+
+  if (!any) {
+    return;
+  }
+
+  heading('ARCHIVE CONTAINERS OPENED - what each response actually held');
+
+  result.passes.forEach(function(pass) {
+    (pass.archives || []).forEach(function(record) {
+      lines.push('');
+      lines.push('  ' + record.scenario + '  [' + pass.name + ' pass]');
+      bullet('route        ' + record.route + '  ' + record.target);
+      bullet('container    ' + record.contentType + ', ' + record.byteLength +
+        ' bytes, state ' + record.state +
+        (record.reason ? ' - ' + record.reason : ''));
+      bullet('raw digest   ' + record.recordedDigest + ' -> ' +
+        record.observedDigest + '  (exempt: a clock read)');
+      bullet('fingerprint  ' + record.fingerprint + '  [' +
+        record.fingerprintComparison + ', compared against ' +
+        record.fingerprintComparedAgainst + ']');
+      // Both sides, always, and named: a reader has to be able to see WHICH
+      // value gated the container without reconstructing the precedence rule.
+      // The recording state is printed even when the pin decided, because the
+      // corpus-side gap is what a re-capture would close.
+      bullet('  recording  ' + (record.recordedFingerprint || '(none)') +
+        '  [' + record.recordingFingerprintState + ']');
+      bullet('  register   ' + (record.pinnedFingerprint || '(no pin)') +
+        (record.pinnedEntryCount === null
+          ? ''
+          : ', ' + record.pinnedEntryCount + ' entries, ' +
+            record.pinnedByteLength + ' bytes') +
+        (record.pinComparison
+          ? '  [' + (record.pinComparison.ok
+            ? 'matches the pin'
+            : 'DIFFERS from the pin on ' +
+              record.pinComparison.mismatches.map(function(entry) {
+                return entry.field;
+              }).join(', ')) + ']'
+          : ''));
+      bullet('entries      ' + record.entryCount +
+        (record.entriesTruncated ? ' (listing bounded)' : ''));
+
+      (record.entries || []).forEach(function(entry) {
+        lines.push('        ' + entry.name + '  ' + entry.method +
+          ', flags ' + entry.flags + ', versionNeeded ' + entry.versionNeeded +
+          '/' + entry.localVersionNeeded + ', madeBy ' + entry.versionMadeBy +
+          ', attrs ' + entry.externalAttributes +
+          (entry.unixMode ? ' (' + entry.unixMode + ')' : '') +
+          ', crc32 ' + entry.crc32Declared +
+          (entry.crc32DeclaredMatchesContent === false
+            ? ' (DOES NOT match its content: ' + entry.crc32Computed + ')'
+            : '') +
+          ', size ' + entry.uncompressedSizeDeclared +
+          ', content ' + String(entry.contentDigest).slice(0, 16));
+      });
+
+      if (record.writer) {
+        bullet('profile      ' + record.writer + ', selected by ' +
+          record.writerSelectedBy + ': ' +
+          (record.profileComparison && record.profileComparison.ok
+            ? 'every registered field matched'
+            : 'MISMATCH on ' + (record.profileComparison
+              ? record.profileComparison.mismatches.map(function(entry) {
+                return entry.field;
+              }).join(', ')
+              : '(no comparison)')));
+      }
+      else if (record.state === 'parsed') {
+        bullet('profile      NO REGISTERED WRITER for this route');
+      }
+
+      (record.profileComparison
+        ? record.profileComparison.undetermined
+        : []).forEach(function(entry) {
+        lines.push('        undetermined  ' + entry.field + ' (expected ' +
+          JSON.stringify(entry.expected) + '): ' + entry.why);
+      });
+    });
+  });
 }
 
 /**
@@ -14216,8 +17838,17 @@ function renderVolatileSection(lines, result, heading, bullet) {
     }
 
     if (category.binaryDigestExemptTypes.length) {
-      bullet('archive types ' + category.binaryDigestExemptTypes.join(', ') +
-        ' (length compared, digest observed)');
+      bullet('archive types ' + category.binaryDigestExemptTypes.join(', '));
+      lines.push('                the RAW DIGEST only: the length is compared ' +
+        'exactly and the container is');
+      lines.push('                opened and compared structurally in the same ' +
+        'step - writer profile against');
+      lines.push('                the frozen ARCHIVE_CONTAINER_REGISTER, and ' +
+        'the entry-table fingerprint');
+      lines.push('                against the recording where it carries one ' +
+        'and against that register\'s');
+      lines.push('                pinned measurement where it does not. Both ' +
+        'fail the run.');
     }
 
     category.textPatterns.forEach(function(pattern) {
@@ -14485,6 +18116,34 @@ module.exports = {
   compareCookies: compareCookies,
   compareBody: compareBody,
   compareJson: compareJson,
+
+  // The archive-container reader and its two comparisons. Exported for the
+  // same reason as the comparators above and for one more: the reader is what
+  // stands behind the raw-digest exemption, so a check must be able to hand it
+  // bytes directly - including malformed ones - rather than only reach it
+  // through a spawned server that serves well-formed archives.
+  readArchiveContainer: readArchiveContainer,
+  archiveWriterProfile: archiveWriterProfile,
+  archiveFingerprint: archiveFingerprint,
+  archiveCanonicalJson: archiveCanonicalJson,
+  archiveContainerKind: archiveContainerKind,
+  crc32Of: crc32Of,
+  compareArchive: compareArchive,
+  compareArchiveProfile: compareArchiveProfile,
+  compareArchivePin: compareArchivePin,
+  describeArchiveComparison: describeArchiveComparison,
+  describeArchiveEntryDivergence: describeArchiveEntryDivergence,
+  selectArchiveWriter: selectArchiveWriter,
+  accountArchives: accountArchives,
+  accountArchiveCheck: accountArchiveCheck,
+  assertArchiveReader: assertArchiveReader,
+  ARCHIVE_CONTAINER_REGISTER: ARCHIVE_CONTAINER_REGISTER,
+  ARCHIVE_PROFILE_FIELDS: ARCHIVE_PROFILE_FIELDS,
+  ARCHIVE_PROFILE_METHOD_FIELDS: ARCHIVE_PROFILE_METHOD_FIELDS,
+  ARCHIVE_PIN_FIELDS: ARCHIVE_PIN_FIELDS,
+  ARCHIVE_SUMMARY_SCHEMA: ARCHIVE_SUMMARY_SCHEMA,
+  ARCHIVE_MAX_RECORDED_ENTRIES: ARCHIVE_MAX_RECORDED_ENTRIES,
+  ARCHIVE_MAX_INFLATE_BYTES: ARCHIVE_MAX_INFLATE_BYTES,
   compareMarkup: compareMarkup,
   compareLists: compareLists,
   compareCrossLocations: compareCrossLocations,
@@ -14583,6 +18242,15 @@ module.exports = {
   // startup assertion that already runs it.
   frameworkCookieSuppression: frameworkCookieSuppression,
   assertFrameworkCookieSuppression: assertFrameworkCookieSuppression,
+  // The register-authority check: the pointer the exemption carries is
+  // READ rather than trusted, and both the pure verifier and the
+  // fail-closed assertion are exported so every rejection branch can be
+  // exercised without driving a request.
+  verifyRegisterAuthority: verifyRegisterAuthority,
+  assertRegisterAuthority: assertRegisterAuthority,
+  describeFrameworkExemption: describeFrameworkExemption,
+  REGISTER_DOCUMENT: REGISTER_DOCUMENT,
+  REGISTER_ANCHORS: REGISTER_ANCHORS,
   isCookieClear: isCookieClear,
   FRAMEWORK_COOKIE_SUPPRESSION: FRAMEWORK_COOKIE_SUPPRESSION,
   establishSessions: establishSessions,

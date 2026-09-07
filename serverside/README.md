@@ -294,8 +294,10 @@ These ports are internal to the Docker network. Only nginx port 8080 is exposed 
 | java-shell | 8010 | Code execution |
 | r-manager | 8300 | WebSocket routing |
 | r-shell | 8010 | Code execution |
-| pygame-manager | 8400 | WebSocket routing |
+| pygame-manager | 8100 | WebSocket routing |
 | pygame-worker | 8010, 6080 | Code execution + VNC |
+
+`pygame-manager` uses the same internal port as `python3-manager` (8100): the two run under separate Compose profiles (`profiles: ["python3"]` and `profiles: ["pygame"]`) and are reached by service name on the Docker network, so they are never up together under one profile.
 
 ## Troubleshooting
 
@@ -341,7 +343,9 @@ docker compose --profile python3 exec python3-manager \
 
 ## Generated File Cleanup
 
-When users run code that produces files (matplotlib plots, R graphics, etc.), these files are stored in Docker volumes and served via nginx. To prevent disk space exhaustion, each manager automatically cleans up old generated files.
+When users run code that produces files (matplotlib plots, R graphics, etc.), these files are stored in Docker volumes and served via nginx. To prevent disk space exhaustion, the python3, java and r managers automatically clean up old generated files.
+
+The pygame manager is the exception: it implements no cleanup and carries no `manager.cleanup` key, so files written to its `pygame-generated` volume (`/tmp/pygame-generated`) are never pruned automatically and have to be cleared with the manual steps below.
 
 ### How It Works
 
@@ -351,7 +355,7 @@ When users run code that produces files (matplotlib plots, R graphics, etc.), th
 
 ### Configuration
 
-Each manager's cleanup is configured in its `config/default.json`:
+Cleanup is configured in each of those three managers' `config/default.json`:
 
 ```json
 {
@@ -392,6 +396,7 @@ docker compose exec python3-manager rm -rf /tmp/python-generated/*
 docker volume rm serverside_python-generated
 docker volume rm serverside_java-generated
 docker volume rm serverside_r-generated
+docker volume rm serverside_pygame-generated
 ```
 
 Note: Removing volumes requires restarting the containers.

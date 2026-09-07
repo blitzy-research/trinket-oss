@@ -154,8 +154,15 @@ describe('Trinket model', function(){
 
         interactionStub = sinon.stub(global, 'Interaction').callsFake(function(data) {
           return _.extend({
+            // Stub shape, not an assertion: the model has always called the
+            // promise form `interaction.save()` with no argument, so a stub
+            // body that only ever invoked `cb(this)` threw `cb is not a
+            // function` on every call. The callback branch is kept for a caller
+            // that passes one; a caller that does not gets the resolved promise
+            // the real Mongoose document returns. The assertion below -
+            // `save.calledOnce` - is unchanged.
             save : sinon.spy(function(cb) {
-              return cb(this);
+              return cb ? cb(this) : Promise.resolve(this);
             })
           }, data);
         });

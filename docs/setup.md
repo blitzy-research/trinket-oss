@@ -67,7 +67,7 @@ In production this secret is mandatory - the application prints the setting it n
 | Setting | Description |
 |---------|-------------|
 | `app.mail.*` | SMTP settings for email (password reset, notifications) |
-| `aws.*` | S3 (or S3-compatible) storage for user-uploaded assets |
+| `aws.*` | S3 storage for user-uploaded assets |
 | `app.auth.google.*` | Google OAuth login |
 | `app.recaptcha.*` | reCAPTCHA spam protection |
 | `db.redis.*` | Redis cache/session store (in-memory fallback otherwise) |
@@ -111,7 +111,8 @@ The test script starts an in-memory MongoDB instance for the run and stops it af
 | app | 3000 | Trinket web application |
 | mongodb | 17017 | MongoDB database |
 | redis | 16379 | Redis (optional - uses in-memory fallback if disabled) |
-| nginx | 443 | HTTPS proxy (optional) |
+
+These are the services `docker-compose.yml` defines. The repository's only nginx is the serverside reverse proxy, published on 8080 and documented in `serverside/README.md`; the root Compose file has no HTTPS proxy and no 443 listener.
 
 ## Creating an Admin User
 

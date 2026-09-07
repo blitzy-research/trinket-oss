@@ -17,8 +17,8 @@ from them:
 
 | Document | Owns |
 |---|---|
-| [`deferred-dependencies.md`](deferred-dependencies.md) | Every package deliberately **left in place** — unmaintained-but-functional, moderate-only, or otherwise not qualifying — with its per-package reasoning, plus the two approved deviations and their precedence arguments |
-| [`preserved-quirks.md`](preserved-quirks.md) | Behaviour preserved unchanged, including behaviour that is a defect, with the target disposition that reproduces each |
+| [`deferred-dependencies.md`](deferred-dependencies.md) | Every package deliberately **left in place** — unmaintained-but-functional, moderate-only, or otherwise not qualifying — with its per-package reasoning, and the full precedence argument for the retained `marked` fork (deviation 2) |
+| [`preserved-quirks.md`](preserved-quirks.md) | Behaviour preserved unchanged, including behaviour that is a defect, with the target disposition that reproduces each — and the **canonical register of the approved deviations**, §11, which is closed at four: the served stream response, the retained `marked` fork, the ZIP container change these dependency moves carry (§11.7), and the per-request course-archive work tree (§11.8) |
 | [`baseline-parity.md`](baseline-parity.md) | How baseline was captured and compared: worktree provenance, corpus method, coverage accounting and the resolution log |
 
 **Rules governing this record.** `review_rules` reports **no user-specified rules** for this project.
@@ -104,13 +104,14 @@ applied.
 
 | | Baseline (`2f8712a`) | Delivered |
 |---|---|---|
-| Production dependencies declared | 58 | **39** |
+| Production dependencies declared | 58 | **40** |
 | Development dependencies declared | 11 | **8** |
 | Packages in the root lockfile | 678 | **510** (509 excluding the root record) |
 | Version moves — production (§3) | — | **17** |
 | Version moves — development (§5) | — | **1** (`sinon`) |
-| Declarations removed | — | **23** (19 production, 4 development) |
+| Declarations removed | — | **22** (18 production, 4 development) |
 | Declarations added | — | **1** (`mongodb-memory-server`) |
+| Removals withdrawn on measurement | — | **1** (`chokidar` — [§4.5](#45-one-removal-withdrawn--chokidar-has-a-live-consumer-after-all)) |
 | `npm audit --omit=dev` | 15 critical, 28 high, 16 moderate — **59** | 0 critical, **1 high**, 6 moderate — **7** |
 | Node-bearing Dockerfiles on a current runtime | 0 of 9 | **9 of 9** |
 
@@ -119,7 +120,7 @@ Counts verified on the delivered manifest:
 ```console
 $ node -e "const p=require('./package.json'); \
     console.log(Object.keys(p.dependencies).length, Object.keys(p.devDependencies).length)"
-39 8
+40 8
 ```
 
 ## 3. Version moves
@@ -137,9 +138,9 @@ the deferred list.
 | `bcrypt` | npm | `^5.1.0` | 5.1.1 | `^6.0.0` | **6.0.0** | incompatible + security (high, over a critical chain) | 5.1.1's `@mapbox/node-pre-gyp` emits `DEP0169`, breaching the zero-deprecation-warning bar; the same chain carries the `tar` critical. 6.0.0 drops the dependency entirely | **Cost factor 10 and hash format unchanged, so existing passwords still verify** — the fact that makes the bump safe. `bcrypt.hash`, `bcrypt.compare`, `bcrypt.genSalt` call sites unchanged. `@mapbox/node-pre-gyp` and `tar` absent from the delivered lockfile |
 | `nodemailer` | npm | `^2.5.0` | 2.7.2 | `^9.1.0` | **9.1.1** | incompatible + security (critical) | 2.7.2 → `libmime` → `iconv-lite` 0.4.15 emits `DEP0005`; the package's own node is critical over `<= 9.0.0` | `nodemailer.createTransport` is the only call site and is unchanged. Chain cleared, measured: `smtp-connection` 2.12.0, `httpntlm` 1.6.1, `libmime` 3.0.0 and both `underscore@1.7.0` copies are absent from the delivered lockfile |
 | `js-yaml` | npm | `~3.0.1` | 3.0.2 | `^4.3.2` | **4.3.2** | security (critical) | 3.0.2 is critical and drags `argparse` 0.1.16 → `underscore` 1.7.0, themselves two further critical nodes. The 4.x line is not automatically safe: **≥ 4.3.1 is required** — see row note 6 | One call-site change: `yaml.safeLoad` → `yaml.load` in `config/routes.js`. The parsed value is the 51-entry reserved-username list, so the same usernames are still rejected. `argparse` measured 0.1.16 → 2.0.1 |
-| `jsonwebtoken` | npm | `^5.0.5` | 5.7.0 | `^9.0.2` | **9.0.3** | security (high) | High over `<= 8.5.1`: unrestricted key type, insecure key retrieval, and a signature-validation bypass from an insecure default algorithm | No code change. `sign`/`verify` round-trip the repository's exact shapes on HS256 with the payload preserved. Application-source call sites unchanged: `jwt.sign` ×3 and `jwt.verify` ×1, plus one `jwt.sign` in a spec |
+| `jsonwebtoken` | npm | `^5.0.5` | 5.7.0 | `^9.0.2` | **9.0.3** | security (high) | High over `<= 8.5.1`: unrestricted key type, insecure key retrieval, and a signature-validation bypass from an insecure default algorithm | No code change. `sign`/`verify` round-trip the repository's exact shapes on HS256 with the payload preserved. Application-source call sites unchanged: `jwt.sign` ×3 and `jwt.verify` ×1, plus one `jwt.sign` in a spec. **One observable consequence, measured**: the emitted JWS **header key order** changed — 5.7.0 wrote `{"typ":"JWT","alg":"HS256"}`, 9.0.3 writes `{"alg":"HS256","typ":"JWT"}` — so the token string differs from baseline wherever one is rendered, which is the hidden `input#emailToken` at `[T lib/views/includes/shareModals.html:132]` fed by the three `jwt.sign` sites in `lib/controllers/trinket.js`. The **payload segment is identical**, cross-version `verify` succeeds in **both directions**, and `verifyEmailToken` passes no options and compares only the decoded `shortCode`, so nothing functional turns on it. It is not a parity hole either: `test/parity/replay.js`'s `generated-ids` rule *JWT-shaped token* already collapses both header orders to `<generated-token>`, and two probes — `emailtoken-jwt-9x-header-order-normalized` and `emailtoken-jwt-570-header-order-normalized`, related by `mustMatch` — now pin that, so a future narrowing of the rule fails at startup instead of silently failing every page that renders a token |
 | `bull` | npm | `^0.7.0` | 0.7.2 | `^4.16.5` | **4.16.5** | security (high, over a critical nest) | 0.7.2's nested `lodash@3.10.1` is a node of the lodash **critical**, and it drags `semver@4.3.6` and `redis@2.8.0`. **Requires source changes** — see row note 8 | Nest cleared, measured: baseline `bull/node_modules` held `lodash@3.10.1`, `redis@2.8.0`, `redis-parser@2.6.0`, `semver@4.3.6`; delivered nests only `uuid@8.3.2`. Method-presence checking was **not** accepted as evidence, so functional worker tests are the gate |
-| `adm-zip` | npm | `~0.4.4` | 0.4.16 | `^0.6.0` | **0.6.0** | security (high) | High over `< 0.6.0`: a crafted ZIP triggers a 4 GB allocation | Call site unchanged (`new zip()`), but **archive-read behaviour is a changed surface**, so the storage contract and archive-layout cases cover it rather than a call-site diff. It is also the reader that exposed the writer defect in `archiver` 2.1.1, and therefore one of the two reasons that package moved (row 17, §9.5): 0.6.0 validates the central-directory CRC that 0.4.16 trusted, so it throws where 0.4.16 silently returned an empty buffer |
+| `adm-zip` | npm | `~0.4.4` | 0.4.16 | `^0.6.0` | **0.6.0** | security (high) | High over `< 0.6.0`: a crafted ZIP triggers a 4 GB allocation | Call site unchanged (`new zip()`), but **archive-read behaviour is a changed surface**, so the storage contract and archive-layout cases cover it rather than a call-site diff. It is also the reader that exposed the writer defect in `archiver` 2.1.1, and therefore one of the two reasons that package moved (row 17, §9.5): 0.6.0 validates the central-directory CRC that 0.4.16 trusted, so it throws where 0.4.16 silently returned an empty buffer. **`adm-zip` is also a writer here, and that is client-visible**: the course archive is built by `new zip()` / `addLocalFolder` / `writeZip` at `[T lib/controllers/courses.js:426-432]`, and 0.6.0's container differs from 0.4.16's on `GET /{userSlug}/courses/{courseSlug}/download.zip` — UTF-8 name flag now set on every entry, `versionNeeded` 10 → 20 on deflated entries, central `versionMadeBy` `0x000a` → `0x0314`, directory external attributes `0x41ed0010` → `0x45ed0010` and file attributes `0x01a40000` → `0x81a40000`, with entry names, order, content, CRCs, sizes and the 538-byte length identical. Registered as approved deviation 3 in [`preserved-quirks.md`](preserved-quirks.md) §11.7 and held by the frozen container register in `test/parity/replay.js` |
 | `lodash` | npm | `^4.17.21` | 4.17.23 | `^4.18.1` | **4.18.1** | security (critical) | Critical over `<= 4.17.23`, whose newest member is the prototype-pollution array-path bypass in `_.unset` / `_.omit` | Call sites unchanged across both consumers: `_.extend` ×4, `_.find` ×2 and `lodash.escape` ×1 in `lib/controllers/trinket.js` and `lib/util/nunjucks.js`. The nested `lodash@3.10.1` node under `bull` clears with the `bull` row |
 | `validator` | npm | `^5.6.0` | 5.7.0 | `^13.15.35` | **13.15.35** | security (high) | High over `<= 13.15.20` (incomplete filtering of special elements; the underlying advisory range reaches `< 13.15.22`), over earlier ReDoS and `isURL` bypass moderates | `validator.isEmail` ×2 is the whole usage, and **the verdict it returns changed**, so the two call sites now route through `the legacy `isEmail` in `lib/controllers/course.js` (§9.1)` — a port of 5.7.0's `isEmail` that delegates the unchanged `isByteLength` back to the installed package. See §9 |
 | `tmp` | npm | `0.0.25` | 0.0.25 | `^0.2.7` | **0.2.7** | security (high) | High over `<= 0.2.5`: path traversal via an unsanitized prefix/postfix. **This was the baseline's single exact pin** — the one row where the declared value was already a version | `tmp.tmpName` is the only call site and is unchanged |
@@ -147,7 +148,7 @@ the deferred list.
 | `diff` | npm | `~1.0.8` | 1.0.8 | `^8.0.4` | **8.0.4** | security (high) | High ReDoS over `<= 3.5.0` on the 1.x line, plus a later `parsePatch`/`applyPatch` denial-of-service | `diff.applyPatch` is the only call site, and **it reads a patch dialect the front end still produces**, so it now routes through the `applyLegacyPatch` port in `lib/controllers/course.js` (§9.2), formerly `lib/util/diff-compat.js` — a port of 1.0.8's `applyPatch`. See §9 |
 | `mime` | npm | `~1.2.11` | 1.2.11 | `^4.1.0` | **4.1.0** | security (high) + maintained major | High ReDoS on MIME lookup of untrusted input. The patch that clears it leaves an unmaintained major, which the request does not permit when a maintained one works — see row note 15 | Node 22 supported and synchronously requireable, verified by loading it. `mime.lookup` ×3 → `mime.getType` ×3 and `mime.extension` ×1 → `mime.getExtension` ×1 — **four call sites across two controllers**, enumerated in full in row note 15, which also records the third consuming file's unused import. The rename is mechanical and the census is static; **runtime parity across those sites is a defined gate, not a result this delivery carries** — [`baseline-parity.md`](baseline-parity.md) §5 holds every parity gate's status |
 | `accepts` | npm | `~1.1.0` | 1.1.4 | `^1.3.8` | **1.3.8** | security (high) | High over `<= 1.3.2` via `negotiator` | No code change: `accepts(request).types(['html', 'json'])` in `lib/util/routeParser.js` is unchanged. The one apparent second call site was a false positive — see row note 16 |
-| `archiver` | npm | `^2.0.0` | 2.1.1 | `^7.0.1` | **7.0.1** | **runtime warning + writer defect** — no advisory on either side | Two measured reasons, neither of them security. 2.1.1 emits `[DEP0005] Buffer()` at **module scope** through `zip-stream` 1.2.0 → `compress-commons` 1.2.2, reached on the `require` in `lib/controllers/trinket.js`, so it breaches the zero-deprecation-warning bar on every boot; and the 2.x writer declares `crc32 = 0` and uncompressed size 0 for every deflated entry, which the `adm-zip` 0.6.0 this migration installs (row 9) cannot read back at all. AAP §0.5.1's triage rule authorizes a change for "a runtime warning", and §0.5.1.1's `archiver keep` row is argued on advisories alone and is silent on warnings — see row note 17 and §9.5 | `engines: {"node": ">= 14"}`, satisfied by 22.23.2. **Import-transparent**: the 25-call surface is unchanged, enumerated in *Import transparency* below. Measured on the delivered tree: `node --pending-deprecation --trace-deprecation -e "require('archiver')"` prints **nothing**; `npm run verify:storage` closes **35 of 35** cases with a passing gate, `archive-layout` among them (34 of 35 before the move); `npm run verify:worker` returns **VERDICT PASS**, **109 of 109** checks over 7 jobs on `bull` 4.16.5 with **0 notices** (a FAIL verdict before it); and `npm audit --omit=dev` is **unchanged at 0 critical, 1 high, 6 moderate** with the same seven advisories |
+| `archiver` | npm | `^2.0.0` | 2.1.1 | `^7.0.1` | **7.0.1** | **runtime warning + writer defect** — no advisory on either side | Two measured reasons, neither of them security. 2.1.1 emits `[DEP0005] Buffer()` at **module scope** through `zip-stream` 1.2.0 → `compress-commons` 1.2.2, reached on the `require` in `lib/controllers/trinket.js`, so it breaches the zero-deprecation-warning bar on every boot; and the 2.x writer declares `crc32 = 0` and uncompressed size 0 for every deflated entry, which the `adm-zip` 0.6.0 this migration installs (row 9) cannot read back at all. AAP §0.5.1's triage rule authorizes a change for "a runtime warning", and §0.5.1.1's `archiver keep` row is argued on advisories alone and is silent on warnings — see row note 17 and §9.5 | `engines: {"node": ">= 14"}`, satisfied by 22.23.2. **Import-transparent**: the 25-call surface is unchanged, enumerated in *Import transparency* below. Measured on the delivered tree: `node --pending-deprecation --trace-deprecation -e "require('archiver')"` prints **nothing**; `npm run verify:storage` closes **35 of 35** cases with a passing gate, `archive-layout` among them (34 of 35 before the move); `npm run verify:worker` returns **VERDICT PASS**, **109 of 109** checks over 7 jobs on `bull` 4.16.5 with **0 notices** (a FAIL verdict before it); and `npm audit --omit=dev` is **unchanged at 0 critical, 1 high, 6 moderate** with the same seven advisories. **Import-transparent is not byte-transparent, and the difference is registered rather than normalized away**: on `GET /{lang}/{shortCode}.zip` — the one route this package writes, at `[T lib/controllers/trinket.js:2044-2045]` — 7.0.1 declares the entry's real `crc32` `0xf10614e3` and uncompressed size `61` where 2.1.1 declared `0` and `0`, with every other container field and the 182-byte length identical on both trees. That is approved deviation 3 in [`preserved-quirks.md`](preserved-quirks.md) §11.7, held by the frozen container register in `test/parity/replay.js`. It also carries a throughput cost, accepted — and these figures are the **QA performance measurement**, attributed to it rather than measured by any gate in this tree, because none of them measures throughput: single-entry archives are **+5.7…9.6 %** at 8 B (+0.11 ms) and **+7.7…8.5 %** at 1 MB (+0.97 ms) against ±3.2 % and ±1.2 % environmental envelopes, more than offset by **−18.6…−24.6 %** on multi-entry archives. Accepted rather than tuned: the move is justified on the warning and integrity axes above, and R-a authorizes no performance work |
 
 ### Row notes
 
@@ -254,9 +255,12 @@ Only the rows whose reasoning does not fit a table cell are expanded. Numbering 
     the reader at `adm-zip` 0.6.0 cannot be shipped together: 2.1.1 declares `crc32 = 0` and
     uncompressed size 0, and 0.6.0 validates both. AAP §0.5.1.1's `archiver keep` row is argued on the
     advisory axis and says nothing about warnings, so it does not bar the change; AAP §0.5.1's rule
-    text does authorize it. **This is not a third deviation and is not recorded as one** — the two
-    approved deviations remain the never-settling file response and the retained `marked` fork, and
-    the audit gate's single high is still `marked` alone (§7). §9.5 carries the mechanism of both
+    text does authorize it. **The dependency decision is not itself a deviation, and classification is
+    not authorization** — what *is* registered is the move's client-visible consequence, the changed
+    ZIP container bytes, as approved deviation 3 in
+    [`preserved-quirks.md`](preserved-quirks.md) §11.7, which that document's §11.3 records as the
+    half that was missing from an earlier revision of this row. The audit gate's single high is still
+    `marked` alone (§7). §9.5 carries the mechanism of both
     defects, the narrower remedy that was measured and rejected, the post-move measurements, and the
     one consequence a reader has to weigh: the CRC and uncompressed-size **header fields** of newly
     written archives now carry their true values instead of zero.
@@ -347,8 +351,12 @@ the deferred list.
 
 ## 4. Removals
 
-This section is **R-b's deliverable**: R-b prohibits vendored dead packages, and twenty-three
-declarations qualified.
+This section is **R-b's deliverable**: R-b prohibits vendored dead packages, and twenty-two
+declarations qualified. A twenty-third, `chokidar`, was removed and the removal has since been
+**withdrawn on measurement** — it had a live consumer after all, and
+[§4.5](#45-one-removal-withdrawn--chokidar-has-a-live-consumer-after-all) records why. R-b cuts both
+ways here: the same rule that forbids carrying a dead package forbids shipping a tree that cannot
+boot for want of a live one.
 
 ### The criterion
 
@@ -367,7 +375,7 @@ delivered lockfile as transitives or optional peers of packages the application 
 not a dead declaration and R-b does not reach it; §4.4 records which, so a reviewer grepping the
 lockfile is not misled.
 
-### 4.1 Production removals — 19
+### 4.1 Production removals — 18
 
 Baseline resolved versions from `git show 2f8712a:package-lock.json`; severities from the baseline
 `npm audit --omit=dev`.
@@ -376,7 +384,6 @@ Baseline resolved versions from `git show 2f8712a:package-lock.json`; severities
 |---|---|---|---|---|---|
 | `@hapi/catbox-redis` | npm | `^7.0.0` | 7.0.2 | none | No consumer. The session cache is the Mongoose-backed catbox engine registered in `app.js`, not Redis — the declaration described a topology the application does not use |
 | `@hapi/hoek` | npm | `^11.0.0` | 11.0.7 | none | No consumer in any spelling. Retained in the tree as a transitive (§4.4) |
-| `chokidar` | npm | `^3.5.3` | 3.6.0 | none | No consumer. Retained in the tree as an optional peer (§4.4) |
 | `debug` | npm | `^4.3.0` | 4.4.3 | none | No consumer. Retained in the tree as a transitive (§4.4) |
 | `file-type` | npm | `^3.8.0` | 3.9.0 | none | No consumer in retained source. Absent from the delivered lockfile entirely |
 | `is-svg` | npm | `^2.1.0` | 2.1.0 | **high** (ReDoS, `2.1.0 - 4.2.2`) | No root consumer. The two `serverside` manager units that do use it declare their own, at `^4.3.2` (python) and `^5.0.0` (pygame), so removing the root declaration deprives nothing |
@@ -418,11 +425,14 @@ registrations go with them.
 
 | | Baseline | Removed | Added | Delivered | Verified |
 |---|---|---|---|---|---|
-| Production | 58 | 19 | 0 | **39** | 58 − 19 = 39 ✔ |
+| Production | 58 | 18 | 0 | **40** | 58 − 18 = 40 ✔ |
 | Development | 11 | 4 | 1 | **8** | 11 − 4 + 1 = 8 ✔ |
 
-Both verified against the delivered manifest (`39 8`, §2), and every one of the twenty-three names
-was checked individually for absence from the delivered `package.json`.
+Both verified against the delivered manifest (`40 8`, §2), and every one of the twenty-two names
+was checked individually for absence from the delivered `package.json`. The production row read
+`19` removed and `39` delivered until `chokidar`'s removal was **withdrawn on measurement**
+([§4.5](#45-one-removal-withdrawn--chokidar-has-a-live-consumer-after-all)); the withdrawal is a
+correction to which packages satisfied §0.5.1.3's criterion, not a change to the criterion.
 
 The removals are genuine rather than merely undeclared — the consuming code is gone too:
 
@@ -442,7 +452,7 @@ could have depended on.
 
 ### 4.4 Removed as a declaration, retained as a transitive
 
-Five of the nineteen production removals still appear somewhere in the delivered lockfile, because a
+Four of the eighteen production removals still appear somewhere in the delivered lockfile, because a
 package the application **does** use depends on them. That is a legitimate transitive, not a dead
 declaration, and R-b's prohibition does not reach it. Recorded so that a lockfile grep does not read
 as a contradiction:
@@ -451,13 +461,90 @@ as a contradiction:
 |---|---|---|
 | `@hapi/hoek` | 11.0.7, production transitive | 28 `@hapi/*` packages and `joi` |
 | `debug` | 4.4.3, production transitive | `ioredis` and `mquery`, and on the dev side `mongodb-memory-server-core`, `https-proxy-agent` and `new-find-package-json`. Two **older** copies sit beside it and neither is the declaration: `mocha` 3.5.3 nests `debug@2.6.8` and `superagent` 0.16.0 nests `debug@0.7.4` (**measured**: `npm ls debug --all`) |
-| `chokidar` | 3.6.0, `optional: true`, `peer: true` | An optional peer of the build tooling; `sass` declares `chokidar ^4.0.0` and gets its own nested 4.0.3 |
 | `mkdirp` | 0.5.1, development transitive | `mocha` |
 | `minimist` | 0.0.8, development transitive | that `mkdirp` |
+
+`chokidar` was the fifth row of this table, described as "3.6.0, `optional: true`, `peer: true` — an
+optional peer of the build tooling". It is **no longer a removal at all**: it is a declared production
+dependency again, and its lockfile entry carries neither flag. See
+[§4.5](#45-one-removal-withdrawn--chokidar-has-a-live-consumer-after-all) for why. `sass` still
+declares `chokidar ^4.0.0` and still gets its own nested 4.0.3, which is unrelated to the root
+declaration.
 
 The other fourteen — `@hapi/catbox-redis`, `file-type`, `is-svg`, `moment-timezone`, `mongo-migrate`,
 `node-uuid`, `optimist`, all four `passport*` packages, `request`, `rimraf` and `sha1` — are **absent
 from the delivered lockfile entirely**, along with the four development removals.
+
+### 4.5 One removal withdrawn — `chokidar` has a live consumer after all
+
+| | |
+|---|---|
+| **Registry / package** | npm `chokidar` |
+| **Baseline** | declared `^3.5.3` in `dependencies`, resolved 3.6.0 |
+| **Removed by** | AAP §0.5.1.3, on the ground "no consumer in retained source" |
+| **Delivered** | declared **`^3.5.3` in `dependencies`** again — byte-identical to the baseline declaration — resolving **3.6.0**, with no `optional` and no `peer` flag in the lockfile |
+| **Finding** | none at either version; `chokidar` 3.6.0 carries no advisory, and `npm audit --omit=dev` is unchanged at 0 critical / 1 high / 6 moderate before and after the declaration |
+| **Reason** | It has a live consumer in retained production source. `[T lib/util/nunjucks.js:8]` configures the shared nunjucks environment with `watch: config.isDev \|\| config.isTest ? true : false`, and nunjucks 3.2.4's `FileSystemLoader` implements watching by `require('chokidar')` (`node_modules/nunjucks/src/node-loaders.js:35-37`), throwing `Error: watch requires chokidar to be installed` when it is absent. `config/app.config.js` loads that module at boot, so every `NODE_ENV=test` and `NODE_ENV=development` process needs the package |
+
+**Why the original removal read as correct, and what it actually measured.** §0.5.1.3's criterion is
+sound and unchanged — a declared dependency with no live consumer in retained source is removed, and a
+consumer that is itself never invoked does not count as live. What the removal measured was whether
+retained source names `chokidar` *itself*, and nothing in `lib/` or `config/` does. The consumer is one
+step further out: retained source configures nunjucks in the one way that makes **nunjucks** require it,
+and nunjucks is invoked on every boot. So the criterion was satisfied all along and the package was
+never dead. This row is the correction; the criterion needs none.
+
+**Measured** (driven both ways in one installed tree, by removing `chokidar` from `node_modules` — the
+state `--omit=optional` produces — and putting it back, each probe requiring `config/app.config` and
+reporting its own outcome):
+
+```text
+chokidar PRESENT (delivered):   test -> loaded    development -> loaded    production -> loaded
+chokidar REMOVED:               test -> FAILED    development -> FAILED    production -> loaded
+                                       "watch requires chokidar to be installed", resolvable=false in all three
+```
+
+The production row is what identifies the mechanism: `chokidar` is unresolvable there too and the boot
+still succeeds, because `watch` is false and the loader never reaches the `require`. The dependency is
+**configuration-gated**, which is precisely why a by-name search of retained source did not find it.
+
+**What the missing declaration cost, measured on install variants rather than argued.** While
+`chokidar` reached the tree only as nunjucks' *optional* peer, the requirement survived by resolution
+rather than by declaration — and `--omit=optional` omits an optional peer deliberately. Every cell below
+was driven, each in a directory holding **nothing but the manifest pair** so the figure is the manifests'
+own rather than a checkout's state, with the package count taken from npm's own `added N packages` line
+and presence taken from `node_modules/chokidar`:
+
+| Command | Before the declaration | After |
+|---|---|---|
+| `npm ci` | 470 packages, `chokidar` present | 470 packages, `chokidar` present — **the declaration adds nothing to a full install** |
+| `npm ci --omit=optional` | **421 packages, `chokidar` ABSENT** → `npm test` exits 1 with `watch requires chokidar to be installed` and runs **0 of 130** cases | **435 packages, `chokidar` 3.6.0 present** → `config/app.config` loads under `NODE_ENV=test` and the suite registers and executes **130 of 130** |
+| `npm ci --omit=dev` | 369 packages, present | 369 packages, present — npm does not prune an optional peer of a production dependency, so **nothing shipped was ever broken** |
+| `npm ci --omit=dev --omit=optional`, `chokidar` in `devDependencies` (counterfactual, driven) | — | **322 packages, ABSENT** |
+| `npm ci --omit=dev --omit=optional`, `chokidar` in `dependencies` (delivered) | — | **336 packages, present** |
+
+One methodological note, because the counterfactual is easy to run wrongly and get the opposite answer:
+moving the declaration between `dependencies` and `devDependencies` **by hand in the lockfile's root
+block is not enough** — `npm ci` prunes from the resolved graph, so a hand-moved entry still installs
+and the counterfactual reads 336 present. Regenerating the lock with
+`npm install --package-lock-only` after editing `package.json` is what makes the placement real, and
+only then does the row read 322 with the package absent. Both were driven here; the 322 figure is the
+regenerated one.
+
+**Why `dependencies` and not `devDependencies`.** Three independent reasons, in order of weight. R-f:
+baseline `2f8712a` declared it in `dependencies` at `^3.5.3`, so restoring exactly that needs no
+invention. The consumer is production application source loaded at boot, not test tooling, so a
+devDependency would make the manifest assert the opposite of the measured runtime fact. And the
+delivered placement is the only one that survives every omission combination, per the last two rows
+above — which matters because `Dockerfile`'s runtime stage installs with `npm ci --omit=dev` and the
+image ends with `ARG NODE_ENV` / `ENV NODE_ENV=$NODE_ENV` carrying **no default**, so an image built
+without `--build-arg NODE_ENV=production` runs as development with `watch` on.
+
+**What was not done.** `lib/util/nunjucks.js` is untouched and byte-identical to baseline: setting
+`watch: false` for the dev and test path would be smaller but it is a behaviour change to a retained
+module, which R-d forbids and AAP §0.3.1 excludes. The watcher and its `FSEventWrap` handles are
+therefore unchanged, and they stay recorded — not repaired — in
+[`preserved-quirks.md`](preserved-quirks.md) §10.3.
 
 ## 5. Development dependencies
 
@@ -709,13 +796,28 @@ inside a non-Node base.
 | `serverside/python/manager/Dockerfile` | `node:18-alpine` | `node:22-alpine` |
 | `serverside/r/manager/Dockerfile` | `node:18-alpine` | `node:22-alpine` |
 | `serverside/pygame/manager/Dockerfile` | `node:18-slim` | `node:22-slim` |
-| `serverside/java/shell/Dockerfile` | `NODE_VERSION 14.21.1` via nvm inside `amazoncorretto:8` | `NODE_VERSION 22.23.2` |
-| `serverside/python/shell/Dockerfile` | `NODE_VERSION 14.21.1` via nvm inside `python:3.10-bullseye` | `NODE_VERSION 22.23.2` |
-| `serverside/r/shell/Dockerfile` | `NODE_VERSION 18.20.5` via nvm inside `r-base:4.4.2` | `NODE_VERSION 22.23.2` |
-| `serverside/pygame/worker/Dockerfile` | NodeSource `setup_18.x` inside `ubuntu:22.04` | NodeSource `setup_22.x` |
+| `serverside/java/shell/Dockerfile` | `NODE_VERSION 14.21.1` via nvm inside `amazoncorretto:8` | node **22.23.2** copied from the digest-pinned `node:22-bookworm` stage; nvm removed |
+| `serverside/python/shell/Dockerfile` | `NODE_VERSION 14.21.1` via nvm inside `python:3.10-bullseye` | node **22.23.2** copied from the digest-pinned `node:22-bookworm` stage; nvm removed; base image now `python:3.10-bookworm` + digest (§6.6) |
+| `serverside/r/shell/Dockerfile` | `NODE_VERSION 18.20.5` via nvm inside `r-base:4.4.2` | node **22.23.2** copied from the digest-pinned `node:22-bookworm` stage; nvm removed; the base's R 4.4.2 now actually governs (§6.6) |
+| `serverside/pygame/worker/Dockerfile` | NodeSource `setup_18.x` inside `ubuntu:22.04` | node **22.23.2** copied from the digest-pinned `node:22-bookworm` stage; NodeSource removed |
 
 The tenth, `serverside/nginx/Dockerfile`, is `nginx:alpine` and carries no Node runtime, so it is
 unchanged.
+
+**The four units that install Node inside a non-Node base share one delivered mechanism**, and it is
+neither nvm nor NodeSource: each declares
+`FROM node:22-bookworm@sha256:8a34c4ab…  AS nodejs` and copies that image's own
+`/usr/local/bin/node` and `/usr/local/lib/node_modules` into the final stage
+[serverside/java/shell/Dockerfile:10,34], [serverside/python/shell/Dockerfile:8,48],
+[serverside/r/shell/Dockerfile:6,63], [serverside/pygame/worker/Dockerfile:9,58], asserting
+`node -v && npm -v` on the same layer so an incomplete copy fails the build rather than the
+container. Both installer scripts are gone; the strings `nvm` and `setup_22.x` survive **only inside
+comments recording what they replaced**, and neither a `NODE_VERSION` variable nor a NodeSource
+repository remains in any of the four. Measured at runtime in all four images: node **v22.23.2**,
+npm **10.9.8**. An earlier revision of this table described the delivered worker as NodeSource
+`setup_22.x` and the three shells as carrying a `NODE_VERSION`; both were stale descriptions of a
+mechanism the delivery had already replaced, and the rows above are corrected from the delivered
+files.
 
 **The four `serverside/*/manager` units, precisely.** Each now installs from a **committed lockfile
 that did not exist before** — the baseline tree carried their `package.json` files and no lockfiles at
@@ -897,6 +999,61 @@ advisories exist.
 | Components | `curl -L --silent -o ./public-components.tgz`, then a separate `&&`-chained `tar xzf` of the file it wrote, inside one `RUN` — with two established defects: **`curl` carried no `--fail`**, so an HTTP error status still exited 0 and the error body was saved *as* the archive, and **no cryptographic digest was checked**, so any well-formed archive was extracted unverified | `RUN node scripts/fetch-components.js` | One digest-verified, idempotent, atomic implementation shared by the host and the image. The two baseline defects did not fail equally: an HTML error body did stop the build, because `tar xzf` rejects it (`gzip: stdin: not in gzip format`) and the `&&` chain fails the layer — but as a late extraction error attributed to `tar` rather than to the download that actually failed — while a **well-formed but wrong, substituted or truncated-yet-still-valid archive was accepted silently**, which is exactly what the SHA-256 verification now prevents |
 | CSS | *absent* | `RUN npm run build:css` | `public/css/base.css` and `public/css/embed.css` are gitignored build outputs, so **the baseline image contained neither stylesheet** and every page rendered unstyled. It runs after `npm ci` (it needs vite and sass) and after the component fetch (the SCSS entry imports from `public/components`) |
 
+### 6.6 Three `serverside` pins that are not the Node runtime
+
+§6.4 records the Node runtime in each image. Three further pins in the same files are load-bearing
+and are recorded here because the Dockerfiles that carry them point readers at this document.
+
+**1. The python shell base — `python:3.10-bookworm`, by multi-arch index digest.**
+
+```dockerfile
+FROM python:3.10-bookworm@sha256:94c362db08c5b38857943d31b10558ff1856e918605c474d205d72a534929d4e
+```
+
+Baseline and the first revision of this migration both pinned `python:3.10-bullseye@sha256:65c6bdcc…`,
+and **that image can no longer be built**: Debian 11 is past security support for this apt path, and
+its `debian-security` pool now returns 404 for `.deb` files its own index still lists, so
+`RUN apt install -y software-properties-common fontconfig locales-all build-essential`
+[serverside/python/shell/Dockerfile:26] exits **100**. Measured, three packages 404 —
+`libc-l10n_2.31-13+deb11u14`, `libpam-cap_2.44-1+deb11u1` and
+`libpolkit-agent-1-0_0.105-31+deb11u2`. The fix is the base rather than the package list, and that
+distinction is measured, not assumed: the apt line is **byte-identical** to baseline and exits 0 on
+bookworm, while dropping `locales-all` and `software-properties-common` — the two packages whose
+dependencies explain the first and third 404 — would still have left `libpam-cap` unreachable. Same
+CPython minor line: **Python 3.10.21**, Debian **12.15**, which also matches the Debian 12 lineage of
+the other `serverside` units. Refresh deliberately with
+`docker buildx imagetools inspect python:3.10-bookworm`, rebuild, and update this row.
+
+**2. The r shell interpreter — R 4.4.2, and why the digest alone did not deliver it.** The base is
+pinned `r-base:4.4.2@sha256:fe9b2952…` [serverside/r/shell/Dockerfile:12], and the delivered image
+nevertheless ran **R 4.6.1** with `r-base`, `r-base-core`, `r-base-dev` and `r-recommended` all at
+`4.6.1-6`. Cause, measured inside the pinned base: it ships
+`/etc/apt/sources.list.d/debian-unstable.list` (`deb http://http.debian.net/debian sid main`) **and
+already carries those four packages at 4.4.2-1**, so naming `r-recommended` in the unpinned
+`apt-get install` immediately after the `FROM` re-resolved it from sid and dragged `r-base-core` up
+with it — the digest pin was intact and irrelevant. The token is removed (nothing is lost: the base
+provides it at the pinned version), and a **build-time assertion** now fails the build if the
+interpreter is not `R version 4.4.2` or any of the four packages is not `4.4.2-*`, in the same spirit
+as the root image's `engines` assertion (§6.1). Measured after the change: `R --version` →
+`R version 4.4.2 (2024-10-31)`, the four packages at `4.4.2-1`, and the assertion printing
+`R 4.4.2 pinned by the base digest -- ok`; a deliberately wrong expected version was confirmed to
+exit the build non-zero. The general rule this records: **no `r-*` package may be named in that apt
+layer**, because the base's sid source makes any such mention a silent version move.
+
+**3. The four manager images' init — `tini` 0.19.0.** Each manager ran `node manager.js` as PID 1,
+and `manager.js` installs no signal handler. PID 1 is exempt from the kernel's default signal
+actions, so `docker stop` was ignored: measured **10.2-10.7 s** (the full grace) followed by SIGKILL,
+exit **137**, on all four units. Each image now installs `tini` as root before its `USER node` line
+and declares `ENTRYPOINT ["/sbin/tini", "--"]` (alpine units) or `["/usr/bin/tini", "--"]` (the
+`node:22-slim` pygame unit), with `CMD ["node", "manager.js"]` unchanged so command overrides still
+work. One version covers all four: **alpine `tini` 0.19.0-r3** at `/sbin/tini`, **debian `tini`
+0.19.0-1+b3** at `/usr/bin/tini`. Measured after: PID 1 is tini with node as its child, and
+`docker stop` returns in **223-423 ms** with exit **143** on every unit, under `docker run` and under
+compose alike. The fix is in the images rather than `init: true` in
+`serverside/docker-compose.yml` because a plain `docker run` deployment — which
+`serverside/README.md` documents — gets no benefit from a compose flag; layering `--init` on top
+remains harmless (measured: 263 ms, exit 143).
+
 ## 7. Audit result
 
 `npm audit --omit=dev`, measured on both trees.
@@ -1047,10 +1204,13 @@ Three mechanisms account for all sixteen:
 The gmail rule is domain-specific and easy to misread: the same local part at `example.com` is
 rejected by **both** versions, so this is not a general relaxation of dot handling.
 
-**Where that reproduction lives in the delivered tree.** `[T lib/controllers/course.js:77]` defines a
+**Where that reproduction lives in the delivered tree.** `[T lib/controllers/course.js:73]` defines a
 local `isEmail(str)` reproducing 5.7.0's control flow, the gmail fold, its FQDN check and its
-local-part expressions, and `[T lib/controllers/course.js:138]` assigns it onto the installed module
-as `validator.isEmail = isEmail`. That assignment is the mechanism, and it is deliberate: the verdict
+local-part expressions, and `[T lib/controllers/course.js:134]` assigns it onto the installed module
+as `validator.isEmail = isEmail` (**measured** at the delivered head:
+`grep -n 'function isEmail\|validator.isEmail = isEmail' lib/controllers/course.js`, which is how
+both addresses are re-derived; an earlier revision cited `:77` and `:138`, the lines these two
+constructs occupy at `7028607`, a state later reverted). That assignment is the mechanism, and it is deliberate: the verdict
 is consumed inside `lib/models/courseInvitation.js`, which calls `validator.isEmail` at `:52` and
 `:117`, and reassigning the method preserves those two persisted-status call sites without editing a
 model file this delivery otherwise leaves alone. An earlier revision of this section placed the
@@ -1069,7 +1229,8 @@ agrees with 5.7.0 on **103 of 103** — including all sixteen that 13.15.35 chan
 `test/lib/util/email-compat.js`, was removed with the module it covered, so **no committed test
 asserts these sixteen verdicts**. What remains is the comparison recorded above — 103 addresses
 through validator 5.7.0, validator 13.15.35 and the delivered reproduction, agreeing with 5.7.0 on
-103 of 103 — and the `isEmail` contract note carried at `[T lib/controllers/course.js:24-30]`. That
+103 of 103 — and the `isEmail` contract note carried at `[T lib/controllers/course.js:20-26]`, whose
+seven lines are byte-identical to the `:24-30` an earlier revision cited at `7028607`. That
 is a measurement without a regression test, and it is recorded here as such rather than presented as
 covered: a future edit to the local `isEmail` or the removal of the `validator.isEmail` assignment
 would change a persisted invitation status with nothing in the suite to catch it.
@@ -1092,9 +1253,11 @@ material — patch `@@ -1,0 +1,1 @@\n+new\n` applied to `''`:
 | 1.0.8 (baseline) | `'new\n'` | `'new\n'` |
 | 8.0.4 | `'\nnew'` | `'\nnew'` — a leading newline gained, the trailing one lost |
 
-**Where that port lives in the delivered tree.** `[T lib/controllers/course.js:169]`
+**Where that port lives in the delivered tree.** `[T lib/controllers/course.js:165]`
 defines `applyLegacyPatch(oldStr, uniDiff)`, a port of 1.0.8's `applyPatch`, and the patch site calls
-it at `[T lib/controllers/course.js:880]` — the same file, so the consumer and the dialect it
+it at `[T lib/controllers/course.js:824]` (**measured** at the delivered head:
+`grep -n 'applyLegacyPatch' lib/controllers/course.js`; an earlier revision cited `:169` and `:880`,
+which are these lines at the reverted `7028607`) — the same file, so the consumer and the dialect it
 requires sit together, with the three worked examples carried in the comment above the function. An
 earlier revision of this section placed the port in a dedicated `lib/util/diff-compat.js`; that
 module was removed as a path outside the authorized file set and the port moved to the call site
@@ -1188,6 +1351,8 @@ document is attributable to the graph they describe.
 | `supertest` | declared `^0.8.3`, resolved **0.8.3**, over `superagent` 0.16.0 — the baseline resolution, after the `^7.1.4` move was withdrawn (§5) |
 | `marked` | version **0.3.2**, commit pin `#55ea82491047d038b4360b78d092f77d439df63f`; `resolved` measured as the `git+ssh://` form, which item 1 above records with its re-assertion step and its digest |
 | `npm ci` | **exit 0**, with **no** `--legacy-peer-deps`: *added 472 packages, and audited 473 packages in 3s*. Driven from a directory holding nothing but the delivered `package.json` and `package-lock.json`, so the figure is the manifest pair's own and not this checkout's state. The lock's 510 entries exceed the 472 installed because 88 of its records carry an `optional`, `os` or `cpu` restriction a single host does not take — 22 of them `@esbuild/*`. A host that declines the optional native `nodejieba` build takes 470 instead, which is what this checkout's `node_modules/.package-lock.json` records; every entry it holds is in the lock and no version differs |
+| Direct dependencies installed-equals-locked | **48 of 48** (40 production + 8 development) — **0 mismatches**, re-measured after the `chokidar` declaration was restored ([§4.5](#45-one-removal-withdrawn--chokidar-has-a-live-consumer-after-all)) |
+| `npm ci` | **exit 0**, with **no** `--legacy-peer-deps`: *added 470 packages, and audited 471 packages in 4s*. Driven from a directory holding nothing but the delivered `package.json` and `package-lock.json`, so the figure is the manifest pair's own and not this checkout's state. The lock's 510 entries exceed the 470 installed because 88 of its records carry an `optional`, `os` or `cpu` restriction — 22 of them `@esbuild/*` — of which **39** are not taken on this host, `nodejieba` 1.4.11 and its `nan` 2.3.5 among them; the installed graph holds 470 entries, every one present in the lock, with 0 version differences. A host that **does** build the optional native `nodejieba` takes those two as well and reports **472** installed and 473 audited, which is the figure an earlier revision of this row quoted as the manifest pair's own; on this host the pair's own figure is the 470 above, and the 472 belongs to the host that takes the optional native build rather than to the pair |
 | Direct dependencies installed-equals-locked | **47 of 47** (39 production + 8 development) — **0 mismatches** |
 | Toolchain | `node v22.23.2`, `npm 10.9.8` |
 
@@ -1259,10 +1424,15 @@ four qualifying reasons, and this package qualifies on the second:
   authorizes on a different axis. The *advisory-driven* bump that §3's *One reversal, recorded*
   withdraws stays withdrawn: `archiver` carries no advisory at either version, and the
   `brace-expansion` high that once appeared to force it was cleared by lockfile regeneration alone.
-- **This is not a deviation and is not recorded as one.** Exactly two deviations are authorized — the
-  never-settling file response and the retained `marked` fork — and neither is a dependency warning.
-  A change the triage rule permits does not need deviation status; it needs a row, a reason and
-  evidence, which is what this section and row 17 are.
+- **The warning is not a deviation and is not recorded as one.** A change the triage rule permits does
+  not need deviation status; it needs a row, a reason and evidence, which is what this section and
+  row 17 are. **What the move's client-visible consequence needed, and now has, is a register entry**:
+  the served ZIP container changed — this package's half is the declared `crc32` and uncompressed size
+  on `GET /{lang}/{shortCode}.zip` — and that is approved deviation 3 in
+  [`preserved-quirks.md`](preserved-quirks.md) §11.7, argued there against R-d on R-b grounds. So this
+  row is what took the register from two entries to three, and the distinction still holds: the warning
+  qualified the move under the triage rule, while the bytes a client downloads needed an argument of
+  their own.
 
 **The two defects, with their mechanism and the gate each one failed.** Both were measured on 2.1.1 in
 an isolated install, so neither figure depends on the delivered tree.

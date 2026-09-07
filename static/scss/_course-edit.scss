@@ -81,6 +81,37 @@ body.course {
     }
   }
 
+  // Disabled-state contract for the anchor-based pseudo-buttons of the course
+  // editor: the destructive controls in the remove/delete dialogs, the outline
+  // "done" control, and the prev/next page controls.
+  //
+  // `.disabled` is only a class, so on an <a> the browser applies no disabled
+  // semantics of its own -- the control still hit-tests and still announces
+  // itself as available. Each of those controls therefore also carries
+  // `aria-disabled`, bound to the same expression as its `disabled` class, and
+  // this rule turns that one attribute into the visual and pointer half of the
+  // contract. Keying on the attribute rather than on `.disabled` keeps the
+  // rule to controls that have opted in, and follows the pointer-events
+  // precedent already set by `ul#page-actions li a.disabled` above.
+  //
+  // `.button.disabled` in _shared.scss tints the label with its own accent
+  // colour over a 40%-lightened wash of that same colour and then drops the
+  // whole control to `opacity: .7`, which leaves the text at roughly 1.6:1.
+  // Restoring full opacity and setting a dark neutral label puts it at 6.0:1
+  // over the blue tint (#cce8ff) and 7.1:1 over the danger tint (#fde7e3),
+  // both clear of the WCAG 2.1 AA 4.5:1 minimum, while the untouched tint and
+  // border keep the control looking as unavailable as it did before.
+  #course-nav a.button[aria-disabled='true'],
+  #new-topic-container a.button[aria-disabled='true'],
+  #removePageDialog a.button[aria-disabled='true'],
+  #removeLessonDialog a.button[aria-disabled='true'],
+  #deleteCourseDialog a.button[aria-disabled='true'] {
+    pointer-events: none;
+    cursor: not-allowed;
+    opacity: 1;
+    color: #4d4d4d;
+  }
+
   .inline-header {
     display: inline-block;
   }
@@ -237,7 +268,9 @@ body.course {
       margin-left: 0;
     }
 
-    #new-topic-button, #edit-outline-button {
+    // #done-outline-button is the outline control's other state; it used to
+    // share #edit-outline-button's id and so was already covered here.
+    #new-topic-button, #edit-outline-button, #done-outline-button {
       margin-bottom: 0;
       width: 100%;
     }

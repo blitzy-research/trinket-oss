@@ -31,6 +31,19 @@ module.exports = [
   },
   {
     // get a course by id
+    //
+    // SEAM-F167. This route declares no `auth`, so it inherits `mode: 'try'`
+    // and an anonymous caller reaches it, and `populate(pre.course,query.with)`
+    // is what fetches the owner's user document when the caller asks for
+    // `with=_owner`. What that response may disclose is bounded in the
+    // PROJECTION, not in the schema below: `tagSafeCourseProjection` in
+    // lib/controllers/course.js reduces a populated `_owner` to `{name,
+    // username}` unconditionally. The `with` schema is deliberately left as it
+    // is, because three client call sites legitimately send `with=['_owner']`
+    // (public/js/classPage/app.js:57,
+    // public/js/courseEditor/controllers/root.js:147 and
+    // public/js/courseEditor/controllers/materialControl.js:91) and refusing
+    // the parameter here would break all three.
     route : 'GET /api/courses/{courseId} course.getCourse',
     config : {
       pre  : ['course(params.courseId)', 'populate(pre.course,query.with)'],
@@ -926,6 +939,17 @@ module.exports = [
       payload : {
         maxBytes : 10 * (1024 * 1024) // 10MB
       },
+      // PRESERVED VALIDATION QUIRK. This payload shorthand rejects unknown keys,
+      // and the embed's Copy/Remix control posts a nested `settings` object with
+      // jQuery, which bracket-keys it; form-encoded bodies are parsed with
+      // querystring.parse, so `settings[testsEnabled]` arrives as a literal
+      // top-level key and is rejected before trinket.createFork runs, leaving no
+      // fork. The rejection answers 200 with the payload echoed back through
+      // request.fail, byte-identical at baseline 2f8712a, so AAP rule R-d keeps
+      // the schema as-is; its accept/reject outcome is recorded in
+      // test/parity/joi-baseline.json and compared by the AAP 0.6.2 joi gate.
+      // POST /api/trinkets/{trinketId}/draft carries `.unknown(true)` and so
+      // accepts the same body; that difference is baseline, not an oversight.
       validate : {
         query : {
           library : Joi.boolean()
@@ -1004,6 +1028,18 @@ module.exports = [
       payload : {
         maxBytes : 10 * (1024 * 1024) // 10MB
       },
+      // PRESERVED VALIDATION QUIRK. This payload shorthand rejects unknown keys,
+      // and the embed's autosave posts a nested `settings` object with jQuery,
+      // which bracket-keys it; form-encoded bodies are parsed with
+      // querystring.parse, so `settings[autofocusEnabled]` arrives as a literal
+      // top-level key and is rejected before trinket.autosave runs at all, which
+      // is why its ownership check never executes. The rejection answers 200 with
+      // the payload, base64 `zipCode` included, echoed back through request.fail,
+      // byte-identical at baseline 2f8712a, so AAP rule R-d keeps the schema
+      // as-is; its accept/reject outcome is recorded in
+      // test/parity/joi-baseline.json and compared by the AAP 0.6.2 joi gate.
+      // POST /api/trinkets/{trinketId}/draft carries `.unknown(true)` and so
+      // accepts the same body; that difference is baseline, not an oversight.
       validate : {
         payload : {
           code     : Joi.string().optional(),
@@ -1240,9 +1276,26 @@ module.exports = [
     route : 'POST /api/users/assets users.assetUpload',
     config : {
       auth: 'session',
+      /*
+       * `output : 'file'` belongs on `multipart`, as it does on the two upload
+       * routes in config/routes.js, which carry the full reasoning.
+       *
+       * In short: `payload.multipart` defaults to FALSE in hapi
+       * [node_modules/@hapi/hapi/lib/config.js:144-149] and @hapi/subtext then
+       * answers 415 to a `multipart/form-data` body from the payload parser
+       * [node_modules/@hapi/subtext/lib/index.js:92-96], so the asset Dropzone
+       * at public/js/plugins/asset-browser.js:270-271 -- whose default
+       * paramName 'file' matches the key validated below -- could never upload
+       * anything. And with `output` at the payload level, a non-multipart body
+       * is spooled to a temp file and its absolute path echoed back at status
+       * 200 by the hand-rolled validation's `request.fail(request.payload, ...)`.
+       * Subtext reads the part output from `options.multipart.output`
+       * [node_modules/@hapi/subtext/lib/index.js:290], so file parts still land
+       * on disk exactly as before.
+       */
       payload : {
         maxBytes  : 1048576 * 5, // 5MB
-        output : 'file'
+        multipart : { output : 'file' }
       },
       validate : {
         payload : {
@@ -1256,9 +1309,14 @@ module.exports = [
     config : {
       auth: 'session',
       pre : ['file(params.fileId)'],
+      // Same declaration as `POST /api/users/assets` above. This is the
+      // asset-replace half of the same flow, driven by the same Dropzone at
+      // public/js/plugins/asset-browser.js:528-530, so leaving it on the
+      // payload-level `output` would keep the replace path answering 415 while
+      // the upload path worked.
       payload : {
         maxBytes : 1048576 * 5, // 5MB
-        output : 'file'
+        multipart : { output : 'file' }
       },
       validate : {
         payload : {

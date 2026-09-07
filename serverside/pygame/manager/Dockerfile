@@ -17,7 +17,14 @@ WORKDIR /app
 # serverside/docker-compose.yml mounts a named volume over it, and Docker seeds
 # a fresh volume's ownership from the image directory underneath, so without it
 # the volume would come up root-owned and unwritable for uid 1000.
-RUN mkdir -p /tmp/pygame-generated \
+#
+# tini is installed in this same layer because apt needs root and `USER node`
+# is set immediately below; why the image needs it is at the ENTRYPOINT. The
+# apt lists are removed in the same layer so they are not carried in the image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /tmp/pygame-generated \
     && chown -R node:node /app /tmp/pygame-generated
 
 USER node
@@ -47,5 +54,28 @@ ENV NODE_CONFIG_DIR=/app/config
 
 # Expose port
 EXPOSE 8100
+
+# PID 1 is exempt from the kernel's default signal actions: a signal whose
+# handler is not installed is discarded instead of terminating the process, and
+# manager.js installs none. With `node manager.js` as PID 1 the SIGTERM from
+# `docker stop` was therefore ignored, the full 10 s grace elapsed and the
+# daemon SIGKILLed the container - measured here 10243 ms, exit 137, with
+# /proc/1/status SigCgt ending 4602 (SIGTERM uncaught). tini as PID 1 forwards
+# the signal to the node child, which is not PID 1 and so terminates on the
+# kernel default - measured 232 ms, exit 143. One tini version covers all four
+# manager units: 0.19.0 - debian tini 0.19.0-1+b3 at /usr/bin/tini here,
+# alpine tini 0.19.0-r3 at /sbin/tini in the java, python and r units.
+#
+# This is in the image rather than `init: true` in
+# serverside/docker-compose.yml because the reported reproduction is a plain
+# `docker run` + `docker stop`, which serverside/README.md documents and which
+# a compose-only flag would still fail, and because the image is what a
+# non-compose deployment ships. Layering `--init`/`init: true` on top stays
+# harmless: Docker's init becomes PID 1, tini runs as its child, and the signal
+# is forwarded through both.
+#
+# CMD is left as it is, so `docker run <image> <other command>` and any compose
+# `command:` override continue to work - tini execs whatever it is given.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 CMD ["node", "manager.js"]

@@ -63,6 +63,19 @@
 // because it assigns `config.constants`, which config/routes.js's
 // language-expansion loop reads AT MODULE LOAD - nothing is re-expanded here.
 //
+// A COMPARISON MUST BE BETWEEN THE TWO SIDES OF THE GATE, and both compare
+// modes refuse one that is not - `assertComparable`, shaped after
+// test/parity/joi-matrix.js's guard of the same name. The same artifact twice
+// is refused outright, both paths resolved through `realpathSync` so a symlink
+// or a `./` spelling cannot slip past, and NO flag permits it. A baseline side
+// that is not a `baseline` artifact, and two artifacts generated from one
+// analysed tree, are refused unless `--allow-same-tree` says the run is a
+// determinism control - and then the waived checks are printed and recorded in
+// the result, so a relaxed PASS is self-describing. A side with no provenance
+// block stays permitted and is reported UNVERIFIED, because a hand-made
+// manifest legitimately has none. All of this exits 2: the gate could not run,
+// which is not the 1 it returns for running and finding a difference.
+//
 // THE PASS CONDITION IS PER ENTRY. Swapping auth between two routes leaves
 // every aggregate unchanged, so the summary and the sidecar figures are a
 // SUMMARY, NOT THE PARITY GATE; the gate is `--compare`, which joins on method
@@ -300,6 +313,13 @@ var USAGE = [
   'MODES',
   '  (default)                        Generate a route manifest.',
   '  --compare <base.json> <tgt.json> Compare two manifests entry by entry.',
+  '                                   The two sides must be two distinct',
+  '                                   artifacts, each recording WHICH tree it',
+  '                                   analysed, from two distinct trees, and',
+  '                                   the FIRST must record role "baseline"; a',
+  '                                   comparison that cannot be evidence is',
+  '                                   refused with exit 2 rather than reported',
+  '                                   as a pass.',
   '  --cli-table                      Capture the route-table CLI, all three',
   '                                   invocation forms.',
   '  --verify-provenance <path...>    Verify that every named artifact or',
@@ -317,7 +337,11 @@ var USAGE = [
   '                                   yet committed. A delivery must verify',
   '                                   without it.',
   '  --compare-cli <base.json>        Compare two --cli-table artifacts across',
-  '                <tgt.json>         trees, byte for byte, form by form.',
+  '                <tgt.json>         trees, byte for byte, form by form. Held',
+  '                                   to the same side-of-the-gate refusals as',
+  '                                   --compare, less the baseline-role check,',
+  '                                   which a --cli-table artifact records',
+  '                                   nothing for.',
   '  --verify                         Regenerate and check that the manifest',
   '                                   already at --out is byte-identical to',
   '                                   what the tree emits now. This is how a',
@@ -343,12 +367,34 @@ var USAGE = [
   '                 repository default, so no run writes into tracked source',
   '                 unless it was asked to. --verify reads the manifest at',
   '                 this path and resolves it the same way.',
+  '  --allow-same-tree',
+  '                 In --compare and --compare-cli only: waive the',
+  '                 baseline-role and same-analysed-tree refusals, for a',
+  '                 determinism or negative control run from one tree. Which',
+  '                 checks it relaxed is printed and recorded in the --out',
+  '                 result, which then states that it is NOT two-tree parity',
+  '                 evidence. Comparing an artifact with ITSELF is refused',
+  '                 unconditionally and this does not permit it - by realpath',
+  '                 AND by device+inode, so a hard link is one artifact too.',
+  '  --allow-unattributed',
+  '                 In --compare and --compare-cli only: compare a side that',
+  '                 records no analysed tree - a hand-made manifest, which has',
+  '                 no provenance block. Refused without this flag, because a',
+  '                 side whose tree is unknown makes the gate\'s claim about',
+  '                 two named trees unstatable and makes the two waivable',
+  '                 checks unapplicable: deleting a provenance block was a way',
+  '                 to hand one tree in twice. The relaxation is printed and',
+  '                 recorded, and the result states it is NOT parity evidence.',
+  '                 No package.json script passes it.',
   '',
   'OPTION RULES',
-  '  No option here is repeatable: a second --app, --out, --compare or',
-  '  --cli-table is a usage error, never a last-one-wins. A value beginning',
-  '  with "-" is a usage error as well, so a missing value cannot swallow the',
-  '  following option; a lone "-" is accepted.',
+  '  No option here is repeatable: a second --app, --out, --compare,',
+  '  --cli-table, --allow-same-tree or --allow-unattributed is a usage error,',
+  '  never a last-one-wins.',
+  '  A value beginning with "-" is a usage error as well, so a missing value',
+  '  cannot swallow the following option; a lone "-" is accepted.',
+  '  Either allow-flag outside the two compare modes is a usage error too,',
+  '  rather than a flag that quietly waives nothing.',
   '',
   'ENVIRONMENT',
   '  ' + ARTIFACT_DIR_ENV + '   Directory for default artifact paths:',
@@ -370,7 +416,13 @@ var USAGE = [
   '       - --verify         the manifest at --out is not byte-identical to',
   '                          what the tree emits now',
   '  2  usage or operational failure, including a provenance sidecar that is',
-  '     present but inconsistent with the manifest or the tree it names',
+  '     present but inconsistent with the manifest or the tree it names, and',
+  '     a --compare or --compare-cli whose two sides are not the two sides of',
+  '     the gate: the same artifact twice (never permitted), a baseline side',
+  '     that is not a baseline artifact, or two artifacts from one analysed',
+  '     tree (the last two waivable by --allow-same-tree). The gate could not',
+  '     run, which is deliberately not the 1 it returns for having run and',
+  '     found a difference.',
   '',
   'NOTE Both output streams of the analysed application must be discarded by',
   '     the caller: loading the controllers prints the in-memory-queue line on',
@@ -443,8 +495,10 @@ ToolError.prototype.constructor = ToolError;
  * @param {string[]} args process.argv.slice(2)
  * @param {string} originalCwd The working directory at process start.
  * @returns {{mode: string, appRoot: string, out: (string|null),
- *            compare: string[], compareCli: string[]}}
- * @throws {ToolError} On an unknown flag or a missing/duplicated value.
+ *            compare: string[], compareCli: string[], verify: string[],
+ *            allowUnverified: boolean, allowSameTree: boolean}}
+ * @throws {ToolError} On an unknown flag, a missing/duplicated value, or
+ *   --allow-same-tree outside the two compare modes.
  */
 function parseArguments(args, originalCwd) {
   var options = {
@@ -457,12 +511,24 @@ function parseArguments(args, originalCwd) {
     // invocation, so one command establishes that it describes one target
     // state.
     verify: [],
-    allowUnverified: false
+    allowUnverified: false,
+    // --allow-same-tree: waives the two WAIVABLE side-of-the-gate checks in
+    // the two compare modes, for a determinism or negative control. It never
+    // waives the same-artifact refusal; see `assertComparable`.
+    allowSameTree: false,
+    // --allow-unattributed: waives the attribution check in the two compare
+    // modes, for the hand-made manifest `verifySuppliedManifest` permits. Kept
+    // separate from --allow-same-tree deliberately: one says "I know both sides
+    // came from one tree", the other says "I cannot say which tree a side came
+    // from", and a caller who means the first must not get the second.
+    allowUnattributed: false
   };
   var sawApp = false;
   var sawOut = false;
   var sawCompare = false;
   var sawCliTable = false;
+  var sawAllowSameTree = false;
+  var sawAllowUnattributed = false;
   var i;
 
   // ANY leading dash disqualifies a token from being a value, not just a `--`
@@ -589,6 +655,26 @@ function parseArguments(args, originalCwd) {
         options.allowUnverified = true;
         break;
 
+      case '--allow-same-tree':
+        // Non-repeatable like every other option here. A boolean flag given
+        // twice is harmless in effect, but the rule this file states is that no
+        // option is repeatable, and an exception nobody can see in the parser
+        // is how the rule stops being true.
+        if (sawAllowSameTree) {
+          throw new ToolError('--allow-same-tree given more than once');
+        }
+        sawAllowSameTree = true;
+        options.allowSameTree = true;
+        break;
+
+      case '--allow-unattributed':
+        if (sawAllowUnattributed) {
+          throw new ToolError('--allow-unattributed given more than once');
+        }
+        sawAllowUnattributed = true;
+        options.allowUnattributed = true;
+        break;
+
       case '--compare-cli':
         if (options.mode === 'compare') {
           throw new ToolError('--compare and --compare-cli are mutually exclusive');
@@ -613,6 +699,26 @@ function parseArguments(args, originalCwd) {
       default:
         throw new ToolError('unknown argument: ' + args[i]);
     }
+  }
+
+  // A flag that silently does nothing is worse than one that is refused: a
+  // caller who passed it believes a check was waived, and on the modes that
+  // have no sides to check there was never a check to waive. Refused after the
+  // loop rather than inside it, so `--allow-same-tree --compare a b` and
+  // `--compare a b --allow-same-tree` behave the same way.
+  if (options.allowSameTree && options.mode !== 'compare' &&
+      options.mode !== 'compare-cli') {
+    throw new ToolError('--allow-same-tree only affects --compare and ' +
+      '--compare-cli, which are the only modes with two sides to check');
+  }
+
+  if (options.allowUnattributed && options.mode !== 'compare' &&
+      options.mode !== 'compare-cli') {
+    throw new ToolError('--allow-unattributed only affects --compare and ' +
+      '--compare-cli, which are the only modes with sides to attribute. In ' +
+      '--verify-provenance mode the neighbouring flag is --allow-unverified, ' +
+      'which is about an artifact whose GENERATOR is not committed yet - a ' +
+      'different question, and the reason these are two flags');
   }
 
   return options;
@@ -5336,6 +5442,438 @@ function runVerify(options) {
 // --compare - THE GATE
 // ---------------------------------------------------------------------------
 
+// The checks that decide whether two artifacts are THE TWO SIDES of this gate,
+// named so the report can state which ones ran and which were waived. Named
+// here rather than inside the guard because both the guard and the artifacts it
+// annotates spell them, and a second copy of a check name is how a report comes
+// to claim a check that no longer exists.
+//
+//   same-artifact                    the two inputs are not one file - compared
+//                                    by device+inode as well as by realpath, so
+//                                    a hard link to one artifact is one file
+//   side-attributed-to-a-tree        each side records WHICH tree it measured,
+//                                    without which none of the checks below can
+//                                    be applied to it
+//   baseline-is-a-baseline-artifact  the baseline side's own provenance says
+//                                    `baseline` (--compare only; a --cli-table
+//                                    artifact records no role)
+//   same-analysed-tree               the two sides measured different trees
+var COMPARABILITY_CHECKS = {
+  compare: ['same-artifact', 'side-attributed-to-a-tree',
+    'baseline-is-a-baseline-artifact', 'same-analysed-tree'],
+  compareCli: ['same-artifact', 'side-attributed-to-a-tree',
+    'same-analysed-tree']
+};
+
+// Which flag waives which check, so the warning and the recorded note name the
+// flag a reader would have to pass to reproduce the relaxation. One map rather
+// than a sentence per site: a relaxation whose flag is named wrongly is a
+// report that sends its reader to the wrong command.
+var RELAXATION_FLAGS = {
+  'side-attributed-to-a-tree'      : '--allow-unattributed',
+  'baseline-is-a-baseline-artifact': '--allow-same-tree',
+  'same-analysed-tree'             : '--allow-same-tree'
+};
+
+/**
+ * Resolves a path through the filesystem, so two spellings of one file collapse.
+ *
+ * `path.resolve` alone answers only for the textual form: a symlink, a `./`
+ * spelling and a doubled separator all name the same inode and resolve to three
+ * different strings, and the same-artifact refusal has to hold for all of them
+ * or it holds for none. `realpathSync` is what collapses them.
+ *
+ * A path that does not exist cannot be realpath'd, and that is deliberately NOT
+ * an error here: the read that follows the guard already diagnoses a missing
+ * artifact, with a message naming the file and the mode that wanted it, and
+ * duplicating that failure earlier would only make the wrong one surface first.
+ * The textual resolution is returned instead, which is still enough for the
+ * two-identical-strings case.
+ *
+ * @param {string} target An already absolute path.
+ * @returns {string} The real path, or the resolved textual path.
+ */
+function realPathOrResolved(target) {
+  try {
+    return fs.realpathSync(target);
+  }
+  catch (err) {
+    return path.resolve(target);
+  }
+}
+
+/**
+ * The filesystem identity of a file: its device and inode, as one string.
+ *
+ * `realpathSync` collapses the spellings of one PATH - a symlink, a `./` form,
+ * a doubled separator - and that is not the same question as whether two paths
+ * are one FILE. A POSIX hard link is a second directory entry for the same
+ * inode: both entries are equally real, `realpathSync` returns each unchanged,
+ * and the two strings differ. Comparing device+inode is what closes that, and
+ * the same-artifact refusal is advertised as unwaivable, so it has to hold for
+ * every way of naming one file rather than for most of them.
+ *
+ * Returns null rather than throwing when the file cannot be stat'd - it may not
+ * exist, and the read that follows this guard is the one that diagnoses that
+ * properly. A null identity simply means the caller falls back to the realpath
+ * comparison, which is what this file did before.
+ *
+ * @param {string} target An already absolute path.
+ * @returns {(string|null)} "<dev>:<ino>", or null when it cannot be stat'd.
+ */
+function artifactInode(target) {
+  var info;
+
+  try {
+    info = fs.statSync(target);
+  }
+  catch (err) {
+    return null;
+  }
+
+  // A directory shares no inode with a regular file, but a path that is not a
+  // file at all is a read error rather than an identity, and answering it here
+  // would pre-empt the diagnosis in `readManifest`.
+  if (!info || !info.isFile()) {
+    return null;
+  }
+
+  return String(info.dev) + ':' + String(info.ino);
+}
+
+/**
+ * The tree a supplied artifact says it analysed, and what kind of artifact it
+ * says it is.
+ *
+ * Both compare modes need this and neither can get it from the same place. A
+ * MANIFEST carries the shared provenance block, so its analysed commit is
+ * `provenance.analysedTree.head` and its kind is `provenance.role`. A
+ * --cli-table ARTIFACT carries no provenance block at all - it records `head`
+ * and `appRoot` at its top level, from `runCliTable` - so its commit is
+ * `head` and it has no role to read. Reading each through one function is what
+ * lets the guard state one rule for both.
+ *
+ * A side with NOTHING to read cannot be attributed to any tree, and the gate's
+ * whole claim is about which two trees it compared. `assertComparable` refuses
+ * such a side by default and `--allow-unattributed` is what permits it, because
+ * a hand-made or hand-reduced manifest legitimately has neither a sidecar nor
+ * an embedded block and `verifySuppliedManifest` deliberately keeps working on
+ * one. Reporting it as merely "unverified" while still exiting 0 was the
+ * remaining shape of the hole this guard exists to close: the delivered gate
+ * printed its full-confidence PASS one line after admitting it could not tell
+ * which tree the baseline described.
+ *
+ * @param {Object} artifact The parsed artifact.
+ * @param {string} target Its path, for the descriptor.
+ * @returns {{path: string, real: string, inode: (string|null),
+ *            head: (string|null), role: (string|null), embedded: boolean}}
+ */
+function comparabilityIdentity(artifact, target) {
+  var block = (isPlainObject(artifact) && isPlainObject(artifact.provenance))
+    ? artifact.provenance
+    : null;
+  var analysed = (block && isPlainObject(block.analysedTree))
+    ? block.analysedTree
+    : null;
+  var head = null;
+
+  if (analysed && typeof analysed.head === 'string' && analysed.head) {
+    head = analysed.head;
+  }
+  else if (!block && isPlainObject(artifact) && typeof artifact.head === 'string' &&
+      artifact.head) {
+    // A --cli-table artifact. Read only when there is no provenance block, so
+    // a manifest that ever grows a top-level `head` cannot be attributed from
+    // the wrong field.
+    head = artifact.head;
+  }
+
+  return {
+    path    : target,
+    real    : realPathOrResolved(target),
+    inode   : artifactInode(target),
+    head    : head,
+    role    : (block && typeof block.role === 'string') ? block.role : null,
+    embedded: Boolean(block)
+  };
+}
+
+/**
+ * Refuses a comparison that is not between the two sides of the gate.
+ *
+ * AAP §0.9.1 designates this file's `--compare` THE PRIMARY PARITY GATE, and
+ * its claim is "the baseline tree's HTTP surface is identical to the migrated
+ * tree's". A comparison of one artifact with itself reports zero differences by
+ * construction, and so does a comparison of two artifacts taken from one tree:
+ * both exit 0 with the gate's full confidence while establishing nothing. The
+ * hole was reachable through the delivered gate, since `npm run verify:routes`
+ * accepts a caller-supplied BASELINE_MANIFEST and hands it straight to
+ * `--compare`, so the refusal belongs here rather than in the caller.
+ *
+ * The shape is test/parity/joi-matrix.js's `assertComparable`, deliberately:
+ * these are two halves of one delivery and a reader who has learned one gate's
+ * refusals should not have to learn the other's.
+ *
+ * Four checks, and only three of them can be waived:
+ *
+ *  - SAME ARTIFACT is refused outright, with no permitting flag. There is no
+ *    reading under which comparing a file with itself is evidence, so no flag
+ *    is offered - an unwaivable check is the only kind that cannot be waived by
+ *    a caller who pasted a command they did not read. Two spellings of one path
+ *    are collapsed through `realpathSync`, so a symlink, a `./` spelling or a
+ *    doubled slash cannot slip past it, AND two paths are compared by
+ *    device+inode, so a hard link - a second directory entry for the same file,
+ *    which `realpathSync` leaves as two different strings - cannot either.
+ *  - SIDE ATTRIBUTED TO A TREE requires each side to record which tree it
+ *    measured. Without it the gate cannot name either tree it compared, so the
+ *    two checks below have nothing to read and the claim "the baseline tree's
+ *    surface equals the migrated tree's" has no referent. `--allow-unattributed`
+ *    permits it, for the hand-made manifest the mode must keep working on, and
+ *    the relaxation is printed and recorded like any other.
+ *  - BASELINE IS A BASELINE ARTIFACT (`--compare` only) closes the "copy the
+ *    target manifest under another name and hand it in as the baseline" vector,
+ *    which the same-artifact check alone does not: two distinct files with
+ *    identical bytes are not one artifact. It is what makes a user-supplied
+ *    BASELINE_MANIFEST safe.
+ *  - SAME ANALYSED TREE catches the same substitution one step earlier and also
+ *    catches the honest mistake - two manifests generated from one worktree at
+ *    different moments.
+ *
+ * The last two are waivable by `--allow-same-tree`, because a determinism
+ * control - generate twice from one tree, compare, expect zero differences - is
+ * a legitimate thing to run and refusing it outright would remove a capability
+ * without closing a hole. The attribution check is waivable by
+ * `--allow-unattributed` for the same reason and no other. Which checks were
+ * relaxed, and by which flag, is printed and recorded in the artifact, so a
+ * relaxed PASS is self-describing and can never be mistaken for a two-tree run.
+ *
+ * Neither flag is passed by any script in package.json, which is what keeps the
+ * delivered gate strict no matter what a caller supplies to it.
+ *
+ * @param {Object} baseline From `comparabilityIdentity` - the FIRST argument's.
+ * @param {Object} target From `comparabilityIdentity` - the SECOND argument's.
+ * @param {boolean} allowSameTree Whether --allow-same-tree was passed.
+ * @param {string} mode 'compare' or 'compare-cli'.
+ * @param {boolean} allowUnattributed Whether --allow-unattributed was passed.
+ * @returns {{checked: string[], relaxed: string[], unverified: string[],
+ *            baseline: Object, target: Object, note: string}}
+ * @throws {ToolError} On a comparison that cannot be evidence. EXIT_ERROR, not
+ *   EXIT_DIFFERENCE: the gate could not run, which is not the same as the gate
+ *   running and finding nothing.
+ */
+function assertComparable(baseline, target, allowSameTree, mode,
+    allowUnattributed) {
+  var checked = mode === 'compare-cli'
+    ? COMPARABILITY_CHECKS.compareCli.slice()
+    : COMPARABILITY_CHECKS.compare.slice();
+  var relaxed = [];
+  var unverified = [];
+  var kind = mode === 'compare-cli' ? 'route-table artifact' : 'manifest';
+  var sameInode = baseline.inode !== null && baseline.inode === target.inode;
+
+  if (sameInode || baseline.real === target.real) {
+    throw new ToolError('refusing to compare ' + baseline.path + ' with ' +
+      'itself (' + (sameInode
+        ? 'both arguments name the same file - device:inode ' + baseline.inode +
+          ', so they are hard links to one artifact even though the two paths ' +
+          'differ'
+        : 'both arguments resolve to ' + baseline.real) + '). A ' +
+      'self-comparison reports zero differences by construction and is not ' +
+      'evidence of parity; there is no flag that permits it. Generate the ' +
+      'baseline side from a worktree at ' + BASELINE_HEAD.slice(0, 7) +
+      ' with --app, which is the comparison AAP 0.9.1 defines.');
+  }
+
+  // Judged before the checks below, because an unattributed side is exactly why
+  // one of them may not be judgeable at all: a reader who sees "no check
+  // refused" would otherwise have to work out for themselves which checks had
+  // nothing to read. The test is the recorded HEAD rather than the presence of
+  // a block - it is the head the same-analysed-tree check needs, so a block
+  // that records none is as unattributed as no block at all and must not pass
+  // just because something was there to read.
+  //
+  // Refused by default, and this is the second half of the finding this guard
+  // answers. Permitting an unattributed side while still printing the gate's
+  // full-confidence PASS left the whole vector open one step further along:
+  // copy the target manifest, delete its `provenance` property, hand it in as
+  // BASELINE_MANIFEST, and `npm run verify:routes` exits 0 with "the HTTP
+  // surface is identical across all 233 entries" over one tree - having said,
+  // one line earlier, that it could not tell which tree the baseline described.
+  [baseline, target].forEach(function (side) {
+    if (side.head !== null) {
+      return;
+    }
+
+    if (!allowUnattributed) {
+      throw new ToolError('the ' + (side === baseline ? 'baseline' : 'target') +
+        ' ' + kind + ' ' + side.path + (side.embedded
+          ? ' carries a provenance block that records no analysed tree'
+          : ' carries no provenance block') + ', so this run cannot tell ' +
+        'which tree it describes - and the gate\'s claim is precisely that ' +
+        'the tree at ' + BASELINE_HEAD.slice(0, 7) + ' and the migrated tree ' +
+        'have one HTTP surface. An unattributed side also makes the ' +
+        'baseline-role and same-analysed-tree checks unapplicable, so ' +
+        'stripping a provenance block is the way to smuggle one tree through ' +
+        'this gate twice. Generate each side with this tool - the baseline ' +
+        'from a worktree at ' + BASELINE_HEAD.slice(0, 7) + ' with --app - or ' +
+        'pass --allow-unattributed to compare a hand-made ' + kind + ' anyway, ' +
+        'which is recorded as NOT two-tree parity evidence.');
+    }
+
+    unverified.push(side.path);
+    relaxed.push('side-attributed-to-a-tree');
+    note('  WARNING: ' + side.path + (side.embedded
+      ? ' carries a provenance block that records no analysed tree'
+      : ' carries no provenance block') + ', so this run cannot tell which ' +
+      'tree it describes. It is compared UNVERIFIED - permitted here only ' +
+      'because --allow-unattributed was passed, for the hand-made ' + kind +
+      ' this mode must keep working on - and the same-artifact refusal is ' +
+      'then the only side-of-the-gate check that can be applied to it.');
+  });
+
+  if (mode !== 'compare-cli' && baseline.role !== null &&
+      baseline.role !== 'baseline') {
+    if (!allowSameTree) {
+      throw new ToolError('the baseline manifest ' + baseline.path + ' records ' +
+        'role ' + JSON.stringify(baseline.role) + ', not "baseline". The ' +
+        'FIRST --compare argument must be a manifest generated from a ' +
+        'worktree at ' + BASELINE_HEAD.slice(0, 7) + '; a "target" manifest is ' +
+        'the other side of this comparison, an "analysis" artifact records no ' +
+        'route surface and an "unreviewed" one measured a tree nobody ' +
+        'identified. Handing the target manifest in under another name is the ' +
+        'exact substitution this check exists for. Pass --allow-same-tree to ' +
+        'run it as a determinism control, recorded as such.');
+    }
+    relaxed.push('baseline-is-a-baseline-artifact');
+  }
+
+  if (baseline.head !== null && target.head !== null &&
+      baseline.head === target.head) {
+    if (!allowSameTree) {
+      throw new ToolError('refusing to compare two ' + kind + 's generated ' +
+        'from the same analysed tree (' + baseline.head.slice(0, 12) +
+        '). The gate compares the base commit against the migrated tree; two ' +
+        'artifacts from one tree prove only that this tool is deterministic. ' +
+        'Pass --allow-same-tree if that determinism check is what you meant, ' +
+        'and the relaxation will be printed and recorded in the report.');
+    }
+    relaxed.push('same-analysed-tree');
+  }
+
+  // Both sides can be unattributed, and the check they relax is one check, not
+  // two. `unverified` still lists both paths, because which sides they were is
+  // the detail a reader needs.
+  relaxed = relaxed.filter(function (name, index) {
+    return relaxed.indexOf(name) === index;
+  });
+
+  return {
+    checked   : checked,
+    relaxed   : relaxed,
+    unverified: unverified,
+    baseline  : { path: artifactPathLabel(baseline.path), head: baseline.head,
+      role: baseline.role, embeddedProvenance: baseline.embedded },
+    target    : { path: artifactPathLabel(target.path), head: target.head,
+      role: target.role, embeddedProvenance: target.embedded },
+    note      : comparabilityNote(relaxed, unverified, checked)
+  };
+}
+
+/**
+ * The flag or flags that waived a given set of checks, spelled for a reader.
+ *
+ * Two flags waive checks here and they mean different things, so a message that
+ * named one of them for both would send a reader to the wrong command. Read
+ * from `RELAXATION_FLAGS` rather than written out at each site, because the
+ * mapping is the thing that has to stay true.
+ *
+ * @param {string[]} relaxed Check names, as recorded by `assertComparable`.
+ * @returns {string} The flags, joined - or a neutral phrase if a future check
+ *   is relaxed without being mapped, which must not produce "undefined".
+ */
+function relaxationFlags(relaxed) {
+  var flags = [];
+
+  relaxed.forEach(function (name) {
+    var flag = Object.prototype.hasOwnProperty.call(RELAXATION_FLAGS, name)
+      ? RELAXATION_FLAGS[name]
+      : null;
+
+    if (flag && flags.indexOf(flag) === -1) {
+      flags.push(flag);
+    }
+  });
+
+  return flags.length ? flags.join(' and ') : 'an explicit flag';
+}
+
+/**
+ * The one sentence that says what a comparison result is evidence OF.
+ *
+ * Written into the artifact and printed, because the pass/fail line alone
+ * cannot distinguish the three outcomes a reader has to tell apart: two-tree
+ * parity evidence, a determinism control that waived the checks which make it
+ * evidence, and a comparison one side of which could not be attributed to any
+ * tree at all.
+ *
+ * @param {string[]} relaxed Checks a flag waived, named through
+ *   `relaxationFlags` so the sentence says which flag would reproduce it.
+ * @param {string[]} unverified Paths this run could not attribute to an
+ *   analysed tree, whether because they carry no provenance block or because
+ *   the block they carry records no analysed tree. Non-empty only under
+ *   --allow-unattributed, which is the only thing that permits such a side.
+ * @param {string[]} checked The checks this mode runs, so the clean sentence
+ *   claims only what was actually established - `--compare-cli` runs three of
+ *   the four, and a note that claimed a baseline role for an artifact which
+ *   records none would be the same false confidence in smaller print.
+ * @returns {string}
+ */
+function comparabilityNote(relaxed, unverified, checked) {
+  var parts = [];
+
+  if (relaxed.length) {
+    parts.push('RELAXED by ' + relaxationFlags(relaxed) + ': ' +
+      relaxed.join(', ') +
+      '. This report is a determinism or negative control, NOT two-tree ' +
+      'parity evidence.');
+  }
+
+  if (unverified.length) {
+    parts.push('UNVERIFIED side(s): ' + unverified.join(', ') +
+      ' record no analysed tree, so the tree each describes is unknown to ' +
+      'this run and the same-analysed-tree check could not be applied. Only ' +
+      '--allow-unattributed permits this, and it is why the sentence above ' +
+      'says this is not parity evidence.');
+  }
+
+  if (!parts.length) {
+    parts.push('The two sides are distinct artifacts, from distinct analysed ' +
+      'trees' +
+      (checked.indexOf('baseline-is-a-baseline-artifact') === -1
+        ? ''
+        : ', and the baseline side records role "baseline"') +
+      '. No check was waived.');
+  }
+
+  return parts.join(' ');
+}
+
+/**
+ * Prints what the guard established, in one place for both compare modes.
+ *
+ * @param {Object} comparability From `assertComparable`.
+ * @returns {undefined}
+ */
+function reportComparability(comparability) {
+  note('  side-of-the-gate checks: ' + comparability.checked.join(', '));
+
+  if (comparability.relaxed.length) {
+    note('  WARNING: ' + relaxationFlags(comparability.relaxed) + ' relaxed ' +
+      comparability.relaxed.join(', ') + '; this run is a determinism or ' +
+      'negative control, NOT two-tree parity evidence');
+  }
+}
+
 /**
  * Indexes a manifest's entries by their join key.
  *
@@ -5623,6 +6161,7 @@ function runCompare(options) {
   var baseline;
   var target;
   var result;
+  var comparability;
 
   note('provenance checks before comparison:');
   verifySuppliedManifest(options.compare[0], 'baseline');
@@ -5630,7 +6169,24 @@ function runCompare(options) {
 
   baseline = readManifest(options.compare[0]);
   target   = readManifest(options.compare[1]);
-  result   = compareManifests(baseline, target);
+
+  // AFTER the two reads and BEFORE the comparison. After, because the guard
+  // reads each side's embedded provenance block and `readManifest` is the one
+  // implementation that turns a missing, unparseable or shapeless artifact into
+  // a message naming it - a guard that parsed the files itself would answer the
+  // same question twice and diagnose it worse. Before, because a comparison
+  // that cannot be evidence must not run at all: a report is the one artifact
+  // whose existence is itself a claim.
+  comparability = assertComparable(
+    comparabilityIdentity(baseline, options.compare[0]),
+    comparabilityIdentity(target, options.compare[1]),
+    options.allowSameTree,
+    'compare',
+    options.allowUnattributed
+  );
+  reportComparability(comparability);
+
+  result = compareManifests(baseline, target);
   var verdict  = result.differences === 0
     ? 'PASS - the HTTP surface is identical across all ' + result.compared +
       ' entries'
@@ -5687,6 +6243,21 @@ function runCompare(options) {
           schema: target.schema === undefined ? null : target.schema,
           routes: (target.summary && target.summary.routes) || null
         }
+      },
+      // Which side-of-the-gate checks ran, which were waived, and what each
+      // side says it is. Beside `inputs` because it is a statement about the
+      // same two files: `inputs` says WHICH artifacts produced this verdict and
+      // this says whether they were the two sides of the gate. A result whose
+      // `relaxed` list is non-empty is a determinism or negative control and
+      // `note` says so, which is what stops a passing report being read as
+      // parity evidence it never claimed.
+      comparability: {
+        checked   : comparability.checked,
+        relaxed   : comparability.relaxed,
+        unverified: comparability.unverified,
+        baseline  : comparability.baseline,
+        target    : comparability.target,
+        note      : comparability.note
       },
       report: report
     }));
@@ -6557,7 +7128,24 @@ function compareCliTables(baseline, target) {
 function runCompareCli(options) {
   var baseline = readCliTableArtifact(options.compareCli[0], 'baseline');
   var target   = readCliTableArtifact(options.compareCli[1], 'target');
-  var result   = compareCliTables(baseline, target);
+  // The same guard the primary gate runs, for the same reason: a route-table
+  // comparison of one capture with itself, or of two captures from one tree,
+  // reports "all 3 invocation form(s) byte-identical across both trees" while
+  // one tree is all it saw. The baseline-role check does not apply here - a
+  // --cli-table artifact records `head` and `appRoot` and no role - so this
+  // mode runs two of the three checks and `checked` says which.
+  var comparability = assertComparable(
+    comparabilityIdentity(baseline.artifact, baseline.path),
+    comparabilityIdentity(target.artifact, target.path),
+    options.allowSameTree,
+    'compare-cli',
+    options.allowUnattributed
+  );
+  var result;
+
+  reportComparability(comparability);
+
+  result = compareCliTables(baseline, target);
   var verdict  = result.differences === 0
     ? 'PASS - all ' + result.compared + ' invocation form(s) are byte-identical ' +
       'across both trees at ' + EXPECTED.cliTableDataRows + ' data row(s)'
@@ -6600,6 +7188,18 @@ function runCompareCli(options) {
           artifact: path.basename(options.compareCli[1]),
           digest: digestOfFile(options.compareCli[1])
         }
+      },
+      // As in the manifest comparison's result, and spelled identically, so one
+      // reader consumes either gate's `comparability` without learning two
+      // vocabularies. `checked` is shorter here by one: a --cli-table artifact
+      // records no role for a baseline check to read.
+      comparability: {
+        checked   : comparability.checked,
+        relaxed   : comparability.relaxed,
+        unverified: comparability.unverified,
+        baseline  : comparability.baseline,
+        target    : comparability.target,
+        note      : comparability.note
       },
       baseline: result.baselineSide,
       target: result.targetSide,
@@ -6959,6 +7559,14 @@ module.exports = {
 
   compareManifests : compareManifests,
   readManifest     : readManifest,
+
+  // The side-of-the-gate guard both compare modes run, and the identity reader
+  // it works from. Exported for the same reason the comparator itself is: its
+  // refusals are the gate's integrity, and a refusal is only testable directly
+  // if it can be called directly.
+  assertComparable      : assertComparable,
+  comparabilityIdentity : comparabilityIdentity,
+  COMPARABILITY_CHECKS  : COMPARABILITY_CHECKS,
 
   // Freshness of a committed artifact, which a HEAD comparison cannot decide.
   runVerify        : runVerify,

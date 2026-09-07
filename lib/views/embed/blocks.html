@@ -9,11 +9,11 @@
 {% if outputOnly %}
   {% include "embed/default-toolbar.html" %}
 {% else %}
-<a class="menu-button item {{'' if toggleCode else 'show-for-small-only'}} allow-original" data-action="code.edit" data-tooltip aria-haspopup="true" data-options="disable_for_touch:true" title="Edit the code.">
+<a class="menu-button item {{'' if toggleCode else 'show-for-small-only'}} allow-original" data-action="code.edit" aria-label="Code" role="button" data-tooltip aria-haspopup="true" data-options="disable_for_touch:true" title="Edit the code.">
   <i class="fa fa-pencil"></i>
   <label class="show-for-large-up">Code</label>
 </a>
-<a class="menu-button item allow-original" data-action="code.run" data-tooltip aria-haspopup="true" title="View the result." data-options="disable_for_touch:true">
+<a class="menu-button item allow-original" data-action="code.run" aria-label="Run" role="button" data-tooltip aria-haspopup="true" title="View the result." data-options="disable_for_touch:true">
   <i class="fa fa-play"></i>
   <label class="show-for-large-up">Run</label>
 </a>
@@ -63,8 +63,9 @@
         id="codeOutputTab" data-action="output.view"><i class="fa fa-play"></i> Run</div>
       <div class="menu-button {% if hideGeneratedCode %}hideGeneratedCode{% endif %} {{ outputTabs }}"
         id="codeViewTab" data-action="code.view"><i class="fa fa-terminal"></i> View Code</div>
-      <div class="{% if showInstructions %}active {% endif %}menu-button {% if hideInstructions or (not isOwner and not trinket.description) %}hideInstructions{% endif %} {{ outputTabs }}"
-        id="instructionsTab" data-action="instructions.view"><i class="fa fa-list"></i> Instructions</div>
+      {# A bare div is announced as static text and cannot be focused, so the tab carries a button role, a tab stop and a name; public/js/embed/embed.js forwards ENTER and SPACE to the same click handler. #}
+      <div class="{% if showInstructions %}active {% endif %}menu-button {% if hideInstructions or (not isOwner and not trinket.description) %}hideInstructions{% endif %} {{ outputTabs }} highlight-on-focus"
+        id="instructionsTab" data-action="instructions.view" role="button" tabindex="0" aria-label="View instructions"><i class="fa fa-list"></i> Instructions</div>
     </div>
 
     <div id="outputContainer" class="{{ outputTabs }} {% if outputTabs == 'noTabs' %}withoutTabs{% else %}withTabs{% endif %}">
@@ -74,7 +75,7 @@
       <div id="output-dragbar" class="hide" data-action="resize"></div>
       <div id="console-wrap" class="hide">
         <div id="console-output"></div>
-        <a id="reset-output" title="clear output"><i class="fa fa-ban"></i></a>
+        <a id="reset-output" title="clear output" aria-label="Clear Output" role="button"><i class="fa fa-ban"></i></a>
       </div>
     </div>
 

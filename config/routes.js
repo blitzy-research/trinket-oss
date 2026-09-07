@@ -338,9 +338,41 @@ routes = [
     route  : 'POST /file files.upload',
     config : {
       auth: 'session',
+      /*
+       * `output : 'file'` belongs on `multipart`, not on the payload as a whole.
+       *
+       * hapi defaults `payload.multipart` to FALSE
+       * [node_modules/@hapi/hapi/lib/config.js:144-149], and @hapi/subtext
+       * answers 415 Unsupported Media Type to a `multipart/form-data` body
+       * whenever it is [node_modules/@hapi/subtext/lib/index.js:92-96] -- from
+       * the payload parser, before the handler exists and before this route's
+       * own validation runs. Every shipped client posts multipart:
+       * public/js/courseEditor/controllers/materialControl.js:157 uploads with
+       * `fileFormDataName: 'upload'`, matching the `upload` key validated
+       * below. Without this declaration no upload can succeed on this route, so
+       * no File document and no stored object is creatable through the
+       * application, and test/lib/api/files.js:48,74 cannot pass.
+       *
+       * Declaring it here rather than at the payload level is what keeps a
+       * NON-multipart body out of the temp directory. `output : 'file'` on the
+       * payload spools every body class to a temp file and hands the handler
+       * `{path, bytes}` -- a shape nothing reads, since the handler consumes
+       * `request.payload.upload` -- while the hand-rolled validation in
+       * lib/util/routeParser.js echoes the rejected payload straight back
+       * through `request.fail(request.payload, ...)`, disclosing an absolute
+       * server filesystem path at status 200. On `multipart`, subtext takes the
+       * part output from `options.multipart.output` and ignores the top-level
+       * `output` for multipart bodies entirely
+       * [node_modules/@hapi/subtext/lib/index.js:290], so file parts are still
+       * written to disk exactly as before while a JSON or raw body is parsed as
+       * data and never spooled.
+       *
+       * `maxBytes` still applies to both classes; subtext checks it against the
+       * content length before any parsing [.../subtext/lib/index.js:41].
+       */
       payload : {
         maxBytes  : 1048576 * 10, // 10MB
-        output : 'file'
+        multipart : { output : 'file' }
       },
       validate : {
         payload : {
@@ -354,9 +386,15 @@ routes = [
     route : 'POST /file/avatar files.uploadAvatar',
     config : {
       auth: 'session',
+      // Same declaration, and for the same two reasons as `POST /file` above:
+      // without `payload.multipart` the avatar Dropzone at
+      // lib/views/users/includes/profile.html:88-94 (paramName 'upload') is
+      // answered 415 by the payload parser, and with `output` at the payload
+      // level any non-multipart body is spooled to a temp file whose absolute
+      // path is then echoed back at status 200.
       payload : {
         maxBytes  : 1048576 * 5, // 5MB
-        output: 'file'
+        multipart : { output : 'file' }
       },
       validate : {
         payload : {
@@ -383,6 +421,32 @@ routes = [
       pre : [helpers.coursesEnabled, { method : helpers.userByUsername, assign : 'user' }, { method : helpers.courseBySlug, assign : 'course' }]
     }
   },
+  // 'embed/beta/{type}.html' names a template directory that does not exist anywhere in
+  // this repository, so view resolution fails for every {type}. The bound handler
+  // trinket.beta (lib/controllers/trinket.js:343) returns successfully first, so the
+  // failure occurs after the handler has returned and therefore reaches no handler-level
+  // log: the route answers 500 for every {type}, measured identically at base commit
+  // 2f8712a. The declaration is preserved rather than removed or backed by new templates
+  // because the HTTP surface is a migration invariant and the route manifest must stay
+  // identical to baseline across all 233 registered entries.
+  //
+  // SECURITY HAZARD, recorded here because this is the line that creates it and because
+  // no remedy available at this declaration is authorized. {type} is attacker-controlled
+  // and is interpolated into a filesystem template path with no validation. A
+  // percent-encoded NUL (GET /embed/beta/foo%00bar, unauthenticated) makes @hapi/vision
+  // stat a path containing \x00; Node raises TypeError [ERR_INVALID_ARG_VALUE], vision
+  // re-throws it through Bounce.rethrow(err, 'system') at manager.js:339 because a
+  // TypeError is a system error, and it escapes the response lifecycle after the handler
+  // has already returned, terminating the process. Measured identically at 2f8712a on
+  // hapi 20.3.0 against a byte-identical vision 7.0.3, so it is pre-existing and not a
+  // migration regression. The ordinary 500 described above leaves the same vision loop
+  // by the other branch: an ENOENT is not re-thrown and falls through to
+  // Boom.badImplementation('View file not found'). The six {lang} routes below
+  // interpolate their param the same way and survive only because their controllers
+  // answer 404 before the view is resolved. The fix belongs in the interpolation layer
+  // (lib/util/routeParser.js), which covers all seven routes at once; constraining the
+  // param here would change either the route manifest or the validation inventory that
+  // AAP 0.9.1 and 0.6.2 hold identical to baseline.
   {
     route : 'GET /embed/beta/{type} trinket.beta',
     html  : 'embed/beta/{type}.html',
@@ -402,7 +466,13 @@ routes = [
     html : 'embed/{lang}.html',
     config : {
       auth: 'session',
-      pre : [helpers.trinketTypeEnabled, helpers.validLang, helpers.findTrinket]
+      // SEAM-F171. `findAssignmentTrinket` performs the same single lookup
+      // `findTrinket` does and then authorizes it: the trinket's principal
+      // (`_owner` or `_creator`, which is how a submission is keyed) or a user
+      // holding `view-assignment-submissions` on the trinket's course, and
+      // `Boom.forbidden()` for anyone else. `auth: 'session'` is unchanged, so
+      // an anonymous request is still answered 401 and redirected to `/login`.
+      pre : [helpers.trinketTypeEnabled, helpers.validLang, helpers.findAssignmentTrinket]
     }
   },
   {
@@ -410,7 +480,12 @@ routes = [
     html : 'embed/{lang}.html',
     config : {
       auth: 'session',
-      pre : [helpers.trinketTypeEnabled, helpers.validLang, helpers.findTrinket]
+      // SEAM-F171. The grading surface, so `findAssignmentFeedbackTrinket`
+      // requires `send-submission-feedback` on the trinket's course - the same
+      // permission the write side of this flow requires - or that the caller be
+      // the trinket's principal, which is what a feedback revision created by
+      // `course.sendFeedback` carries instead of a course id.
+      pre : [helpers.trinketTypeEnabled, helpers.validLang, helpers.findAssignmentFeedbackTrinket]
     }
   },
   {
@@ -527,6 +602,26 @@ routes = [
     html  : 'docs/colors.html'
   },
   {
+    // KNOWN UX DEFECT, DELIBERATELY NOT REPAIRED HERE. Because this
+    // declaration carries no `html`, `success` or `fail` key, an unconfigured
+    // deployment answers this route with a bare `h.response(json)` -- HTTP 200
+    // whose body is the raw JSON `{"message":"Google OAuth is not configured.
+    // Please set up Google OAuth credentials.","flash":{}}` with no page
+    // chrome and no way back except the browser's Back button. That is what
+    // `request.fail` does when neither a fail redirect nor a fail template is
+    // declared [lib/util/routeParser.js:310-318].
+    //
+    // No `html`, `success` or `fail` key may be added to close it.
+    // test/parity/manifest.js records `success: successSpec(declaration)` and
+    // `fail: failSpec(declaration)` verbatim into the route manifest, where
+    // this entry reads `"success": {}, "fail": {}`, and AAP 0.9.1 makes
+    // entry-by-entry equality of the baseline and target manifests the primary
+    // parity gate. Adding a key changes this entry and fails that gate.
+    //
+    // Closing it therefore needs a numbered entry in the approved-deviation
+    // register, docs/preserved-quirks.md section 11 -- which declares itself
+    // closed at exactly two deviations and is owned outside this file -- taken
+    // together with a recapture of the corpus scenario that drives this route.
     route : 'GET /auth/google auth.google',
     config : {
       auth : false

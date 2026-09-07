@@ -5,11 +5,11 @@
   "generator": {
     "path": "test/parity/capture.js",
     "blob": "93266288728d9a059fe3f95a2d1cd3ab6756f134",
-    "commit": "4dcdd761b4f176d67d6402b15f4325bd73eb8c2b",
+    "commit": "7f2cc64cc70416e8088c22ce3fafba1b274ae0a5",
     "commitState": "contains-this-exact-source",
     "verified": true,
-    "deliveredHead": "4dcdd761b4f176d67d6402b15f4325bd73eb8c2b",
-    "deliveredHeadShort": "4dcdd76",
+    "deliveredHead": "7f2cc64cc70416e8088c22ce3fafba1b274ae0a5",
+    "deliveredHeadShort": "7f2cc64",
     "matchesDeliveredHead": true
   },
   "analysedTree": {
@@ -20,9 +20,9 @@
     "worktreeState": "clean"
   },
   "delivered": {
-    "head": "4dcdd761b4f176d67d6402b15f4325bd73eb8c2b",
-    "headShort": "4dcdd76",
-    "subject": "Recapture the baseline request corpus and validation baseline from the base commit",
+    "head": "7f2cc64cc70416e8088c22ce3fafba1b274ae0a5",
+    "headShort": "7f2cc64",
+    "subject": "Withdraw the remaining unauthorized scope and reconcile every delivery document",
     "isBaselineCommit": false,
     "worktreeState": "dirty"
   },
@@ -118,55 +118,7 @@
       "timeoutMs": 15000,
       "selection": "filtered",
       "selectionPatterns": [
-        "pattern:route.put.api-courses-courseId-invitations-invitationId-resend.json",
-        "pattern:route.put.api-courses-courseId-lessons-lessonId-draft.json",
-        "pattern:route.put.api-courses-courseId-lessons-lessonId-materials-materialId-assignment.json",
-        "pattern:route.put.api-courses-courseId-lessons-lessonId-materials-materialId-draft.json",
-        "pattern:route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
-        "pattern:route.put.api-courses-courseId-lessons-lessonId-materials-materialId-name.json",
-        "pattern:route.put.api-courses-courseId-lessons-lessonId-materials-materialId-patchContent.json",
-        "pattern:route.put.api-courses-courseId-lessons-lessonId-move.json",
-        "pattern:route.put.api-courses-courseId-lessons-lessonId-name.json",
-        "pattern:route.put.api-courses-courseId-metadata.json",
-        "pattern:route.put.api-folders-folderId-name.json",
-        "pattern:route.put.api-trinkets-trinketId-code.json",
-        "pattern:route.put.api-trinkets-trinketId-description.json",
-        "pattern:route.put.api-trinkets-trinketId-metrics.json",
-        "pattern:route.put.api-trinkets-trinketId-name.json",
-        "pattern:route.put.api-trinkets-trinketId-published.json",
-        "pattern:route.put.api-trinkets-trinketId-slug.json",
-        "pattern:route.put.api-users-userId.json",
-        "pattern:quirk.fallback.post.api-interest",
-        "pattern:quirk.fail-redirect-leak.post-users",
-        "pattern:quirk.reply-chain.header-resolved.posted-zip-download",
-        "pattern:quirk.dead-301.course-by-slug-alias",
-        "pattern:quirk.oauth.new-user-created-then-failed",
-        "pattern:quirk.oauth.existing-user-succeeds",
-        "pattern:error-edge.asset-from-url.transport-refused",
-        "pattern:error-edge.asset-from-url.midstream-failure",
-        "pattern:error-edge.asset-from-url.query-bearing-url",
-        "pattern:client-contract.multipart-upload.api-user-assets",
-        "pattern:client-contract.multipart-upload.api-user-assets-replace",
-        "pattern:client-contract.multipart-upload.page-file-upload",
-        "pattern:client-contract.multipart-upload.page-file-avatar",
-        "pattern:client-contract.material-patch-conflict.put-patch-content",
-        "pattern:client-contract.share-email.post-api-trinket-email",
-        "pattern:client-contract.client-metric.production-fields",
-        "pattern:route.delete.api-admin-featured-course-courseId.json",
-        "pattern:route.delete.api-courses-courseId.json",
-        "pattern:route.delete.api-courses-courseId-invitations-invitationId.json",
-        "pattern:route.delete.api-courses-courseId-lessons-lessonId.json",
-        "pattern:route.delete.api-courses-courseId-lessons-lessonId-materials-materialId.json",
-        "pattern:route.delete.api-courses-courseId-users-userId.json",
-        "pattern:route.delete.api-drafts-trinketId.json",
-        "pattern:route.delete.api-folders-folderId.json",
-        "pattern:route.delete.api-trinkets-lang-list-shortCode.json",
-        "pattern:route.delete.api-trinkets-trinketId.json",
-        "pattern:route.delete.api-trinkets-trinketId-folder.json",
-        "pattern:route.delete.api-users.json",
-        "pattern:route.delete.api-users-assets-fileId.json",
-        "pattern:auth.outcome.user-not-found",
-        "pattern:client-contract.delete-trinket-folder.query-shape"
+        "pattern:/^(route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-assignment\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-draft\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-move\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-name\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-patchContent\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-move\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-name\\.json|route\\.put\\.api\\-courses\\-courseId\\-metadata\\.json|route\\.put\\.api\\-folders\\-folderId\\-name\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-code\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-description\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-metrics\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-name\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-published\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-slug\\.json|route\\.put\\.api\\-users\\-userId\\.json|quirk\\.fallback\\.post\\.api\\-interest|quirk\\.fail\\-redirect\\-leak\\.post\\-users|quirk\\.reply\\-chain\\.header\\-resolved\\.posted\\-zip\\-download|quirk\\.dead\\-301\\.course\\-by\\-slug\\-alias|quirk\\.oauth\\.new\\-user\\-created\\-then\\-failed|quirk\\.oauth\\.existing\\-user\\-succeeds|error\\-edge\\.asset\\-from\\-url\\.transport\\-refused|error\\-edge\\.asset\\-from\\-url\\.midstream\\-failure|error\\-edge\\.asset\\-from\\-url\\.query\\-bearing\\-url|client\\-contract\\.multipart\\-upload\\.api\\-user\\-assets|client\\-contract\\.multipart\\-upload\\.api\\-user\\-assets\\-replace|client\\-contract\\.multipart\\-upload\\.page\\-file\\-upload|client\\-contract\\.multipart\\-upload\\.page\\-file\\-avatar|client\\-contract\\.material\\-patch\\-conflict\\.put\\-patch\\-content|client\\-contract\\.share\\-email\\.post\\-api\\-trinket\\-email|client\\-contract\\.client\\-metric\\.production\\-fields|route\\.delete\\.api\\-admin\\-featured\\-course\\-courseId\\.json|route\\.delete\\.api\\-courses\\-courseId\\.json|route\\.delete\\.api\\-courses\\-courseId\\-invitations\\-invitationId\\.json|route\\.delete\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\.json|route\\.delete\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\.json|route\\.delete\\.api\\-courses\\-courseId\\-users\\-userId\\.json|route\\.delete\\.api\\-drafts\\-trinketId\\.json|route\\.delete\\.api\\-folders\\-folderId\\.json|route\\.delete\\.api\\-trinkets\\-lang\\-list\\-shortCode\\.json|route\\.delete\\.api\\-trinkets\\-trinketId\\.json|route\\.delete\\.api\\-trinkets\\-trinketId\\-folder\\.json|route\\.delete\\.api\\-users\\.json|route\\.delete\\.api\\-users\\-assets\\-fileId\\.json|auth\\.outcome\\.user\\-not\\-found|client\\-contract\\.delete\\-trinket\\-folder\\.query\\-shape|route\\.put\\.api\\-courses\\-courseId\\-invitations\\-invitationId\\-email\\.json|route\\.put\\.api\\-courses\\-courseId\\-invitations\\-invitationId\\-resend\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-draft\\.json)$/"
       ],
       "appended": true,
       "quirks": true
@@ -197,7 +149,7 @@
       "none"
     ],
     "routeManifest": {
-      "artifact": "ephemeral:route-manifest.json",
+      "artifact": "ephemeral:route-manifest.baseline.json",
       "routes": 233,
       "expected": 233
     }
@@ -205,12 +157,12 @@
   "payloadDigest": {
     "algorithm": "sha256",
     "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
-    "value": "b64db2b993535b9dfb3016c09f008b631bab2f5ec45e1b3db1a22c27e95af8a6"
+    "value": "c4ab57fafd2643b0717fd86c4adf735b022d1bcc152207b15cd4fde3fdc39f23"
   },
   "artifactDigest": {
     "algorithm": "sha256",
     "canonicalization": "the artifact bytes as written, verbatim",
-    "value": "6f5fb82ffb7f7c30ba8581974d3b998412eebc772db803dd4fbeb7b204f85ab6"
+    "value": "bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798"
   },
-  "note": "COMMITTED PROVENANCE RECORD for test/parity/corpus.json, the artifact it sits beside. This sidecar IS committed and is meant to be: six committed references read it as the corpus's provenance record - test/parity/capture.js, test/parity/corpus.json, CHANGELOG.md, docs/preserved-quirks.md, docs/deferred-dependencies.md and docs/baseline-parity.md - so it is evidence in the delivery, not scratch output. Every field above except artifactDigest is also embedded in corpus.json under its own `provenance` key, which remains the self-contained record; this file adds artifactDigest, a sha256 over the exact corpus bytes as written, which is what binds this record to that one file and lets a byte-for-byte comparison of two corpora keep the provenance outside the compared region. REGENERATED BY: `node test/parity/capture.js --app <git worktree at 2f8712a> --out test/parity/corpus.json`, run from the target worktree - capture.js writes the corpus and this sidecar in the same run - and then `npm run verify:corpus:attest`, which rewrites this note into its DELIVERY RECORD form and adds a `targetReplay` key. No `targetReplay` key is present here, so no target replay has been attested into this file yet. CORRECTED WORDING: this field previously read \"RUN OUTPUT - not a delivery artifact, and not to be committed\", which contradicted the committed file it described. That string is what test/parity/manifest.js's sidecarProvenance still composes (manifest.js:2531), so a re-capture re-emits it and this note has to be re-applied until that generator is corrected. Nothing else in this file was touched: the recorded commits, runtime, detail block and both digests are the captured evidence, and re-attesting them belongs to the run that produces them."
+  "note": "COMMITTED PROVENANCE RECORD for test/parity/corpus.json, the artifact it sits beside. This sidecar IS committed and is meant to be: committed references read it as the corpus's provenance record - test/parity/capture.js, test/parity/corpus.json, test/parity/replay.js, docs/baseline-parity.md, docs/preserved-quirks.md and CHANGELOG.md - so it is evidence in the delivery rather than scratch output. Every field above except artifactDigest is also embedded in corpus.json under its own `provenance` key, which remains the self-contained record; this file adds artifactDigest, a sha256 over the exact corpus bytes as written, which is what binds this record to that one file and lets a byte-for-byte comparison of two corpora keep the provenance outside the compared region. REGENERATED BY: `node test/parity/capture.js --app <a git worktree at 2f8712a with its own npm ci> --out test/parity/corpus.json --expect-baseline --manifest <a route manifest bound to that worktree> --overlay test/parity/server-overlay.json --port 3010`, run from the target worktree - capture.js writes the corpus and this sidecar in the same run - as one full pass followed by three appended passes, because the baseline application dies on three routes and capture.js stops a run when it does. The three are POST /api/admin/user/{userId}, and POST /{userSlug}/courses/{courseSlug}/copy in both Accept modes; their recorded transport failures are the observation of a route that kills the process, driven with the server demonstrably alive, and are the only transport failures in the artifact. Every pass ran on port 3010 - the port test/parity/server-overlay.json declares and `npm run verify:corpus` defaults to - because the absolute Location values and inline-script digests a recording carries name the authority the application was configured with, so a replay elsewhere reports harness noise. No `targetReplay` key is present here, so no target replay has been attested into this file. CORRECTED WORDING: this field is composed by test/parity/manifest.js's sidecarProvenance (manifest.js:2531) as \"RUN OUTPUT - not a delivery artifact, and not to be committed\", which contradicts the committed file it describes, and the same claim appears in the corpus's own embedded provenance note, which capture.js composes. Both generators are deliberately left as they are and the note is re-applied here instead: an artifact binds to its generator's BLOB, so editing capture.js would break the binding this record rests on - blob 93266288728d9a059fe3f95a2d1cd3ab6756f134, which commit 7f2cc64 is verified to hold. A re-capture re-emits the generator's wording, so this note has to be re-applied until those generators are corrected. Nothing else in this file was touched: the recorded commits, runtime, detail block and both digests are the captured evidence, and re-attesting them belongs to the run that produces them."
 }

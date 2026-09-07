@@ -9,9 +9,16 @@ FROM node:22-bookworm@sha256:8a34c4ab3ea2c5cd194f07e317b2a8f09461d3c8b05c4e34c8c
 
 # Base image pinned by multi-arch INDEX digest so the OS and CPython contents of
 # a build are immutable; the bare tag floats. Refresh deliberately with
-# `docker buildx imagetools inspect python:3.10-bullseye` and record the value in
+# `docker buildx imagetools inspect python:3.10-bookworm` and record the value in
 # docs/dependency-inventory.md.
-FROM python:3.10-bullseye@sha256:65c6bdcca22db1a3468a0262ae05f38a0a718f51e9818cd09c12094aaae28a33
+# Debian 12, not the previous `python:3.10-bullseye`: Debian 11 is past security
+# support for this apt path, and its debian-security pool now 404s on .deb files
+# its own index still lists (measured: libc-l10n, libpam-cap and
+# libpolkit-agent-1-0), so the bullseye base could not build the apt layer below
+# whatever the package list. Bookworm also matches the Debian 12 lineage of the
+# other serverside units. Same CPython minor (3.10.21); the apt line is unchanged
+# and exits 0 here.
+FROM python:3.10-bookworm@sha256:94c362db08c5b38857943d31b10558ff1856e918605c474d205d72a534929d4e
 
 # ARG DEBIAN_FRONTEND=noninteractive
 

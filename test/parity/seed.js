@@ -12,8 +12,13 @@
 //
 // INVOCATION
 //   var seed = require('./seed');
-//   await seed.seed();                                // everything, gated
+//   await seed.seed();                                // the six default
+//                                                     // groups, gated
 //   await seed.seed({ users: true, files: true });    // storage.js
+//   await seed.seed({ invitations: true });           // an opt-in group, which
+//                                                     // is reached only by
+//                                                     // being NAMED - see the
+//                                                     // note on DEFAULT_GROUPS
 //
 //   node test/parity/seed.js --verify   // standalone self-check; starts its own
 //                                       // in-memory MongoDB through mongo.js
@@ -21,8 +26,9 @@
 // goes to stdout as an artifact.
 //
 // EXPORTS, each documented at module.exports: ids, credentials, oauth,
-// oauthIdentities, fixtures, GROUPS, storage(), s3Manifest(), keyFromUrl(),
-// seed(), verify(), reset(), resetOAuthNewcomer()
+// oauthIdentities, fixtures, GROUPS, DEFAULT_GROUPS, OPT_IN_GROUPS, storage(),
+// s3Manifest(), keyFromUrl(), invitationToken(), seed(), verify(), reset(),
+// resetOAuthNewcomer()
 //
 // THE BOUNDARY THAT MUST NOT MOVE
 // `test/helpers/db.js`'s `reset` does nothing but `dropDatabase`, and the serial
@@ -30,7 +36,7 @@
 // default user is absent and then creates it. Seeding from inside that `reset`
 // would break it, so this seeder is a separately named module used only by
 // `capture.js`, `replay.js`, `storage.js` and `worker.js`, and `reset()` here
-// deletes only the documents in the eight collections this file owns and NEVER
+// deletes only the documents in the ten collections this file owns and NEVER
 // drops a database. Nothing under `test/helpers` or `test/lib` is required from
 // here: `test/helpers/db.js` requires `config/db`, which connects at module
 // scope, and `test/helpers/defaults.js`'s identity values are copied into
@@ -99,14 +105,22 @@ var LOG_PREFIX = '[parity:seed] ';
 // `reset()` address; note `lib/models/trinket.js` registers its model as
 // 'Snippet', a 2013 name the migration does not touch.
 var MODEL_MODULES = {
-  User     : '../../lib/models/user',
-  Snippet  : '../../lib/models/trinket',
-  Course   : '../../lib/models/course',
-  Lesson   : '../../lib/models/lesson',
-  Material : '../../lib/models/material',
-  File     : '../../lib/models/file',
-  Folder   : '../../lib/models/folder',
-  Export   : '../../lib/models/export'
+  User             : '../../lib/models/user',
+  Snippet          : '../../lib/models/trinket',
+  Course           : '../../lib/models/course',
+  Lesson           : '../../lib/models/lesson',
+  Material         : '../../lib/models/material',
+  File             : '../../lib/models/file',
+  Folder           : '../../lib/models/folder',
+  Export           : '../../lib/models/export',
+  // The two entities of this checkpoint's scope that had no fixed-`_id`
+  // fixture. They are seeded by the two OPT-IN groups declared with
+  // OPT_IN_GROUPS below, but they are listed here unconditionally because this
+  // map is also what `reset({scope: 'collections'})` empties: a corpus case
+  // that wrote an invitation or an interaction through the application must be
+  // cleared by `reset()` whether or not the fixtures for it were ever seeded.
+  CourseInvitation : '../../lib/models/courseInvitation',
+  Interaction      : '../../lib/models/interaction'
 };
 
 // ---------------------------------------------------------------------------
@@ -115,8 +129,12 @@ var MODEL_MODULES = {
 // Valid 24-character hex, and deliberately synthetic so a reviewer reading a
 // captured response can tell a seeded id from a generated one at a glance. The
 // blocks are: 01 users, 02 trinkets, 03 course/lesson/material, 04 folders,
-// 05 files, 06 exports. Within a block, `ff` is reserved for an id that belongs
-// to NO document - the absence is the fixture.
+// 05 files, 06 exports, 07 course invitations, 08 interactions. Within a block,
+// `ff` is reserved for an id that belongs to NO document - the absence is the
+// fixture.
+//
+// Blocks 07 and 08 are the two OPT-IN groups (see OPT_IN_GROUPS): their ids are
+// declared here like any other, and only the SELECTION treats them differently.
 var ids = Object.freeze({
   // 01 - identities. `missingUser` is planted in a session by capture.js to
   // reach the "User not found" outcome of `app.js`'s session auth scheme, which
@@ -174,7 +192,33 @@ var ids = Object.freeze({
   exportPending   : '000000000000000000000601',
   exportCompleted : '000000000000000000000602',
   exportExpired   : '000000000000000000000603',
-  missingExport   : '0000000000000000000006ff'
+  missingExport   : '0000000000000000000006ff',
+
+  // 07 - course invitations. Four documents, one per status
+  // `lib/models/courseInvitation.js:14` names, because the status is what every
+  // branch that touches an invitation reads: `sendInvitationEmail` returns
+  // early for anything that is not 'pending' or 'resend',
+  // `findUnacceptedByCourse` filters 'accepted' out, and 'invalid' is what
+  // `addList` writes for an address `validator.isEmail` rejects. One fixture
+  // reaches one of those branches, so there are four.
+  invitationPending  : '000000000000000000000701',
+  invitationSent     : '000000000000000000000702',
+  invitationAccepted : '000000000000000000000703',
+  invitationInvalid  : '000000000000000000000704',
+  missingInvitation  : '0000000000000000000007ff',
+
+  // 08 - interactions. Three documents:
+  // `lib/models/trinket.js`'s `findAndUpdateMetrics` writes one per metric
+  // update, and the shape it writes differs on two axes that both reach a
+  // response through `GET /api/trinkets/{trinketId}/interactions` - whether the
+  // metric name matches /views/ (which also rewrites `lastView`), and whether
+  // the caller was authenticated (which is the only source of `_actor`). Two of
+  // them sit on one trinket and one on another, so a `findByTrinketId` result
+  // has a count that can be wrong in either direction.
+  interactionEmbedView : '000000000000000000000801',
+  interactionRun       : '000000000000000000000802',
+  interactionLinkShare : '000000000000000000000803',
+  missingInteraction   : '0000000000000000000008ff'
 });
 
 // ---------------------------------------------------------------------------
@@ -413,6 +457,23 @@ var DATES = Object.freeze({
   exportCompleted  : '2024-06-02T00:00:00.000Z',
   exportExpired    : '2024-06-03T00:00:00.000Z',
 
+  // Block 07. `created` is fixed for the same reason every other `created` is;
+  // `lastUpdated` cannot be and is in VOLATILE_FIELDS. `invitationSentOn` is the
+  // `sentOn` the 'sent' fixture carries - `sendInvitationEmail` assigns
+  // `Date.now()` there, so a fixture that left it unset would be the only
+  // representation of a sent invitation and would not look like one the
+  // application had written.
+  invitationPending  : '2024-07-01T00:00:00.000Z',
+  invitationSent     : '2024-07-02T00:00:00.000Z',
+  invitationAccepted : '2024-07-03T00:00:00.000Z',
+  invitationInvalid  : '2024-07-04T00:00:00.000Z',
+  invitationSentOn   : '2024-07-02T00:05:00.000Z',
+
+  // Block 08 has no dates at all: `lib/models/interaction.js` declares
+  // `timestamps: false`, so `lib/models/model.js` does not apply the timestamps
+  // plugin and the documents carry neither `created` nor `lastUpdated`. That
+  // makes an interaction the one fixture here with no volatile field whatsoever.
+
   // Assignment dates on the seeded material. Fixed and in the past/future
   // respectively so `lib/models/material.js`'s `isVisible` returns a stable
   // answer: available since 2024, hidden after 2099, therefore visible.
@@ -511,6 +572,27 @@ var EXPORT_ZIP = Buffer.concat([
  */
 function sha1Hex(buffer) {
   return crypto.createHash('sha1').update(buffer).digest('hex');
+}
+
+/**
+ * The invitation token `lib/models/courseInvitation.js`'s `addList` derives.
+ *
+ * Reproduced rather than invented, and that is the whole point of deriving it:
+ * `addList` computes `md5(email + course.id).slice(0, 8)` at
+ * `lib/models/courseInvitation.js:37`, and `GET /courses/accept/{token}` finds
+ * an invitation by exactly that value through `findByToken`. A token made up
+ * here would be just as fixed and would prove nothing about the accept route,
+ * whereas this one is a pure function of two values this file already fixes -
+ * the address and the seeded course id - so it stays deterministic while
+ * remaining the token the application would have written.
+ *
+ * @param {string} email the invited address, already lowercased
+ * @param {string} courseId the 24-character hex course id
+ * @returns {string} 8-character lowercase hex
+ */
+function invitationToken(email, courseId) {
+  return crypto.createHash('md5').update(email + courseId).digest('hex')
+    .substring(0, 8);
 }
 
 // Derived, then checked against a committed constant. Deriving alone would make
@@ -790,6 +872,119 @@ var TRINKETS = Object.freeze([
 var FOLDER_TRINKET_KEYS = Object.freeze(['trinketPython', 'trinketHtml']);
 
 // ---------------------------------------------------------------------------
+// Course invitation descriptors
+// ---------------------------------------------------------------------------
+// One per status `lib/models/courseInvitation.js:14` names. All four point at
+// the seeded course, which is what makes the unique `{courseId, email}` index
+// meaningful here: four documents in one course, distinguished only by address.
+//
+// `token` is DERIVED, through `invitationToken`, for the reason stated there.
+// The 'invalid' fixture's address is deliberately not an address -
+// `lib/models/courseInvitation.js:52` writes `status: 'invalid'` for anything
+// `validator.isEmail` rejects, and a fixture carrying a valid address with an
+// 'invalid' status would be a state the application never writes.
+var INVITATIONS = Object.freeze([
+  Object.freeze({
+    key    : 'invitationPending',
+    _id    : ids.invitationPending,
+    email  : 'parity-invitee-pending@example.com',
+    status : 'pending'
+  }),
+  Object.freeze({
+    key     : 'invitationSent',
+    _id     : ids.invitationSent,
+    email   : 'parity-invitee-sent@example.com',
+    status  : 'sent',
+    // Only the 'sent' fixture carries one: `sendInvitationEmail` assigns
+    // `sentOn` in the same save that moves the status to 'sent', so the two go
+    // together or neither does.
+    sentOn  : DATES.invitationSentOn
+  }),
+  Object.freeze({
+    key    : 'invitationAccepted',
+    _id    : ids.invitationAccepted,
+    email  : 'parity-invitee-accepted@example.com',
+    status : 'accepted'
+  }),
+  Object.freeze({
+    key    : 'invitationInvalid',
+    _id    : ids.invitationInvalid,
+    email  : 'parity-invitee-invalid-address',
+    status : 'invalid'
+  })
+]);
+
+// The statuses `findUnacceptedByCourse` returns - everything except 'accepted',
+// which is the `$ne` at `lib/models/courseInvitation.js:105`. Recorded here so
+// the self-check states the expected count rather than re-deriving the filter.
+var UNACCEPTED_INVITATION_KEYS = Object.freeze(
+  INVITATIONS.filter(function(invitation) {
+    return invitation.status !== 'accepted';
+  }).map(function(invitation) {
+    return invitation.key;
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Interaction descriptors
+// ---------------------------------------------------------------------------
+// Exactly the documents `lib/models/trinket.js`'s `findAndUpdateMetrics`
+// writes: `{action, _trinket, _owner, lang}` merged with the `meta` its caller
+// built, which is `{referer, address}` from the request headers plus `_actor`
+// when and only when the request was authenticated
+// (`lib/controllers/trinket.js:607-628`). `action` is the METRIC NAME, so the
+// values below are drawn from the `metrics` sub-document at
+// `lib/models/trinket.js:65-74` rather than invented.
+//
+// `referer` and `address` are populated on the anonymous fixture and empty on
+// the authenticated ones, which is what the handler produces from a request
+// with and without those headers - and it is deliberate that the values are
+// visibly synthetic: this payload reaches an anonymously readable response, a
+// pre-existing exposure recorded in docs/preserved-quirks.md, so the fixture
+// must not put anything resembling a real address in a captured artifact.
+var INTERACTIONS = Object.freeze([
+  Object.freeze({
+    key     : 'interactionEmbedView',
+    _id     : ids.interactionEmbedView,
+    trinket : 'trinketPython',
+    action  : 'embedViews',
+    // No `_actor`: an embed view is the anonymous case, and it is the only one
+    // whose metric name matches /views/ and therefore also rewrites the
+    // trinket's `lastView`.
+    referer : 'https://parity.example.com/embed-host',
+    address : '203.0.113.10'
+  }),
+  Object.freeze({
+    key     : 'interactionRun',
+    _id     : ids.interactionRun,
+    trinket : 'trinketPython',
+    action  : 'runs',
+    // The admin, not the owner: `lib/controllers/trinket.js:690` skips the
+    // metric update entirely when the actor owns the trinket, so an
+    // owner-actor interaction is a document the application does not write on
+    // that path.
+    actor   : 'admin',
+    referer : '',
+    address : ''
+  }),
+  Object.freeze({
+    key     : 'interactionLinkShare',
+    _id     : ids.interactionLinkShare,
+    trinket : 'trinketHtml',
+    action  : 'linkShares',
+    actor   : 'admin',
+    referer : '',
+    address : '',
+    // `info` is the schema's one free-form field (`info: {}` at
+    // `lib/models/interaction.js:12`, "arbitrary data flavored by action") and
+    // nothing else in this fixture set carries a Mixed value, so one document
+    // does - otherwise a serialization change to Mixed would pass every check
+    // here.
+    info    : Object.freeze({ shareTarget : 'link', channel : 'parity-fixture' })
+  })
+]);
+
+// ---------------------------------------------------------------------------
 // The configuration-independent fixture facts
 // ---------------------------------------------------------------------------
 // Everything a sibling harness needs to assert against WITHOUT reading
@@ -904,7 +1099,40 @@ var fixtures = Object.freeze({
   folder : Object.freeze({
     name          : 'parity folder',
     trinketKeys   : FOLDER_TRINKET_KEYS
-  })
+  }),
+
+  // Address, status and DERIVED token per invitation, keyed the way `ids` is,
+  // so a harness building a `/courses/accept/{token}` path never hard-codes a
+  // token and never recomputes the md5 itself.
+  invitations : Object.freeze(INVITATIONS.reduce(function(acc, invitation) {
+    acc[invitation.key] = Object.freeze({
+      id       : invitation._id,
+      courseId : ids.course,
+      email    : invitation.email,
+      status   : invitation.status,
+      token    : invitationToken(invitation.email, ids.course),
+      sentOn   : invitation.sentOn || null
+    });
+    return acc;
+  }, {})),
+
+  // The keys `findUnacceptedByCourse` is expected to return, and their count.
+  unacceptedInvitationKeys : UNACCEPTED_INVITATION_KEYS,
+
+  // Action, subject trinket and actor per interaction, so a harness asserting
+  // `GET /api/trinkets/{trinketId}/interactions` states which documents it
+  // expects rather than counting whatever came back.
+  interactions : Object.freeze(INTERACTIONS.reduce(function(acc, interaction) {
+    acc[interaction.key] = Object.freeze({
+      id      : interaction._id,
+      trinket : interaction.trinket,
+      action  : interaction.action,
+      actor   : interaction.actor || null,
+      referer : interaction.referer,
+      address : interaction.address
+    });
+    return acc;
+  }, {}))
 });
 
 /**
@@ -955,7 +1183,7 @@ function loadConfig() {
 }
 
 /**
- * Resolves the eight models on first use, and caches them.
+ * Resolves the ten models on first use, and caches them.
  *
  * Requiring a model registers its schema on mongoose's default connection and
  * pulls in `config` and `lib/util/store`; none of that should happen merely
@@ -1213,16 +1441,89 @@ function s3Manifest(options) {
 //     nothing, and making the embed conditional on the selection would make the
 //     fixture's CONTENT depend on which groups were asked for - which is
 //     exactly the non-determinism this file exists to remove.
-var GROUP_ORDER = ['users', 'files', 'trinkets', 'course', 'folders', 'exports'];
+//
+//   invitations -> course     the invitation's `courseId` IS the seeded course,
+//     and `findUnacceptedByCourse` is queried by course, so an invitation
+//     without it points at nothing and its own self-check cannot run.
+//
+//   interactions -> trinkets  the interaction embeds `_trinket`, `_owner` and
+//     `lang`, all three read off the trinket by
+//     `lib/models/trinket.js`'s `findAndUpdateMetrics`.
+//
+// THE SIX DEFAULT GROUPS AND THE TWO OPT-IN GROUPS, and why the split exists.
+//
+// `resolveSelection` treats "no group mentioned" as everything, and two callers
+// rely on that: `test/parity/capture.js` and `test/parity/replay.js` both spawn
+// a seeder child that calls `seed()` with no flags at all. Those two drive the
+// request corpus, whose responses are compared EXACTLY. Adding a seventh and
+// eighth default-on group would therefore have put new documents into every
+// capture and every replay, changed the response of every route that reads an
+// invitation or an interaction - `GET /api/trinkets/{trinketId}/interactions`
+// and the course-invitation family among them - and invalidated the committed
+// `test/parity/corpus.json`.
+//
+// So the two new groups are OPT-IN: a caller that NAMES one gets it, a caller
+// that names nothing gets exactly the six groups it got before they existed.
+// This is a property of the SELECTION and of nothing else - the ids, the
+// descriptors, the seeders, the delete map and the self-check treat all eight
+// groups alike - and it is expressed as one list rather than as a condition
+// inside `resolveSelection`, so folding a group into the default is a
+// deliberate edit to OPT_IN_GROUPS and cannot happen by adding a group
+// somewhere else. `assertGroupTablesConsistent()` below refuses to load the
+// module if a group ends up in neither list or in both.
+//
+// Being opt-in does NOT mean being ungated: `node test/parity/seed.js --verify`
+// names every group, including these two, so their fixtures are asserted on
+// every run of the standalone gate.
+var DEFAULT_GROUPS = Object.freeze([
+  'users', 'files', 'trinkets', 'course', 'folders', 'exports'
+]);
+
+var OPT_IN_GROUPS = Object.freeze(['invitations', 'interactions']);
+
+var GROUP_ORDER = DEFAULT_GROUPS.concat(OPT_IN_GROUPS);
 
 var GROUP_DEPENDENCIES = Object.freeze({
-  users    : Object.freeze([]),
-  files    : Object.freeze(['users']),
-  trinkets : Object.freeze(['users', 'files']),
-  course   : Object.freeze(['users', 'trinkets']),
-  folders  : Object.freeze(['users', 'trinkets']),
-  exports  : Object.freeze(['users'])
+  users        : Object.freeze([]),
+  files        : Object.freeze(['users']),
+  trinkets     : Object.freeze(['users', 'files']),
+  course       : Object.freeze(['users', 'trinkets']),
+  folders      : Object.freeze(['users', 'trinkets']),
+  exports      : Object.freeze(['users']),
+  invitations  : Object.freeze(['course']),
+  interactions : Object.freeze(['users', 'trinkets'])
 });
+
+/**
+ * Whether a group is seeded when a caller names no group at all.
+ *
+ * The one predicate that distinguishes the two lists, so every place the
+ * distinction matters reads it from here.
+ *
+ * @param {string} group
+ * @returns {boolean}
+ */
+function isDefaultGroup(group) {
+  return DEFAULT_GROUPS.indexOf(group) >= 0;
+}
+
+/**
+ * A selection naming every group `true`, opt-in groups included.
+ *
+ * The explicit form of "everything", for the one caller that wants it: the
+ * standalone `--verify` gate. It is a function over GROUP_ORDER rather than a
+ * literal so that a group added later is gated without that call site being
+ * edited, and it is deliberately NOT what an absent argument means - see the
+ * note on DEFAULT_GROUPS for what depends on the default staying the six.
+ *
+ * @returns {Object} group name -> true, for every group
+ */
+function everyGroup() {
+  return GROUP_ORDER.reduce(function(selection, group) {
+    selection[group] = true;
+    return selection;
+  }, {});
+}
 
 // Which fixed ids each group owns. `reset({ scope: 'fixtures' })` and
 // `seed({ force: true })` delete exactly these, and the self-check walks them
@@ -1240,7 +1541,13 @@ var GROUP_IDS = Object.freeze({
   folders  : Object.freeze(['Folder', [ids.folder]]),
   exports  : Object.freeze(['Export', [
     ids.exportPending, ids.exportCompleted, ids.exportExpired
-  ]])
+  ]]),
+  invitations : Object.freeze(['CourseInvitation', INVITATIONS.map(function(i) {
+    return i._id;
+  })]),
+  interactions : Object.freeze(['Interaction', INTERACTIONS.map(function(i) {
+    return i._id;
+  })])
 });
 
 // The course group spans three collections, so its ids do not fit the one-model
@@ -1262,7 +1569,17 @@ var MISSING_IDS = Object.freeze([
   Object.freeze({ model : 'Course',  id : ids.missingCourse,  key : 'missingCourse' }),
   Object.freeze({ model : 'Folder',  id : ids.missingFolder,  key : 'missingFolder' }),
   Object.freeze({ model : 'File',    id : ids.missingFile,    key : 'missingFile' }),
-  Object.freeze({ model : 'Export',  id : ids.missingExport,  key : 'missingExport' })
+  Object.freeze({ model : 'Export',  id : ids.missingExport,  key : 'missingExport' }),
+  Object.freeze({
+    model : 'CourseInvitation',
+    id    : ids.missingInvitation,
+    key   : 'missingInvitation'
+  }),
+  Object.freeze({
+    model : 'Interaction',
+    id    : ids.missingInteraction,
+    key   : 'missingInteraction'
+  })
 ]);
 
 // The option keys that are not group names. `verify` is one of them because
@@ -1277,9 +1594,16 @@ var SELECTION_FLAGS = Object.freeze(['force', 'scope', 'verify']);
  * Two selection styles, because both appear in practice:
  *   * At least one group explicitly `true` -> the selection is exactly those,
  *     plus whatever they depend on. `{users: true, files: true}` is how
- *     `test/parity/storage.js` avoids creating the whole world.
- *   * Only `false` values -> the selection is everything except those.
- *   * No group mentioned -> everything.
+ *     `test/parity/storage.js` avoids creating the whole world. This is the ONE
+ *     style that can select an opt-in group, and naming it is the whole of the
+ *     opt-in: `{invitations: true}` seeds invitations and the course tree
+ *     underneath them.
+ *   * Only `false` values -> the selection is every DEFAULT group except those.
+ *   * No group mentioned -> every DEFAULT group.
+ *
+ * The last two say DEFAULT deliberately: an opt-in group is never reached by
+ * omission, only by being named `true` or by being the dependency of one. See
+ * the note on DEFAULT_GROUPS for why the corpus depends on that.
  *
  * A group that is explicitly `false` but required by a selected group is a
  * contradiction, and it THROWS rather than being silently overridden: seeding
@@ -1312,13 +1636,22 @@ function resolveSelection(options) {
 
   GROUP_ORDER.forEach(function(group) {
     if (!mentioned.length) {
-      wanted[group] = true;
+      // Nothing named: the six defaults, and not the opt-in pair.
+      wanted[group] = isDefaultGroup(group);
     }
     else if (anyTrue) {
+      // Something named `true`: exactly what was named, whichever list it is
+      // on. Dependencies are added below.
       wanted[group] = opts[group] === true;
     }
     else {
-      wanted[group] = opts[group] !== false;
+      // Only exclusions named: the defaults minus them. An opt-in group is
+      // still not selected here - `{files: false}` means "the usual set without
+      // files", not "everything that exists without files" - and an opt-in
+      // group named `false` is accepted and redundant rather than an error,
+      // which is the same treatment a default group named `false` twice over
+      // would get.
+      wanted[group] = isDefaultGroup(group) && opts[group] !== false;
     }
   });
 
@@ -1377,6 +1710,19 @@ function describeDependency(group, dependency) {
     return 'The assignment material embeds a trinket\'s id, shortCode and lang.';
   }
 
+  if (group === 'invitations' && dependency === 'course') {
+    return 'Every invitation\'s `courseId` is the seeded course, and its token ' +
+           'is md5(email + courseId) (lib/models/courseInvitation.js:37), so ' +
+           'without that course the fixtures point at nothing and ' +
+           'findUnacceptedByCourse has nothing to query.';
+  }
+
+  if (group === 'interactions' && dependency === 'trinkets') {
+    return 'Each interaction embeds the trinket\'s `_trinket`, `_owner` and ' +
+           '`lang`, which lib/models/trinket.js:206-211 reads off the trinket ' +
+           'it was recorded against.';
+  }
+
   return 'Its documents carry a required owner or an embedded reference.';
 }
 
@@ -1401,6 +1747,67 @@ function privateModel(name) {
   loadModels();
 
   return mongoose.model(name);
+}
+
+/**
+ * The unique indexes a model's schema declares, read from the schema itself.
+ *
+ * `Schema.prototype.indexes()` returns `[keyPattern, options]` pairs covering
+ * BOTH forms this codebase uses - `unique: true` on a path
+ * (`lib/models/user.js`'s `username` and `email`, `lib/models/trinket.js`'s
+ * `shortCode`) and a compound declaration through `lib/models/model.js`'s
+ * `index` config (`lib/models/course.js`'s and `lib/models/folder.js`'s
+ * `{_owner, slug}`, `lib/models/courseInvitation.js`'s `{courseId, email}`) -
+ * so nothing has to be listed here and a newly declared unique index is
+ * asserted the moment it is declared.
+ *
+ * @param {string} name a registered mongoose model name
+ * @returns {Array<{key: Object, description: string}>} one entry per declared
+ *   unique index, in declaration order; empty for a model that declares none
+ */
+function declaredUniqueIndexes(name) {
+  return privateModel(name).schema.indexes()
+    .filter(function(pair) {
+      return !!(pair[1] && pair[1].unique === true);
+    })
+    .map(function(pair) {
+      return {
+        key         : pair[0],
+        description : '{' + Object.keys(pair[0]).map(function(field) {
+          return field + ': ' + pair[0][field];
+        }).join(', ') + '}'
+      };
+    });
+}
+
+/**
+ * Whether two index key patterns are the same index.
+ *
+ * Field ORDER matters to MongoDB for a compound index, so the comparison walks
+ * both key lists positionally rather than comparing sorted sets: an index on
+ * `{courseId: 1, email: 1}` is not the index on `{email: 1, courseId: 1}`, and
+ * treating them as equal would let a reordered declaration pass while a
+ * different index was in force.
+ *
+ * @param {Object} live the `key` of an index the server reports
+ * @param {Object} declared the key pattern the schema declares
+ * @returns {boolean}
+ */
+function sameIndexKey(live, declared) {
+  var liveFields     = Object.keys(live || {});
+  var declaredFields = Object.keys(declared || {});
+
+  if (liveFields.length !== declaredFields.length) {
+    return false;
+  }
+
+  return declaredFields.every(function(field, index) {
+    // Loose equality on the direction, because the schema may declare `1`
+    // where the server reports `1` as a number and a text or hashed index
+    // reports a string; the value is compared as written either way.
+    return liveFields[index] === field &&
+      String(live[field]) === String(declared[field]);
+  });
 }
 
 /**
@@ -2361,14 +2768,199 @@ async function seedExports(models, summary) {
   });
 }
 
+/**
+ * The four course invitations, one per status.
+ *
+ * Saved through the model rather than inserted raw, so the timestamps plugin's
+ * pre-save hook runs and `created` is honoured exactly as it is for every other
+ * fixture here. There is no other hook on this schema - the email is sent by
+ * `sendEmails`, which is a class method the controller calls and not something
+ * a save triggers - so a saved invitation is byte-for-byte what
+ * `lib/models/courseInvitation.js`'s `addList` upsert would have produced, with
+ * the same derived token.
+ *
+ * All four sit in the seeded course, which is what exercises the unique
+ * `{courseId, email}` index the model declares: four documents that differ only
+ * by address.
+ *
+ * @param {Object} models
+ * @param {Object} summary
+ */
+async function seedInvitations(models, summary) {
+  var i, descriptor;
+
+  for (i = 0; i < INVITATIONS.length; i++) {
+    descriptor = INVITATIONS[i];
+
+    // The IIFE binds `descriptor` for this iteration, the same shape
+    // seedTrinkets uses, so the creator closes over its own spec rather than
+    // over the loop variable.
+    await ensure(summary, 'CourseInvitation', descriptor._id, (function(spec) {
+      return async function() {
+        var attrs = {
+          _id      : spec._id,
+          courseId : ids.course,
+          email    : spec.email,
+          token    : invitationToken(spec.email, ids.course),
+          status   : spec.status,
+          created  : DATES[spec.key]
+        };
+
+        // Only where the descriptor carries one, because `sentOn` and the
+        // 'sent' status are written by the same save.
+        if (spec.sentOn) {
+          attrs.sentOn = spec.sentOn;
+        }
+
+        return await new models.CourseInvitation(attrs).save();
+      };
+    })(descriptor));
+  }
+}
+
+/**
+ * The three interactions.
+ *
+ * Read off the SEEDED TRINKET rather than from a literal: `_owner` and `lang`
+ * are copied from the trinket document the way
+ * `lib/models/trinket.js`'s `findAndUpdateMetrics` copies them, so an
+ * interaction cannot disagree with the trinket it points at. That is also why
+ * this group depends on `trinkets` rather than embedding the owner id here - a
+ * literal would go stale the moment a trinket descriptor changed hands.
+ *
+ * `_actor` is set only where the descriptor names one, because the handler sets
+ * it only for an authenticated request, and an interaction with an `_actor` it
+ * would never have carried is not a fixture of anything.
+ *
+ * @param {Object} models
+ * @param {Object} summary
+ */
+async function seedInteractions(models, summary) {
+  var i, descriptor, trinket;
+
+  for (i = 0; i < INTERACTIONS.length; i++) {
+    descriptor = INTERACTIONS[i];
+    trinket    = await privateModel('Snippet').findById(ids[descriptor.trinket]).exec();
+
+    if (!trinket) {
+      throw new Error(
+        LOG_PREFIX + 'the interaction `' + descriptor.key + '` needs trinket `' +
+        descriptor.trinket + '`, which is absent. This should be unreachable - ' +
+        '`interactions` depends on `trinkets` - so it indicates the trinkets ' +
+        'group failed silently.'
+      );
+    }
+
+    await ensure(summary, 'Interaction', descriptor._id, (function(spec, subject) {
+      return async function() {
+        var attrs = {
+          _id      : spec._id,
+          _trinket : subject._id,
+          _owner   : subject._owner,
+          lang     : subject.lang,
+          action   : spec.action,
+          referer  : spec.referer,
+          address  : spec.address
+        };
+
+        if (spec.actor) {
+          attrs._actor = ids[spec.actor];
+        }
+
+        // `copy` rather than the frozen literal, so mongoose is never handed a
+        // frozen object to annotate - the same rule the other seeders follow.
+        if (spec.info) {
+          attrs.info = copy(spec.info);
+        }
+
+        return await new models.Interaction(attrs).save();
+      };
+    })(descriptor, trinket));
+  }
+}
+
 var SEEDERS = {
-  users    : seedUsers,
-  files    : seedFiles,
-  trinkets : seedTrinkets,
-  course   : seedCourseTree,
-  folders  : seedFolders,
-  exports  : seedExports
+  users        : seedUsers,
+  files        : seedFiles,
+  trinkets     : seedTrinkets,
+  course       : seedCourseTree,
+  folders      : seedFolders,
+  exports      : seedExports,
+  invitations  : seedInvitations,
+  interactions : seedInteractions
 };
+
+/**
+ * Refuses to load the module if the group tables disagree with each other.
+ *
+ * The opt-in mechanism is one list, and a list is only as reliable as the thing
+ * that notices when a group is missing from it. Every group must be on exactly
+ * one of DEFAULT_GROUPS and OPT_IN_GROUPS, and must have a dependency entry, an
+ * id entry and a seeder; a group that is on neither list would be unreachable
+ * by any selection, and one that is on both would have a selection that depends
+ * on which list was consulted. This runs at require time because a
+ * misconfiguration here produces fixtures that look right, and the cost is one
+ * pass over eight names with no I/O.
+ *
+ * @throws {Error} If any group table is inconsistent.
+ */
+function assertGroupTablesConsistent() {
+  var faults = [];
+
+  DEFAULT_GROUPS.forEach(function(group) {
+    if (OPT_IN_GROUPS.indexOf(group) >= 0) {
+      faults.push('`' + group + '` is both a default and an opt-in group');
+    }
+  });
+
+  GROUP_ORDER.forEach(function(group, index) {
+    if (!isDefaultGroup(group) && OPT_IN_GROUPS.indexOf(group) === -1) {
+      faults.push('`' + group + '` is on neither DEFAULT_GROUPS nor ' +
+        'OPT_IN_GROUPS, so no selection can reach it');
+    }
+
+    if (!GROUP_DEPENDENCIES[group]) {
+      faults.push('`' + group + '` has no GROUP_DEPENDENCIES entry');
+    }
+    else {
+      GROUP_DEPENDENCIES[group].forEach(function(dependency) {
+        var at = GROUP_ORDER.indexOf(dependency);
+
+        if (at === -1) {
+          faults.push('`' + group + '` depends on `' + dependency +
+            '`, which is not a group');
+        }
+        else if (at >= index) {
+          // The closure walk in `resolveSelection` is a single reverse pass and
+          // is correct only while every dependency sits earlier in GROUP_ORDER.
+          faults.push('`' + group + '` depends on `' + dependency +
+            '`, which is not EARLIER in GROUP_ORDER, so the single-pass ' +
+            'dependency closure would miss it');
+        }
+      });
+    }
+
+    // `course` is the one group whose ids `idsForGroups` reads from
+    // COURSE_TREE_IDS instead, because it spans three collections; it still
+    // carries a GROUP_IDS entry, so the check is uniform.
+    if (!GROUP_IDS[group]) {
+      faults.push('`' + group + '` has no GROUP_IDS entry');
+    }
+
+    if (typeof SEEDERS[group] !== 'function') {
+      faults.push('`' + group + '` has no seeder');
+    }
+  });
+
+  if (faults.length) {
+    throw new Error(
+      LOG_PREFIX + 'the group tables are inconsistent, so a selection would ' +
+      'not mean what it says:\n  - ' + faults.join('\n  - ')
+    );
+  }
+}
+
+assertGroupTablesConsistent();
 
 // ---------------------------------------------------------------------------
 // The public operations
@@ -2506,13 +3098,18 @@ async function seed(options) {
  *
  * Two scopes, and neither is `dropDatabase`:
  *
- *   'collections' (default) empties the eight collections this file writes.
+ *   'collections' (default) empties the ten collections this file writes.
  *   'fixtures'              deletes only the documents carrying a fixed `_id`,
  *                           leaving anything a corpus case created.
  *
  * Documents are deleted rather than collections dropped, so the indexes
  * `lib/models/*.js` declare - including the unique `{_owner, slug}` compounds
- * on Course and Folder - survive and keep being enforced.
+ * on Course and Folder and the unique `{courseId, email}` on CourseInvitation -
+ * survive and keep being enforced. That distinction is not cosmetic: a
+ * `dropDatabase` takes the indexes with it and mongoose builds them only at
+ * model registration, so uniqueness would be silently unenforced afterwards.
+ * `verify()`'s last section asserts those indexes are present, which is what
+ * turns that condition into a gate.
  *
  * This is NOT the `reset` in `db.js` under `test/helpers`, and must never
  * become it. That one drops the whole database and the serial suite depends on
@@ -2537,7 +3134,7 @@ async function reset(options) {
   if (scope !== 'collections') {
     throw new Error(
       LOG_PREFIX + 'unknown reset scope `' + scope + '`; use ' +
-      '\'collections\' (empty the eight owned collections) or \'fixtures\' ' +
+      '\'collections\' (empty the ten owned collections) or \'fixtures\' ' +
       '(delete only the fixed ids)'
     );
   }
@@ -2623,13 +3220,23 @@ function canonical(value) {
  * two must be identical. Anything that differs is either a field this file
  * failed to fix or a field that belongs in VOLATILE_FIELDS with a reason.
  *
+ * SCOPED THE SAME WAY `verify()` IS, and for the same reason: a projection of a
+ * group nobody seeded is an empty array whose only effect is to change the
+ * artifact. With no argument it projects the six DEFAULT groups, so the
+ * artifact a caller has always got is byte-for-byte the artifact it still gets;
+ * `{groups: [...]}` or the option object handed to `seed()` projects exactly
+ * that selection, which is how direct execution takes in the opt-in groups it
+ * seeded.
+ *
+ * @param {Object} [options] the same group flags `seed()` takes, or
+ *   `{groups: string[]}` to name the seeded groups directly
  * @returns {Promise<Object>} model name -> array of canonical documents,
  *   ordered by `_id`
  */
-async function projection() {
+async function projection(options) {
   assertConnection();
 
-  var map     = idsForGroups(GROUP_ORDER);
+  var map     = idsForGroups(verifiedGroups(options));
   var models  = Object.keys(map).sort();
   var result  = {};
   var i, model, objectIds, documents;
@@ -2683,12 +3290,14 @@ function servedIdentities() {
 }
 
 /**
- * The groups `verify()` should assert about.
+ * The groups `verify()` should assert about, and `projection()` should project.
  *
  * `{groups: [...]}` is the form `seed()` uses, because it already knows the
  * dependency-closed selection it seeded and re-resolving it could only
  * disagree. Anything else goes through `resolveSelection`, so a caller may hand
- * `verify()` the same option object it handed `seed()`.
+ * `verify()` the same option object it handed `seed()` - which is also how the
+ * opt-in groups are reached, since `resolveSelection` with nothing named
+ * resolves to the six defaults.
  *
  * @param {Object} [options]
  * @returns {string[]} group names, in GROUP_ORDER
@@ -3116,6 +3725,244 @@ async function verify(options) {
           !!lessonDoc && lessonDoc.materials.length === 2);
   }
 
+  // 13. The course invitations, asserted through the model's OWN lookups rather
+  //     than through queries written here - `findByToken` is what
+  //     `GET /courses/accept/{token}` calls and `findUnacceptedByCourse` is what
+  //     the invitation list calls, so running those two is what proves a
+  //     fixture is reachable the way the application reaches it. A check that
+  //     merely confirmed the document exists would pass while the derived token
+  //     was wrong.
+  if (has('invitations')) {
+    var invitationKeys = Object.keys(fixtures.invitations);
+
+    for (i = 0; i < invitationKeys.length; i++) {
+      var invitationFact = fixtures.invitations[invitationKeys[i]];
+      var invitationDoc  = await privateModel('CourseInvitation')
+        .findById(invitationFact.id).exec();
+
+      check('invitation ' + invitationKeys[i] + ' was found', !!invitationDoc);
+
+      if (invitationDoc) {
+        check('invitation ' + invitationKeys[i] + ' belongs to the seeded ' +
+              'course ' + ids.course,
+              String(invitationDoc.courseId) === ids.course);
+        check('invitation ' + invitationKeys[i] + ' carries status \'' +
+              invitationFact.status + '\' (found \'' + invitationDoc.status +
+              '\'), which is what decides whether sendInvitationEmail acts on ' +
+              'it and whether findUnacceptedByCourse returns it',
+              invitationDoc.status === invitationFact.status);
+        check('invitation ' + invitationKeys[i] + '\'s token is the value ' +
+              'md5(email + courseId).slice(0,8) derives, so ' +
+              'GET /courses/accept/{token} addresses it with the token the ' +
+              'application would have written',
+              invitationDoc.token === invitationFact.token);
+      }
+
+      var byToken = await loadModels().CourseInvitation
+        .findByToken(invitationFact.token);
+
+      check('invitation ' + invitationKeys[i] + ' is found by the model\'s own ' +
+            'findByToken(' + invitationFact.token + '), which is the exact ' +
+            'lookup the accept route performs',
+            !!byToken && String(byToken.id) === invitationFact.id);
+    }
+
+    // The 'sent' fixture is the only one carrying `sentOn`, because that field
+    // and the 'sent' status are written by the same save.
+    var sentInvitation = await privateModel('CourseInvitation')
+      .findById(ids.invitationSent).exec();
+
+    check('the sent invitation carries the fixed sentOn ' +
+          DATES.invitationSentOn + ', so a serialized invitation is ' +
+          'comparable rather than clock-dependent',
+          !!sentInvitation && !!sentInvitation.sentOn &&
+            sentInvitation.sentOn.toISOString() === DATES.invitationSentOn);
+
+    var pendingInvitation = await privateModel('CourseInvitation')
+      .findById(ids.invitationPending).exec();
+
+    check('the pending invitation carries no sentOn, so it is the fixture ' +
+          'sendInvitationEmail actually acts on',
+          !!pendingInvitation && !pendingInvitation.sentOn);
+
+    if (has('course')) {
+      var courseForInvites = await privateModel('Course').findById(ids.course).exec();
+      var unaccepted       = courseForInvites
+        ? await loadModels().CourseInvitation.findUnacceptedByCourse(courseForInvites)
+        : [];
+
+      check('findUnacceptedByCourse returns the ' +
+            fixtures.unacceptedInvitationKeys.length + ' non-accepted ' +
+            'invitation(s) and not the accepted one (found ' +
+            unaccepted.length + ')',
+            unaccepted.length === fixtures.unacceptedInvitationKeys.length);
+      check('the accepted invitation is excluded from that result, which is ' +
+            'the $ne filter at lib/models/courseInvitation.js:105',
+            !unaccepted.some(function(doc) {
+              return String(doc.id) === ids.invitationAccepted;
+            }));
+    }
+
+    check('the invalid invitation\'s address is one validator.isEmail rejects, ' +
+          'which is the only state that produces status \'invalid\'',
+          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+            fixtures.invitations.invitationInvalid.email));
+    check('the four invitations carry four distinct addresses, so the unique ' +
+          '{courseId, email} index the model declares is satisfied by ' +
+          'documents that would otherwise collide',
+          Object.keys(fixtures.invitations).map(function(key) {
+            return fixtures.invitations[key].email;
+          }).filter(function(email, index, all) {
+            return all.indexOf(email) === index;
+          }).length === INVITATIONS.length);
+  }
+
+  // 14. The interactions, and the per-trinket counts the interactions route
+  //     answers with. Asserted through `findByTrinketId` because that is the
+  //     one call `lib/controllers/trinket.js`'s `interactions` handler makes.
+  if (has('interactions')) {
+    var interactionKeys = Object.keys(fixtures.interactions);
+    var perTrinket      = {};
+
+    for (i = 0; i < interactionKeys.length; i++) {
+      var interactionFact = fixtures.interactions[interactionKeys[i]];
+      var interactionDoc  = await privateModel('Interaction')
+        .findById(interactionFact.id).exec();
+
+      perTrinket[interactionFact.trinket] =
+        (perTrinket[interactionFact.trinket] || 0) + 1;
+
+      check('interaction ' + interactionKeys[i] + ' was found', !!interactionDoc);
+
+      if (interactionDoc) {
+        check('interaction ' + interactionKeys[i] + ' records action \'' +
+              interactionFact.action + '\' (found \'' + interactionDoc.action +
+              '\'), which is the metric name findAndUpdateMetrics writes',
+              interactionDoc.action === interactionFact.action);
+        check('interaction ' + interactionKeys[i] + ' points at trinket ' +
+              interactionFact.trinket,
+              String(interactionDoc._trinket) === ids[interactionFact.trinket]);
+        check('interaction ' + interactionKeys[i] + ' embeds the trinket\'s own ' +
+              'owner and lang, copied off the document the way ' +
+              'lib/models/trinket.js:206-211 copies them',
+              !!interactionDoc._owner && !!interactionDoc.lang &&
+                interactionDoc.lang ===
+                  fixtures.trinkets[interactionFact.trinket].lang);
+        check('interaction ' + interactionKeys[i] +
+              (interactionFact.actor
+                ? ' carries _actor ' + interactionFact.actor +
+                  ', the authenticated case'
+                : ' carries no _actor, the anonymous case that is the only ' +
+                  'shape an unauthenticated request produces'),
+              interactionFact.actor
+                ? String(interactionDoc._actor) === ids[interactionFact.actor]
+                : !interactionDoc._actor);
+        check('interaction ' + interactionKeys[i] + ' carries neither created ' +
+              'nor lastUpdated, because lib/models/interaction.js declares ' +
+              'timestamps: false - so it has no volatile field at all',
+              !interactionDoc.get('created') && !interactionDoc.get('lastUpdated'));
+      }
+    }
+
+    var trinketsWithInteractions = Object.keys(perTrinket);
+
+    for (i = 0; i < trinketsWithInteractions.length; i++) {
+      var subjectKey = trinketsWithInteractions[i];
+      var byTrinket  = await loadModels().Interaction
+        .findByTrinketId(ids[subjectKey]);
+
+      check('findByTrinketId(' + subjectKey + ') returns the ' +
+            perTrinket[subjectKey] + ' seeded interaction(s) (found ' +
+            byTrinket.length + '), which is the count ' +
+            'GET /api/trinkets/{trinketId}/interactions answers with',
+            byTrinket.length === perTrinket[subjectKey]);
+    }
+
+    check('the free-form `info` field survived the round trip as an object, ' +
+          'so the one Mixed value in this fixture set is actually exercised',
+          !!(await privateModel('Interaction')
+            .findById(ids.interactionLinkShare).exec() || {}).info);
+    check('at least one interaction names a /views/ metric, which is the ' +
+          'branch of findAndUpdateMetrics that also rewrites the trinket\'s ' +
+          'lastView',
+          interactionKeys.some(function(key) {
+            return /views/i.test(fixtures.interactions[key].action);
+          }));
+  }
+
+  // 15. THE DECLARED UNIQUE INDEXES ARE ACTUALLY ON THEIR COLLECTIONS.
+  //
+  //     This is a check about the DATABASE rather than about a document, and it
+  //     exists because the failure it catches is silent. A unique index that is
+  //     absent rejects nothing: `_id` still collides, so a fixture insert still
+  //     fails on a repeat, but two DIFFERENT documents sharing a username, a
+  //     shortCode or a `{courseId, email}` pair are accepted with no error at
+  //     all. Nothing else in this file would notice, because every check above
+  //     reads documents this file itself wrote.
+  //
+  //     The concrete defect it gates is a mid-run `dropDatabase`: mongoose
+  //     builds a schema's indexes once, at model registration, so a database
+  //     dropped afterwards comes back with no index but `_id_` and DB-level
+  //     uniqueness is unenforced for the rest of the run. That was measured on
+  //     `test/helpers/db.js`'s `reset` (15 `snippets` indexes at boot, 1 after
+  //     the drop, a duplicate `shortCode` accepted), and it is now repaired
+  //     there by rebuilding the indexes after each drop - but a repair with no
+  //     gate is a repair that regresses quietly, so the assertion lives here.
+  //
+  //     The expectation is READ FROM THE SCHEMA, never listed: `schema.indexes()`
+  //     yields every index mongoose would build, including the ones a path's
+  //     `unique: true` implies, so a newly declared unique index is asserted
+  //     without this file being edited.
+  //
+  //     Scoped to the models the selected groups own - which is exactly what
+  //     `idsForGroups` enumerates - because those are the collections that are
+  //     guaranteed to exist under this selection. Asking a collection no group
+  //     seeded for its indexes raises NamespaceNotFound, which would turn a
+  //     legitimate subset seed into a failure about something else.
+  var indexedModels = Object.keys(map).sort();
+
+  for (i = 0; i < indexedModels.length; i++) {
+    var indexedModel = indexedModels[i];
+    var expectations = declaredUniqueIndexes(indexedModel);
+
+    if (!expectations.length) {
+      continue;
+    }
+
+    // The build mongoose started at model registration has to have finished
+    // before its result can be read. `init()` is the right call for that and
+    // the WRONG one for repairing anything: it is memoised on `$init`, so it
+    // waits for the original build and does not start a new one - which is
+    // what keeps this a check rather than a fix that hides its own subject.
+    try {
+      await privateModel(indexedModel).init();
+    }
+    catch (e) {
+      // A build that failed is exactly the condition being checked, so the
+      // rejection is not the answer - the index list below is.
+    }
+
+    var live = await privateModel(indexedModel).collection.indexes()
+      .catch(function() { return []; });
+
+    for (j = 0; j < expectations.length; j++) {
+      var uniqueSpec = expectations[j];
+      var present    = live.some(function(index) {
+        return index.unique === true &&
+          sameIndexKey(index.key, uniqueSpec.key);
+      });
+
+      check('the unique index ' + indexedModel + ' declares on ' +
+            uniqueSpec.description + ' is present on collection `' +
+            privateModel(indexedModel).collection.collectionName + '`. If it ' +
+            'is missing, uniqueness is SILENTLY UNENFORCED at the database ' +
+            'level - two documents sharing that key are accepted instead of ' +
+            'rejected with E11000 - which is what a dropDatabase with no ' +
+            'index rebuild leaves behind (see test/helpers/db.js)',
+            present);
+    }
+  }
+
   if (failures.length) {
     throw new Error(
       LOG_PREFIX + failures.length + ' of ' + checks + ' fixture checks ' +
@@ -3142,6 +3989,11 @@ var USAGE = [
   'groups it seeded and throws on any failure, so every harness that seeds is',
   'gated on them. This is the standalone form, which provisions its own',
   'database and asserts the whole fixture set.',
+  '',
+  'THE WHOLE set: this entry point NAMES every group, including the two opt-in',
+  'groups (invitations, interactions) that seed() leaves out when a caller',
+  'names nothing. That is what keeps those two fixtures gated even though the',
+  'corpus harnesses do not seed them - see the note on DEFAULT_GROUPS.',
   '',
   '  --verify           the default action; accepted explicitly',
   '  --overlay <path>   NODE_CONFIG overlay to apply beneath the address',
@@ -3251,7 +4103,15 @@ async function main(argv) {
     try {
       // `seed()` gates on the fixture checks itself, so this call is also the
       // proof that the gate every harness inherits passes here.
-      summary = await seed();
+      // EVERY group, named. `seed()` with no argument resolves to the six
+      // DEFAULT groups, which is the selection the corpus harnesses depend on
+      // and must not be widened; the standalone gate is the one caller that
+      // wants the opt-in pair as well, so it says so. Built from the group
+      // tables rather than written out, so a group added later is gated here
+      // without this call being edited.
+      var wholeSet = everyGroup();
+
+      summary = await seed(wholeSet);
       note('seeded groups: ' + summary.selected.join(', '));
       note('created: ' + JSON.stringify(summary.created));
       note('seed() gated on ' + summary.verified.checks + ' fixture checks ' +
@@ -3262,15 +4122,15 @@ async function main(argv) {
            'account(s) removed)');
       note('asset metrics: ' + JSON.stringify(summary.assetMetrics));
 
-      // Again through the exported entry point, with no argument, which is the
-      // form a caller outside this file uses and the one that asserts the
-      // whole set rather than a selection.
-      report = await verify();
+      // Again through the exported entry point, with the same whole-set
+      // selection, which is the form a caller outside this file uses and the
+      // one that asserts every group rather than the default six.
+      report = await verify(wholeSet);
       note(report.checks + ' fixture checks passed');
 
       // Idempotence, proven in this process rather than asserted: a second
       // call must create nothing and throw nothing.
-      summary = await seed();
+      summary = await seed(wholeSet);
       note('second seed created: ' + JSON.stringify(summary.created));
 
       if (Object.keys(summary.created).length) {
@@ -3280,7 +4140,7 @@ async function main(argv) {
         );
       }
 
-      artifact = await projection();
+      artifact = await projection(wholeSet);
       process.stdout.write(JSON.stringify(artifact, null, 2) + '\n');
 
       return 0;
@@ -3323,8 +4183,15 @@ module.exports = {
     disabled : IDENTITIES.disabled
   }),
   fixtures    : fixtures,
-  GROUPS      : Object.freeze(GROUP_ORDER.slice()),
-  MISSING_IDS : MISSING_IDS,
+
+  // THE GROUP SURFACE, all three lists, because a consumer that only saw
+  // `GROUPS` could not tell which of them `seed()` selects by default. `GROUPS`
+  // is every group in dependency order; `DEFAULT_GROUPS` is what an absent
+  // argument resolves to; `OPT_IN_GROUPS` is what a caller must NAME to get.
+  GROUPS         : Object.freeze(GROUP_ORDER.slice()),
+  DEFAULT_GROUPS : DEFAULT_GROUPS,
+  OPT_IN_GROUPS  : OPT_IN_GROUPS,
+  MISSING_IDS    : MISSING_IDS,
 
   // THE OAUTH IDENTITY CONTRACT. `oauth` is the whole of it - both addresses,
   // both derived usernames, both provider account ids, the token and the seeded
@@ -3361,6 +4228,12 @@ module.exports = {
   idsForGroups     : idsForGroups,
   exportFilename   : exportFilename,
   sha1Hex          : sha1Hex,
+
+  // The invitation token, derived the way lib/models/courseInvitation.js
+  // derives it, so a harness building a /courses/accept/{token} path for an
+  // address this file does not seed still gets the value the application would
+  // have written.
+  invitationToken  : invitationToken,
   isJsonFileArray  : isJsonFileArray,
   VOLATILE_FIELDS  : VOLATILE_FIELDS,
   USAGE            : USAGE,

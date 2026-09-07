@@ -543,6 +543,62 @@ var ARTIFACT_NAMES = {
 var OVERWRITE_FLAG = '--overwrite-baseline';
 var BASELINE_COMMIT = '2f8712a';
 
+// HOW the tree under test was identified, recorded in every artifact so a
+// reader can tell the two apart and the stronger claim is never made silently.
+//
+//   worktree          the tree names a git HEAD, and the shared contract
+//                     decided from it - including whether the working copy is
+//                     still clean
+//   content-verified  the tree has no git metadata, and every tracked file of
+//                     the base commit was hashed out of it and matched. It
+//                     holds that commit's CONTENT; it says nothing about the
+//                     commit graph
+//   unidentified      neither established it
+var IDENTITY_WORKTREE     = 'worktree';
+var IDENTITY_CONTENT      = 'content-verified';
+var IDENTITY_UNIDENTIFIED = 'unidentified';
+
+// How many differing paths a refusal names. Enough to see the shape of the
+// mismatch, bounded so a wholly wrong tree does not print 520 lines.
+var CONTENT_SAMPLE = 5;
+
+// The provenance checks that RESOLVE A GIT OBJECT - a blob, a commit or a head
+// - and are therefore unsatisfiable when the tool's own checkout has no
+// repository at all. Outside a repository their expectations are withheld and
+// every one of them is recorded as a named waiver, never skipped silently.
+var REPOSITORY_LOOKUP_CHECKS = [
+  'generator-blob-resolves',
+  'generator-commit-resolves',
+  'generator-commit-contains-source',
+  'analysed-head-resolves',
+  'delivered-head-resolves',
+  'generator-current',
+  'generator-verified'
+];
+
+// The two checks that read the block alone but whose SUBJECT is a commit id an
+// artifact captured outside a repository could not have recorded. They still
+// run: a pass is a pass, and only a failure is waived - and only because the
+// run that produced the block had no repository to name a commit from.
+var REPOSITORY_RECORDED_CHECKS = [
+  'analysed-tree-recorded',
+  'delivered-recorded'
+];
+
+// The closed set a failure may be waived under. Anything outside it is a
+// refusal whether or not there is a repository. See
+// assertMatrixProvenanceWithoutRepository.
+var REPOSITORY_DEPENDENT_CHECKS =
+  REPOSITORY_LOOKUP_CHECKS.concat(REPOSITORY_RECORDED_CHECKS);
+
+// This tool's repository root once resolved, or null when it has none.
+// `undefined` means "not asked yet"; see toolRepository.
+var toolRepositoryState;
+
+// Every provenance check this run waived, with its reason. Accumulated so the
+// written report carries what stderr said. See recordProvenanceWaiver.
+var provenanceWaivers = [];
+
 // Where `--compare` writes its report when the caller names no `--out`. Named
 // as a constant because the provenance block records WHICH ARTIFACT it
 // describes and a consumer checks that name, so the default the write site uses
@@ -1203,6 +1259,8 @@ function parseArguments(args, originalCwd) {
     allowSameTree : false
   };
   var seen = {};
+  // Null until a mode flag names one; see setMode.
+  var explicitMode = null;
   var i;
 
   // A DASH-LEADING TOKEN IS NEVER A VALUE. `--out --schema-only` is a missing
@@ -1232,11 +1290,24 @@ function parseArguments(args, originalCwd) {
     seen[flag] = true;
   }
 
+  // THE MODE THAT WAS NAMED, tracked apart from the mode that will RUN.
+  // `options.mode` starts at `capture` because that is the default, so it
+  // cannot answer "did the caller name a mode?" - and reading the conflict off
+  // it made the usage error ORDER-DEPENDENT: `--compare <a> --capture` was
+  // refused while `--capture --compare <a>` was accepted and ran the
+  // comparison, and `--capture --schema-only` ran an enumeration that drives no
+  // request at all. Both printed `gate PASSED` and exited 0, which is the worst
+  // available outcome for a gate: a malformed CI invocation reporting success
+  // over measurements it never took. The OPTION RULES in USAGE say a second
+  // occurrence of any option, "the mode flags included", is a usage error, so
+  // this is the parser meeting the contract it documents.
   function setMode(mode, flag) {
-    if (options.mode !== 'capture' && options.mode !== mode) {
-      throw new ToolError('--' + options.mode + ' and ' + flag +
+    if (explicitMode !== null && explicitMode !== mode) {
+      throw new ToolError('--' + explicitMode + ' and ' + flag +
         ' are mutually exclusive');
     }
+
+    explicitMode = mode;
     options.mode = mode;
   }
 
@@ -2370,6 +2441,210 @@ function generatorIdentityOf(record) {
 }
 
 /**
+ * The configuration identity of a run, in the shape the provenance records.
+ *
+ * ONE implementation, used by `buildProvenance` to record the run and by
+ * `assertConfigurationComparable` to check a live run against a recording. Two
+ * implementations is how the fault this closes arrived in the first place: the
+ * recipe composed one configuration, the recording described another, and
+ * nothing compared the two.
+ *
+ * The three fields are exactly what identifies a configuration without
+ * readmitting run-local state: `NODE_ENV`, the sorted TOP-LEVEL keys of the
+ * composed NODE_CONFIG, and `configurationDigest` - which replaces every
+ * secret-labelled value and DROPS every address-labelled one before hashing,
+ * so the port and the ephemeral database name are not in it and two runs over
+ * one overlay produce the same digest. `nodeConfigDir` is deliberately NOT part
+ * of the identity: it is a path label, and a capture pointed at a baseline
+ * worktree records `analysed:config` where a comparison run pointed at the tool
+ * root records `tool:config` for the same configuration.
+ *
+ * @param {Object} environment From prepareEnvironment.
+ * @returns {{NODE_ENV: string, nodeConfigKeys: string[],
+ *            nodeConfigDigest: Object}}
+ */
+function configurationIdentity(environment) {
+  var composed = parseJsonOrNull(environment.nodeConfig);
+
+  return {
+    NODE_ENV        : environment.nodeEnv,
+    nodeConfigKeys  : composed === null ? [] : Object.keys(composed).sort(),
+    nodeConfigDigest: provenance.configurationDigest(
+      composed === null ? {} : composed)
+  };
+}
+
+/**
+ * The configuration a recording says it was produced under, or null.
+ *
+ * Null means the artifact predates the configuration record, which is not a
+ * difference and not a pass: it is an unestablished comparability claim, and
+ * `assertConfigurationComparable` refuses it as such.
+ *
+ * @param {Object} record From readRecording, or any object carrying a
+ *   provenance block.
+ * @returns {(Object|null)}
+ */
+function configurationOf(record) {
+  var block = (record && (record.provenance || record.matrix &&
+    record.matrix.provenance)) || {};
+  var detail = block.detail || {};
+
+  return isPlainObject(detail.configuration) ? detail.configuration : null;
+}
+
+/**
+ * The digest value out of a recorded or computed configuration identity.
+ *
+ * @param {(Object|null)} configuration
+ * @returns {(string|null)}
+ */
+function configurationDigestValue(configuration) {
+  var digest = configuration && configuration.nodeConfigDigest;
+
+  if (typeof digest === 'string') {
+    return digest;
+  }
+
+  return (digest && typeof digest.value === 'string') ? digest.value : null;
+}
+
+/**
+ * The keys one configuration has and the other does not, both ways round.
+ *
+ * @param {(string[]|undefined)} recorded
+ * @param {(string[]|undefined)} observed
+ * @returns {{missing: string[], extra: string[]}} `missing` were recorded and
+ *   are absent now; `extra` are present now and were not recorded.
+ */
+function configurationKeyDrift(recorded, observed) {
+  var left = Array.isArray(recorded) ? recorded : [];
+  var right = Array.isArray(observed) ? observed : [];
+
+  return {
+    missing: left.filter(function(key) {
+      return right.indexOf(key) === -1;
+    }),
+    extra  : right.filter(function(key) {
+      return left.indexOf(key) === -1;
+    })
+  };
+}
+
+/**
+ * REFUSES a comparison whose two sides did not run under the same
+ * configuration.
+ *
+ * AAP §0.9.3 requires both sides of a parity gate to be exercised under the
+ * SAME external overlay, and until this existed nothing checked it. The
+ * consequence was not theoretical: the delivered `verify:joi` recipe deleted
+ * `features` from the overlay before comparing, while the committed baseline
+ * had been recorded with it, and the gate reported four parity DIFFERENCES on
+ * `POST /api/users/assetFromURL` - a 501 feature-guard answer against a
+ * recorded 200 - on a tree that was in parity. A configuration mismatch is not
+ * a finding about the tree under test; it is a run that cannot be evidence
+ * either way.
+ *
+ * So it is an OPERATIONAL failure and exits 2, never 1. A caller must be able
+ * to tell "the gate found a difference" from "the gate could not run", and
+ * reporting this as a difference is precisely the confusion that cost a
+ * checkpoint.
+ *
+ * The message names the differing keys and BOTH digests, because the fix is
+ * always to reconcile the overlay with the recording and neither half is
+ * guessable from the other.
+ *
+ * @param {(Object|null)} recorded The recorded configuration, from
+ *   configurationOf.
+ * @param {(Object|null)} observed This run's configuration, from
+ *   configurationIdentity - or a second recording's.
+ * @param {{recordedFrom: string, observedFrom: string}} where Labels for the
+ *   message: the artifact the recording came from, and what produced the other
+ *   side.
+ * @returns {{recordedDigest: string, observedDigest: string,
+ *            keys: string[]}} The identity both sides agreed on.
+ * @throws {ToolError} On a mismatch, or when either side cannot say what
+ *   configuration it ran under.
+ */
+function assertConfigurationComparable(recorded, observed, where) {
+  var recordedDigest = configurationDigestValue(recorded);
+  var observedDigest = configurationDigestValue(observed);
+  var drift;
+
+  if (recorded === null || recordedDigest === null) {
+    throw new ToolError(where.recordedFrom + ' does not record the ' +
+      'configuration it was captured under (provenance ' +
+      '`detail.configuration.nodeConfigDigest` is absent), so it cannot be ' +
+      'established that this run and that recording were exercised under the ' +
+      'same external overlay - which AAP §0.9.3 requires of both sides of a ' +
+      'parity gate. Re-capture the recording with this generator, which ' +
+      'records the configuration digest beside every measurement.');
+  }
+
+  if (observed === null || observedDigest === null) {
+    throw new ToolError(where.observedFrom + ' does not say what ' +
+      'configuration it ran under, so this comparison cannot be established ' +
+      'as parity evidence. This is a defect in the run rather than in the ' +
+      'tree under test.');
+  }
+
+  drift = configurationKeyDrift(recorded.nodeConfigKeys,
+    observed.nodeConfigKeys);
+
+  if (recorded.NODE_ENV !== observed.NODE_ENV) {
+    throw new ToolError('refusing to compare: ' + where.recordedFrom + ' was ' +
+      'captured with NODE_ENV=' + JSON.stringify(recorded.NODE_ENV) +
+      ' and ' + where.observedFrom + ' ran with NODE_ENV=' +
+      JSON.stringify(observed.NODE_ENV) + '. The two sides of this gate must ' +
+      'be exercised under the same configuration (AAP §0.9.3); a difference ' +
+      'measured across two environments is not a parity difference, so this ' +
+      'is an operational failure and not a finding about the tree under test.');
+  }
+
+  if (recordedDigest !== observedDigest) {
+    throw new ToolError('refusing to compare: ' + where.recordedFrom + ' was ' +
+      'captured under a DIFFERENT configuration from the one ' +
+      where.observedFrom + ' ran under, so a difference between them would ' +
+      'not be a parity difference. AAP §0.9.3 requires both sides to run ' +
+      'under the same external overlay.\n' +
+      '  configuration recorded in the baseline: keys [' +
+      (Array.isArray(recorded.nodeConfigKeys)
+        ? recorded.nodeConfigKeys.join(', ')
+        : '') + '], digest ' + recordedDigest + '\n' +
+      '  configuration this run composed    : keys [' +
+      (Array.isArray(observed.nodeConfigKeys)
+        ? observed.nodeConfigKeys.join(', ')
+        : '') + '], digest ' + observedDigest + '\n' +
+      (drift.missing.length
+        ? '  top-level key(s) the recording had and this run does not: ' +
+          drift.missing.join(', ') + '\n'
+        : '') +
+      (drift.extra.length
+        ? '  top-level key(s) this run has and the recording did not: ' +
+          drift.extra.join(', ') + '\n'
+        : '') +
+      (drift.missing.length || drift.extra.length
+        ? ''
+        : '  the top-level keys agree, so a value inside one of them differs; ' +
+          'the digest covers every non-address value in the composed ' +
+          'configuration\n') +
+      '  Pass the overlay the recording was made with - ' +
+      '`--overlay test/parity/server-overlay.json`, which is what ' +
+      '`npm run verify:joi` does - or re-capture the baseline under the ' +
+      'overlay you mean to gate on. This is an operational failure (the gate ' +
+      'could not run) and NOT a parity difference.');
+  }
+
+  return {
+    recordedDigest: recordedDigest,
+    observedDigest: observedDigest,
+    keys          : Array.isArray(observed.nodeConfigKeys)
+      ? observed.nodeConfigKeys
+      : []
+  };
+}
+
+/**
  * The major of a semver-ish version string, or null.
  *
  * @param {(string|null)} version
@@ -2390,10 +2665,18 @@ function majorOf(version) {
  * and would report zero differences with total confidence, so it is refused
  * here rather than left to the caller.
  *
- * Three checks, and only two of them can be waived:
+ * Four checks, and only two of them can be waived:
  *
  *  - SAME PATH is refused outright, with no opt-out. There is no reading under
  *    which comparing a file with itself is evidence.
+ *  - SAME CONFIGURATION is refused outright too, and for the same reason: the
+ *    two sides of the gate must have been exercised under the same external
+ *    overlay (AAP §0.9.3), and when they were not, every difference the
+ *    comparison finds is an artefact of the configuration rather than a
+ *    property of either tree. `--allow-same-tree` does not reach it, because
+ *    the determinism and perturbation controls it exists for run under one
+ *    configuration anyway. See assertConfigurationComparable for the failure
+ *    this closes.
  *  - SAME APPLICATION HEAD and SAME JOI MAJOR are refused unless
  *    `--allow-same-tree` is passed, because the offline negative controls -
  *    two recordings from one tree, one of them perturbed - are legitimate and
@@ -2414,7 +2697,7 @@ function assertComparable(baseline, target, allowSameTree) {
   var baselineJoi = joiVersionOf(baseline);
   var targetJoi = joiVersionOf(target);
   var relaxed = [];
-  var checked = ['same-path', 'baseline-is-a-capture',
+  var checked = ['same-path', 'baseline-is-a-capture', 'same-configuration',
     'same-application-head', 'same-joi-major'];
 
   if (path.resolve(baseline.path) === path.resolve(target.path)) {
@@ -2445,6 +2728,19 @@ function assertComparable(baseline, target, allowSameTree) {
       'application and records their outcomes; comparing against anything ' +
       'else would diff measured responses with absent ones.');
   }
+
+  // THE CONFIGURATION BOTH SIDES RAN UNDER, reconciled from what each of them
+  // RECORDED rather than from what the caller believes it passed. In the live
+  // branch this is the same identity `buildMatrix` already refused on before a
+  // single case was driven; it is repeated here because the offline two-matrix
+  // branch drives nothing and would otherwise reach a verdict unchecked, and
+  // because a check that runs on one of two paths is a check that will be
+  // routed around.
+  assertConfigurationComparable(configurationOf(baseline),
+    configurationOf(target), {
+      recordedFrom: 'the baseline recording ' + baseline.path,
+      observedFrom: 'the target ' + target.path
+    });
 
   if (baselineHead !== null && targetHead !== null && baselineHead === targetHead) {
     if (!allowSameTree) {
@@ -2596,6 +2892,35 @@ function assertMatrixProvenance(target, text, matrix, expect) {
     ? block.role === 'baseline'
     : !!expect.requireBaselineTree;
 
+  // WHERE THIS TOOL'S OWN CHECKOUT HAS NO GIT REPOSITORY, the contract's
+  // repository-resolution checks are not lenient - they are UNSATISFIABLE, and
+  // by nothing the artifact did. There is no object database to resolve a blob,
+  // a commit or a head in, so every one of them fails on a sound artifact and
+  // the gate refuses to run at all: measured, six failures on the committed
+  // baseline from a `git archive` extraction of this tree.
+  //
+  // So they are withheld and NAMED AS WAIVERS rather than silently skipped -
+  // a skipped check reads as a passed one - and the one thing that IS
+  // computable there is substituted for them: the generator's git blob id
+  // recomputed from the bytes on disk. That is the substance of
+  // `generator-current` and of `generator-commit-contains-source` both, since
+  // a blob id is content-addressed and identical in every clone, so an
+  // artifact produced by a different generator than the one delivered beside
+  // it is still refused here. Every self-authenticating check - schema,
+  // artifact name, role, payload digest, the baseline-tree claim and the
+  // sidecar reconciliation - stays exactly as strict as it is with a
+  // repository present.
+  if (toolRepository() === null) {
+    return assertMatrixProvenanceWithoutRepository(target, text, block, {
+      artifact           : path.basename(target),
+      roles              : roles,
+      requireBaselineTree: requireBaseline,
+      payload            : payload,
+      sidecar            : expect.sidecar,
+      artifactText       : expect.sidecar === undefined ? undefined : text
+    });
+  }
+
   verdict = provenance.validate(block, {
     artifact           : path.basename(target),
     roles              : roles,
@@ -2637,6 +2962,209 @@ function assertMatrixProvenance(target, text, matrix, expect) {
     ', ' + verdict.checks.length + ' check(s) passed');
 
   return block;
+}
+
+/**
+ * Authenticates an artifact where there is no repository to resolve anything
+ * in, waiving what cannot be established and naming every waiver.
+ *
+ * The named set is fixed and closed, and every member of it is a check whose
+ * SUBJECT is a git object: a blob, a commit, a head, or a claim
+ * (`generator.verified`) that only a repository lookup could have produced.
+ * Nothing else is waivable here, and a check that fails for any other reason
+ * is still a refusal - which is what keeps this from becoming a way to consume
+ * an artifact that was edited by hand.
+ *
+ * `analysed-tree-recorded` and `delivered-recorded` are in the set for a
+ * reason worth stating: an artifact CAPTURED in a tree with no git metadata
+ * cannot name its own commits, so its block records nulls there. That is the
+ * environment's limitation and not the artifact's, and the alternative - a
+ * gate that cannot run at all outside a checkout - is what this closes.
+ *
+ * @param {string} target Absolute path, for the messages.
+ * @param {string} text The exact bytes read.
+ * @param {Object} block The extracted provenance block.
+ * @param {Object} expect What provenance.validate is asked for, WITHOUT the
+ *   repository-dependent expectations.
+ * @returns {Object} The validated block.
+ * @throws {ToolError} On any failure that is not one of the named waivers.
+ */
+function assertMatrixProvenanceWithoutRepository(target, text, block, expect) {
+  var verdict = provenance.validate(block, expect);
+  var waived = [];
+  var failures = [];
+  var recorded = (block.generator && block.generator.blob) || null;
+  var onDisk;
+
+  // A FAILURE inside the closed set is waived with the contract's own wording
+  // kept as its detail; anything else is a refusal exactly as it would be in a
+  // checkout. This is what catches the two checks that DO run here -
+  // `analysed-tree-recorded` and `delivered-recorded` - failing on an artifact
+  // captured where no commit could be named.
+  verdict.failures.forEach(function(failure) {
+    var name = failure.split(':')[0];
+
+    if (REPOSITORY_DEPENDENT_CHECKS.indexOf(name) === -1) {
+      failures.push(failure);
+      return;
+    }
+
+    waived.push({
+      artifact: path.basename(target),
+      check   : name,
+      detail  : failure,
+      reason  : 'the run that produced this artifact had no git repository, ' +
+        'so it could not record the commit this check reads. Unsatisfiable ' +
+        'here through no fault of the artifact; the generator blob recomputed ' +
+        'from the delivered source on disk was substituted for the generator ' +
+        'identity.'
+    });
+  });
+
+  // AND THE WITHHELD ONES, named individually. Their expectations were not
+  // passed to the contract, so they neither passed nor failed - and a check
+  // that is silently absent reads exactly like a check that passed, which is
+  // the confusion this whole function exists to avoid.
+  REPOSITORY_LOOKUP_CHECKS.forEach(function(name) {
+    if (verdict.checks.some(function(entry) { return entry.name === name; })) {
+      return;
+    }
+
+    waived.push({
+      artifact: path.basename(target),
+      check   : name,
+      detail  : name + ': not performed - it resolves a git object (the ' +
+        'block records generator blob ' +
+        String((block.generator && block.generator.blob) || 'none')
+          .slice(0, 12) + ', generator commit ' +
+        String((block.generator && block.generator.commit) || 'none')
+          .slice(0, 12) + ', delivered head ' +
+        String((block.delivered && block.delivered.head) || 'none')
+          .slice(0, 12) + ')',
+      reason  : 'this tool\'s own checkout has no git repository, so there is ' +
+        'no object database in which a blob, a commit or a head could be ' +
+        'resolved. The generator blob recomputed from the delivered source on ' +
+        'disk is checked instead, which is the substance of ' +
+        '`generator-current` and `generator-commit-contains-source`.'
+    });
+  });
+
+  // THE SUBSTITUTED CHECK, and it is not a formality: the recorded blob is
+  // content-addressed, so it is the same forty characters in every clone, and
+  // recomputing it from the delivered source establishes exactly what
+  // `generator-current` establishes - that rerunning the generator sitting
+  // here would rerun the one that produced this artifact.
+  try {
+    onDisk = gitBlobHash(fs.readFileSync(__filename));
+  }
+  catch (err) {
+    failures.push('generator-blob-recomputed: the delivered generator ' +
+      provenance.pathLabel(__filename, { toolRoot: TOOL_ROOT }) + ' could ' +
+      'not be read, so nothing establishes that this artifact was produced ' +
+      'by it: ' + (err && err.message ? err.message : String(err)));
+  }
+
+  if (onDisk !== undefined && recorded === null) {
+    failures.push('generator-blob-recomputed: the block names no generator ' +
+      'blob, so there is nothing to compare the delivered source against');
+  }
+  else if (onDisk !== undefined && onDisk !== recorded) {
+    failures.push('generator-blob-recomputed: the delivered ' +
+      ((block.generator && block.generator.path) ||
+        'test/parity/joi-matrix.js') + ' hashes to ' + onDisk.slice(0, 12) +
+      ' and this artifact records ' + String(recorded).slice(0, 12) +
+      ', so the generator here is not the one that produced it and rerunning ' +
+      'it need not reproduce the artifact. Re-capture the artifact with the ' +
+      'generator delivered beside it.');
+  }
+
+  if (failures.length) {
+    throw new ToolError('the provenance of matrix ' + target + ' does not ' +
+      'establish it as parity evidence, so it was not consumed:\n  ' +
+      failures.join('\n  ') + '\nRegenerate the artifact with the generator ' +
+      'that produced its measurements; a block may not be edited into an ' +
+      'artifact by hand.');
+  }
+
+  note('provenance OK ' + path.basename(target) + ': role ' + block.role +
+    ', analysed tree ' +
+    ((block.analysedTree && block.analysedTree.headShort) || 'none') +
+    ', generator blob ' + String(recorded).slice(0, 12) +
+    ' recomputed from the delivered source and matched, ' +
+    verdict.checks.filter(function(entry) { return entry.ok; }).length +
+    ' contract check(s) passed, ' + waived.length + ' WAIVED');
+
+  waived.forEach(function(entry) {
+    recordProvenanceWaiver(entry);
+    note('  WAIVED ' + entry.check + ' on ' + entry.artifact + ': ' +
+      entry.reason);
+  });
+
+  note('  this run is authenticated by content - schema, artifact name, ' +
+    'role, payload digest, the baseline-tree claim and the recomputed ' +
+    'generator blob - and NOT by any repository lookup. The waivers above ' +
+    'travel with the written report.');
+
+  return block;
+}
+
+/**
+ * Records a waiver so the written report carries what stderr said.
+ *
+ * A waiver a reviewer has to have been watching stderr to see is a waiver
+ * nobody will find in six months, so every one of them is accumulated here and
+ * written into the comparison report and the run-output sidecar.
+ *
+ * @param {Object} entry {artifact, check, detail, reason}
+ * @returns {undefined}
+ */
+function recordProvenanceWaiver(entry) {
+  var already = provenanceWaivers.some(function(existing) {
+    return existing.artifact === entry.artifact &&
+      existing.check === entry.check;
+  });
+
+  if (!already) {
+    provenanceWaivers.push(entry);
+  }
+
+  return undefined;
+}
+
+/**
+ * Every provenance waiver this run recorded, oldest first.
+ *
+ * @returns {Array.<Object>}
+ */
+function recordedProvenanceWaivers() {
+  return provenanceWaivers.slice();
+}
+
+/**
+ * This tool's own repository root, or null when it has none.
+ *
+ * Resolved once and cached: it is asked for on every artifact read, the answer
+ * cannot change during a run, and `git rev-parse --git-dir` on a tree with no
+ * repository is the one git invocation that is guaranteed to fail.
+ *
+ * @returns {(string|null)} TOOL_ROOT when it is inside a repository.
+ */
+function toolRepository() {
+  if (toolRepositoryState === undefined) {
+    try {
+      childProcess.execFileSync('git', ['-C', TOOL_ROOT, 'rev-parse',
+        '--git-dir'], {
+        encoding: 'utf8',
+        stdio   : ['ignore', 'pipe', 'ignore']
+      });
+      toolRepositoryState = TOOL_ROOT;
+    }
+    catch (err) {
+      toolRepositoryState = null;
+    }
+  }
+
+  return toolRepositoryState;
 }
 
 /**
@@ -10326,14 +10854,17 @@ function redactSecrets(serialized) {
  */
 function buildProvenance(input) {
   var redacted = redactSecrets(input.environment.nodeConfig);
-  var composed = parseJsonOrNull(input.environment.nodeConfig);
+  var identity = configurationIdentity(input.environment);
+  var treeIdentity = input.treeIdentity ||
+    { mode: IDENTITY_WORKTREE, verification: null };
   var alignment = input.databaseAlignment === undefined ||
     input.databaseAlignment === null
     ? null
     : input.databaseAlignment;
+  var block;
 
   try {
-    return provenance.build({
+    block = provenance.build({
       artifact      : input.artifact,
       role          : input.role,
       // `__filename`, so the block identifies the generator by the git blob of
@@ -10390,12 +10921,12 @@ function buildProvenance(input) {
         // confirm a guess at a secret. The reproduction source is the
         // committed overlay, which the `redaction` prose names.
         configuration   : {
-          NODE_ENV        : input.environment.nodeEnv,
-          nodeConfigKeys  : composed === null
-            ? []
-            : Object.keys(composed).sort(),
-          nodeConfigDigest: provenance.configurationDigest(
-            composed === null ? {} : composed),
+          // configurationIdentity is the ONE implementation of these three
+          // fields, shared with assertConfigurationComparable so that what a
+          // capture records and what a comparison checks cannot drift apart.
+          NODE_ENV        : identity.NODE_ENV,
+          nodeConfigKeys  : identity.nodeConfigKeys,
+          nodeConfigDigest: identity.nodeConfigDigest,
           nodeConfigDir   : provenance.pathLabel(
             input.environment.nodeConfigDir,
             { toolRoot: TOOL_ROOT, analysedRoot: input.appRoot }),
@@ -10417,13 +10948,110 @@ function buildProvenance(input) {
           'configuration - the redaction applies to this record only. The ' +
           'values come from the committed overlay ' +
           '(test/parity/server-overlay.json) and any --overlay the caller ' +
-          'passed, which are where a reviewer reproduces them from.'
+          'passed, which are where a reviewer reproduces them from.',
+        // HOW the analysed tree was identified. Recorded on every block,
+        // including the ordinary worktree case, because "identified by a git
+        // HEAD" and "identified by hashing every tracked file" are different
+        // claims and a reader must not have to infer which one an artifact
+        // rests on. See resolveTreeIdentity.
+        analysedTreeIdentity : describeTreeIdentity(treeIdentity)
       }
     });
   }
   catch (err) {
     throw asToolError(err);
   }
+
+  // A CONTENT-VERIFIED tree has no git metadata, so the contract's
+  // `treeIdentity` could name no head for it and recorded nulls. The identity
+  // it DOES have was established here, file by file, so it is written into the
+  // same field a reader looks at - with `worktreeState` and `identity` both
+  // saying `content-verified`, so the block states how it knows and never
+  // reads as a clean worktree capture. The portability guard is re-run over
+  // the result, because a block this tool edited after the contract built it
+  // must meet the same bar.
+  if (treeIdentity.mode === IDENTITY_CONTENT && block.analysedTree) {
+    block.analysedTree.head             = provenance.BASELINE_HEAD;
+    block.analysedTree.headShort        = provenance.BASELINE_HEAD.slice(0, 7);
+    block.analysedTree.subject          = baselineSubject();
+    block.analysedTree.isBaselineCommit = true;
+    block.analysedTree.worktreeState    = IDENTITY_CONTENT;
+    block.analysedTree.identity         = IDENTITY_CONTENT;
+
+    try {
+      provenance.assertPortable(block, 'provenance');
+    }
+    catch (err) {
+      throw asToolError(err);
+    }
+  }
+
+  return block;
+}
+
+/**
+ * A tree identity, reduced to what belongs in a committed artifact.
+ *
+ * Counts and a mode, never a path: the verification read files out of one
+ * directory on one host, and what a reader needs is which commit was checked,
+ * how, and that nothing differed.
+ *
+ * @param {Object} identity From resolveTreeIdentity.
+ * @returns {Object}
+ */
+function describeTreeIdentity(identity) {
+  var verification = identity.verification;
+
+  if (identity.mode !== IDENTITY_CONTENT) {
+    return {
+      mode : identity.mode,
+      basis: identity.mode === IDENTITY_WORKTREE
+        ? 'the analysed tree named a git HEAD, and the shared contract ' +
+          'decided its identity from that HEAD and its worktree state'
+        : 'neither a git HEAD nor a content match identified the analysed tree'
+    };
+  }
+
+  return {
+    mode           : IDENTITY_CONTENT,
+    commit         : verification.commit,
+    entriesChecked : verification.entries,
+    blobsMatched   : verification.matched,
+    basis          : 'the analysed tree has no git metadata, so every tracked ' +
+      'file of the base commit was hashed out of it as a git blob and ' +
+      'compared with the id that commit records. All of them matched, which ' +
+      'establishes the base commit\'s CONTENT and says nothing about the ' +
+      'commit graph - an extraction and a worktree are therefore recorded ' +
+      'differently. Untracked build state (node_modules, public/components, ' +
+      'built CSS) is not part of the base commit\'s tree and was ignored.'
+  };
+}
+
+/**
+ * The base commit's subject line, or null.
+ *
+ * Read from this tool's repository rather than from the analysed tree, because
+ * the tree being described is precisely the one with no git metadata.
+ *
+ * @returns {(string|null)}
+ */
+function baselineSubject() {
+  var output;
+
+  try {
+    output = childProcess.execFileSync('git',
+      ['-C', TOOL_ROOT, 'log', '-1', '--format=%s', provenance.BASELINE_HEAD], {
+        encoding: 'utf8',
+        stdio   : ['ignore', 'pipe', 'ignore']
+      });
+  }
+  catch (err) {
+    return null;
+  }
+
+  output = String(output).trim();
+
+  return output || null;
 }
 
 /**
@@ -10464,6 +11092,10 @@ function buildRunOutput(input) {
     // Filled in by recordWarningGate, which runs after teardown so the
     // application's stderr is complete. Null when the gate never reported.
     warningGate : null,
+    // The provenance checks this run waived, if any. On the SIDECAR as well as
+    // in the comparison report, so a capture - which writes no report - still
+    // leaves the record beside the artifact it produced.
+    provenanceWaivers : recordedProvenanceWaivers(),
     // The run's own addressing, for a reader debugging THIS run.
     run         : {
       appRoot  : input.appRoot,
@@ -10520,24 +11152,312 @@ function buildRunOutput(input) {
  * @throws {ToolError} When a capture is pointed at a tree that is not the base
  *   commit and no escape was given.
  */
-function resolveRole(options, mode, tree) {
+function resolveRole(options, mode, tree, identity) {
+  var established = identity || { mode: IDENTITY_UNIDENTIFIED, verification: null };
+
   if (mode === 'schema-only') {
     return ROLE_ANALYSIS;
   }
 
   if (mode !== 'capture') {
-    return tree.isBaselineCommit ? ROLE_BASELINE : ROLE_TARGET;
+    // A role is a fact about the tree, so a tree whose content IS the base
+    // commit gets the baseline role whether that content arrived as a git
+    // checkout or as an extraction of it. Anything else is the target side.
+    return (tree.isBaselineCommit || established.mode === IDENTITY_CONTENT)
+      ? ROLE_BASELINE
+      : ROLE_TARGET;
   }
 
+  // A CHECKOUT is held to exactly what it was held to before: the contract
+  // decides, so a real repository at the wrong commit, or at the right commit
+  // with uncommitted changes, is refused as it always was. Content
+  // verification is not consulted here and cannot weaken it.
+  if (tree.head !== null) {
+    try {
+      return provenance.assertBaseline(tree, {
+        allowNonBaseline: options.allowNonBaseline,
+        what            : 'the joi baseline matrix'
+      });
+    }
+    catch (err) {
+      throw asToolError(err);
+    }
+  }
+
+  // NOT A CHECKOUT. `git worktree add` is not available in every environment a
+  // gate has to run in - a read-only clone, an image layer, a `git archive`
+  // extraction in a measurement rig - and the identity the contract wants from
+  // git is an identity of CONTENT. So it is established from content instead,
+  // against the base commit's own tree read out of THIS tool's repository, and
+  // the artifact records which of the two ways identified it.
+  if (established.mode === IDENTITY_CONTENT) {
+    return ROLE_BASELINE;
+  }
+
+  if (options.allowNonBaseline) {
+    return ROLE_UNREVIEWED;
+  }
+
+  throw new ToolError('the joi baseline matrix must be measured on the base ' +
+    'commit ' + provenance.BASELINE_HEAD + ' (AAP §0.10.3), and the tree at ' +
+    '--app is not a checkout, so its identity was established by CONTENT ' +
+    'instead - which it did not pass.\n  ' +
+    describeBaselineContent(established.verification) + '\n' +
+    '  Point --app at a worktree at the base commit (`git worktree add ' +
+    '--detach <path> ' + BASELINE_COMMIT + '`) or at an extraction of that ' +
+    'commit whose tracked files are byte-identical to it; extra untracked ' +
+    'files - node_modules, public/components, built CSS - are ignored. Or ' +
+    'pass --allow-nonbaseline to record the artifact as `unreviewed`, which ' +
+    'does not qualify as gate evidence.');
+}
+
+/**
+ * Establishes what the tree under test IS, by git metadata or by content.
+ *
+ * Two ways to know a tree holds the base commit, and they are not equally
+ * strong. A git checkout NAMES its commit and `git status` says whether the
+ * working copy still matches it, which is what `provenance.treeIdentity`
+ * reports. An extraction has no metadata at all - and it still either holds
+ * that commit's content or it does not, which is a question every byte of it
+ * answers.
+ *
+ * The weaker-looking one is checked more thoroughly: every one of the base
+ * commit's recorded blobs is hashed out of the tree under test and compared,
+ * so a content-verified tree cannot differ from the base commit in a single
+ * byte of a single tracked file. What it cannot tell you is anything about the
+ * commit GRAPH - a tree could hold that content having reached it by another
+ * route - so the two are recorded as DIFFERENT identity modes and the stronger
+ * claim is never made silently.
+ *
+ * Content verification is attempted only where git has nothing to say: a tree
+ * that names a HEAD is identified by that HEAD, at exactly the strictness the
+ * shared contract has always applied.
+ *
+ * @param {Object} options Parsed arguments.
+ * @param {string} mode The mode being run.
+ * @param {Object} tree From provenance.treeIdentity.
+ * @returns {{mode: string, verification: (Object|null)}}
+ */
+function resolveTreeIdentity(options, mode, tree) {
+  var verification;
+
+  if (tree && tree.head !== null) {
+    return { mode: IDENTITY_WORKTREE, verification: null };
+  }
+
+  if (mode === 'schema-only') {
+    // Enumeration only: it executes no application, its artifact is `analysis`
+    // whichever tree it read, and hashing 520 files to label it would buy
+    // nothing.
+    return { mode: IDENTITY_UNIDENTIFIED, verification: null };
+  }
+
+  verification = verifyBaselineContent(options.appRoot);
+
+  return {
+    mode        : verification.ok ? IDENTITY_CONTENT : IDENTITY_UNIDENTIFIED,
+    verification: verification
+  };
+}
+
+/**
+ * Verifies that a tree holds the base commit's content, file by file.
+ *
+ * The base commit's tree is read out of THIS tool's repository with `git
+ * ls-tree -r -z`, which lists every tracked path with its mode and its blob
+ * id. Each recorded path must exist in the analysed tree and hash to the same
+ * blob id, computed the way git computes it - sha1 over `blob <byteLength>\0`
+ * and the bytes - so no git is needed on the analysed side at all.
+ *
+ * WHAT IT DELIBERATELY DOES NOT DO is fail on extra files. An installed tree
+ * carries node_modules, public/components and built CSS, all of them
+ * gitignored build state that the base commit's tree does not list and that
+ * every measurement needs present. So the check is "every tracked file of the
+ * base commit is here, byte for byte", which is the property a measurement of
+ * that commit requires.
+ *
+ * A submodule entry would break the claim - a gitlink records a commit id, not
+ * content, so nothing in the analysed tree could be hashed to confirm it - and
+ * it is refused rather than skipped. This repository has none; the check is
+ * here because skipping one silently would turn a hole into a pass.
+ *
+ * @param {string} appRoot Absolute path of the tree under test.
+ * @returns {{ok: boolean, mode: string, commit: string, entries: number,
+ *            matched: number, missing: string[], differing: string[],
+ *            unreadable: string[], resolvable: boolean, reason: (string|null)}}
+ */
+function verifyBaselineContent(appRoot) {
+  var record = {
+    ok         : false,
+    mode       : IDENTITY_CONTENT,
+    commit     : provenance.BASELINE_HEAD,
+    entries    : 0,
+    matched    : 0,
+    missing    : [],
+    differing  : [],
+    unreadable : [],
+    resolvable : false,
+    reason     : null
+  };
+  var entries;
+
   try {
-    return provenance.assertBaseline(tree, {
-      allowNonBaseline: options.allowNonBaseline,
-      what            : 'the joi baseline matrix'
-    });
+    entries = baselineTreeEntries();
   }
   catch (err) {
-    throw asToolError(err);
+    record.reason = err && err.message ? err.message : String(err);
+    return record;
   }
+
+  record.resolvable = true;
+  record.entries    = entries.length;
+
+  entries.forEach(function(entry) {
+    var target = path.resolve(appRoot, entry.path);
+    var actual;
+
+    try {
+      actual = entry.symlink
+        ? gitBlobHash(Buffer.from(fs.readlinkSync(target), 'utf8'))
+        : gitBlobHash(fs.readFileSync(target));
+    }
+    catch (err) {
+      if (err && err.code === 'ENOENT') {
+        record.missing.push(entry.path);
+        return;
+      }
+
+      record.unreadable.push(entry.path + ' (' +
+        (err && err.message ? err.message : String(err)) + ')');
+      return;
+    }
+
+    if (actual === entry.blob) {
+      record.matched += 1;
+      return;
+    }
+
+    record.differing.push(entry.path);
+  });
+
+  record.ok = record.entries > 0 && record.matched === record.entries;
+
+  return record;
+}
+
+/**
+ * The base commit's tracked files, with their blob ids.
+ *
+ * `-r` recurses so only blobs are listed, and `-z` makes the records
+ * NUL-separated so a path needing quoting arrives verbatim rather than
+ * C-quoted.
+ *
+ * @returns {Array.<{mode: string, blob: string, path: string,
+ *                   symlink: boolean}>}
+ * @throws {ToolError} When the base commit's tree cannot be read from this
+ *   tool's repository, or it contains an entry whose content cannot be
+ *   verified.
+ */
+function baselineTreeEntries() {
+  var output;
+  var entries = [];
+
+  try {
+    output = childProcess.execFileSync('git',
+      ['-C', TOOL_ROOT, 'ls-tree', '-r', '-z', provenance.BASELINE_HEAD], {
+        encoding : 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+        stdio    : ['ignore', 'pipe', 'ignore']
+      });
+  }
+  catch (err) {
+    throw new ToolError('the base commit ' + provenance.BASELINE_HEAD +
+      ' could not be read from this tool\'s own repository, so there is ' +
+      'nothing to verify the analysed tree\'s content against (`git -C ' +
+      '<tool root> ls-tree -r ' + BASELINE_COMMIT + '` failed). A tree with ' +
+      'no git metadata can only be identified against a repository that has ' +
+      'the base commit; run this from a checkout that does.');
+  }
+
+  String(output).split('\0').forEach(function(record) {
+    var match = /^(\d{6}) (blob|commit) ([0-9a-f]{40})\t([\s\S]+)$/.exec(record);
+
+    if (record === '') {
+      return;
+    }
+
+    if (!match) {
+      throw new ToolError('cannot parse a `git ls-tree` record for the base ' +
+        'commit: ' + JSON.stringify(record.slice(0, 120)));
+    }
+
+    if (match[1] === '160000' || match[2] === 'commit') {
+      throw new ToolError('the base commit records ' + match[4] + ' as a ' +
+        'submodule, and a gitlink names a commit rather than content, so a ' +
+        'tree with no git metadata cannot be verified against it. Identify ' +
+        'the analysed tree with a real worktree instead.');
+    }
+
+    entries.push({
+      mode    : match[1],
+      blob    : match[3],
+      path    : match[4],
+      symlink : match[1] === '120000'
+    });
+  });
+
+  return entries;
+}
+
+/**
+ * git's blob id for a buffer, computed without git.
+ *
+ * `sha1("blob " + byteLength + "\0" + bytes)`, which is the object id git
+ * itself would store - so a tree with no `.git` directory can still be
+ * compared, path by path, with a commit's recorded tree.
+ *
+ * @param {Buffer} bytes
+ * @returns {string} 40 hex characters.
+ */
+function gitBlobHash(bytes) {
+  return crypto.createHash('sha1')
+    .update(Buffer.from('blob ' + bytes.length + '\0', 'utf8'))
+    .update(bytes)
+    .digest('hex');
+}
+
+/**
+ * A content verification, as one line for an error message or a note.
+ *
+ * @param {(Object|null)} verification From verifyBaselineContent.
+ * @returns {string}
+ */
+function describeBaselineContent(verification) {
+  var sample;
+
+  if (!verification) {
+    return 'no content verification was attempted';
+  }
+
+  if (!verification.resolvable) {
+    return 'the base commit\'s tree could not be read: ' +
+      (verification.reason || 'no reason recorded');
+  }
+
+  sample = verification.missing.concat(verification.differing)
+    .slice(0, CONTENT_SAMPLE)
+    .join(', ');
+
+  return 'checked ' + verification.entries + ' tracked file(s) of ' +
+    BASELINE_COMMIT + ': ' + verification.matched + ' identical, ' +
+    verification.missing.length + ' absent, ' +
+    verification.differing.length + ' differing, ' +
+    verification.unreadable.length + ' unreadable' +
+    (sample ? '; first differing path(s): ' + sample : '') +
+    (verification.unreadable.length
+      ? '; unreadable: ' +
+        verification.unreadable.slice(0, CONTENT_SAMPLE).join(', ')
+      : '');
 }
 
 /**
@@ -12020,6 +12940,7 @@ function replayRecordedInputs(entries, compiled, recorded) {
 async function buildMatrix(options, mode, recorded) {
   var wantsHttp = mode !== 'schema-only';
   var database = { provisioned: false, uri: null, overlay: null };
+  var configuration = null;
   var environment;
   var loaded;
   var targets;
@@ -12042,6 +12963,7 @@ async function buildMatrix(options, mode, recorded) {
   var matchers;
   var deferred = null;
   var tree;
+  var identity;
   var role;
   var provenanceInput;
 
@@ -12053,15 +12975,25 @@ async function buildMatrix(options, mode, recorded) {
   // database has been provisioned, an application started and every case
   // driven. `resolveRole` throws here, before publishDatabaseAddress, so a
   // mis-aimed capture costs nothing and says what to do about it.
-  tree = provenance.treeIdentity(options.appRoot);
-  role = resolveRole(options, mode, tree);
+  tree     = provenance.treeIdentity(options.appRoot);
+  identity = resolveTreeIdentity(options, mode, tree);
+  role     = resolveRole(options, mode, tree, identity);
 
   note('analysed tree ' + (tree.headShort || 'not a checkout') +
     (tree.subject ? ' (' + tree.subject + ')' : '') + ', worktree ' +
-    tree.worktreeState + '; this artifact is recorded as `' + role + '`' +
+    tree.worktreeState + '; identified by ' + identity.mode +
+    '; this artifact is recorded as `' + role + '`' +
     (role === 'unreviewed'
       ? ' and DOES NOT QUALIFY as gate evidence (--allow-nonbaseline)'
       : ''));
+
+  if (identity.mode === IDENTITY_CONTENT) {
+    note('the tree at --app has no git metadata and was identified BY ' +
+      'CONTENT against ' + BASELINE_COMMIT + ': ' +
+      describeBaselineContent(identity.verification) + '. That establishes ' +
+      'the base commit\'s content and not its commit graph, and the artifact ' +
+      'records `content-verified` rather than a worktree identity.');
+  }
 
   if (wantsHttp) {
     loadSiblings();
@@ -12071,6 +13003,31 @@ async function buildMatrix(options, mode, recorded) {
   }
 
   environment = prepareEnvironment(options.appRoot);
+
+  // THE CONFIGURATION CHECK, BEFORE A SINGLE CASE IS DRIVEN, and for the same
+  // reason the baseline check above runs before anything is launched: a
+  // comparison whose two sides ran under different overlays is not evidence
+  // either way, and finding that out after 306 cases have been driven costs
+  // three minutes and reports the mismatch as a parity difference. The
+  // composed NODE_CONFIG is complete at this point - the inherited value, the
+  // redis overlay, the `--overlay` file and the database address are all in it
+  // - so the identity computed here is exactly the one this run will record in
+  // its own provenance. See assertConfigurationComparable.
+  if (recorded !== null && recorded !== undefined) {
+    configuration = assertConfigurationComparable(
+      configurationOf({ provenance: recorded.provenance }),
+      configurationIdentity(environment), {
+        recordedFrom: 'the baseline recording being replayed',
+        observedFrom: 'this ' + mode + ' run'
+      });
+
+    note('configuration reconciled with the recording: NODE_ENV ' +
+      environment.nodeEnv + ', NODE_CONFIG keys [' +
+      configuration.keys.join(', ') + '], digest ' +
+      configuration.recordedDigest.slice(0, 16) + '... - both sides of this ' +
+      'gate ran under the same external overlay (AAP §0.9.3)');
+  }
+
   loaded      = harvest(options.appRoot);
   targets     = enumerateTargets(loaded, fixtureIds());
   maps        = languageMaps(loaded);
@@ -12223,6 +13180,10 @@ async function buildMatrix(options, mode, recorded) {
     artifact            : artifactName(options, mode),
     role                : role,
     appRoot             : options.appRoot,
+    // HOW the analysed tree was identified, so the artifact distinguishes a
+    // git worktree identity from a content-verified one. See
+    // resolveTreeIdentity.
+    treeIdentity        : identity,
     environment         : environment,
     recaptchaConfigured : recaptchaConfigured(options.appRoot),
     server              : context === null ? null : context.server,
@@ -13150,6 +14111,19 @@ async function runCompare(options) {
   // evidence the verdict is derived from.
   report.proofMismatches = audits;
   report.warnings = warnings;
+  // Every provenance check this run could not establish, with its reason. Empty
+  // in a checkout, which is the normal case; non-empty only where there was no
+  // repository to resolve a git object in, and then a reader of the report sees
+  // exactly what was waived rather than having to have watched stderr. See
+  // assertMatrixProvenanceWithoutRepository.
+  report.provenanceWaivers = recordedProvenanceWaivers();
+
+  if (report.provenanceWaivers.length) {
+    note('WARNING: ' + report.provenanceWaivers.length + ' provenance ' +
+      'check(s) were WAIVED as unsatisfiable outside a repository and are ' +
+      'recorded in ' + out + ' under `provenanceWaivers`; the artifacts were ' +
+      'authenticated by content instead');
+  }
 
   reportText = serialize(report);
   writeArtifact(out, reportText);
@@ -13344,6 +14318,10 @@ module.exports = {
   readRecording    : readRecording,
   majorOf          : majorOf,
   assertComparable : assertComparable,
+  configurationIdentity      : configurationIdentity,
+  configurationOf            : configurationOf,
+  configurationKeyDrift      : configurationKeyDrift,
+  assertConfigurationComparable: assertConfigurationComparable,
   resolveOut       : resolveOut,
   recordComparisonInto : recordComparisonInto,
   // The provenance surface, exported so a harness can drive it WITHOUT a
@@ -13353,6 +14331,16 @@ module.exports = {
   buildProvenance       : buildProvenance,
   buildRunOutput        : buildRunOutput,
   resolveRole           : resolveRole,
+  resolveTreeIdentity   : resolveTreeIdentity,
+  verifyBaselineContent : verifyBaselineContent,
+  baselineTreeEntries   : baselineTreeEntries,
+  gitBlobHash           : gitBlobHash,
+  describeBaselineContent: describeBaselineContent,
+  describeTreeIdentity  : describeTreeIdentity,
+  baselineSubject       : baselineSubject,
+  IDENTITY_WORKTREE     : IDENTITY_WORKTREE,
+  IDENTITY_CONTENT      : IDENTITY_CONTENT,
+  IDENTITY_UNIDENTIFIED : IDENTITY_UNIDENTIFIED,
   artifactName          : artifactName,
   artifactLabel         : artifactLabel,
   sidecarLink           : sidecarLink,
@@ -13360,6 +14348,11 @@ module.exports = {
   joiVersionOf          : joiVersionOf,
   generatorIdentityOf   : generatorIdentityOf,
   assertMatrixProvenance: assertMatrixProvenance,
+  assertMatrixProvenanceWithoutRepository: assertMatrixProvenanceWithoutRepository,
+  recordProvenanceWaiver     : recordProvenanceWaiver,
+  recordedProvenanceWaivers  : recordedProvenanceWaivers,
+  toolRepository             : toolRepository,
+  REPOSITORY_DEPENDENT_CHECKS: REPOSITORY_DEPENDENT_CHECKS,
   asToolError           : asToolError,
   parseJsonOrNull       : parseJsonOrNull,
   // The outcome-proof mismatch audit and the verdict, exported for the same

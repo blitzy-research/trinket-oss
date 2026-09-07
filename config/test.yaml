@@ -15,24 +15,32 @@ app:
   # test/lib/api/trinket.js), so with mail unconfigured they never reach the
   # behaviour they assert.
   #
-  # MEASURED, not argued (`node test/parity/mongo.js -- mocha`, this tree): with
-  # this block present the suite reports 103 passing / 28 failing; with the block
-  # removed it reports 98 passing / 33 failing, and the five newly failing cases
-  # are exactly the five named above - forgot_pass.js:47 (`Store.set.firstCall`
-  # is null, because the short-circuit returns before the reset key is stored),
-  # :65, :81 (302 where 200 is asserted), :111 (/forgot-pass where /reset-pass is
-  # asserted) and trinket.js:99. AAP 0.9.2's "npm test exits 0 with the baseline
-  # assertions unweakened" is a hard gate and 0.4.1's edit list does not name
-  # this key, so the gate is what retains it; the alternative would be weakening
-  # five baseline assertions, which R-d and 0.9.2 both forbid.
+  # MEASURED, not argued (`node test/parity/mongo.js -- mocha`, this tree, with
+  # every key this file currently carries in force - both this `mail` block and
+  # the `cloud` block below): with this block present the suite reports 115
+  # passing / 16 failing; with the block neutralised it reports 110 passing / 21
+  # failing, and the five newly failing cases are exactly the five named above -
+  # forgot_pass.js:47 (`Store.set.firstCall` is null, because the short-circuit
+  # returns before the reset key is stored), :65, :81 (302 where 200 is
+  # asserted), :111 (/forgot-pass where /reset-pass is asserted) and
+  # trinket.js:99. AAP 0.9.2's "npm test exits 0 with the baseline assertions
+  # unweakened" is a hard gate and 0.4.1's edit list does not name this key, so
+  # the gate is what retains it; the alternative would be weakening five
+  # baseline assertions, which R-d and 0.9.2 both forbid.
   #
-  # The two totals above were RE-MEASURED after the `features` and `cloud` keys
-  # in this file were added (they read 95 / 36 and 90 / 41 before those keys
-  # existed, when five more cases were failing for reasons unrelated to mail).
-  # The delta this block is justified by - the same five named cases - is
-  # unchanged by that: `NODE_CONFIG='{"app":{"mail":{"from":"","host":""}}}'`,
-  # which is what removing the block leaves, fails exactly those five and
-  # nothing else.
+  # Read the two totals as a pair, never singly. Neither is a claim about the
+  # 0.9.2 gate: 16 cases still fail here for reasons unrelated to mail (10 in
+  # test/lib/api/course.js, 4 in test/lib/api/files.js, 1 in
+  # test/lib/api/registration.js, plus the suite-total hook in
+  # test/lib/api/index.js), and both totals move whenever one of those is fixed.
+  # What justifies this block is the DELTA of exactly five, which those unrelated
+  # failures do not touch: `NODE_CONFIG='{"app":{"mail":{"from":"","host":""}}}'`,
+  # which is what removing the block leaves, fails exactly those five and nothing
+  # else. Re-measure the pair rather than editing one number if the totals drift.
+  #
+  # The `cloud` block below this `app` section is a separate +1: it fixes exactly
+  # one further case, the single profile case that reads it. This file has never
+  # carried a `features` key.
   #
   # Supplying the credential here is provisioning, not a behaviour change: the
   # suite stubs the transport itself (test/helpers/mail.js replaces
@@ -55,6 +63,37 @@ app:
     session:
       cookieOptions:
         password: 'test-only-fixed-session-secret-not-a-real-credential'
+# `cloud` is the LEGACY key name the profile spec was written against for what
+# this tree now calls `aws.buckets.useravatars` (config/default.yaml).
+#
+# This is test-only provisioning, not a behaviour change: its sole consumer in
+# the repository is test/lib/api/profile.js:34, which builds an avatar URL from
+# it and asserts the value round-trips back out of the profile-update route. That
+# route applies no validation to `avatar`, so the host is opaque to the product
+# and only the round-trip is asserted. With the key absent, `config.cloud` is
+# undefined and the case fails with `TypeError: Cannot read properties of
+# undefined (reading 'containers')` inside the test body - a missing fixture,
+# not a product defect.
+#
+# The host is deliberately NOT default.yaml's committed
+# `aws.buckets.useravatars.host` ('https://your-avatars-bucket.example.com').
+# MEASURED: with that value the case still fails, because
+# lib/models/user.js:244 treats any avatar containing `example.com` as a
+# placeholder meaning "no avatar" and answers the default instead
+# ("expected ... 'https://your-avatars-bucket.example.com/franz', but got
+# '/img/avatar-default.svg'"). The fixture therefore uses a host the placeholder
+# rule does not swallow, under the RFC 2606 reserved `.invalid` TLD so it can
+# never resolve and cannot be mistaken for a real bucket. It is the same value
+# the round-trip was measured green against.
+#
+# Only `cloud` is added: `aws.buckets.useravatars` is left exactly as
+# default.yaml ships it, so `normalizeAvatar`'s `hasCloudConfig` stays false in
+# tests and no other case's expected avatar changes. No application module reads
+# `cloud`, and only NODE_ENV=test sees this key.
+cloud:
+  containers:
+    userAvatars:
+      host: 'http://cdn.test.invalid/avatars'
 db:
   mongo:
     host: localhost

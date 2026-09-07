@@ -42,7 +42,7 @@ Both retrieval paths run the same implementation, `scripts/fetch-components.js`,
 
 | Component | Repository | Version | Notes |
 |-----------|------------|---------|-------|
-| skulpt | [trinketapp/skulpt-dist](https://github.com/trinketapp/skulpt-dist) | 0.11.1.34 | Python-to-JS compiler (Trinket fork) |
+| skulpt | [trinketapp/skulpt-dist](https://github.com/trinketapp/skulpt-dist) | 0.11.1.33 | Python-to-JS compiler (Trinket fork) |
 | marked | [trinketapp/marked](https://github.com/trinketapp/marked) | master | Markdown parser (Trinket fork) |
 | jq-console | [trinketapp/jq-console](https://github.com/trinketapp/jq-console) | v2.13.2.1 | Console/REPL UI |
 | traqball.js | [trinketapp/traqball.js](https://github.com/trinketapp/traqball.js) | 1.0.3 | 3D rotation for turtle graphics |
@@ -66,7 +66,7 @@ MIDI/music playback environment based on MIDI.js.
 
 ## Contributing
 
-Contributions are welcome. The full guidelines live in [CONTRIBUTING.md](https://github.com/Blitzy-Sandbox/blitzy-trinket-oss/blob/main/CONTRIBUTING.md); the short version is:
+Contributions are welcome. The full guidelines live in [CONTRIBUTING.md](../CONTRIBUTING.md); the short version is:
 
 1. **Reporting bugs** - Check existing [Issues](https://github.com/trinketapp/trinket-oss/issues) first, then open a new issue with a clear title, reproduction steps, expected vs. actual behavior, and browser/OS/Node version when relevant.
 2. **Suggesting features** - Open an issue with the `enhancement` label describing the problem, your proposed solution, and any alternatives considered.

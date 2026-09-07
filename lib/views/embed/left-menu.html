@@ -1,62 +1,66 @@
-<aside class="left-off-canvas-menu" data-interface="trinket-menu">
+{# The panel is positioned off-screen until it is opened, so its controls
+   start outside the tab order and public/js/embed/embed.js puts them back
+   in while the panel is open. Without this, a keyboard user walks eleven
+   invisible controls before reaching the editor. #}
+<aside class="left-off-canvas-menu" data-interface="trinket-menu" aria-label="Trinket menu">
   <ul class="off-canvas-list mode-menu" data-mode="interact">
     {% block custom_menu %}{% endblock %}
     <li><label>Menu</label></li>
     {% if lang == "music" %}
       <li>
-        <a class="menu-button" data-action="code.config"><i class="fa fa-cog"></i>Setup</a>
-        <a class="menu-button" data-action="code.cheatsheet"><i class="fa fa-file"></i>Cheatsheet</a>
+        <a class="menu-button" data-action="code.config" aria-label="Setup" role="button"><i class="fa fa-cog"></i>Setup</a>
+        <a class="menu-button" data-action="code.cheatsheet" aria-label="Cheatsheet" role="button"><i class="fa fa-file"></i>Cheatsheet</a>
       </li>
     {% elif lang == "glowscript" and runMode != "calculator" %}
       {% if not outputOnly %}
       <li>
-        <a class="menu-button" data-action="code.help" data-data="open" tabindex="0"><i class="fa fa-question"></i>Web VPython Help</a>
+        <a class="menu-button" data-action="code.help" data-data="open" tabindex="-1" aria-label="Web VPython Help" role="button"><i class="fa fa-question"></i>Web VPython Help</a>
       </li>
       {% endif %}
     {% endif %}
     {% if not noReset %}
     <li>
-      <a class="reset-it menu-button" data-action="code.reset" title="Reset editor to original version" tabindex="0"><i class="fa fa-refresh"></i>Reset</a>
+      <a class="reset-it menu-button" data-action="code.reset" title="Reset editor to original version" tabindex="-1" aria-label="Reset" role="button"><i class="fa fa-refresh"></i>Reset</a>
     </li>
     {% endif %}
     <li>
-      <a class="menu-button" data-action="mode.fullscreen" data-no-analytics="true" title="Switch to fullscreen mode" tabindex="0"><i class="fa fa-expand"></i>Fullscreen</a>
+      <a class="menu-button" data-action="mode.fullscreen" data-no-analytics="true" title="Switch to fullscreen mode" tabindex="-1" aria-label="Fullscreen" role="button"><i class="fa fa-expand"></i>Fullscreen</a>
     </li>
     {% if downloadable %}
     <li>
-      <a class="menu-button" data-action="mode.download" title="Download this code to your device" tabindex="0"><i class="fa fa-download"></i>Download</a>
+      <a class="menu-button" data-action="mode.download" title="Download this code to your device" tabindex="-1" aria-label="Download" role="button"><i class="fa fa-download"></i>Download</a>
     </li>
     {% endif %}
     {% if uploadable %}
     <li>
-      <a class="menu-button" data-action="mode.upload" tabindex="0"><i class="fa fa-upload"></i>Upload</a>
+      <a class="menu-button" data-action="mode.upload" tabindex="-1" aria-label="Upload" role="button"><i class="fa fa-upload"></i>Upload</a>
     </li>
     {% endif %}
     {% if configurable or toggleEditor %}
     <li>
-      <a class="menu-button" data-action="code.settings" tabindex="0"><i class="fa fa-cog"></i>Settings</a>
+      <a class="menu-button" data-action="code.settings" tabindex="-1" aria-label="Settings" role="button"><i class="fa fa-cog"></i>Settings</a>
     </li>
     {% endif %}
     {% if sharingEnabled %}
     <li><label>Sharing</label></li>
     <li>
-      <a class="share-it menu-button" data-action="sharing.share" aria-controls="share-options" tabindex="0"><i class="fa fa-share"></i>Share</a>
+      <a class="share-it menu-button" data-action="sharing.share" aria-controls="share-options" tabindex="-1" aria-label="Share" role="button"><i class="fa fa-share"></i>Share</a>
     </li>
     <li>
-      <a class="embed-it menu-button" data-action="sharing.embed" tabindex="0"><i class="fa fa-code"></i>Embed</a>
+      <a class="embed-it menu-button" data-action="sharing.embed" tabindex="-1" aria-label="Embed" role="button"><i class="fa fa-code"></i>Embed</a>
     </li>
     {% if emailEnabled %}
     <li>
-      <a class="email-it menu-button" data-action="sharing.email" tabindex="0"><i class="fa fa-envelope-o"></i>Email</a>
+      <a class="email-it menu-button" data-action="sharing.email" tabindex="-1" aria-label="Email" role="button"><i class="fa fa-envelope-o"></i>Email</a>
     </li>
     {% endif %}
     {% endif %}
     {% block fontsize %}
     <li><label>Font Size</label></li>
     <li>
-      <a class='menu-button font-size small-font left' data-action="code.fontsize" data-data="1em" tabindex="0" aria-label="Set font size to small" role="menuitem">aA</a>
-      <a class='menu-button font-size medium-font left' data-action="code.fontsize" data-data="1.5em" tabindex="0" aria-label="Set font size to medium" role="menuitem">aA</a>
-      <a class='menu-button font-size large-font left' data-action="code.fontsize" data-data="2em" tabindex="0" aria-label="Set font size to large" role="menuitem">aA</a>
+      <a class='menu-button font-size small-font left' data-action="code.fontsize" data-data="1em" tabindex="-1" aria-label="Set font size to small" role="menuitem">aA</a>
+      <a class='menu-button font-size medium-font left' data-action="code.fontsize" data-data="1.5em" tabindex="-1" aria-label="Set font size to medium" role="menuitem">aA</a>
+      <a class='menu-button font-size large-font left' data-action="code.fontsize" data-data="2em" tabindex="-1" aria-label="Set font size to large" role="menuitem">aA</a>
     </li>
     {% endblock %}
   </ul>

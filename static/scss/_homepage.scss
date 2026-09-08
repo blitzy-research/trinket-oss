@@ -135,6 +135,14 @@ body#home {
     }
   }
 
+  // Both ids must exist in home.html for these two rules to keep the page's
+  // two sibling sections on one left edge. Each narrows a Foundation `.row`,
+  // which is centred by `margin: 0 auto`, so narrowing one of the pair and not
+  // the other re-centres it alone and the two headings separate - which is
+  // exactly what happened while `#my-courses` matched no element: -22.5px at
+  // 375 and -23.4px at 768. Renaming or dropping either id here without the
+  // other silently reintroduces that, because a selector that matches nothing
+  // is not an error.
   @media #{$small-only} {
     #recent-trinkets, #my-courses {
       max-width: 80%;

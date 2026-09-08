@@ -58,4 +58,51 @@
     .row > .columns {
         min-width: 0;
     }
+
+    // The sign-up submit sits in a `medium-2 medium-offset-3 small-4
+    // small-offset-1` column [lib/views/signup.html:232]. That column's
+    // content box measures ~95-97px at a 375px viewport and ~100px at 768px,
+    // while the max-content width of `.button.primary.small` around the label
+    // "Sign Up" is ~104px. An inline-block is sized shrink-to-fit, which
+    // clamps to the space available, so the label took the one break
+    // opportunity it has - the space - and rendered on two lines,
+    // "Sign" / "Up": measured 97x61 at 375 and 100x62 at 768, and on one line
+    // only at 1280 and wider. `white-space: nowrap` removes that break
+    // opportunity, so shrink-to-fit resolves to max-content instead.
+    //
+    // Why not the alternatives: widening `small-4`/`medium-2` would change
+    // the grid at every width and move the control off the offset it shares
+    // with the fields above it, and trimming `.button` padding would resize
+    // every button in the application. The project carries no component
+    // library - only a vendored Foundation 5.5.3.1 SCSS fork
+    // [static/scss/_settings.scss:8] - so a px or rem value invented here
+    // would be a hardcoded value with no design-system token behind it.
+    // Nothing is hardcoded by `nowrap`: the label keeps whatever width the
+    // Foundation type scale gives it.
+    //
+    // The overflow this permits is contained. At its widest the control
+    // exceeds the column's content box by ~7px, which lands inside that
+    // column's own 15px Foundation gutter padding, in a `.row` that holds no
+    // other column - so it overlaps nothing and cannot extend
+    // `documentElement.scrollWidth` the way the unbroken-token case above
+    // does.
+    //
+    // Scoped to `button.button` inside this wrapper on purpose. Both sign-up
+    // variants are `<button>` elements - the `g-recaptcha` one and the plain
+    // `type="submit"` one [lib/views/signup.html:234,236] - so the element
+    // selector covers exactly the two controls that wrap, while
+    // `login.html:92` submits with an `input.button` whose "log in" label
+    // already fits its wider `medium-6` column and is deliberately left
+    // alone. The `a.login-button` in `includes/login-buttons.html` carries a
+    // different class and is unaffected.
+    //
+    // The compiled selector list also carries
+    // `.auth-page-wrapper button.faux-button`, because `_shared.scss:99-100`
+    // declares `.faux-button { @extend .button; }` and Sass replays every
+    // `.button` selector for it. Neither auth template nor the shared
+    // `login-buttons.html` include renders a `faux-button`, so that half of
+    // the pair matches no element on either page.
+    button.button {
+        white-space: nowrap;
+    }
 }

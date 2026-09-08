@@ -3,6 +3,15 @@
 {% block body_id %}home{% endblock %}
 
 {% block content %}
+{#
+  The page carries no visible page-level title by design: the section headings
+  below are the visible hierarchy. This one names the document for assistive
+  technology only, the same construct the editor chrome uses in
+  `embed/base.html`, so the rendered layout is unchanged. `show-for-sr` is
+  Foundation's clip-based helper rather than `display: none`, which would prune
+  the heading from the accessibility tree instead of hiding it visually.
+#}
+<h1 class="show-for-sr">Home</h1>
 {% if user and user.roles %}
   <input id="roles" type='hidden' value='{{ user.roles | encrypt }}'>
 {% endif %}
@@ -27,40 +36,77 @@
 </section>
 {% endif %}
 <section id="recent-trinkets" class="row">
-  <div class="clearfix">
-    <h2 class="left">My Recent Trinkets</h2>
-    <nav class="right">
-      <new-trinket></new-trinket>
-    </nav>
-  </div>
-  <p>Trinkets are interactive examples you can put on any site.  Create or edit your trinkets here:</p>
-  <ul class="medium-block-grid-3 small-block-grid-1">
-  {% for trinket in trinkets %}
-    <li class="item" title="{% if trinket.name == "" %}{% else %}{{ trinket.name }}{% endif %}">
-      <a href="/library/trinkets/{{ trinket.shortCode }}">
-        <img src="{{ trinket.snapshot }}" alt="">
-        <div class="overlay">
-          Click To Edit
-          <div class="homeLabel">
-            {% if trinket.name == "" %}<i>Untitled</i>{% else %}{{ trinket.name }}{% endif %}
-          </div>
-        </div>
-      </a>
-    </li>
-  {% endfor %}
-  </ul>
-  <section class="row">
-    <div class="columns small-12">
-      <a href="/library/trinkets" class="right button">View All My Trinkets&nbsp;<i class="fa fa-arrow-circle-right"></i></a>
+  {#
+    The section's content lives in a Foundation column, exactly as the courses
+    section below does. Without one, this row's children take no column padding
+    while the courses column takes 0.9375rem, so the two section headings stood
+    on different left edges at every width where the row is not narrowed.
+  #}
+  <div class="small-12 columns">
+    <div class="clearfix">
+      <h2 class="left">My Recent Trinkets</h2>
+      <nav class="right">
+        <new-trinket></new-trinket>
+      </nav>
     </div>
-  </section>
+    <p>Trinkets are interactive examples you can put on any site.  Create or edit your trinkets here:</p>
+    {% if trinkets and trinkets.length %}
+    <ul class="medium-block-grid-3 small-block-grid-1">
+    {% for trinket in trinkets %}
+      <li class="item" title="{% if trinket.name == "" %}{% else %}{{ trinket.name }}{% endif %}">
+        <a href="/library/trinkets/{{ trinket.shortCode }}">
+          <img src="{{ trinket.snapshot }}" alt="">
+          <div class="overlay">
+            Click To Edit
+            <div class="homeLabel">
+              {#
+                `not trinket.name` rather than `== ""`: a trinket created
+                without a name persists no `name` at all, and `undefined == ""`
+                is false, so the equality test fell through to printing nothing
+                and the caption rendered blank at zero height. The library card
+                shows the same "Untitled" fallback for the same record.
+              #}
+              {% if not trinket.name %}<i>Untitled</i>{% else %}{{ trinket.name }}{% endif %}
+            </div>
+          </div>
+        </a>
+      </li>
+    {% endfor %}
+    </ul>
+    {% else %}
+    {#
+      The subtitle above ends in a colon, so an empty list left the section
+      introducing content that was not there. This is the treatment the courses
+      section below gives its own empty case: a plain paragraph naming the
+      control that resolves it - here the New Trinket button in this section's
+      own header.
+    #}
+    <p class="no-recent-trinkets">You have no trinkets yet. Click the "New Trinket" button above to create your first one.</p>
+    {% endif %}
+    <section class="row">
+      <div class="columns small-12">
+        <a href="/library/trinkets" class="right button">View All My Trinkets&nbsp;<i class="fa fa-arrow-circle-right"></i></a>
+      </div>
+    </section>
+  </div>
 </section>
 {% if config.features.courses != false %}
 <hr>
 
+{#
+  The `id="my-courses"` on the row below is load-bearing rather than
+  decorative: `_homepage.scss` narrows `#recent-trinkets, #my-courses` at the
+  small and medium breakpoints, and while that id was absent only the trinkets
+  row was narrowed and re-centred - which put the two sibling sections on
+  different left edges below 1024px. The id belongs on the `.row`, the element
+  Foundation centres, and not on the section, which would take the max-width
+  without the auto margins and move the edge further apart. The comment lives
+  out here because the markup below is inside `{% raw %}`, where a template
+  comment would be emitted to the client verbatim.
+#}
 {% raw %}
 <section ng-controller="CoursesController">
-  <div class="row clearfix">
+  <div id="my-courses" class="row clearfix">
     <div class="small-12 medium-8 columns">
       <h2 class="left">My Courses</h2>
 

@@ -35,3 +35,29 @@
     margin-bottom: rem-calc(12px);
   }
 }
+
+// The course editor's two single-field modals. Both used to have no commit
+// control at all -- the only way to submit was the Enter key -- so each now
+// carries a submit button inside its existing form. Foundation's `.small`
+// button and its default text input both land under 44px, which is below the
+// pointer-target size a control on a touch screen needs, and these two modals
+// are the ones this stylesheet is responsible for. The field and the button
+// are sized together so they read as a pair, and the min-height is a floor
+// rather than a fixed height, so a longer label or a larger base font size
+// still grows the control instead of clipping it.
+//
+// `$modal-commit-target` is local to this file on purpose: the shared scale
+// lives in _settings.scss, which this rule does not own and must not extend.
+$modal-commit-target: rem-calc(44);
+
+#newTopicDialog, #newPageDialog {
+  input[type="text"] {
+    min-height: $modal-commit-target;
+    margin-bottom: rem-calc(12);
+  }
+
+  button[type="submit"] {
+    min-height: $modal-commit-target;
+    margin-bottom: 0;
+  }
+}

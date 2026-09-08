@@ -1,6 +1,25 @@
 <div class="dropdown-wrapper">
-  <a class="small button primary dropdown" data-dropdown="{{id}}"><span class="show-for-large-up">New Trinket</span><i class="hide-for-large-up trinket-key"></i></a>
-  <ul id="{{id}}" class="tiny f-dropdown" data-dropdown-content>
+  <!--
+    A native <button> rather than an href-less <a>: only a button (or an anchor
+    with an href) enters sequential focus navigation and is exposed with a
+    button role. Foundation binds its dropdown by delegation on [data-dropdown]
+    and keeps managing aria-expanded itself, and the caret/box styling is shared
+    by `.dropdown.button.small` and `button.dropdown.small`, so the conversion
+    is behaviour- and pixel-neutral. Every class is preserved because
+    trinket.js finds this trigger with `element.find('.button.dropdown')`.
+
+    The aria-label is required, not decorative: below `large-up` the visible
+    "New Trinket" span is hidden and the only remaining content is the
+    private-use icomoon glyph, which carries no accessible name. Above the
+    breakpoint the visible text matches the label exactly, so label-in-name
+    holds. The glyph itself is hidden from assistive technology.
+
+    tabindex="-1" on the panel makes Foundation's `dropdown.focus()` (called on
+    open, foundation.dropdown.js:168) land somewhere focusable; the same
+    treatment is applied to the dropdown panels in lib/views/docs/colors.html.
+  -->
+  <button type="button" class="small button primary dropdown" data-dropdown="{{id}}" aria-label="New Trinket"><span class="show-for-large-up">New Trinket</span><i class="hide-for-large-up trinket-key" aria-hidden="true"></i></button>
+  <ul id="{{id}}" class="tiny f-dropdown" data-dropdown-content tabindex="-1">
     <li ng-repeat="item in items">
       <a ng-click="create(item.lang)"><i class="lang-sprite lang-sprite-{{item.lang}}"></i>{{item.label}} <i ng-show="item.icon" class="{{item.icon}}"></i></a>
     </li>

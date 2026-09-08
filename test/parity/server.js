@@ -290,7 +290,10 @@ var USAGE = [
   '                       config/test.yaml sets app.start: false, so this',
   '                       normally produces no listening socket.',
   '  --secure             Set session isSecure: true, the pass in which the',
-  '                       cookie patch appends "; SameSite=None; Secure".',
+  '                       session cookie is served Secure. SameSite stays',
+  '                       Lax in both passes: the second onPreResponse',
+  '                       appends the Expires horizon and nothing else',
+  '                       (deviation 7, docs/preserved-quirks.md §11.11).',
   '  --host <host>        Bind host, and app.url.hostname with it.',
   '  --port <n>           Bind port, and app.url.port with it, so absolute',
   '                       Location headers match the port actually served.',
@@ -3470,7 +3473,8 @@ function assertReadableFile(target, label) {
  * @param {Object} [options]
  * @param {string} [options.appRoot] The worktree under test. Default cwd.
  * @param {(string|null)} [options.overlay] Overlay path, or null for none.
- * @param {boolean} [options.secure] The `SameSite=None; Secure` cookie pass.
+ * @param {boolean} [options.secure] The secure cookie pass: session isSecure
+ *   true, so the cookie is served `Secure` with `SameSite=Lax` unchanged.
  * @param {(string|null)} [options.host] Bind host and app.url.hostname.
  * @param {(number|null)} [options.port] Bind port and app.url.port.
  * @param {(string|null)} [options.database] Pin the MongoDB database name.
@@ -3838,7 +3842,7 @@ function reportStarted(result) {
   note('stderr         ' + result.stderrPath);
   note('run directory  ' + result.runDir);
   note('cookie pass    ' + (result.secure
-    ? 'secure - the patch appends "; SameSite=None; Secure"'
+    ? 'secure - Secure set by isSecure, SameSite=Lax, Expires one year out'
     : 'non-secure - SameSite=Lax, no Secure, Expires one year out'));
 
   if (result.mongo) {

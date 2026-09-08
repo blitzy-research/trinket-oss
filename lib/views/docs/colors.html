@@ -73,13 +73,32 @@
       outline: 3px solid rgb(34, 34, 34);
       outline-offset: 1px;
     }
+
+    /* The page's title is now the `h1` it always should have been - the page
+       previously opened at `h2`, leaving it with no top-level heading at all.
+       Only its level changed, not its appearance: Foundation gives h1 and h2
+       the same family, weight, colour, margins and 1.4 header line-height
+       ratio and differs solely in font-size, so pinning font-size alone
+       reproduces the h2's measured rendering exactly - 37px (and therefore
+       37 x 1.4 = 51.8px line-height) from the medium breakpoint up, and 27px
+       (37.8px line-height) on small screens. Nothing else is restated,
+       because nothing else differed. */
+    body#colors h1 {
+      font-size: 2.3125rem;
+    }
+
+    @media only screen and (max-width: 40em) {
+      body#colors h1 {
+        font-size: 1.6875rem;
+      }
+    }
   </style>
 {% endblock %}
 
 {% block content %}
 <div class="row">
   <div class="small-12 columns">
-    <h2>Colors</h2>
+    <h1>Colors</h1>
     <h3 class="subheader">Click on a color below to see its turtle name, CSS name, hex code, or RGB values.</h3>
   </div>
 </div>

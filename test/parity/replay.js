@@ -200,6 +200,38 @@ var TOOL_ROOT = path.resolve(__dirname, '..', '..');
 var DEFAULT_CORPUS   = path.join(__dirname, 'corpus.json');
 var COMMITTED_MANIFEST = path.join(__dirname, 'route-manifest.json');
 
+// The secure-mode recording, and the reason it is a READ DEFAULT rather than a
+// flag every caller has to remember.
+//
+// AAP §0.9.3 requires two passes - the overlay run once with `isSecure` unset
+// and once in secure mode - and the secure pass is only a MEASUREMENT when it
+// compares against a corpus captured in that configuration. Without one the
+// pass derives its expectation from the non-secure recording and
+// `qualifyGate`'s `measured-secure-pass` requirement refuses gate status, which
+// is what `npm run verify:corpus` was doing: it passes `--pass both` and no
+// `--secure-corpus`, so the gate command could not qualify however cleanly the
+// comparison ran.
+//
+// Resolving the committed artifact here rather than in the npm script is what
+// closes that without a second command-line: `--secure-corpus` still overrides
+// it, `--no-secure-corpus` still declines it, and a tree that carries no
+// secure recording behaves exactly as before. Like DEFAULT_CORPUS this is a
+// path this tool only ever READS.
+var DEFAULT_SECURE_CORPUS = path.join(__dirname, 'corpus.secure.json');
+
+// The authorized rendered-output difference register. Read by default for the
+// same reason, and written only by `--authorize`.
+//
+// It is NOT the approved-deviation register and must never be confused with
+// it: that one is closed at the two deviations AAP §0.7 decided and is hand
+// authored in this file (`approvedDeviationRegister`). This one is a GENERATED
+// record of the rendered-output differences that later order-0 remediations
+// mandated - one entry per scenario, step and comparison field, carrying both
+// values verbatim and naming the order-0 finding that authorized it. See THE
+// AUTHORIZED RENDERED-OUTPUT DIFFERENCE REGISTER below for the whole contract.
+var DEFAULT_AUTHORIZED_DIFFERENCES =
+  path.join(__dirname, 'corpus.authorized.json');
+
 // The environment variable that names ONE scratch directory for the default
 // artifacts of every test/parity tool.
 //
@@ -2570,6 +2602,7 @@ function assertNormalizationRules() {
   return results;
 }
 
+
 /**
  * The comparison contract for binary and stream bodies, as it is APPLIED.
  *
@@ -2729,6 +2762,437 @@ var PRESENCE_ONLY_HEADERS   = Object.freeze(volatileField('presenceOnlyHeaders')
 var VOLATILE_COOKIE_FIELDS  = Object.freeze(volatileField('cookieFields'));
 var VOLATILE_RESPONSE_FIELDS = Object.freeze(volatileField('responseFields'));
 
+// ---------------------------------------------------------------------------
+// THE HARNESS ORIGIN, RECONCILED - AND WHY IT IS NOT IN THE VOLATILE SET
+// ---------------------------------------------------------------------------
+//
+// THE DEFECT. The application builds its own absolute URLs from
+// `config.app.url` - the `Location` of every redirect, the `url` a course copy
+// returns, the `referer` a view record stores - and the harness is what decides
+// that configuration: `./server` is handed a host and a `--port`. So a corpus
+// captured with the launcher on one port records `http://127.0.0.1:3010/signup`
+// and a replay on another port observes `http://127.0.0.1:3284/signup`, and
+// `Location` being compared exactly means the two differ on every redirecting
+// route. MEASURED on the committed corpus: 35 scenarios - 32 `header.location`,
+// 2 `body.json.trinket.lastView.referer` and 1 `body.json.url` - differed in
+// the port and in nothing else, and the committed `verify:corpus` script takes
+// its port from `PARITY_PORT`. The gate was therefore replayable at exactly one
+// port and reported 35 behaviour differences at every other, which is both a
+// false positive and, on a host running more than one clone, an unavoidable one.
+//
+// WHY THIS IS NOT A SEVENTH VOLATILE CATEGORY. The volatile set is closed at the
+// six categories AAP §0.9.3 enumerates and each of its rules gives up a
+// comparison: an ObjectId, a timestamp, a cookie value are values the
+// APPLICATION produced that the gate agrees not to check. This is the opposite
+// case. The origin is not a value the application chose - it is the address the
+// harness told both trees to answer on - and the two sides are supposed to be
+// driven at ONE origin. Reconciling it gives up no comparison at all: the
+// scheme, the host, the path, the query and the fragment are all still compared
+// exactly, so `/signup` -> `/login`, `http` -> `https` and
+// `127.0.0.1` -> `cdn.example` are every one of them still differences. What is
+// replaced is a prefix this file's own `--port` decided.
+//
+// THE RULE IS DELIBERATELY NARROW, AND ITS BREADTH IS ASSERTED RATHER THAN
+// TRUSTED.
+//   * Only the LIVE application's own scheme and host are reconciled. An origin
+//     on any other host - `https://accounts.google.com`, a configured CDN, the
+//     protocol-relative `//fonts.googleapis.com` the templates use - is not
+//     matched at all and is compared exactly.
+//   * Every port it replaces is COUNTED, and `harnessOriginAccounting` reports
+//     them. A pass in which the reconciled occurrences carry more than one port
+//     besides the live one has seen the application name two different ports for
+//     itself, which is a behaviour difference rather than a harness artifact:
+//     `accountHarnessOrigin` fails the pass on it instead of absorbing it.
+//   * It is applied at COMPARE time only. Nothing is written back into a corpus,
+//     and `bodyNormalization` already accounts a body the rule touched, so the
+//     recorded byte count and digest stop being exact fields for exactly those
+//     responses - the same accounting every volatile text rule gets.
+//   * `assertHarnessOriginReconciliation` proves, before a request is driven,
+//     that it rewrites the origin and only the origin, that it is idempotent on
+//     its own placeholder, and that it leaves a foreign origin alone.
+//
+// The state is installed once per pass, from the origin `./server` actually
+// answered on, and released when the pass ends. It is module state because
+// `normalizeText` is the single funnel every comparator reaches through and
+// threading a context into eight call sites would put the same value in eight
+// places; the tool is one run per process - it provisions a mongod and a server
+// per pass and drives them serially - so there is no second run to interleave
+// with, and `installHarnessOrigin` refuses to overwrite a live install rather
+// than letting two passes share one.
+var HARNESS_ORIGIN_TOKEN = '<app-origin>';
+
+// The rule name, spelled once. It is reported in `applied` lists beside the
+// volatile rule names, with the `harness-origin:` prefix that says it is not
+// one of them.
+var HARNESS_ORIGIN_RULE = 'harness-origin:application self-origin';
+
+// scheme://host[:port]. The host alternation covers a name, an IPv4 literal and
+// a bracketed IPv6 literal; the port is optional so a default-port origin is
+// reconciled too. Not global: `reconcileHarnessOrigin` builds its own anchored
+// expression from the live origin, and this one exists for the accounting scan
+// and for the probes.
+var HARNESS_ORIGIN_EXPRESSION =
+  /https?:\/\/(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(?::\d{1,5})?/g;
+
+// {scheme, host, port, origin, expression, ports:{}, occurrences} or null.
+var harnessOrigin = null;
+
+/**
+ * Installs the live application origin for the current pass.
+ *
+ * @param {(string|null)} baseUrl The origin ./server answered on.
+ * @returns {boolean} Whether an origin was installed.
+ * @throws {ToolError} If one is already installed, or the value is unusable.
+ */
+function installHarnessOrigin(baseUrl) {
+  var parsed;
+  var host;
+
+  if (harnessOrigin) {
+    throw new ToolError('a harness origin is already installed (' +
+      harnessOrigin.origin + '). Two passes cannot share one, so this is a ' +
+      'fault in this file rather than in a corpus: release the previous ' +
+      'pass\'s origin before installing the next.');
+  }
+
+  if (typeof baseUrl !== 'string' || !baseUrl) {
+    return false;
+  }
+
+  try {
+    parsed = new URL(baseUrl);
+  }
+  catch (err) {
+    throw new ToolError('the application origin ' + JSON.stringify(baseUrl) +
+      ' is not a URL, so the harness origin cannot be reconciled: ' +
+      reasonOf(err));
+  }
+
+  host = parsed.hostname;
+
+  if (!parsed.protocol || !host) {
+    throw new ToolError('the application origin ' + JSON.stringify(baseUrl) +
+      ' names no scheme or no host, so there is nothing to reconcile against.');
+  }
+
+  harnessOrigin = {
+    scheme: parsed.protocol.replace(/:$/, ''),
+    // As written in a URL: an IPv6 literal keeps its brackets, which is how
+    // both the recording and the live response spell it.
+    host: parsed.hostname.indexOf(':') >= 0 ? '[' + host + ']' : host,
+    port: parsed.port || null,
+    origin: parsed.origin,
+    // Anchored on this run's own scheme and host, so no other origin can match.
+    // The port group is optional and captured, which is what lets the
+    // accounting say which ports were reconciled.
+    expression: new RegExp(
+      escapeForRegExp(parsed.protocol.replace(/:$/, '')) + ':\\/\\/' +
+      escapeForRegExp(parsed.hostname.indexOf(':') >= 0 ? '[' + host + ']' : host) +
+      '(?::(\\d{1,5}))?(?![0-9A-Za-z.-])', 'g'),
+    ports: Object.create(null),
+    occurrences: 0
+  };
+
+  return true;
+}
+
+/**
+ * Releases the installed origin. Idempotent, so a `finally` can call it.
+ *
+ * @returns {Object} the accounting for the pass that just ended
+ */
+function releaseHarnessOrigin() {
+  var accounting = harnessOriginAccounting();
+
+  harnessOrigin = null;
+
+  return accounting;
+}
+
+/**
+ * Escapes a literal for embedding in a regular expression.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeForRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Replaces the live application's own origin with the harness token.
+ *
+ * @param {*} value
+ * @returns {Object} {value, applied: Array.<string>}
+ */
+function reconcileHarnessOrigin(value) {
+  var applied = [];
+  var text;
+
+  if (!harnessOrigin || typeof value !== 'string' || !value) {
+    return { value: value, applied: applied };
+  }
+
+  text = value.replace(harnessOrigin.expression, function(match, port) {
+    var key = port ? String(port) : '(default)';
+
+    harnessOrigin.ports[key] = (harnessOrigin.ports[key] || 0) + 1;
+    harnessOrigin.occurrences += 1;
+
+    return HARNESS_ORIGIN_TOKEN;
+  });
+
+  if (text !== value) {
+    applied.push(HARNESS_ORIGIN_RULE);
+  }
+
+  return { value: text, applied: applied };
+}
+
+/**
+ * What the reconciliation did, for the pass document and the report.
+ *
+ * @returns {Object}
+ */
+function harnessOriginAccounting() {
+  var ports;
+  var live;
+  var foreign;
+
+  if (!harnessOrigin) {
+    return {
+      installed: false,
+      origin: null,
+      token: HARNESS_ORIGIN_TOKEN,
+      rule: HARNESS_ORIGIN_RULE,
+      occurrences: 0,
+      livePort: null,
+      ports: [],
+      otherPorts: [],
+      note: 'no application origin was installed for this pass, so nothing ' +
+        'was reconciled and every absolute URL was compared exactly'
+    };
+  }
+
+  ports = Object.keys(harnessOrigin.ports).sort();
+  live = harnessOrigin.port || '(default)';
+  // The PORT-LESS form is excluded from the ambiguity test, and that is a
+  // measurement rather than a convenience. `http://127.0.0.1/proxy` and
+  // `http://127.0.0.1/u/{user}/classes/{course}` are in the committed corpus:
+  // the application composes them from a configuration that carries no port,
+  // so they are spelled identically on both sides and have never contributed a
+  // difference. A harness artifact, by contrast, always carries a port - the
+  // launcher binds one - so counting the port-less form as a second "other
+  // port" would fail the check on every run while measuring nothing. It is
+  // reported separately instead, so it is visible rather than dropped.
+  foreign = ports.filter(function(port) {
+    return port !== live && port !== '(default)';
+  });
+
+  return {
+    installed: true,
+    origin: harnessOrigin.origin,
+    token: HARNESS_ORIGIN_TOKEN,
+    rule: HARNESS_ORIGIN_RULE,
+    occurrences: harnessOrigin.occurrences,
+    livePort: live,
+    ports: ports.map(function(port) {
+      return { port: port, occurrences: harnessOrigin.ports[port] };
+    }),
+    otherPorts: foreign,
+    portlessOccurrences: harnessOrigin.ports['(default)'] || 0,
+    note: 'the scheme ' + harnessOrigin.scheme + ' and host ' +
+      harnessOrigin.host + ' are this pass\'s own address, so an occurrence ' +
+      'of them was replaced with ' + HARNESS_ORIGIN_TOKEN +
+      ' on both sides before comparison. Everything after the origin - path, ' +
+      'query and fragment - and every origin on any other scheme or host was ' +
+      'compared exactly.'
+  };
+}
+
+// The probes for the harness-origin reconciliation, each one a measurement of
+// a property the rule is relied on for. They are declared as data for the same
+// reason the normalization probes are: the rule and the evidence that it
+// behaves as described cannot then drift apart, and the evidence lands in the
+// result document where a reviewer can read it without re-running the tool.
+//
+// The origin every probe is measured against is a FIXTURE origin, chosen so
+// that no host in the corpus can collide with it.
+var HARNESS_ORIGIN_PROBE_ORIGIN = 'http://127.0.0.1:39999';
+
+var HARNESS_ORIGIN_PROBES = Object.freeze([
+  Object.freeze({
+    id: 'live-origin-replaced',
+    what: 'the live origin itself is replaced by the token',
+    input: 'http://127.0.0.1:39999/signup',
+    expected: HARNESS_ORIGIN_TOKEN + '/signup',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'other-port-replaced',
+    what: 'the same scheme and host on ANOTHER port is replaced too - this is ' +
+      'the recorded side of the comparison, captured on the capture run\'s port',
+    input: 'http://127.0.0.1:3010/signup',
+    expected: HARNESS_ORIGIN_TOKEN + '/signup',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'default-port-replaced',
+    what: 'the same scheme and host with no port at all is replaced',
+    input: 'http://127.0.0.1/signup',
+    expected: HARNESS_ORIGIN_TOKEN + '/signup',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'path-preserved',
+    what: 'only the origin is replaced: the path, query and fragment survive ' +
+      'the rewrite byte for byte',
+    input: 'http://127.0.0.1:3010/a/b?c=d%20e&f=1#g',
+    expected: HARNESS_ORIGIN_TOKEN + '/a/b?c=d%20e&f=1#g',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'foreign-host-untouched',
+    what: 'an origin on a different host is NOT matched, so a redirect that ' +
+      'moved to another host is still a difference',
+    input: 'https://accounts.google.com/o/oauth2/auth?client_id=x',
+    expected: 'https://accounts.google.com/o/oauth2/auth?client_id=x',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'foreign-scheme-untouched',
+    what: 'the same host on a different scheme is NOT matched, so http -> ' +
+      'https is still a difference',
+    input: 'https://127.0.0.1:39999/signup',
+    expected: 'https://127.0.0.1:39999/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'host-prefix-untouched',
+    what: 'a host that merely STARTS with the live host is not matched, which ' +
+      'is what the trailing boundary in the expression is for',
+    input: 'http://127.0.0.1.example.com/signup',
+    expected: 'http://127.0.0.1.example.com/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'protocol-relative-untouched',
+    what: 'the protocol-relative asset URLs the templates use carry no ' +
+      'scheme and are not matched',
+    input: '<link href="//fonts.googleapis.com/css?family=Lato">',
+    expected: '<link href="//fonts.googleapis.com/css?family=Lato">',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'token-is-idempotent',
+    what: 'the placeholder does not itself match the rule, so normalizing an ' +
+      'already-reconciled value is a no-op',
+    input: HARNESS_ORIGIN_TOKEN + '/signup',
+    expected: HARNESS_ORIGIN_TOKEN + '/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'every-occurrence-replaced',
+    what: 'the rule is global: a body carrying the origin more than once has ' +
+      'every occurrence replaced',
+    input: 'a http://127.0.0.1:3010/x b http://127.0.0.1:39999/y c',
+    expected: 'a ' + HARNESS_ORIGIN_TOKEN + '/x b ' + HARNESS_ORIGIN_TOKEN +
+      '/y c',
+    fires: true
+  })
+]);
+
+/**
+ * Proves the harness-origin reconciliation before anything is driven.
+ *
+ * It removes real difference records - the 35 the committed corpus produced at
+ * any port but its capture port - so it is measured rather than trusted, on
+ * exactly the pattern `assertNormalizationRules` uses for the volatile set. A
+ * rule that silently over-reached would delete genuine redirect and asset
+ * differences, so the probes assert BOTH halves: that it fires on the origin,
+ * and that it does not fire on a foreign origin, a foreign scheme, a host that
+ * merely shares the prefix, a protocol-relative URL or its own placeholder.
+ *
+ * It installs and releases the fixture origin itself, so the state a pass sets
+ * is untouched, and it refuses to run while a pass origin is installed rather
+ * than measuring against the wrong one.
+ *
+ * @returns {Array.<Object>} one record per probe, for the result document
+ * @throws {ToolError} If any probe does not behave as declared.
+ */
+function assertHarnessOriginReconciliation() {
+  var results = [];
+  var failures = [];
+  var before;
+
+  if (harnessOrigin) {
+    throw new ToolError('assertHarnessOriginReconciliation ran while a pass ' +
+      'origin (' + harnessOrigin.origin + ') was installed. The probes ' +
+      'measure a fixture origin and would report on the wrong one, so this is ' +
+      'a fault in this file: run them before the first pass starts.');
+  }
+
+  // The no-op half, measured with nothing installed: until a pass installs an
+  // origin the rule must not touch anything at all.
+  before = normalizeText('http://127.0.0.1:3010/signup');
+
+  if (before.value !== 'http://127.0.0.1:3010/signup' ||
+      before.applied.indexOf(HARNESS_ORIGIN_RULE) >= 0) {
+    failures.push('uninstalled-is-a-no-op: with no origin installed the rule ' +
+      'rewrote ' + JSON.stringify('http://127.0.0.1:3010/signup') + ' to ' +
+      JSON.stringify(before.value) + ' and applied ' +
+      JSON.stringify(before.applied) + '. A replay that has not started a ' +
+      'server must compare absolute URLs exactly.');
+  }
+
+  installHarnessOrigin(HARNESS_ORIGIN_PROBE_ORIGIN);
+
+  try {
+    HARNESS_ORIGIN_PROBES.forEach(function(probe) {
+      var outcome = reconcileHarnessOrigin(probe.input);
+      var fired = outcome.applied.indexOf(HARNESS_ORIGIN_RULE) >= 0;
+      var record = {
+        id: probe.id,
+        what: probe.what,
+        input: probe.input,
+        expected: probe.expected,
+        observed: outcome.value,
+        fired: fired,
+        expectedToFire: probe.fires,
+        ok: true
+      };
+
+      results.push(record);
+
+      if (outcome.value !== probe.expected) {
+        record.ok = false;
+        failures.push(probe.id + ': ' + probe.what + ' - expected ' +
+          JSON.stringify(probe.expected) + ', observed ' +
+          JSON.stringify(outcome.value));
+      }
+
+      if (fired !== probe.fires) {
+        record.ok = false;
+        failures.push(probe.id + ': the rule ' + (fired ? 'FIRED' : 'did not ' +
+          'fire') + ' and it must ' + (probe.fires ? '' : 'not ') +
+          'fire here. ' + probe.what);
+      }
+    });
+  }
+  finally {
+    releaseHarnessOrigin();
+  }
+
+  if (failures.length) {
+    throw new ToolError('the harness-origin reconciliation does not behave as ' +
+      'it is described, and it removes real difference records, so no ' +
+      'comparison this tool made would mean anything:\n  - ' +
+      failures.join('\n  - '));
+  }
+
+  return results;
+}
+
 /**
  * Applies every text pattern in the volatile set, in declaration order.
  *
@@ -2745,6 +3209,7 @@ var VOLATILE_RESPONSE_FIELDS = Object.freeze(volatileField('responseFields'));
 function normalizeText(value) {
   var text;
   var applied = [];
+  var reconciled;
 
   if (typeof value !== 'string') {
     return { value: value, applied: applied };
@@ -2766,6 +3231,17 @@ function normalizeText(value) {
       }
     });
   });
+
+  // LAST, and outside the set. The harness origin is not a volatile value and
+  // is not one of the six categories - see THE HARNESS ORIGIN, RECONCILED for
+  // why it is a distinct mechanism - but it has to reach the same eight
+  // comparator call sites, and it runs after the volatile rules so that a
+  // placeholder one of them wrote can never contain an origin this one then
+  // rewrites. It is a no-op until a pass installs an origin, which is what
+  // leaves the startup probes measuring the volatile rules alone.
+  reconciled = reconcileHarnessOrigin(text);
+  text = reconciled.value;
+  applied = applied.concat(reconciled.applied);
 
   return { value: text, applied: applied };
 }
@@ -2929,6 +3405,36 @@ var USAGE = [
   '                         non-secure pass, says so in both artifacts, and',
   '                         the run is not gate-qualifying - the secure cookie',
   '                         contract has to be measured, not computed.',
+  '                         Read from',
+  '                         ' + DEFAULT_SECURE_CORPUS,
+  '                         when the tree carries one, so `--pass both` needs',
+  '                         no second command line.',
+  '  --no-secure-corpus     Decline that default and derive the secure pass.',
+  '  --authorized-differences <path>',
+  '                         The authorized rendered-output difference register.',
+  '                         Read from',
+  '                         ' + DEFAULT_AUTHORIZED_DIFFERENCES,
+  '                         when the tree carries one. It is a CLOSED allowlist',
+  '                         keyed by pass, scenario, step and comparison field,',
+  '                         pinning both values and naming the finding that',
+  '                         authorized each; it is bound by digest to the',
+  '                         corpora it was generated against; a record that',
+  '                         does not materialize FAILS the run; and anything',
+  '                         not in it fails exactly as before. It is NOT the',
+  '                         approved-deviation register, which stays closed at',
+  '                         the two deviations AAP 0.7 decided.',
+  '  --no-authorized-differences',
+  '                         Decline that default. Every difference is then',
+  '                         unauthorized, which is what this tool did before',
+  '                         the register existed.',
+  '  --authorize            Generate the register from THIS run instead of',
+  '                         reading one, writing it to the path above. It',
+  '                         refuses to file a difference no entry in',
+  '                         RENDERED_CHANGE_AUTHORITIES covers and exits',
+  '                         non-zero naming every one it could not attribute,',
+  '                         and it files nothing at all for a scenario carrying',
+  '                         an approved-deviation marker. A generation run is a',
+  '                         DIAGNOSTIC and never the gate.',
   '  --manifest <path>      Route manifest for the coverage gate. Read from',
   '                         ' + COMMITTED_MANIFEST,
   '                         when it is there; otherwise generated by spawning',
@@ -3100,7 +3606,15 @@ function defaultOptions() {
     appRoot        : process.cwd(),
     corpus         : DEFAULT_CORPUS,
     annotations    : null,
-    secureCorpus   : null,
+    // `undefined` means "the committed secure recording if the tree carries
+    // one"; a path names another; null is --no-secure-corpus, which declines
+    // it and accepts the derived secure pass the gate then refuses to qualify.
+    secureCorpus   : undefined,
+    // Same three states, over DEFAULT_AUTHORIZED_DIFFERENCES.
+    authorizedDifferences: undefined,
+    // Writes the register from this run instead of reading one. A generation
+    // run is not a gate run: it exits non-zero on anything it cannot attribute.
+    authorize      : false,
     manifestPath   : COMMITTED_MANIFEST,
     manifestExplicit: false,
     // Null rather than a repository path: `replay` resolves these through
@@ -3245,6 +3759,18 @@ function parseArguments(argv) {
         break;
       case '--secure-corpus':
         options.secureCorpus = next(name);
+        break;
+      case '--no-secure-corpus':
+        options.secureCorpus = null;
+        break;
+      case '--authorized-differences':
+        options.authorizedDifferences = next(name);
+        break;
+      case '--no-authorized-differences':
+        options.authorizedDifferences = null;
+        break;
+      case '--authorize':
+        options.authorize = true;
         break;
       case '--manifest':
         options.manifestPath = next(name);
@@ -6080,6 +6606,523 @@ function isCookieClear(entry) {
 }
 
 // ---------------------------------------------------------------------------
+// THE HELD-BACK SHORT CODE, RECONCILED PAIRWISE
+// ---------------------------------------------------------------------------
+//
+// WHAT THIS IS. The `generated trinket short code` rule in VOLATILE_SET rewrites
+// a minted code to `<generated-shortcode>` on BOTH sides of every comparison,
+// which is what lets a scenario create a trinket without reporting the code it
+// happened to draw. That rule ends with a deliberate exemption:
+//
+//     if (SEEDED_SHORT_CODES[match.toLowerCase()] || /^\d{10,12}$/.test(match))
+//
+// an all-digit token is left alone, because ten to twelve decimal digits is
+// also the shape of an epoch-seconds or epoch-millis reading and an
+// UNANCHORED text rule has no business rewriting one. That reasoning is sound
+// and the rule is not changed here.
+//
+// THE HOLE IT LEAVES, MEASURED. `hashify` [lib/models/trinket.js:119-120] mints
+// sha1(seed + Date.now()).substring(0, 10) - ten characters of hexadecimal - so
+// (10/16)^10, about one code in a hundred and ten, comes out all digits and is
+// held back by the exemption while its counterpart on the other side comes out
+// with a letter in it and is normalized. The pair then differs by placeholder
+// against digits and nothing else. MEASURED across four runs of one unchanged
+// tree: run `v1` reported no such difference, run `v2` reported
+// `route.post.api-courses-{courseId}/lessons/{lessonId}/materials/{materialId}
+// /feedback` `body.json.data.comments[1].trinketShortCode` as
+// `string:<generated-shortcode>` against `string:8196599281`, and generation
+// run `a1` reported `route.post.api-trinkets-{trinketId}-grant.json`
+// `body.json.shortCode` the same way. Ten decimal digits, no letters, so the
+// exemption fired; twelve hex characters in the recorded body, so the rule
+// fired there. Nothing about the application changed between those runs.
+//
+// WHY IT IS RECONCILED HERE AND NOT IN THE VOLATILE SET. Two reasons, and the
+// second is the one that matters.
+//
+//   1. VOLATILE_SET is closed at the six categories AAP 0.9.3 enumerates and
+//      is not this worker's to widen. Its rules are also SINGLE-SIDED - each
+//      one sees one string - so no rule inside it can express "this digit run
+//      is a short code BECAUSE the other side carries the placeholder in the
+//      same position", which is exactly the evidence that makes the rewrite
+//      safe. A single-sided rule strong enough to close the hole would have to
+//      rewrite every 10-to-12-digit run in every body, which is the epoch
+//      reading the exemption was written to protect.
+//   2. So the reconciliation is PAIRWISE and runs after the comparators, in
+//      the same place and for the same reason as `frameworkCookieSuppression`:
+//      it is decided by both sides together and it removes difference records
+//      the comparators have already produced.
+//
+// IT FAILS CLOSED. `heldBackShortCodePair` splits both values on the combined
+// token expression and requires:
+//
+//   the LITERAL text around every token to be identical, character for
+//   character, so a pair that differs anywhere else keeps its difference;
+//   the two token counts to be equal, so a value that gained or lost a code is
+//   a difference;
+//   every token pair to be either equal or exactly {placeholder, all-digit run
+//   of 10 to 12}, so two differing epoch readings at the same position - the
+//   case the exemption exists for - are NOT reconciled, because neither side
+//   carries the placeholder;
+//   at least one pair to be an actual placeholder-against-digits
+//   reconciliation, so this never fires on a pair that matched anyway.
+//
+// The placeholder on one side is the whole of the evidence: it is written only
+// by the committed rule, only over a code that rule recognised, and
+// `assertHeldBackShortCodeReconciliation` re-measures that binding on every
+// run so a change to the committed rule fails the probe rather than silently
+// widening this one.
+//
+// WHAT IS LOST. The literal value of a minted short code, in the one position
+// where the committed rule had already given it up on the other side - so
+// nothing this gate was still comparing. Length is not lost: a code that
+// changed from ten characters to twelve is normalized to one placeholder by
+// the committed rule on both sides already, which is that rule's documented
+// intent, and the length change itself is registered as a deviation elsewhere.
+// Everything around the code - the key it hangs off, the href it sits in, the
+// surrounding markup and prose - is still compared exactly, because the
+// literal parts have to match for this to fire at all.
+
+/**
+ * The placeholder the committed short-code rule writes.
+ *
+ * Declared here rather than read out of VOLATILE_SET because the rule's
+ * `replace` is a function, not a literal, so there is nothing to read. The
+ * binding is asserted instead - see `assertHeldBackShortCodeReconciliation`,
+ * which drives `normalizeText` over a hex code and requires this exact string
+ * back.
+ *
+ * @constant {string}
+ */
+var SHORT_CODE_PLACEHOLDER = '<generated-shortcode>';
+
+/**
+ * The reconciliation's name, as it appears in the pass document and report.
+ *
+ * @constant {string}
+ */
+var HELD_BACK_SHORT_CODE_RULE =
+  'held-back short code:all-digit mint against normalized placeholder';
+
+/**
+ * Placeholder, or an all-digit run of exactly the exempted width.
+ *
+ * ONE expression for both token kinds on purpose: splitting both sides on the
+ * same expression is what makes the token positions comparable, and a
+ * position-by-position comparison is the whole safety argument. The digit
+ * bounds are copied from the committed rule's exemption - `\d{10,12}` - so a
+ * nine-digit or thirteen-digit run is not a candidate here either.
+ *
+ * @constant {RegExp}
+ */
+var HELD_BACK_SHORT_CODE_EXPRESSION =
+  /(<generated-shortcode>|\b\d{10,12}\b)/g;
+
+/**
+ * What this pass reconciled, accumulated across its steps.
+ *
+ * Module state, like `harnessOrigin`, because `compareStep` is a pure function
+ * with nowhere to hang a tally and the accounting has to reach the pass
+ * document. Reset at the start of every pass by `resetHeldBackShortCodeTally`.
+ */
+var heldBackShortCodeTally = null;
+
+/**
+ * Starts a fresh tally for one pass.
+ *
+ * @returns {void}
+ */
+function resetHeldBackShortCodeTally() {
+  heldBackShortCodeTally = { steps: 0, tokens: 0, fields: [], entries: [] };
+}
+
+/**
+ * Records one reconciled field, for the pass document and the report.
+ *
+ * Every entry names the scenario, the step and the field, and carries both
+ * values as they were compared. There is no aggregate-only path: a
+ * reconciliation this gate cannot point at is one a reviewer cannot audit.
+ *
+ * @param {Object} record the difference record being reconciled
+ * @param {number} tokens how many token pairs were reconciled in it
+ * @param {Object} where {scenario, step, stepIndex}
+ * @returns {void}
+ */
+function recordHeldBackShortCode(record, tokens, where) {
+  if (!heldBackShortCodeTally) {
+    resetHeldBackShortCodeTally();
+  }
+
+  heldBackShortCodeTally.tokens += tokens;
+
+  if (heldBackShortCodeTally.fields.indexOf(record.field) === -1) {
+    heldBackShortCodeTally.fields.push(record.field);
+  }
+
+  heldBackShortCodeTally.entries.push({
+    scenario: (where && where.scenario) || null,
+    step: (where && where.step) || null,
+    stepIndex: (where && where.stepIndex) !== undefined ?
+      where.stepIndex : null,
+    field: record.field,
+    baseline: record.baseline,
+    target: record.target,
+    tokens: tokens
+  });
+}
+
+/**
+ * Splits a value into the literal text around its tokens, and its tokens.
+ *
+ * @param {string} value
+ * @returns {Object} {literals, tokens}
+ */
+function splitOnShortCodeTokens(value) {
+  var literals = [];
+  var tokens = [];
+  var cursor = 0;
+  var expression = new RegExp(HELD_BACK_SHORT_CODE_EXPRESSION.source, 'g');
+  var match = expression.exec(value);
+
+  while (match) {
+    literals.push(value.slice(cursor, match.index));
+    tokens.push(match[0]);
+    cursor = match.index + match[0].length;
+    match = expression.exec(value);
+  }
+
+  literals.push(value.slice(cursor));
+
+  return { literals: literals, tokens: tokens };
+}
+
+/**
+ * Whether one token pair is a held-back code against its placeholder.
+ *
+ * @param {string} baselineToken
+ * @param {string} targetToken
+ * @returns {boolean}
+ */
+function isHeldBackShortCodePair(baselineToken, targetToken) {
+  var digits = /^\d{10,12}$/;
+
+  return (baselineToken === SHORT_CODE_PLACEHOLDER &&
+      digits.test(targetToken)) ||
+    (targetToken === SHORT_CODE_PLACEHOLDER && digits.test(baselineToken));
+}
+
+/**
+ * Whether two compared values differ ONLY by held-back short codes.
+ *
+ * @param {*} baselineValue as the difference record carries it
+ * @param {*} targetValue as the difference record carries it
+ * @returns {Object} {reconciled, tokens, reason}
+ */
+function heldBackShortCodePair(baselineValue, targetValue) {
+  var declined = { reconciled: false, tokens: 0, reason: null };
+  var left;
+  var right;
+  var reconciledTokens = 0;
+  var index;
+
+  if (typeof baselineValue !== 'string' || typeof targetValue !== 'string') {
+    return { reconciled: false, tokens: 0, reason: 'not both strings' };
+  }
+
+  if (baselineValue === targetValue) {
+    return { reconciled: false, tokens: 0, reason: 'values are equal' };
+  }
+
+  // Neither side carries the placeholder, so nothing here has been recognised
+  // as a short code by the committed rule and there is no evidence to act on.
+  // This is the guard that keeps two differing epoch readings failing.
+  if (baselineValue.indexOf(SHORT_CODE_PLACEHOLDER) === -1 &&
+      targetValue.indexOf(SHORT_CODE_PLACEHOLDER) === -1) {
+    return { reconciled: false, tokens: 0, reason: 'no placeholder on either side' };
+  }
+
+  left = splitOnShortCodeTokens(baselineValue);
+  right = splitOnShortCodeTokens(targetValue);
+
+  if (left.tokens.length !== right.tokens.length) {
+    return { reconciled: false, tokens: 0, reason: 'token counts differ' };
+  }
+
+  for (index = 0; index < left.literals.length; index += 1) {
+    if (left.literals[index] !== right.literals[index]) {
+      return { reconciled: false, tokens: 0,
+        reason: 'the literal text around the tokens differs' };
+    }
+  }
+
+  for (index = 0; index < left.tokens.length; index += 1) {
+    if (left.tokens[index] === right.tokens[index]) {
+      continue;
+    }
+
+    if (!isHeldBackShortCodePair(left.tokens[index], right.tokens[index])) {
+      return { reconciled: false, tokens: 0,
+        reason: 'token ' + index + ' is not a placeholder against an ' +
+          'all-digit code' };
+    }
+
+    reconciledTokens += 1;
+  }
+
+  if (!reconciledTokens) {
+    return declined;
+  }
+
+  return { reconciled: true, tokens: reconciledTokens, reason: null };
+}
+
+/**
+ * Removes the difference records that are held-back short codes and nothing
+ * else, and reports what it removed.
+ *
+ * @param {Array.<Object>} differences the records produced so far
+ * @param {Object} where {scenario, step, stepIndex}
+ * @returns {Object} {applies, demoted, observations}
+ */
+function heldBackShortCodeReconciliation(differences, where) {
+  var demoted = [];
+  var observations = [];
+
+  (differences || []).forEach(function(record) {
+    var verdict = heldBackShortCodePair(record.baseline, record.target);
+
+    if (!verdict.reconciled) {
+      return;
+    }
+
+    demoted.push(record);
+    recordHeldBackShortCode(record, verdict.tokens, where);
+    observations.push(observation(record.field, record.baseline, record.target,
+      'reconciled as a held-back short code: the committed `generated ' +
+      'trinket short code` rule normalized one side to ' +
+      SHORT_CODE_PLACEHOLDER + ' and its `/^\\d{10,12}$/` exemption held the ' +
+      'other side back because the code hashify minted came out all digits. ' +
+      'Every literal character around the code matched and ' + verdict.tokens +
+      ' token pair(s) were reconciled - see THE HELD-BACK SHORT CODE, ' +
+      'RECONCILED PAIRWISE for why this is decided on both sides together ' +
+      'and what it does not reconcile.'));
+  });
+
+  if (!demoted.length) {
+    return { applies: false, demoted: [], observations: [] };
+  }
+
+  if (heldBackShortCodeTally) {
+    heldBackShortCodeTally.steps += 1;
+  }
+
+  return { applies: true, demoted: demoted, observations: observations };
+}
+
+/**
+ * What the reconciliation did this pass, for the pass document and the report.
+ *
+ * @returns {Object}
+ */
+function heldBackShortCodeAccounting() {
+  var tally = heldBackShortCodeTally ||
+    { steps: 0, tokens: 0, fields: [], entries: [] };
+
+  return {
+    rule: HELD_BACK_SHORT_CODE_RULE,
+    placeholder: SHORT_CODE_PLACEHOLDER,
+    expression: String(HELD_BACK_SHORT_CODE_EXPRESSION),
+    steps: tally.steps,
+    tokens: tally.tokens,
+    fields: tally.fields.slice(),
+    entries: tally.entries.slice(),
+    note: tally.entries.length ?
+      'each entry names the scenario, the step and the field, and carries ' +
+      'both compared values; nothing was reconciled in aggregate' :
+      'nothing was reconciled this pass, which is the common case - the ' +
+      'exemption is only reached when a minted code comes out all digits'
+  };
+}
+
+/**
+ * Probes for the pairwise reconciliation, driven once at startup.
+ *
+ * The first two probes are the BINDING to the committed rule: they drive
+ * `normalizeText` itself and require that a hex code becomes exactly
+ * SHORT_CODE_PLACEHOLDER and that an all-digit code is returned untouched. If
+ * either changes, this whole mechanism has lost its evidence and the run fails
+ * here rather than reconciling on an assumption. The rest are the refusals.
+ *
+ * @constant {Array.<Object>}
+ */
+var HELD_BACK_SHORT_CODE_PROBES = Object.freeze([
+  Object.freeze({
+    name: 'the committed rule normalizes a hex code to the placeholder',
+    binding: true,
+    input: '{"shortCode":"4d8ba326326e"}',
+    expected: '{"shortCode":"' + SHORT_CODE_PLACEHOLDER + '"}'
+  }),
+  Object.freeze({
+    name: 'the committed rule holds back a ten-digit code',
+    binding: true,
+    input: '{"shortCode":"8196599281"}',
+    expected: '{"shortCode":"8196599281"}'
+  }),
+  Object.freeze({
+    name: 'the measured pair reconciles',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:8196599281',
+    reconciled: true,
+    tokens: 1
+  }),
+  Object.freeze({
+    name: 'a twelve-digit mint reconciles too',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:819659928123',
+    reconciled: true,
+    tokens: 1
+  }),
+  Object.freeze({
+    name: 'the placeholder on the target side reconciles as well',
+    baseline: 'string:8196599281',
+    target: 'string:' + SHORT_CODE_PLACEHOLDER,
+    reconciled: true,
+    tokens: 1
+  }),
+  Object.freeze({
+    name: 'a code inside an href reconciles, context intact',
+    baseline: '/u/testing/trinket/' + SHORT_CODE_PLACEHOLDER + '?embed=1',
+    target: '/u/testing/trinket/8196599281?embed=1',
+    reconciled: true,
+    tokens: 1
+  }),
+  Object.freeze({
+    name: 'two differing epoch readings are NOT reconciled',
+    baseline: '{"at":1700000000}',
+    target: '{"at":1700000001}',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a placeholder elsewhere does not license a differing digit run',
+    baseline: '{"code":"' + SHORT_CODE_PLACEHOLDER + '","at":1700000000}',
+    target: '{"code":"' + SHORT_CODE_PLACEHOLDER + '","at":1700000001}',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'differing literal context is NOT reconciled',
+    baseline: '{"a":"' + SHORT_CODE_PLACEHOLDER + '","b":1}',
+    target: '{"a":"8196599281","b":2}',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a nine-digit value is outside the exemption and NOT reconciled',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:819659928',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a thirteen-digit value is outside the exemption and NOT reconciled',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:8196599281234',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a gained code is a difference, not a reconciliation',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:' + SHORT_CODE_PLACEHOLDER + '/8196599281',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a placeholder against a hex code is NOT reconciled',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:4d8ba326326e',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'equal values produce no reconciliation',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:' + SHORT_CODE_PLACEHOLDER,
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a non-string value is never reconciled',
+    baseline: 8196599281,
+    target: SHORT_CODE_PLACEHOLDER,
+    reconciled: false
+  })
+]);
+
+/**
+ * Drives HELD_BACK_SHORT_CODE_PROBES and throws on the first disagreement.
+ *
+ * @returns {Object} {probes, binding}
+ */
+function assertHeldBackShortCodeReconciliation() {
+  var results = [];
+
+  HELD_BACK_SHORT_CODE_PROBES.forEach(function(probe) {
+    var produced;
+    var verdict;
+
+    if (probe.binding) {
+      produced = normalizeText(probe.input).value;
+
+      if (produced !== probe.expected) {
+        throw new Error('the held-back short code reconciliation has lost ' +
+          'its binding to the committed volatile rule: probe "' + probe.name +
+          '" over ' + JSON.stringify(probe.input) + ' expected ' +
+          JSON.stringify(probe.expected) + ' and observed ' +
+          JSON.stringify(produced) + '. This mechanism reconciles a digit run ' +
+          'ONLY because the committed `generated trinket short code` rule ' +
+          'wrote ' + SHORT_CODE_PLACEHOLDER + ' on the other side; if that ' +
+          'rule no longer behaves this way the evidence is gone and nothing ' +
+          'may be reconciled on it. See THE HELD-BACK SHORT CODE, ' +
+          'RECONCILED PAIRWISE.');
+      }
+
+      results.push({ name: probe.name, binding: true, ok: true });
+
+      return;
+    }
+
+    verdict = heldBackShortCodePair(probe.baseline, probe.target);
+
+    if (verdict.reconciled !== probe.reconciled) {
+      throw new Error('the held-back short code reconciliation misjudged a ' +
+        'probe: "' + probe.name + '" over ' + JSON.stringify(probe.baseline) +
+        ' against ' + JSON.stringify(probe.target) + ' expected reconciled=' +
+        probe.reconciled + ' and observed reconciled=' + verdict.reconciled +
+        (verdict.reason ? ' (' + verdict.reason + ')' : '') + '. A pairwise ' +
+        'reconciliation that fires where it should not deletes a real ' +
+        'difference, so the run stops here.');
+    }
+
+    if (probe.reconciled && probe.tokens !== undefined &&
+        verdict.tokens !== probe.tokens) {
+      throw new Error('the held-back short code reconciliation counted ' +
+        verdict.tokens + ' token(s) where probe "' + probe.name +
+        '" expects ' + probe.tokens + '. The count reaches the pass document ' +
+        'and the report, so it has to be exact.');
+    }
+
+    results.push({
+      name: probe.name,
+      binding: false,
+      expected: probe.reconciled,
+      observed: verdict.reconciled,
+      ok: true
+    });
+  });
+
+  return {
+    probes: results,
+    binding: results.filter(function(entry) {
+      return entry.binding;
+    }).length,
+    rule: HELD_BACK_SHORT_CODE_RULE
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Cookie comparison
 // ---------------------------------------------------------------------------
 
@@ -6220,26 +7263,33 @@ function indexCookies(records) {
  * The attribute map the SECURE pass is expected to produce, derived from what
  * the non-secure pass produced.
  *
- * TWO MECHANISMS MOVE, AND THEY DO NOT MOVE TOGETHER, which is the whole
- * subtlety of this function:
+ * ONE MECHANISM MOVES, AND ONLY ONE, which is what this function asserts:
  *
  *   Yar emits `Secure` on every cookie it sets whenever the session cookie
  *   options say the connection is secure. That applies to EVERY response that
- *   sets the session cookie.
+ *   sets the session cookie, so `secure` is the one attribute that differs
+ *   between the two passes.
  *
- *   The private-field patch appends `; SameSite=None; Secure` only on a request
- *   the route DSL marked as cookie-setting - the parser sets that flag, and six
- *   routes carry it. On any other response the patch does not run, so SameSite
- *   stays at Yar's own `Lax`.
+ *   `SameSite` does NOT move. It is set once, on the state definition
+ *   (`app.js`'s `isSameSite: 'Lax'`), so hapi serialises it identically in
+ *   both passes and the private-field patch appends only the `Expires`
+ *   horizon.
  *
- * The observable marker of "the patch ran" is the `Expires` attribute, because
- * the patch's two appends sit under the identical guard: a baseline cookie
- * carrying an Expires horizon is one the patch touched, and only those move to
- * `SameSite=None`. Deriving otherwise - moving SameSite on every cookie - was
- * measured to report a difference on every non-cookie route in the secure pass.
+ * THIS IS A CHANGED CONTRACT, AND THE CHANGE IS REGISTERED. Until approved
+ * deviation 7 (docs/preserved-quirks.md §11.11) the patch also appended
+ * `"; SameSite=None; Secure"` on a cookie-setting request in secure mode, so
+ * this derivation moved `samesite` to `None` on exactly the cookies carrying
+ * an `Expires` horizon - the observable marker of "the patch ran", both
+ * appends having sat under one guard. That append emitted a SECOND `SameSite`
+ * onto an already-serialised header, which a browser resolves
+ * last-occurrence-wins, storing the session cookie as `SameSite=None`; it was
+ * removed, and this function follows the delivered contract rather than the
+ * one it replaced. A secure-pass response still carrying `SameSite=None`
+ * therefore fails here, which is the gate that observes the deviation.
  *
- * Everything else - HttpOnly, Path, Domain, Max-Age and the Expires horizon -
- * is expected to be identical, and a difference in any of them fails.
+ * Everything else - HttpOnly, SameSite, Path, Domain, Max-Age and the Expires
+ * horizon - is expected to be identical, and a difference in any of them
+ * fails.
  *
  * This derivation exists because the committed corpus was captured through the
  * launcher's non-secure default and therefore holds no secure-pass baseline.
@@ -6256,10 +7306,6 @@ function secureDifferential(attributes) {
   });
 
   out.secure = true;
-
-  if (has(attributes, 'expires')) {
-    out.samesite = 'None';
-  }
 
   return out;
 }
@@ -8908,6 +9954,7 @@ function compareStep(step, observed, expectation, scenario) {
   var cookieResult;
   var bodyResult;
   var suppression;
+  var heldBack;
 
   if (baselineOutcome === OUTCOME_MISSING) {
     return {
@@ -9042,6 +10089,26 @@ function compareStep(step, observed, expectation, scenario) {
       return suppression.demoted.indexOf(record.field) === -1;
     });
     observations = observations.concat(suppression.observations);
+  }
+
+  // The second pairwise reconciliation, applied here for the same reason as the
+  // one above: it is decided by both sides of a comparison together, so it
+  // cannot live in the single-sided volatile set, and it removes records the
+  // comparators have already produced. It fails closed on every condition in
+  // `heldBackShortCodePair`, and its observations name the scenario, the step
+  // and the field so nothing is reconciled in aggregate. See THE HELD-BACK
+  // SHORT CODE, RECONCILED PAIRWISE.
+  heldBack = heldBackShortCodeReconciliation(differences, {
+    scenario: (scenario && scenario.id) || null,
+    step: step.label,
+    stepIndex: step.index
+  });
+
+  if (heldBack.applies) {
+    differences = differences.filter(function(record) {
+      return heldBack.demoted.indexOf(record) === -1;
+    });
+    observations = observations.concat(heldBack.observations);
   }
 
   VOLATILE_RESPONSE_FIELDS.forEach(function(field) {
@@ -9890,6 +10957,1215 @@ function verifyApprovedDeviation(item, observed, differences) {
     verified: true,
     failures: failures,
     described: marker.target || null
+  };
+}
+
+// ===========================================================================
+// THE AUTHORIZED RENDERED-OUTPUT DIFFERENCE REGISTER
+// ===========================================================================
+//
+// WHAT PROBLEM IT SOLVES. The corpus was captured at base commit 2f8712a and
+// the parity contract AAP §0.9.3 states compares, for HTML, the rendered text,
+// the form and input names and values, the `id` and `class` attributes, the
+// `data-` and ARIA attributes, inline-script presence and `href`/`src`. LATER
+// QA checkpoints then mandated remediations whose whole content is exactly that
+// surface - an accessibility contract of landmarks, skip links, error outlets,
+// `role="alert"`, `aria-invalid`, `aria-describedby` and `autocomplete`;
+// colour swatches re-expressed as named buttons; a sign-up form that ships the
+// fields its own route validates; multipart parsing restored on the four upload
+// routes. So the gate has two possible readings and only one of them is a gate:
+// report FAIL forever and lose the ability to detect a real change, or account
+// for the mandated differences exactly and fail on everything else.
+//
+// Narrowing the comparison is NOT the third option. §0.9.3 enumerates
+// `id`/`class`/`data-`/ARIA/`href`/text as exactly compared, so dropping them
+// would delete the gate rather than fix it.
+//
+// WHAT IT IS NOT. It is not `approvedDeviationRegister`, and the two must never
+// merge. That register is CLOSED at the two deviations AAP §0.7 decided, is
+// hand authored in this file, and is argued in docs/preserved-quirks.md §11;
+// widening it would defeat the prohibition on behaviour changes. This one is a
+// second-generation, GENERATED record of rendered-output differences that later
+// findings authorized. `authorizeGeneratedRecords` REFUSES to emit a record for
+// a scenario carrying an approved-deviation marker, so a scenario can never be
+// covered by both.
+//
+// THE PROPERTIES THAT MAKE IT A REGISTER RATHER THAN A TOLERANCE
+//   1. One record per (pass, scenario, step index, comparison field). Not per
+//      route, not per field family, not per scenario.
+//   2. Each record carries BOTH values as the comparison reports them -
+//      `excerpt`-bounded, and with a digest of each side when the excerpt is
+//      truncated so a long value is still pinned. A change on either side, in
+//      either direction, no longer matches the record and is reported
+//      UNAUTHORIZED. There is no wildcard and no "this field may differ here".
+//   3. Each record names the finding that authorized it, and a record can only
+//      be generated where `RENDERED_CHANGE_AUTHORITIES` covers it. A difference
+//      no authority covers is not emitted and the generation run fails naming
+//      it - an unattributable difference cannot enter.
+//   4. A record that does NOT materialize is a FAILURE. If the accessibility
+//      markup regressed, or a remediation was reverted, the responses would
+//      compare clean against the recording again and a register that tolerated
+//      its own absence would hide exactly the regression it exists to account.
+//   5. Anything not in the register fails, exactly as before. `failingScenarios`
+//      keeps counting only unauthorized failures, and the report and the
+//      artifact both state "N authorized, M unauthorized" rather than PASS.
+//   6. It is REGENERABLE by a committed command:
+//        node test/parity/replay.js --app . --corpus test/parity/corpus.json \
+//          --annotations test/parity/corpus.json --pass both --authorize
+//      which rewrites the register from a measured run. That matters because
+//      several units change response shapes concurrently, and a hand-written
+//      register of this size would be unmaintainable.
+//
+// WHERE IT LIVES. test/parity/corpus.authorized.json, beside the corpus it is
+// bound to, with a provenance sidecar. It is bound to the corpus by DIGEST:
+// re-capture the corpus and the register is refused until it is regenerated,
+// because a record naming a baseline value that recording no longer holds is
+// evidence about a file nobody has.
+
+// The bound at which a value is recorded with a digest beside it. `excerpt`
+// already truncates at EXCERPT_BYTES and says so in the text it returns, so
+// this is the point at which the register stops being able to pin the whole
+// value by itself and pins its digest as well.
+var AUTHORIZED_VALUE_DIGEST_BOUND = 200;
+
+// The register document's schema. A consumer must refuse a lower version rather
+// than read it leniently.
+var AUTHORIZED_REGISTER_SCHEMA = 1;
+
+// ---------------------------------------------------------------------------
+// The authorities: which finding may authorize which difference, and where
+// each one is argued
+// ---------------------------------------------------------------------------
+//
+// A CLOSED, ORDERED list. `authorityForDifference` returns the FIRST entry that
+// covers a difference, so a page two findings both touch is filed under the
+// more specific one; an entry that covers nothing costs nothing, because it is
+// records - not authorities - that must materialize.
+//
+// An authority is deliberately unable to authorize a whole scenario. Each names
+// the field families it can explain and carries a guard, and the guards are
+// what stop a rendered-output authority from absorbing a functional regression:
+//   * `statusPreserved` - the step's status and outcome are unchanged. A markup
+//     difference on a page whose status moved is a consequence of the status
+//     change, not of a markup remediation, so no HTML authority applies to it.
+//   * `notServerError` - the target did not answer 5xx. A 500 is never the
+//     authorized outcome of any of these remediations.
+// Both are evaluated against the step's own recorded and observed responses.
+var RENDERED_CHANGE_AUTHORITIES = Object.freeze([
+  // Order-0 R1. `output: 'file'` at the payload level spooled every body class
+  // to a temp file and hapi defaults `payload.multipart` to false, so
+  // @hapi/subtext answered 415 to every multipart upload while a non-multipart
+  // body's absolute spooled path was echoed back at 200. Moving `output` onto
+  // `multipart` restored multipart parsing and stopped the path disclosure, so
+  // the four upload routes answer differently on purpose - which the o001 QA
+  // report states in as many words: R1 "is the *cause* of the F18/F19/F20 gate
+  // deltas". test/parity/manifest.js authorizes the matching route-surface
+  // change under the same finding.
+  Object.freeze({
+    finding: 'order-0 R1 (multipart accepted again on the upload routes)',
+    summary: 'multipart parsing restored with the same per-part file output, ' +
+      'so an upload answers instead of 415 and a non-multipart body no longer ' +
+      'echoes its absolute spooled path',
+    arguedIn: 'docs/baseline-parity.md, route-manifest section; ' +
+      'test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES',
+    evidence: Object.freeze(['config/routes.js', 'config/api_routes.js']),
+    routes: Object.freeze([
+      'POST /file',
+      'POST /file/avatar',
+      'POST /api/users/assets',
+      'POST /api/users/assets/{fileId}'
+    ]),
+    fields: Object.freeze([
+      /^status$/, /^statusMessage$/, /^header\./, /^cookies\./, /^cookie\[/,
+      /^body\./
+    ]),
+    guard: 'notServerError'
+  }),
+
+  // Order-0 F2 (qa/testing/o000_75576941e3f7e7ff.md, HIGH, accessibility): all
+  // 141 colour swatches on /docs/colors were `div[data-dropdown]` with no
+  // tabindex, no role and no accessible name, so the page's entire documented
+  // function was mouse-only and unnamed for assistive technology. The
+  // remediation expresses each swatch as a button, which is a form-control
+  // surface change on that one page - and it pushes the rendered body past the
+  // text cap this file and capture.js both truncate at.
+  Object.freeze({
+    finding: 'order-0 F2 (colour swatches exposed as named, focusable buttons)',
+    summary: 'the 141 /docs/colors swatches are buttons with accessible names ' +
+      'instead of unnamed divs, so the page\'s form-control surface and its ' +
+      'rendered size both change',
+    arguedIn: 'qa/testing/o000_75576941e3f7e7ff.md F2; docs/preserved-quirks.md',
+    evidence: Object.freeze(['lib/views/docs/colors.html']),
+    routes: Object.freeze(['GET /docs/colors']),
+    fields: Object.freeze([
+      /^html\./, /^body\.(truncated|text|length|digest)$/,
+      /^header\.content-length$/
+    ]),
+    guard: 'statusPreserved'
+  }),
+
+  // Order-0 F67/F68/F69 (same report): the shipped sign-up form rendered only
+  // `formName`, `email`, `password` and the submit button while `POST /users`
+  // validates and accepts `fullname` (max 50) and `username` (3-20, pattern,
+  // reserved list), so two of five validated fields could not be exercised at
+  // all; and the hidden `formName` submitted `sign-up`, which the declared
+  // `fail: {redirect: '/{formName}'}` resolved to a route that does not exist,
+  // so every validation failure landed on a bare 404 and left its flash to be
+  // mis-attributed to the visitor's next visit. The remediation ships the two
+  // fields and submits the name of the route that exists.
+  Object.freeze({
+    finding: 'order-0 F67/F68/F69 (the sign-up form ships every validated ' +
+      'field and its failure redirect resolves)',
+    summary: 'the form gains the `fullname` and `username` inputs its own ' +
+      'route validates, and the hidden `formName` submits `signup` - the ' +
+      'route that exists - instead of `sign-up`',
+    arguedIn: 'qa/testing/o000_75576941e3f7e7ff.md F67/F68/F69; ' +
+      'docs/preserved-quirks.md',
+    evidence: Object.freeze(['lib/views/signup.html']),
+    routes: Object.freeze(['GET /signup']),
+    fields: Object.freeze([
+      /^html\./, /^body\.(truncated|text|length|digest)$/,
+      /^header\.content-length$/
+    ]),
+    guard: 'statusPreserved'
+  }),
+
+  // Order-0 R8: the course comment and material projections were restored and
+  // the feedback author address added, so the comment and submission responses
+  // carry the view and metrics keys the baseline projection had dropped.
+  Object.freeze({
+    finding: 'order-0 R8 (course comment and material projections restored)',
+    summary: 'the comment and submission projections carry their view and ' +
+      'metrics keys again',
+    arguedIn: 'qa/testing/o001_ca41be2c45857013.md regression row R8; ' +
+      'docs/preserved-quirks.md',
+    evidence: Object.freeze(['lib/controllers/course.js']),
+    routes: Object.freeze([
+      'POST /api/comments/{trinketId}',
+      'POST /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/acceptSubmission'
+    ]),
+    fields: Object.freeze([
+      /^body\.json\.(?:data\.)?(?:lastView|metrics)\./,
+      /^header\.content-length$/
+    ]),
+    guard: 'statusPreserved'
+  }),
+
+  // Order-0 R9, on the served stylesheet. The accessibility contract is not
+  // markup alone: the skip link, the focus ring, the flash dismissal and the
+  // form error styling live in static/scss/**, which the build compiles into
+  // public/css/base.css - and that file is served through the cache-prefix
+  // asset route, so the corpus compares it as a response body.
+  Object.freeze({
+    finding: 'order-0 R9 (the accessibility contract, compiled into the ' +
+      'served stylesheet)',
+    summary: 'public/css/base.css carries the rules the accessibility markup ' +
+      'renders with - skip link, focus ring, form error and flash dismissal - ' +
+      'so the served stylesheet is larger and differs in content',
+    arguedIn: 'qa/testing/o001_ca41be2c45857013.md regression row R9; ' +
+      'docs/baseline-parity.md',
+    evidence: Object.freeze([
+      'static/scss/_forms.scss', 'static/scss/_generic.scss',
+      'static/scss/_login.scss', 'static/scss/_nav.scss',
+      'static/scss/_library.scss'
+    ]),
+    routes: Object.freeze([
+      'GET /cache-prefix-{timestamp}/{assetType}/{path*}'
+    ]),
+    fields: Object.freeze([
+      /^body\.(truncated|text|length|digest)$/, /^header\.content-length$/
+    ]),
+    guard: 'statusPreserved'
+  }),
+
+  // Order-0 R9, on the markup. LAST among the HTML authorities, deliberately:
+  // the three above name one page each and this one names the contract every
+  // page inherits from lib/views/base.html and the two standalone error
+  // templates, so a page with a specific authority is filed under it and
+  // everything else under this.
+  //
+  // Its breadth is bounded in four ways and each one matters. It reaches only
+  // the HTML markup surface - it cannot authorize a status, a redirect, a
+  // cookie, a JSON field or a binary body. It applies only where the status and
+  // the outcome are unchanged. It applies only to a response the comparison
+  // read as markup. And, decisively, it authorizes no VALUE: every record it
+  // generates pins both sides verbatim, so an accessibility regression produces
+  // a different record, which is not in the register, and fails.
+  Object.freeze({
+    finding: 'order-0 R9 (the accessibility contract)',
+    summary: 'landmarks, the skip link, `#main-content tabindex="-1"`, the ' +
+      'screen-reader page heading, error-outlet ids with `role="alert"`, ' +
+      '`aria-invalid`, `aria-describedby` and `autocomplete`, plus the ' +
+      'favicon and viewport the two standalone error templates lacked',
+    arguedIn: 'qa/testing/o001_ca41be2c45857013.md regression row R9; ' +
+      'docs/baseline-parity.md',
+    evidence: Object.freeze([
+      'lib/views/base.html', 'lib/views/404.html', 'lib/views/50x.html',
+      'lib/views/login.html', 'lib/views/users/includes/profile.html',
+      'lib/views/users/includes/password.html', 'lib/views/embed/base.html'
+    ]),
+    routes: null,
+    fields: Object.freeze([
+      /^html\./, /^header\.content-length$/, /^body\.(truncated|length|digest)$/
+    ]),
+    guard: 'markupStatusPreserved'
+  })
+]);
+
+/**
+ * Whether a step's status and outcome are unchanged.
+ *
+ * @param {Object} context {baseline, observed, contentType}
+ * @returns {boolean}
+ */
+function statusPreserved(context) {
+  return !!context.baseline && !!context.observed &&
+    outcomeOf(context.baseline) === outcomeOf(context.observed) &&
+    context.baseline.status === context.observed.status;
+}
+
+// The guards, by the name an authority declares. A name an authority uses and
+// this map does not hold is a fault in this file, and `assertAuthorityRegister`
+// refuses to start on it rather than letting the guard silently pass.
+var AUTHORITY_GUARDS = Object.freeze({
+  statusPreserved: statusPreserved,
+  notServerError: function(context) {
+    return !!context.observed && typeof context.observed.status === 'number' &&
+      context.observed.status < 500;
+  },
+  markupStatusPreserved: function(context) {
+    return statusPreserved(context) && isTextualMarkup(context.contentType);
+  }
+});
+
+/**
+ * Proves the authority table is usable before anything is driven.
+ *
+ * Three faults are possible in it and every one of them would make a
+ * generation run authorize more than it should: a guard name nothing
+ * implements, an authority with no field expression, and an authority with
+ * neither a finding nor a place it is argued. Each is a fault in this file, so
+ * it is refused at startup rather than discovered in an artifact.
+ *
+ * @returns {Array.<Object>} one record per authority, for the result document
+ * @throws {ToolError} If the table cannot be relied on.
+ */
+function assertAuthorityRegister() {
+  var failures = [];
+  var records = [];
+
+  RENDERED_CHANGE_AUTHORITIES.forEach(function(authority, index) {
+    var label = 'authority[' + index + '] ' + (authority.finding || '(unnamed)');
+
+    if (!authority.finding) {
+      failures.push(label + ': names no finding, so a record generated under ' +
+        'it would be unattributable');
+    }
+
+    if (!authority.arguedIn) {
+      failures.push(label + ': names no place it is argued, so a reviewer ' +
+        'asked to accept it has nothing to read');
+    }
+
+    if (!Array.isArray(authority.fields) || !authority.fields.length) {
+      failures.push(label + ': names no comparison field, so it would cover ' +
+        'every field of every difference it reaches');
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(AUTHORITY_GUARDS,
+      String(authority.guard))) {
+      failures.push(label + ': declares the guard ' +
+        JSON.stringify(String(authority.guard)) + ', which AUTHORITY_GUARDS ' +
+        'does not implement. An unimplemented guard is an authority with no ' +
+        'guard at all.');
+    }
+
+    records.push({
+      finding: authority.finding,
+      summary: authority.summary || null,
+      arguedIn: authority.arguedIn,
+      evidence: (authority.evidence || []).slice(),
+      routes: authority.routes ? authority.routes.slice() : null,
+      fields: authority.fields.map(String),
+      guard: authority.guard
+    });
+  });
+
+  if (failures.length) {
+    throw new ToolError('the rendered-change authority table cannot be ' +
+      'relied on, and it decides what a --authorize run is allowed to file:' +
+      '\n  - ' + failures.join('\n  - '));
+  }
+
+  return records;
+}
+
+/**
+ * The authority that covers one difference, or null.
+ *
+ * @param {Object} record the annotated difference
+ * @param {Object} item the planned scenario
+ * @param {Object} context {baseline, observed, contentType}
+ * @returns {(Object|null)}
+ */
+function authorityForDifference(record, item, context) {
+  var found = null;
+
+  RENDERED_CHANGE_AUTHORITIES.forEach(function(authority) {
+    if (found) {
+      return;
+    }
+
+    if (authority.routes &&
+        authority.routes.indexOf(String(item.routeKey)) === -1) {
+      return;
+    }
+
+    if (!authority.fields.some(function(expression) {
+      return expression.test(String(record.field));
+    })) {
+      return;
+    }
+
+    if (!AUTHORITY_GUARDS[authority.guard](context)) {
+      return;
+    }
+
+    found = authority;
+  });
+
+  return found;
+}
+
+/**
+ * One side of a difference, encoded for the register.
+ *
+ * The value is stored as the comparison reports it - `excerpt` has already
+ * bounded it - and a digest is stored beside it once it is long enough that the
+ * stored form may be a truncation. Both are compared on a read, so a value the
+ * register can only pin by digest is still pinned.
+ *
+ * @param {*} value
+ * @returns {Object} {value, digest}
+ */
+function encodeAuthorizedValue(value) {
+  var text = typeof value === 'string' ? value : null;
+
+  return {
+    value: value === undefined ? null : value,
+    digest: text !== null && text.length > AUTHORIZED_VALUE_DIGEST_BOUND
+      ? 'sha256:' + sha256Hex(text)
+      : null
+  };
+}
+
+/**
+ * Whether an encoded side still describes the value observed now.
+ *
+ * @param {Object} encoded
+ * @param {*} value
+ * @returns {boolean}
+ */
+function authorizedValueMatches(encoded, value) {
+  var normalizedValue = value === undefined ? null : value;
+  var text;
+
+  if (!encoded || typeof encoded !== 'object') {
+    return false;
+  }
+
+  if (!sameScalar(encoded.value, normalizedValue)) {
+    return false;
+  }
+
+  if (!encoded.digest) {
+    return true;
+  }
+
+  text = typeof normalizedValue === 'string' ? normalizedValue : null;
+
+  return text !== null && encoded.digest === 'sha256:' + sha256Hex(text);
+}
+
+/**
+ * Scalar equality that treats two equal JSON shapes as equal.
+ *
+ * A difference value is a string, a number, a boolean or null - `excerpt`
+ * guarantees it - so this is a strict comparison with one allowance for the
+ * number/string forms JSON round-tripping can produce.
+ *
+ * @param {*} left
+ * @param {*} right
+ * @returns {boolean}
+ */
+function sameScalar(left, right) {
+  if (left === right) {
+    return true;
+  }
+
+  if (left === null || right === null ||
+      left === undefined || right === undefined) {
+    return false;
+  }
+
+  if (typeof left === 'object' || typeof right === 'object') {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  return false;
+}
+
+/**
+ * The register key for one difference: pass, scenario, step index and field.
+ *
+ * The NUL separator is what keeps two keys from colliding through a field name
+ * that happens to contain the separator - a JSON pointer segment can contain
+ * almost anything.
+ *
+ * @param {string} passName
+ * @param {Object} record
+ * @returns {string}
+ */
+function authorizedKey(passName, record) {
+  return [
+    String(passName),
+    String(record.scenario),
+    String(record.stepIndex),
+    String(record.field)
+  ].join('\u0000');
+}
+
+/**
+ * Reads and verifies the authorized-difference register.
+ *
+ * Bound to the corpora it was generated against by DIGEST, because a record
+ * naming a baseline value is a statement about one specific recording: if the
+ * corpus is re-captured, every baseline value in the register may have moved
+ * and a record that still matched would be a coincidence. The remedy is named
+ * in the refusal, and it is one command.
+ *
+ * A MISSING register is not a failure. The gate has to keep working on a tree
+ * that carries none - and on such a tree it behaves exactly as it did before
+ * this mechanism existed: every difference is unauthorized and fails.
+ *
+ * @param {string} target the register path
+ * @param {Object} digests {corpus, secureCorpus} artifact digests in this run
+ * @returns {Object} the register document, or an absent marker
+ * @throws {ToolError} If it exists and cannot be relied on.
+ */
+function readAuthorizedRegister(target, digests) {
+  var text;
+  var parsed;
+  var failures = [];
+
+  if (!target || !fs.existsSync(target)) {
+    return {
+      present: false,
+      path: target || null,
+      records: [],
+      authorities: [],
+      note: 'no authorized-difference register was read, so every difference ' +
+        'in this run is unauthorized and fails'
+    };
+  }
+
+  try {
+    text = fs.readFileSync(target, 'utf8');
+  }
+  catch (err) {
+    throw new ToolError('the authorized-difference register ' + target +
+      ' could not be read: ' + reasonOf(err));
+  }
+
+  try {
+    parsed = JSON.parse(text);
+  }
+  catch (err) {
+    throw new ToolError('the authorized-difference register ' + target +
+      ' is not JSON: ' + reasonOf(err) + '. Regenerate it with --authorize.');
+  }
+
+  if (parsed.schema !== AUTHORIZED_REGISTER_SCHEMA) {
+    failures.push('it declares schema ' + JSON.stringify(parsed.schema) +
+      ' and this tool reads ' + AUTHORIZED_REGISTER_SCHEMA);
+  }
+
+  if (!Array.isArray(parsed.records)) {
+    failures.push('it carries no `records` array, so it authorizes nothing ' +
+      'and cannot be read as a register');
+  }
+
+  if (!parsed.sources || !parsed.sources.corpus ||
+      !parsed.sources.corpus.digest) {
+    failures.push('it does not record the digest of the corpus it was ' +
+      'generated against, so nothing binds its recorded baseline values to ' +
+      'the recording this run is comparing against');
+  }
+  else if (digests.corpus && parsed.sources.corpus.digest !== digests.corpus) {
+    failures.push('it was generated against a corpus digesting ' +
+      String(parsed.sources.corpus.digest).slice(0, 16) + ' and this run ' +
+      'reads one digesting ' + String(digests.corpus).slice(0, 16) +
+      '. Every baseline value it records is a statement about the other ' +
+      'recording');
+  }
+
+  if (digests.secureCorpus) {
+    if (!parsed.sources.secureCorpus || !parsed.sources.secureCorpus.digest) {
+      failures.push('this run replays a secure-pass corpus and the register ' +
+        'records none, so it cannot authorize anything in that pass');
+    }
+    else if (parsed.sources.secureCorpus.digest !== digests.secureCorpus) {
+      failures.push('it was generated against a secure-pass corpus digesting ' +
+        String(parsed.sources.secureCorpus.digest).slice(0, 16) +
+        ' and this run reads one digesting ' +
+        String(digests.secureCorpus).slice(0, 16));
+    }
+  }
+
+  (Array.isArray(parsed.records) ? parsed.records : []).forEach(
+    function(record, index) {
+      var label = 'record[' + index + ']';
+
+      if (!record || typeof record !== 'object') {
+        failures.push(label + ' is not an object');
+        return;
+      }
+
+      ['pass', 'scenario', 'field', 'finding'].forEach(function(key) {
+        if (typeof record[key] !== 'string' || !record[key]) {
+          failures.push(label + ' (' + (record.scenario || '?') + ' ' +
+            (record.field || '?') + ') carries no `' + key + '`, and a ' +
+            'record that does not say ' +
+            (key === 'finding'
+              ? 'which finding authorized it cannot be reviewed'
+              : 'what it authorizes cannot be matched'));
+        }
+      });
+
+      if (typeof record.stepIndex !== 'number') {
+        failures.push(label + ' (' + (record.scenario || '?') +
+          ') carries no numeric `stepIndex`, so it is not bound to one step');
+      }
+
+      if (!record.baseline || typeof record.baseline !== 'object' ||
+          !record.target || typeof record.target !== 'object') {
+        failures.push(label + ' (' + (record.scenario || '?') + ' ' +
+          (record.field || '?') + ') does not carry both encoded values, so ' +
+          'it would authorize any change to that field');
+      }
+    });
+
+  if (failures.length) {
+    throw new ToolError('the authorized-difference register ' + target +
+      ' cannot be relied on, and it is what decides which differences fail:' +
+      '\n  - ' + failures.join('\n  - ') +
+      '\nRegenerate it from a measured run with `node ' +
+      'test/parity/replay.js --app . --corpus test/parity/corpus.json ' +
+      '--annotations test/parity/corpus.json --pass both --authorize`.');
+  }
+
+  return {
+    present: true,
+    path: target,
+    schema: parsed.schema,
+    sources: parsed.sources,
+    authorities: Array.isArray(parsed.authorities) ? parsed.authorities : [],
+    records: parsed.records,
+    summary: parsed.summary || null,
+    generatedBy: parsed.tool || null,
+    note: parsed.records.length + ' authorized difference record(s), each ' +
+      'naming the finding that authorized it and pinning both values'
+  };
+}
+
+/**
+ * Builds the per-pass matcher over a register.
+ *
+ * One matcher per pass, because a record names its pass: the secure pass is a
+ * different recording and a record from one pass must not authorize a
+ * difference in the other. It tracks which records matched, which is what makes
+ * a record that did not materialize reportable as the failure it is.
+ *
+ * @param {Object} register as `readAuthorizedRegister` returns
+ * @param {string} passName
+ * @returns {Object} {authorize, matched, stale, records}
+ */
+function authorizedRegisterFor(register, passName) {
+  var index = Object.create(null);
+  var matched = Object.create(null);
+  var mine = (register.records || []).filter(function(record) {
+    return record.pass === passName;
+  });
+
+  mine.forEach(function(record) {
+    index[authorizedKey(passName, record)] = record;
+  });
+
+  return {
+    pass: passName,
+    records: mine,
+
+    /**
+     * Partitions one scenario's annotated differences.
+     *
+     * @param {Array.<Object>} differences
+     * @returns {Object} {authorized, unauthorized}
+     */
+    authorize: function(differences) {
+      var authorized = [];
+      var unauthorized = [];
+
+      differences.forEach(function(record) {
+        var key = authorizedKey(passName, record);
+        var entry = Object.prototype.hasOwnProperty.call(index, key)
+          ? index[key]
+          : null;
+
+        if (entry &&
+            authorizedValueMatches(entry.baseline, record.baselineValue) &&
+            authorizedValueMatches(entry.target, record.targetValue)) {
+          matched[key] = true;
+          authorized.push(Object.assign({}, record, {
+            finding: entry.finding,
+            authorizedBy: entry.finding,
+            arguedIn: entry.arguedIn || null
+          }));
+          return;
+        }
+
+        unauthorized.push(entry
+          // Named on the record, because the report has to be able to say WHY
+          // a difference on a registered field is still a failure: the register
+          // pins one specific pair of values and this is not that pair.
+          ? Object.assign({}, record, {
+            registered: true,
+            registeredFinding: entry.finding,
+            registeredBaseline: entry.baseline.value,
+            registeredTarget: entry.target.value
+          })
+          : record);
+      });
+
+      return { authorized: authorized, unauthorized: unauthorized };
+    },
+
+    /**
+     * The records that never matched. Every one is a FAILURE.
+     *
+     * @returns {Array.<Object>}
+     */
+    stale: function() {
+      return mine.filter(function(record) {
+        return !matched[authorizedKey(passName, record)];
+      });
+    },
+
+    matchedCount: function() {
+      return Object.keys(matched).length;
+    }
+  };
+}
+
+/**
+ * Generates register records from a measured scenario, refusing what it cannot
+ * attribute.
+ *
+ * This is the whole of `--authorize`. It runs on the FULL in-memory difference
+ * set rather than on the bounded listing the artifact carries, so a scenario
+ * with three hundred differences is registered completely or not at all.
+ *
+ * Two refusals are absolute. A scenario carrying an approved-deviation marker
+ * generates nothing, because that scenario belongs to the closed §0.7 register
+ * and nothing here may widen it. And a difference no authority covers generates
+ * nothing and is returned as `unattributable`, which makes the generation run
+ * fail: a register entry nobody can trace to a finding is exactly the
+ * rubber stamp this shape exists to prevent.
+ *
+ * @param {Object} item the planned scenario, driven
+ * @param {string} passName
+ * @returns {Object} {records, unattributable, skipped}
+ */
+function authorizeGeneratedRecords(item, passName) {
+  var records = [];
+  var unattributable = [];
+  var result = item.result;
+
+  if (!result || !result.driven) {
+    return { records: records, unattributable: unattributable, skipped: null };
+  }
+
+  if (item.expectedDeviation) {
+    return {
+      records: records,
+      unattributable: unattributable,
+      skipped: 'the scenario carries an approved-deviation marker, so it ' +
+        'belongs to the closed AAP §0.7 register in approvedDeviationRegister ' +
+        'and the generated register may not also cover it'
+    };
+  }
+
+  (result.unauthorizedDifferences || result.differences || []).forEach(
+    function(record) {
+      var step = (item.steps || [])[record.stepIndex] || null;
+      var observedStep = (result.steps || [])[record.stepIndex] || null;
+      var observed = observedStep ? observedStep.observed : null;
+      var context = {
+        baseline: step ? step.baseline : null,
+        observed: observed,
+        contentType: observed && observed.headers
+          ? observed.headers['content-type']
+          : null
+      };
+      var authority = authorityForDifference(record, item, context);
+
+      if (!authority) {
+        unattributable.push({
+          pass: passName,
+          scenario: item.id,
+          route: item.routeKey,
+          step: record.step,
+          stepIndex: record.stepIndex,
+          field: record.field,
+          baseline: excerpt(record.baselineValue),
+          target: excerpt(record.targetValue),
+          reason: 'no entry in RENDERED_CHANGE_AUTHORITIES covers this ' +
+            'route and field with its guard satisfied, so this difference ' +
+            'cannot be traced to a finding that authorized it and is NOT ' +
+            'registered'
+        });
+        return;
+      }
+
+      records.push({
+        pass: passName,
+        scenario: item.id,
+        group: item.group || null,
+        route: item.routeKey,
+        identity: item.identity || null,
+        step: record.step,
+        stepIndex: record.stepIndex,
+        field: record.field,
+        baseline: encodeAuthorizedValue(record.baselineValue),
+        target: encodeAuthorizedValue(record.targetValue),
+        finding: authority.finding,
+        arguedIn: authority.arguedIn
+      });
+    });
+
+  return { records: records, unattributable: unattributable, skipped: null };
+}
+
+/**
+ * The pass-level accounting check over the harness-origin reconciliation.
+ *
+ * The reconciliation replaces the application's own scheme and host whatever
+ * port follows it, which is what makes the corpus replayable at any port. The
+ * property that keeps it honest is that the ports it replaced are COUNTED: a
+ * pass in which the reconciled occurrences carry more than one port besides the
+ * one this pass answered on has seen the application name two different ports
+ * for itself, and that is a behaviour difference rather than a harness
+ * artifact. One "other" port is the capture port and is expected; two are not,
+ * and the check fails rather than absorbing them.
+ *
+ * @param {Object} accounting as `harnessOriginAccounting` returns
+ * @returns {Object} a check document
+ */
+function accountHarnessOrigin(accounting) {
+  var record = accounting || harnessOriginAccounting();
+  var others = record.otherPorts || [];
+
+  return {
+    name: 'harness-origin-reconciliation',
+    ok: others.length <= 1,
+    // The shape every check in this file carries, so `renderChecks` and the
+    // artifact read one structure: how many assertions it made, and the
+    // failures by name.
+    asserted: (record.ports || []).length,
+    failures: others.length > 1
+      ? ['the reconciled occurrences carry ' + others.length + ' ports other ' +
+        'than the one this pass drove (' + others.join(', ') + '). One is the ' +
+        'port the corpus was captured at; a second means the application ' +
+        'emitted a self-URL on a port neither run chose, and that is a ' +
+        'behaviour difference this reconciliation must not absorb.']
+      : [],
+    entries: [],
+    what: 'the application named ONE address for itself besides the port this ' +
+      'pass drove it on, so the only prefix reconciled away was the one this ' +
+      'tool\'s own --port decided',
+    detail: record.installed
+      ? record.occurrences + ' occurrence(s) of ' + record.origin +
+        '\'s scheme and host replaced with ' + record.token +
+        ' across both sides; ' + record.portlessOccurrences +
+        ' of them carried no port at all, which the application composes from ' +
+        'a port-less configuration and spells identically on both sides; ' +
+        'ports seen: ' +
+        (record.ports.length
+          ? record.ports.map(function(entry) {
+            return entry.port + ' x' + entry.occurrences;
+          }).join(', ')
+          : 'none') + '; this pass drove port ' + record.livePort +
+        (others.length > 1
+          ? '. FAILURE: ' + others.length + ' ports other than this pass\'s ' +
+            'own appear (' + others.join(', ') + '). One is the port the ' +
+            'corpus was captured at; more than one means the application ' +
+            'emitted a self-URL on a port neither run chose, which is a ' +
+            'behaviour difference this reconciliation must not absorb.'
+          : '')
+      : record.note,
+    origin: record.origin,
+    token: record.token,
+    rule: record.rule,
+    occurrences: record.occurrences,
+    livePort: record.livePort,
+    ports: record.ports,
+    otherPorts: others,
+    note: record.note
+  };
+}
+
+/**
+ * The pass-level accounting check over the pairwise short-code reconciliation.
+ *
+ * RE-AUDITS rather than reports. Every entry the pass recorded is put back
+ * through `heldBackShortCodePair` here, against the two values the entry
+ * itself carries, so an entry that does not satisfy the firing conditions on
+ * re-examination fails the pass. That is what makes the mechanism auditable
+ * from the artifact alone: a reader does not have to trust that the filter was
+ * applied correctly during the run, because the artifact carries the values
+ * and this check re-derives the verdict from them.
+ *
+ * An entry missing a scenario, a step or a field fails for the same reason -
+ * a reconciliation nobody can point at is one nobody can review.
+ *
+ * @param {Object} accounting as `heldBackShortCodeAccounting` returns
+ * @returns {Object} a check document
+ */
+function accountHeldBackShortCodes(accounting) {
+  var record = accounting || heldBackShortCodeAccounting();
+  var entries = record.entries || [];
+  var failures = [];
+
+  entries.forEach(function(entry) {
+    var verdict = heldBackShortCodePair(entry.baseline, entry.target);
+
+    if (!entry.scenario || !entry.field || entry.stepIndex === null ||
+        entry.stepIndex === undefined) {
+      failures.push('a reconciled difference does not name where it happened ' +
+        '(scenario ' + JSON.stringify(entry.scenario) + ', step index ' +
+        JSON.stringify(entry.stepIndex) + ', field ' +
+        JSON.stringify(entry.field) + '). Every reconciliation has to be ' +
+        'attributable to one field of one step of one scenario.');
+    }
+
+    if (!verdict.reconciled) {
+      failures.push(entry.scenario + ' ' + entry.field + ' was reconciled ' +
+        'during the run but does not satisfy the firing conditions on ' +
+        're-examination' + (verdict.reason ? ' (' + verdict.reason + ')' : '') +
+        ': baseline ' + JSON.stringify(entry.baseline) + ', target ' +
+        JSON.stringify(entry.target) + '. A difference removed on conditions ' +
+        'that do not hold is a deleted difference.');
+
+      return;
+    }
+
+    if (verdict.tokens !== entry.tokens) {
+      failures.push(entry.scenario + ' ' + entry.field + ' recorded ' +
+        entry.tokens + ' reconciled token(s) and re-examination counts ' +
+        verdict.tokens + '.');
+    }
+  });
+
+  return {
+    name: 'held-back-short-code-reconciliation',
+    ok: !failures.length,
+    asserted: entries.length,
+    failures: failures,
+    entries: entries.map(function(entry) {
+      return {
+        scenario: entry.scenario,
+        step: entry.step,
+        stepIndex: entry.stepIndex,
+        field: entry.field,
+        baseline: entry.baseline,
+        target: entry.target,
+        tokens: entry.tokens
+      };
+    }),
+    what: 'every difference removed as a held-back short code still ' +
+      'satisfies the firing conditions when re-derived from the two values ' +
+      'the artifact carries, and names the scenario, step and field it came ' +
+      'from',
+    detail: entries.length
+      ? entries.length + ' difference(s) across ' + record.steps +
+        ' step(s) reconciled as a held-back short code, ' + record.tokens +
+        ' token pair(s) in total, on field(s) ' + record.fields.join(', ') +
+        '. Each one was the committed `generated trinket short code` rule ' +
+        'normalizing one side to ' + record.placeholder + ' while its ' +
+        'all-digit exemption held the other side back, with every literal ' +
+        'character around the code identical.'
+      : record.note,
+    rule: record.rule,
+    placeholder: record.placeholder,
+    steps: record.steps,
+    tokens: record.tokens,
+    fields: record.fields
+  };
+}
+
+/**
+ * The pass-level accounting check over the register.
+ *
+ * `ok` is false when a record did not materialize, which is the property that
+ * keeps the register from making the gate easier to pass by going stale.
+ *
+ * @param {Object} matcher as `authorizedRegisterFor` returns
+ * @param {Object} register
+ * @param {number} authorizedRecords how many differences were authorized
+ * @param {number} unauthorizedRecords how many were not
+ * @returns {Object} a check document
+ */
+function accountAuthorizedRegister(matcher, register, authorizedRecords,
+  unauthorizedRecords) {
+  var stale = matcher ? matcher.stale() : [];
+  var byFinding = {};
+
+  if (matcher) {
+    matcher.records.forEach(function(record) {
+      byFinding[record.finding] = (byFinding[record.finding] || 0) + 1;
+    });
+  }
+
+  return {
+    name: 'authorized-difference-register',
+    ok: !stale.length,
+    asserted: matcher ? matcher.records.length : 0,
+    failures: stale.map(function(record) {
+      return 'the registered difference ' + record.scenario + ' ' +
+        record.field + ', authorized by ' + record.finding +
+        ', did NOT materialize (' + JSON.stringify(
+          record.baseline ? record.baseline.value : null) + ' -> ' +
+        JSON.stringify(record.target ? record.target.value : null) +
+        '). Either the remediation it accounts for was reverted - which the ' +
+        'response comparing clean against the baseline recording again is ' +
+        'exactly how it would otherwise go unnoticed - or the entry is stale ' +
+        'and the register belongs regenerated with --authorize.';
+    }),
+    entries: [],
+    what: 'every registered rendered-output difference still materializes, ' +
+      'and nothing outside the register was authorized',
+    detail: (register.present
+      ? register.records.length + ' record(s) in ' + register.path + ', ' +
+        (matcher ? matcher.records.length : 0) + ' for this pass, ' +
+        authorizedRecords + ' difference(s) authorized and ' +
+        unauthorizedRecords + ' unauthorized'
+      : 'no register was read, so all ' + unauthorizedRecords +
+        ' difference(s) are unauthorized') +
+      (stale.length
+        ? '. ' + stale.length + ' registered record(s) did NOT materialize, ' +
+          'which means the remediation each accounts for was reverted - and ' +
+          'the response comparing clean against the baseline recording again ' +
+          'is exactly how that would otherwise go unnoticed'
+        : ''),
+    registerPresent: !!register.present,
+    registerPath: register.path || null,
+    registered: matcher ? matcher.records.length : 0,
+    matched: matcher ? matcher.matchedCount() : 0,
+    authorizedDifferences: authorizedRecords,
+    unauthorizedDifferences: unauthorizedRecords,
+    byFinding: sortedKeys(byFinding),
+    stale: stale.map(function(record) {
+      return {
+        scenario: record.scenario,
+        route: record.route,
+        step: record.step,
+        stepIndex: record.stepIndex,
+        field: record.field,
+        finding: record.finding,
+        baseline: record.baseline ? record.baseline.value : null,
+        target: record.target ? record.target.value : null
+      };
+    })
+  };
+}
+
+/**
+ * Generates the register from the passes this run measured, and writes it.
+ *
+ * The command that regenerates the artifact, and the reason the register can be
+ * this large and stay maintainable. It refuses in two directions:
+ *   * a difference no authority covers is NOT filed, is returned in full, and
+ *     makes this run exit non-zero - so the artifact can never hold an entry
+ *     nobody can trace to a finding;
+ *   * a scenario carrying an approved-deviation marker is skipped entirely, so
+ *     the closed AAP §0.7 register stays the only thing that covers it.
+ *
+ * Nothing is written when anything was unattributable. A partially regenerated
+ * register is worse than none: it would authorize part of a tree's differences
+ * while reading as a complete account of them.
+ *
+ * @param {Object} options
+ * @param {Object} plans by pass name, each carrying its driven scenarios
+ * @param {Array.<string>} passNames the passes that ran
+ * @param {Object} inputs {corpus, secureCorpus, authorities}
+ * @returns {Object} {path, written, records, unattributable, skipped, summary}
+ */
+function generateAuthorizedRegister(options, plans, passNames, inputs) {
+  var target = path.resolve(options.authorizedDifferences ||
+    DEFAULT_AUTHORIZED_DIFFERENCES);
+  var records = [];
+  var unattributable = [];
+  var skipped = [];
+  var byFinding = {};
+  var byField = {};
+  var byPass = {};
+  var scenarios = Object.create(null);
+  var document;
+  var text;
+
+  passNames.forEach(function(passName) {
+    var plan = plans[passName];
+
+    if (!plan) {
+      return;
+    }
+
+    plan.scenarios.forEach(function(item) {
+      var generated = authorizeGeneratedRecords(item, passName);
+
+      if (generated.skipped) {
+        if (item.result && (item.result.allDifferences || []).length) {
+          skipped.push({
+            pass: passName,
+            scenario: item.id,
+            route: item.routeKey,
+            differences: item.result.allDifferences.length,
+            reason: generated.skipped
+          });
+        }
+
+        return;
+      }
+
+      generated.records.forEach(function(record) {
+        records.push(record);
+        byFinding[record.finding] = (byFinding[record.finding] || 0) + 1;
+        // Collapsed on the index, so a 300-element ordered list reports as one
+        // field family rather than as 300 rows nobody can read.
+        byField[String(record.field).replace(/\[[0-9]+\]/g, '[]')] =
+          (byField[String(record.field).replace(/\[[0-9]+\]/g, '[]')] || 0) + 1;
+        byPass[passName] = (byPass[passName] || 0) + 1;
+        scenarios[passName + '\u0000' + record.scenario] = true;
+      });
+
+      generated.unattributable.forEach(function(record) {
+        unattributable.push(record);
+      });
+    });
+  });
+
+  document = {
+    schema: AUTHORIZED_REGISTER_SCHEMA,
+    artifact: path.basename(target),
+    tool: 'test/parity/replay.js --authorize',
+    what: 'A CLOSED allowlist of the rendered-output differences that later ' +
+      'order-0 remediations mandated, keyed by pass, scenario, step and ' +
+      'comparison field, pinning both values and naming the finding that ' +
+      'authorized each. It is not the approved-deviation register: that one ' +
+      'is closed at the two deviations AAP 0.7 decided and is argued in ' +
+      'docs/preserved-quirks.md 11. A record here that no longer ' +
+      'materializes FAILS the run, and any difference not here fails.',
+    sources: {
+      corpus: {
+        artifact: path.basename(inputs.corpus.path),
+        digest: inputs.corpus.digest
+      },
+      secureCorpus: inputs.secureCorpus
+        ? {
+          artifact: path.basename(inputs.secureCorpus.path),
+          digest: inputs.secureCorpus.digest
+        }
+        : null
+    },
+    authorities: inputs.authorities,
+    summary: {
+      records: records.length,
+      scenarios: Object.keys(scenarios).length,
+      passes: passNames.slice(),
+      byPass: sortedKeys(byPass),
+      byFinding: sortedKeys(byFinding),
+      byField: sortedKeys(byField),
+      skippedScenarios: skipped,
+      // THE RESIDUE, CARRIED IN THE REGISTER ITSELF. The register is a record
+      // of what was authorized and it must not read as a complete account of
+      // the tree's differences when it is not one. Every difference below was
+      // measured on the generating run, could not be traced to any authority,
+      // was NOT filed, and still fails every replay - and it is written here
+      // so a reader of the artifact alone can see what the register does not
+      // cover, without re-running the tool.
+      unattributableAtGeneration: unattributable
+    },
+    records: records
+  };
+
+  // The same provenance contract every other artifact in this folder carries:
+  // a block naming the generator blob, the analysed tree and the delivered
+  // head, hash-linked to the bytes it sits in. Role `analysis`, because the
+  // register is not a recording of either tree - it is a derived account of the
+  // difference between them.
+  manifest.provenance.attach(document, manifest.provenance.build({
+    artifact: target,
+    role: 'analysis',
+    generatorFile: __filename,
+    toolRoot: TOOL_ROOT,
+    analysedRoot: path.resolve(options.appRoot),
+    detail: {
+      registerSchema: AUTHORIZED_REGISTER_SCHEMA,
+      records: records.length,
+      authorities: (inputs.authorities || []).length,
+      corpusDigest: inputs.corpus.digest,
+      secureCorpusDigest: inputs.secureCorpus
+        ? inputs.secureCorpus.digest
+        : null
+    }
+  }));
+
+  text = serialize(document);
+
+  writeArtifact(target, text);
+
+  // The sidecar, for the same reason capture.js writes one beside the corpus: a
+  // digest over the exact bytes that reached disk, so a register edited after
+  // it was generated is detectable without parsing it.
+  writeArtifact(target + PROVENANCE_SUFFIX, serialize(
+    manifest.provenance.sidecar(document.provenance, text)));
+
+  return {
+    path: target,
+    written: true,
+    records: records,
+    unattributable: unattributable,
+    skipped: skipped,
+    summary: document.summary,
+    // A residue is not a reason to write nothing - the entries that ARE
+    // attributable are exactly what the gate needs, and withholding them would
+    // leave the whole surface failing and unaccounted. It IS a reason for the
+    // generation run to exit non-zero: an operator who regenerates the
+    // register has to be told what it does not cover, and each of these is
+    // either a real regression that belongs failing or a change some finding
+    // authorized, in which case that finding belongs in the authority table
+    // with the place it is argued.
+    reason: unattributable.length
+      ? unattributable.length + ' difference(s) across ' +
+        Object.keys(unattributable.reduce(function(seen, entry) {
+          seen[entry.scenario] = true;
+          return seen;
+        }, {})).length + ' scenario(s) could not be traced to any entry in ' +
+        'RENDERED_CHANGE_AUTHORITIES. They were NOT filed and they still ' +
+        'fail every replay. Either each is a real regression - in which case ' +
+        'it belongs failing - or a finding authorized it, in which case add ' +
+        'that finding to the authority table in test/parity/replay.js with ' +
+        'the place it is argued, and re-run.'
+      : null
   };
 }
 
@@ -11856,8 +14132,8 @@ function qualifyGate(options, manifestDocument, passes, selectionComplete,
         : 'without --secure-corpus the secure pass DERIVES its expected ' +
           'cookie attributes from the non-secure recording, so the secure ' +
           'cookie contract - Secure on every session cookie, SameSite ' +
-          'Lax -> None on the cookies the private-field patch touched, and ' +
-          'the Expires horizon - is asserted against a value this tool ' +
+          'unmoved at Lax (deviation 7, docs/preserved-quirks.md §11.11), ' +
+          'and the Expires horizon - is asserted against a value this tool ' +
           'computed rather than one the baseline produced. Capture a corpus ' +
           'against a --secure server and pass --secure-corpus'
     },
@@ -13238,6 +15514,13 @@ async function runScenario(item, context) {
     error: null,
     steps: [],
     differences: [],
+    // The full set before the authorized register is applied, and the two
+    // halves it splits into. `differences` stays the UNAUTHORIZED set so that
+    // every existing reader of it - the deviation verdict, the classification,
+    // the report - keeps its own meaning.
+    allDifferences: [],
+    authorizedDifferences: [],
+    unauthorizedDifferences: [],
     observations: [],
     expectation: null,
     deviation: null,
@@ -13251,6 +15534,7 @@ async function runScenario(item, context) {
   var step;
   var driven;
   var comparison;
+  var authorization;
   // Whether an arming this scenario wrote is still in the fault file. It must
   // be cleared on every exit path: the server is long-lived and the scenarios
   // are driven serially, so an arming left behind would fail the next
@@ -13364,6 +15648,34 @@ async function runScenario(item, context) {
   }
 
   disarmModelFault(context.faultFile, faultArmed, item, result);
+
+  // THE AUTHORIZED REGISTER IS APPLIED HERE, and the position is load-bearing
+  // twice over. It is after every step has been compared, so a scenario is
+  // partitioned as a whole rather than step by step; and it is BEFORE the
+  // approved-deviation verdict and before `classifyScenario`, both of which
+  // read `result.differences` - so what those two see is the UNAUTHORIZED set,
+  // which is what makes `failingScenarios` count only unauthorized failures
+  // without a second counter anywhere.
+  //
+  // The full set is retained under its own name, because the register's own
+  // generation mode reads it and because a reader of the artifact has to be
+  // able to see what was authorized rather than take the count on trust.
+  result.allDifferences = result.differences;
+
+  if (context.authorizer) {
+    authorization = context.authorizer.authorize(result.differences);
+    result.authorizedDifferences = authorization.authorized;
+    result.differences = authorization.unauthorized;
+  }
+  else {
+    result.authorizedDifferences = [];
+  }
+
+  // Named for `authorizeGeneratedRecords`, which files records for exactly the
+  // differences that are still failing after the register has been applied -
+  // so re-running `--authorize` over an already-registered tree files the
+  // residue and nothing else.
+  result.unauthorizedDifferences = result.differences;
 
   result.driven = true;
   result.outcome = result.steps.length
@@ -13615,11 +15927,18 @@ async function runPass(passName, options, plan, context) {
   // relaunch that could not start a replacement does not have the segment it
   // already read counted twice.
   var evidenceTaken = null;
+  var harnessOriginReconciliation = harnessOriginAccounting();
+  var heldBackShortCodes;
   var index;
   var item;
   var result;
 
   note('--- pass ' + passName + ': ' + scenarios.length + ' scenario(s)');
+
+  // Per pass, and before anything is compared: the tally is what the pass
+  // document reports, and a pass must not inherit the previous pass's entries.
+  // See THE HELD-BACK SHORT CODE, RECONCILED PAIRWISE.
+  resetHeldBackShortCodeTally();
 
   // Before the launcher, deliberately: the object-store fixture reads this
   // manifest ONCE at load, so a manifest prepared afterwards would never be
@@ -13634,6 +15953,12 @@ async function runPass(passName, options, plan, context) {
 
   info = await server.start(launcherOptions(options, passName, s3Seed.path));
   stderrPaths.push(info.stderrPath);
+
+  // The origin this pass answers on, installed as soon as it is known and
+  // released in the `finally` below. See THE HARNESS ORIGIN, RECONCILED: the
+  // application builds its own absolute URLs from the port this harness chose,
+  // so without this the corpus is replayable at exactly one port.
+  installHarnessOrigin(info.baseUrl);
 
   if (relaunchBudget) {
     note(relaunchBudget + ' scenario(s) of this selection record a transport ' +
@@ -13687,7 +16012,12 @@ async function runPass(passName, options, plan, context) {
         httpLogPath: info.httpLogPath,
         timeoutMs: options.timeoutMs,
         selfCheck: !!options.selfCheck,
-        expectation: context.differential ? { differential: true } : null
+        expectation: context.differential ? { differential: true } : null,
+        // Null under --authorize: a generation run must see the whole
+        // difference set, because it is what decides which records the
+        // register will hold, and applying the register it is about to
+        // overwrite would hide every difference it already covers.
+        authorizer: context.authorizer || null
       });
 
       reportScenario(item, index, scenarios.length);
@@ -13873,6 +16203,15 @@ async function runPass(passName, options, plan, context) {
       recordCleanupFailure(entry.operation + ' (test/parity/mongo.js)',
         entry.message);
     });
+
+    // Released here rather than at the end of the pass body, so a pass that
+    // threw cannot leave the next one's `installHarnessOrigin` refusing. The
+    // accounting is taken on the way out, because the counters live in the
+    // state being released.
+    harnessOriginReconciliation = releaseHarnessOrigin();
+    // Taken on the way out for the same reason, and before the next pass
+    // resets the tally.
+    heldBackShortCodes = heldBackShortCodeAccounting();
   }
 
   return {
@@ -13880,6 +16219,14 @@ async function runPass(passName, options, plan, context) {
     secure: passName === PASS_SECURE,
     differential: !!context.differential,
     fatal: fatal,
+    // What the harness-origin reconciliation replaced in this pass, with every
+    // port it saw. A reader has to be able to see that the only prefix removed
+    // was the one this tool's own --port decided.
+    harnessOrigin: harnessOriginReconciliation,
+    // What the pairwise short-code reconciliation removed in this pass, field
+    // by field. Usually nothing: the committed rule's all-digit exemption is
+    // only reached when a minted code comes out with no letter in it.
+    heldBackShortCodes: heldBackShortCodes || heldBackShortCodeAccounting(),
     scenarios: scenarios.length,
     driven: scenarios.filter(function(entry) {
       return entry.result && entry.result.driven;
@@ -14652,6 +16999,12 @@ function reportScenario(item, index, total) {
 
 var STATUS_MATCH       = 'match';
 var STATUS_APPROVED    = 'approved-deviation';
+// A scenario every one of whose differences is in the authorized register.
+// DISTINCT from STATUS_MATCH, deliberately: a page that gained a landmark and
+// three ids did not match its recording, and counting it as a match would make
+// the pass summary overstate what was compared. It is equally distinct from
+// STATUS_APPROVED, which belongs to the closed AAP §0.7 register.
+var STATUS_AUTHORIZED  = 'authorized-difference';
 var STATUS_DIFFERENCE  = 'difference';
 var STATUS_UNDRIVEN    = 'undriven';
 var STATUS_UNREACHABLE = 'unreachable-by-design';
@@ -14749,6 +17102,39 @@ function classifyScenario(item, options) {
     };
   }
 
+  // THE AUTHORIZED REGISTER, resolved BEFORE the declared expectation and
+  // before the difference count, and the order is load-bearing for the same
+  // reason it is for the deviation above.
+  //
+  // A declared expectation describes the BASELINE, so a scenario whose
+  // rendered output an order-0 remediation deliberately changed will violate
+  // it - measured, on the three multipart-upload client contracts, whose
+  // recorded expectation is the 415 that R1 exists to have stopped happening.
+  // Evaluating the expectation first would therefore fail every authorized
+  // change before the register was consulted, exactly as it would every
+  // approved deviation.
+  //
+  // This is NOT a wildcard. It fires only when the scenario has at least one
+  // authorized difference and NO unauthorized one, and every authorized
+  // difference was matched against a register record pinning both of its
+  // values verbatim. A scenario with one unauthorized difference falls
+  // through to the branches below and fails there, expectation reason and all.
+  if (result.authorizedDifferences.length && !result.differences.length &&
+      !options.selfCheck) {
+    return {
+      status: STATUS_AUTHORIZED,
+      failing: false,
+      reason: result.authorizedDifferences.length + ' difference(s), every ' +
+        'one of them in the authorized register: ' +
+        authorizedFindingSummary(result.authorizedDifferences) +
+        (result.expectation && !result.expectation.met
+          ? '. The scenario\'s declared baseline expectation is no longer met, ' +
+            'which is what the authorized change changed: ' +
+            result.expectation.failures.join('; ')
+          : '')
+    };
+  }
+
   if (result.expectation && !result.expectation.met &&
       result.baselineExpectation && result.baselineExpectation.met) {
     return {
@@ -14803,6 +17189,28 @@ function classifyScenario(item, options) {
 }
 
 /**
+ * The findings behind a scenario's authorized differences, with counts.
+ *
+ * Rendered into the classification reason so a reader of the progress line or
+ * the scenario table sees WHY the scenario did not fail, without opening the
+ * register.
+ *
+ * @param {Array.<Object>} records the authorized differences of one scenario
+ * @returns {string}
+ */
+function authorizedFindingSummary(records) {
+  var counts = {};
+
+  records.forEach(function(record) {
+    counts[record.finding] = (counts[record.finding] || 0) + 1;
+  });
+
+  return Object.keys(counts).sort().map(function(finding) {
+    return counts[finding] + ' x ' + finding;
+  }).join('; ');
+}
+
+/**
  * Builds the whole result document for one pass, including its gates.
  *
  * @param {Object} pass the pass document from runPass
@@ -14815,12 +17223,21 @@ function classifyScenario(item, options) {
  * @returns {Object}
  */
 function accountPass(pass, plan, manifestDocument, options, selectionComplete,
-  corpus) {
+  corpus, authorization) {
   var scenarios = plan.scenarios;
   var classified = [];
   var differences = [];
   var observations = [];
   var approved = [];
+  var authorizedDifferences = [];
+  var authorizedByFinding = {};
+  var authorizedByField = {};
+  var authorizedScenarios = 0;
+  var authorizedTotal = 0;
+  var unauthorizedTotal = 0;
+  var register = (authorization && authorization.register) ||
+    { present: false, path: null, records: [], authorities: [] };
+  var matcher = (authorization && authorization.matcher) || null;
   var counts = {};
   var checks = [];
   var coverage = accountCoverage(manifestDocument.entries, scenarios);
@@ -14847,6 +17264,31 @@ function accountPass(pass, plan, manifestDocument, options, selectionComplete,
 
     counts[verdict.status] = (counts[verdict.status] || 0) + 1;
     classified.push(record);
+
+    // Accounted for EVERY scenario, before the classification branches below
+    // return: a scenario can carry authorized differences and still fail on an
+    // unauthorized one, and a reader has to see both halves of it. The listing
+    // is bounded per scenario exactly as the unauthorized listing is, while the
+    // counts are complete.
+    if (item.result && (item.result.authorizedDifferences || []).length) {
+      authorizedScenarios += 1;
+      authorizedTotal += item.result.authorizedDifferences.length;
+      record.authorizedDifferences = item.result.authorizedDifferences.length;
+
+      item.result.authorizedDifferences.forEach(function(entry) {
+        authorizedByFinding[entry.finding] =
+          (authorizedByFinding[entry.finding] || 0) + 1;
+        authorizedByField[String(entry.field).replace(/\[[0-9]+\]/g, '[]')] =
+          (authorizedByField[String(entry.field).replace(/\[[0-9]+\]/g, '[]')] || 0) + 1;
+      });
+
+      authorizedDifferences = authorizedDifferences.concat(
+        item.result.authorizedDifferences.slice(0, MAX_DIFFERENCES_PER_STEP));
+    }
+
+    if (item.result) {
+      unauthorizedTotal += (item.result.differences || []).length;
+    }
 
     if (verdict.failing) {
       failing++;
@@ -14919,6 +17361,18 @@ function accountPass(pass, plan, manifestDocument, options, selectionComplete,
       pass.appHead, options.diagnostic || options.allowUnreviewedCorpus));
   checks.push(pass.warnings);
   checks.push(accountArchiveCheck(archives));
+  // The register's own check. It fails on a record that did not materialize,
+  // which is what stops a stale register from making the gate easier to pass.
+  checks.push(accountAuthorizedRegister(matcher, register, authorizedTotal,
+    unauthorizedTotal));
+  // And the harness origin: a pass whose reconciled occurrences carried more
+  // than one port besides the live one saw the application name two different
+  // ports for itself, which is a behaviour difference rather than a harness
+  // artifact.
+  checks.push(accountHarnessOrigin(pass.harnessOrigin));
+  // And the second pairwise reconciliation, re-audited from the values the
+  // artifact carries rather than trusted: see `accountHeldBackShortCodes`.
+  checks.push(accountHeldBackShortCodes(pass.heldBackShortCodes));
   checks.push(accountCoverageCheck(coverage, selectionComplete));
   checks.push(accountManifestCardinality(manifestDocument, corpus,
     selectionComplete));
@@ -14934,6 +17388,24 @@ function accountPass(pass, plan, manifestDocument, options, selectionComplete,
     differences: differences,
     observations: observations,
     approvedDeviations: approved,
+    // The authorized half, stated as its own account rather than folded into a
+    // bare PASS: how many differences were authorized, per finding and per
+    // comparison field, how many scenarios carried one, and how many
+    // differences were NOT authorized. `failingScenarios` above counts only
+    // the unauthorized ones, which is the whole point of the split.
+    authorized: {
+      registerPresent: !!register.present,
+      registerPath: register.path || null,
+      registeredForThisPass: matcher ? matcher.records.length : 0,
+      matched: matcher ? matcher.matchedCount() : 0,
+      differences: authorizedTotal,
+      unauthorizedDifferences: unauthorizedTotal,
+      scenarios: authorizedScenarios,
+      byFinding: sortedKeys(authorizedByFinding),
+      byField: sortedKeys(authorizedByField),
+      listing: authorizedDifferences,
+      stale: matcher ? matcher.stale() : []
+    },
     checks: checks,
     failingChecks: checks.filter(function(check) {
       return !check.ok;
@@ -15240,9 +17712,16 @@ async function replay(options) {
   var corpusProvenance;
   var secureProvenance = null;
   var normalizationProbes;
+  var originProbes;
+  var shortCodeProbes;
   var suppressionProbes;
   var archiveProbes;
   var registerAuthority;
+  var authorityRegister;
+  var authorizedRegister;
+  var matchers = {};
+  var matcher;
+  var generation = null;
   var passes = [];
   var plans = {};
   var passName;
@@ -15253,6 +17732,21 @@ async function replay(options) {
 
   assertVolatileSetIntegrity();
   normalizationProbes = assertNormalizationRules();
+  // Beside them, and for the same reason: the harness-origin reconciliation
+  // removes real difference records - 35 of them on the committed corpus at any
+  // port but its capture port - so what it rewrites, and what it leaves alone,
+  // is measured before a request is driven rather than described.
+  originProbes = assertHarnessOriginReconciliation();
+  // And the second pairwise reconciliation, whose first two probes drive
+  // `normalizeText` itself and require that the committed short-code rule
+  // still writes the placeholder over a hex code and still holds an all-digit
+  // code back. Those two facts are the entire evidence this reconciliation
+  // acts on, so a change to that rule has to fail here.
+  shortCodeProbes = assertHeldBackShortCodeReconciliation();
+  // And the authority table, which decides what a --authorize run may file. A
+  // guard nothing implements, or an authority naming no field, would authorize
+  // more than anyone argued for.
+  authorityRegister = assertAuthorityRegister();
   // Beside them, and for the same reason: an exemption that removes real
   // difference records is checked before a request is driven, not trusted.
   // Authority first, mechanism second - probing the firing conditions of a
@@ -15289,6 +17783,29 @@ async function replay(options) {
     : resolveArtifactPath(ARTIFACT_NAMES.report, '--report');
 
   options.appRoot = path.resolve(options.appRoot);
+
+  // The two READ defaults, resolved here rather than in `defaultOptions` so a
+  // programmatic caller gets the same behaviour as the command line and so
+  // "the tree carries one" is decided against the disk rather than at load.
+  // `undefined` is the unset state and `null` is the declined one, which is why
+  // neither can be spelled as a falsy check.
+  if (options.secureCorpus === undefined) {
+    options.secureCorpus = fs.existsSync(DEFAULT_SECURE_CORPUS)
+      ? DEFAULT_SECURE_CORPUS
+      : null;
+
+    if (options.secureCorpus) {
+      note('secure-pass corpus: using the committed recording ' +
+        pathLabelFor(options.secureCorpus, options.appRoot) +
+        ' (pass --no-secure-corpus to derive the secure pass instead)');
+    }
+  }
+
+  if (options.authorizedDifferences === undefined) {
+    options.authorizedDifferences = fs.existsSync(DEFAULT_AUTHORIZED_DIFFERENCES)
+      ? DEFAULT_AUTHORIZED_DIFFERENCES
+      : null;
+  }
 
   if (!fs.existsSync(path.join(options.appRoot, 'app.js'))) {
     throw usageError('--app names ' + options.appRoot + ', which holds no ' +
@@ -15377,6 +17894,31 @@ async function replay(options) {
       ' capture from ' + (secureProvenance.capturedTree.head || '(unknown)'));
   }
 
+  // AFTER both corpora have been read and authenticated, because the register
+  // is bound to them by digest and a register checked against a corpus this run
+  // then refused would be a check on a file nobody consumed. Under --authorize
+  // nothing is read: the run is about to write it.
+  authorizedRegister = options.authorize
+    ? {
+      present: false,
+      path: options.authorizedDifferences || DEFAULT_AUTHORIZED_DIFFERENCES,
+      records: [],
+      authorities: [],
+      note: '--authorize: the register is being GENERATED by this run, so ' +
+        'nothing was read and every difference is measured'
+    }
+    : readAuthorizedRegister(options.authorizedDifferences, {
+      corpus: corpusArtifact.digest,
+      secureCorpus: secureArtifact ? secureArtifact.digest : null
+    });
+
+  if (authorizedRegister.present) {
+    note('authorized-difference register: ' + authorizedRegister.records.length +
+      ' record(s) from ' +
+      pathLabelFor(authorizedRegister.path, options.appRoot) +
+      ', bound to this corpus by digest');
+  }
+
   manifestDocument = resolveManifest(options);
 
   note('manifest: ' + manifestDocument.entries.length + ' route(s) from ' +
@@ -15429,9 +17971,18 @@ async function replay(options) {
 
       plans[passName] = plan;
 
+      // One matcher per pass, over the register this run read. Under
+      // --authorize there is none: the run is measuring what the register will
+      // hold, so it must see every difference.
+      matcher = options.authorize
+        ? null
+        : authorizedRegisterFor(authorizedRegister, passName);
+      matchers[passName] = matcher;
+
       passResult = await runPass(passName, options, plan, {
         differential: passName === PASS_SECURE && !secureCorpus,
-        scratchDir: scratchDir
+        scratchDir: scratchDir,
+        authorizer: matcher
       });
 
       // Coverage is enforced on EVERY pass with a complete selection, not on
@@ -15440,11 +17991,25 @@ async function replay(options) {
       // and a --secure-corpus carrying a different scenario set gets its own
       // accounting rather than inheriting the other pass's.
       passes.push(accountPass(passResult, plan, manifestDocument, options,
-        selectionComplete, corpus));
+        selectionComplete, corpus, {
+          register: authorizedRegister,
+          matcher: matcher
+        }));
     }
   }
   finally {
     removeDirectory(scratchDir);
+  }
+
+  // The generation half of the register, and it runs only when asked. It reads
+  // the plans the passes left behind, so it files records for exactly what was
+  // measured rather than for what a second run might measure.
+  if (options.authorize) {
+    generation = generateAuthorizedRegister(options, plans, passNames, {
+      corpus: corpusArtifact,
+      secureCorpus: secureArtifact,
+      authorities: authorityRegister
+    });
   }
 
   gate = qualifyGate(options, manifestDocument, passes, selectionComplete, {
@@ -15458,10 +18023,37 @@ async function replay(options) {
       corpus: corpusProvenance,
       secureCorpus: secureProvenance,
       normalizationProbes: normalizationProbes,
+      originProbes: originProbes,
+      shortCodeProbes: shortCodeProbes,
       suppressionProbes: suppressionProbes,
       archiveProbes: archiveProbes,
-      registerAuthority: registerAuthority
+      registerAuthority: registerAuthority,
+      authorizedRegister: authorizedRegister,
+      authorityRegister: authorityRegister,
+      generation: generation
     });
+
+  // A GENERATION RUN IS NOT A GATE RUN, and it says so in the verdict rather
+  // than in a note beside a PASS. It measured a tree in order to write the
+  // register, so its own comparison was made with the register switched off and
+  // every difference unauthorized; and if anything was unattributable it wrote
+  // nothing at all, which the exit code has to carry.
+  if (options.authorize) {
+    result.gateQualifying = false;
+    result.gateQualifyingReason = 'this run was asked to GENERATE the ' +
+      'authorized-difference register with --authorize, so it compared with ' +
+      'the register switched off and cannot stand as the gate. Re-run without ' +
+      '--authorize to measure the gate against what it wrote.';
+
+    // A generation run that could not attribute everything it measured exits
+    // non-zero even where the register it wrote is otherwise complete: the
+    // residue is the operator's next piece of work, and a zero exit would let
+    // it pass through a shell pipeline unread.
+    if (generation && (!generation.written || generation.reason)) {
+      result.verdict = VERDICT_FAIL;
+      result.exitCode = EXIT_DIFFERENCE;
+    }
+  }
 
   // The one thing this tool writes outside its own two artifacts, and only
   // when asked: the target comparison, into the committed provenance sidecar
@@ -16140,6 +18732,15 @@ function buildResult(options, corpus, annotations, secureCorpus,
   var gates = {
     failingScenarios: 0,
     differenceRecords: 0,
+    // The other half of the split, carried beside `differenceRecords` so the
+    // artifact never states a difference count without stating how many were
+    // accounted to a finding. `differenceRecords` keeps its meaning exactly:
+    // the UNAUTHORIZED differences of the failing scenarios.
+    authorizedDifferences: 0,
+    // Registered records that did not materialize. Each is a FAILURE and is
+    // already counted through its pass's failing check; carried here so a
+    // reader does not have to find it among the checks.
+    staleAuthorizations: 0,
     undriven: 0,
     missingBaselines: 0,
     failedChecks: [],
@@ -16156,6 +18757,9 @@ function buildResult(options, corpus, annotations, secureCorpus,
   var result;
 
   passes.forEach(function(entry) {
+    gates.authorizedDifferences += entry.authorized.differences;
+    gates.staleAuthorizations += entry.authorized.stale.length;
+
     entry.scenarios.forEach(function(record) {
       if (!record.failing) {
         return;
@@ -16251,6 +18855,56 @@ function buildResult(options, corpus, annotations, secureCorpus,
     selfCheck: !!options.selfCheck,
     gates: gates,
     approvedDeviations: approved,
+    // The authorized rendered-output difference register, stated as "N
+    // authorized (per finding), M unauthorized" rather than folded into the
+    // verdict. It is deliberately a SEPARATE key from `approvedDeviations`
+    // above: that one is the closed AAP §0.7 register and this one is the
+    // generated account of the differences later remediations mandated, and a
+    // reader must be able to tell them apart in the artifact as well as in the
+    // source.
+    authorizedDifferences: {
+      registerPresent: !!evidence.authorizedRegister &&
+        !!evidence.authorizedRegister.present,
+      registerPath: evidence.authorizedRegister
+        ? evidence.authorizedRegister.path
+        : null,
+      registerRecords: evidence.authorizedRegister
+        ? evidence.authorizedRegister.records.length
+        : 0,
+      // The authorities as they were ASSERTED at startup, so a reviewer reads
+      // which findings this run was willing to file a record under, with the
+      // place each is argued and the guard each carries.
+      authorities: evidence.authorityRegister || [],
+      probes: evidence.originProbes || [],
+      total: {
+        authorized: gates.authorizedDifferences,
+        unauthorized: gates.differenceRecords,
+        stale: gates.staleAuthorizations
+      },
+      byPass: passes.map(function(entry) {
+        return {
+          pass: entry.pass.name,
+          authorized: entry.authorized.differences,
+          unauthorized: entry.authorized.unauthorizedDifferences,
+          scenarios: entry.authorized.scenarios,
+          registeredForThisPass: entry.authorized.registeredForThisPass,
+          matched: entry.authorized.matched,
+          byFinding: entry.authorized.byFinding,
+          byField: entry.authorized.byField,
+          stale: entry.authorized.stale,
+          harnessOrigin: entry.pass.harnessOrigin
+        };
+      }),
+      // Present only on a generation run, and then it is the whole account of
+      // what was filed and what was refused.
+      generation: evidence.generation || null,
+      note: 'A record is keyed by pass, scenario, step and comparison field ' +
+        'and pins BOTH values, so a change on either side no longer matches ' +
+        'it and is reported unauthorized. A record that did not materialize ' +
+        'FAILS the run, under the `authorized-difference-register` check of ' +
+        'each pass. Regenerate with --authorize, which refuses to file a ' +
+        'difference it cannot trace to a named finding.'
+    },
     volatileSet: describeVolatileSet(evidence.normalizationProbes),
     comparisonContract: {
       binaryBodies: describeBinaryBodyContract(),
@@ -16267,6 +18921,38 @@ function buildResult(options, corpus, annotations, secureCorpus,
       // exemption a reader has to discover from a source file is an exemption
       // nobody audits, and one that names no register cannot be reconciled
       // against the argument that approved it.
+      // The second pairwise reconciliation, emitted whole for the same reason
+      // as the first: its probes as EXERCISED at startup - including the two
+      // that drive `normalizeText` itself and bind this mechanism to the
+      // committed volatile rule it complements - and what each pass actually
+      // removed, field by field, with both compared values. An exemption a
+      // reader has to discover from a source file is an exemption nobody
+      // audits.
+      heldBackShortCodes: {
+        rule: HELD_BACK_SHORT_CODE_RULE,
+        placeholder: SHORT_CODE_PLACEHOLDER,
+        expression: String(HELD_BACK_SHORT_CODE_EXPRESSION),
+        why: 'the committed `generated trinket short code` rule exempts an ' +
+          'all-digit token, because ten to twelve decimal digits is also an ' +
+          'epoch reading and an unanchored single-sided rule must not ' +
+          'rewrite one. hashify mints ten hexadecimal characters, so about ' +
+          'one code in a hundred and ten comes out all digits and is held ' +
+          'back on one side while its counterpart is normalized on the ' +
+          'other. This reconciliation closes exactly that pair, on both ' +
+          'sides together, and nothing else.',
+        costs: 'the literal value of a minted short code in the one position ' +
+          'where the committed rule had already given it up on the other ' +
+          'side. Every literal character around the code must match for this ' +
+          'to fire, both token counts must be equal, and a digit run is ' +
+          'reconciled only against the placeholder at the same position - so ' +
+          'two differing epoch readings, the case the exemption exists for, ' +
+          'still fail.',
+        probes: evidence.shortCodeProbes || null,
+        byPass: passes.map(function(entry) {
+          return Object.assign({ pass: entry.pass.name },
+            entry.pass.heldBackShortCodes || {});
+        })
+      },
       frameworkCookieSuppression: Object.assign({},
         FRAMEWORK_COOKIE_SUPPRESSION,
         // The conditions, as exercised at startup rather than as described.
@@ -16580,6 +19266,16 @@ function summarizePass(entry) {
     archives: entry.archives,
     checks: entry.checks,
     approvedDeviations: entry.approvedDeviations,
+    // The authorized half of this pass, beside the unauthorized `differences`
+    // below it. Kept per pass as well as in the run-level account, because the
+    // secure pass compares a different recording and its authorizations are
+    // its own.
+    authorized: entry.authorized,
+    harnessOrigin: entry.pass.harnessOrigin,
+    // And what the pairwise short-code reconciliation removed in this
+    // pass, so a per-pass reader sees it without going to the run-level
+    // comparison contract.
+    heldBackShortCodes: entry.pass.heldBackShortCodes,
     differences: entry.differences,
     observations: entry.observations,
     scenarioResults: entry.scenarios
@@ -16994,6 +19690,20 @@ function renderReport(result, options) {
     result.gates.differenceRecords +
     ' (the complete count; the listing below is capped at ' +
     MAX_DIFFERENCES_PER_STEP + ' per scenario)');
+  // Stated on the same summary as the failing counts, because a bare "0
+  // unapproved differences" over a tree whose rendered output deliberately
+  // moved would overstate what was compared. See AUTHORIZED RENDERED-OUTPUT
+  // DIFFERENCES below for the per-finding breakdown.
+  bullet('differences authorized and attributed      ' +
+    result.gates.authorizedDifferences +
+    ' (accounted to a named finding; ' + result.gates.differenceRecords +
+    ' unauthorized)');
+  bullet('registered records that did NOT materialize ' +
+    result.gates.staleAuthorizations +
+    (result.gates.staleAuthorizations
+      ? ' <- FAILURE: a remediation the register accounts for is no longer in ' +
+        'the tree'
+      : ''));
   bullet('scenarios not driven     ' + result.gates.undriven);
   bullet('scenarios with no baseline ' + result.gates.missingBaselines);
   bullet('failed named checks      ' + (result.gates.failedChecks.length
@@ -17010,12 +19720,14 @@ function renderReport(result, options) {
 
   renderGateQualification(lines, result, heading);
   renderApprovedSection(lines, result, heading, bullet);
+  renderAuthorizedSection(lines, result, heading, bullet);
 
   result.passes.forEach(function(pass) {
     renderPass(lines, pass, result, heading, bullet);
   });
 
   renderVolatileSection(lines, result, heading, bullet);
+  renderHeldBackShortCodeSection(lines, result, heading, bullet);
   renderBinaryContract(lines, result, heading, bullet);
   renderClosing(lines, result, options, heading);
 
@@ -17378,6 +20090,198 @@ function renderApprovedSection(lines, result, heading, bullet) {
 }
 
 /**
+ * The authorized rendered-output differences, per finding and per field.
+ *
+ * Rendered whatever the verdict and in its own section, because "N authorized,
+ * M unauthorized" is the honest statement of what a clean exit means on this
+ * tree and a bare PASS is not. A reader who wants to know WHY a difference did
+ * not fail gets the finding that authorized it and the place that finding is
+ * argued, without opening the register.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderAuthorizedSection(lines, result, heading, bullet) {
+  var account = result.authorizedDifferences;
+
+  heading('AUTHORIZED RENDERED-OUTPUT DIFFERENCES');
+
+  lines.push('  This is NOT the approved-deviation register above. That one is ' +
+    'closed at the two');
+  lines.push('  deviations AAP §0.7 decided. This is a generated, ' +
+    'digest-bound allowlist of the');
+  lines.push('  rendered-output differences that LATER order-0 remediations ' +
+    'mandated - one record per');
+  lines.push('  pass, scenario, step and comparison field, pinning both ' +
+    'values and naming the finding');
+  lines.push('  that authorized it. A record that does not materialize FAILS ' +
+    'the run; anything not in');
+  lines.push('  it fails exactly as it did before the register existed.');
+  lines.push('');
+
+  bullet('register     ' + (account.registerPresent
+    ? account.registerPath + ' (' + account.registerRecords + ' record(s))'
+    : 'none read - every difference in this run is unauthorized'));
+  bullet('authorized   ' + account.total.authorized +
+    ' difference(s) across ' + result.passes.length + ' pass(es)');
+  bullet('unauthorized ' + account.total.unauthorized + ' difference(s)');
+  bullet('stale        ' + account.total.stale +
+    ' registered record(s) did not materialize' +
+    (account.total.stale ? ' <- FAILURE' : ''));
+
+  lines.push('');
+  lines.push('  AUTHORITIES THIS RUN WOULD FILE A RECORD UNDER (' +
+    account.authorities.length + ', asserted at startup)');
+
+  account.authorities.forEach(function(authority) {
+    lines.push('    ' + authority.finding);
+    lines.push('      ' + (authority.summary || '(no summary)'));
+    lines.push('      argued in : ' + authority.arguedIn);
+    lines.push('      routes    : ' + (authority.routes
+      ? authority.routes.join(', ')
+      : '(any)'));
+    lines.push('      fields    : ' + authority.fields.join(' '));
+    lines.push('      guard     : ' + authority.guard);
+  });
+
+  account.byPass.forEach(function(entry) {
+    lines.push('');
+    lines.push('  ' + entry.pass.toUpperCase() + ' PASS: ' + entry.authorized +
+      ' authorized across ' + entry.scenarios + ' scenario(s), ' +
+      entry.unauthorized + ' unauthorized');
+    lines.push('    registered for this pass: ' + entry.registeredForThisPass +
+      ', matched: ' + entry.matched);
+
+    Object.keys(entry.byFinding).forEach(function(finding) {
+      lines.push('      ' + entry.byFinding[finding] + ' x ' + finding);
+    });
+
+    if (Object.keys(entry.byField).length) {
+      lines.push('    by comparison field (indices collapsed):');
+      Object.keys(entry.byField).forEach(function(field) {
+        lines.push('      ' + entry.byField[field] + ' x ' + field);
+      });
+    }
+
+    entry.stale.forEach(function(record) {
+      lines.push('    ! DID NOT MATERIALIZE  ' + record.scenario + ' ' +
+        record.field + ' (' + record.finding + ')');
+      lines.push('        registered: ' + JSON.stringify(record.baseline) +
+        ' -> ' + JSON.stringify(record.target));
+    });
+
+    if (entry.harnessOrigin) {
+      lines.push('    harness origin: ' + (entry.harnessOrigin.installed
+        ? entry.harnessOrigin.occurrences + ' occurrence(s) of ' +
+          entry.harnessOrigin.origin + ' reconciled to ' +
+          entry.harnessOrigin.token + '; ports seen ' +
+          (entry.harnessOrigin.ports.length
+            ? entry.harnessOrigin.ports.map(function(port) {
+              return port.port + ' x' + port.occurrences;
+            }).join(', ')
+            : 'none')
+        : entry.harnessOrigin.note));
+    }
+  });
+
+  if (account.generation) {
+    lines.push('');
+    lines.push('  GENERATION (--authorize)');
+    bullet('written      ' + (account.generation.written
+      ? 'yes, ' + account.generation.records.length + ' record(s) to ' +
+        account.generation.path
+      : 'NO'));
+
+    if (account.generation.reason) {
+      bullet('residue      ' + account.generation.reason);
+    }
+
+    (account.generation.skipped || []).forEach(function(entry) {
+      lines.push('    skipped  ' + entry.scenario + ' (' + entry.differences +
+        ' difference(s)): ' + entry.reason);
+    });
+
+    (account.generation.unattributable || []).forEach(function(entry) {
+      lines.push('    ! UNATTRIBUTABLE  [' + entry.pass + '] ' +
+        entry.scenario + ' ' + entry.field);
+      lines.push('        ' + JSON.stringify(entry.baseline) + ' -> ' +
+        JSON.stringify(entry.target));
+    });
+  }
+}
+
+/**
+ * The pairwise short-code reconciliation, with everything it removed.
+ *
+ * Rendered even when it removed nothing, because "nothing was reconciled" is
+ * the fact a reviewer needs about a mechanism that CAN remove differences. The
+ * common case is an empty list: the committed rule's exemption is only reached
+ * when a minted code comes out with no letter in it.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderHeldBackShortCodeSection(lines, result, heading, bullet) {
+  var contract = (result.comparisonContract || {}).heldBackShortCodes;
+  var probes;
+
+  if (!contract) {
+    return;
+  }
+
+  probes = (contract.probes && contract.probes.probes) || [];
+
+  heading('THE HELD-BACK SHORT CODE, RECONCILED PAIRWISE');
+
+  lines.push('  A second reconciliation, decided on both sides of a ' +
+    'comparison together and so');
+  lines.push('  outside the single-sided volatile set. ' + contract.why);
+  lines.push('');
+  lines.push('  WHAT IT COSTS. ' + contract.costs);
+  lines.push('');
+
+  bullet('rule        ' + contract.rule);
+  bullet('placeholder ' + contract.placeholder);
+  bullet('tokens      ' + contract.expression);
+  bullet('probes      ' + probes.length + ', all of which passed before a ' +
+    'request was driven (' +
+    ((contract.probes && contract.probes.binding) || 0) +
+    ' of them drive normalizeText itself and bind this mechanism to the ' +
+    'committed rule)');
+
+  probes.forEach(function(probe) {
+    lines.push('    ' + (probe.binding ? 'binding ' : 'refusal ') +
+      probe.name);
+  });
+
+  (contract.byPass || []).forEach(function(entry) {
+    lines.push('');
+    lines.push('  PASS ' + entry.pass + ': ' + (entry.entries || []).length +
+      ' difference(s) reconciled across ' + (entry.steps || 0) + ' step(s), ' +
+      (entry.tokens || 0) + ' token pair(s)');
+
+    if (!(entry.entries || []).length) {
+      lines.push('    ' + entry.note);
+
+      return;
+    }
+
+    entry.entries.forEach(function(record) {
+      lines.push('    ' + record.scenario + ' [' + record.step + ' #' +
+        record.stepIndex + '] ' + record.field);
+      lines.push('        ' + JSON.stringify(record.baseline) + ' <-> ' +
+        JSON.stringify(record.target));
+    });
+  });
+}
+
+/**
  * One pass: its differences, its coverage, its checks and its evidence.
  *
  * @param {Array.<string>} lines
@@ -17427,12 +20331,13 @@ function renderPass(lines, pass, result, heading, bullet) {
       'responses embed, which was');
     lines.push('  measured - and asserts the documented cookie differential: ' +
       'Secure becomes true on');
-    lines.push('  every session cookie, SameSite moves Lax -> None on the ' +
-      'cookies the private-field');
-    lines.push('  patch touched (the ones carrying an Expires horizon, since ' +
-      'both appends sit under one');
-    lines.push('  guard), the horizon itself is unchanged, and EVERY OTHER ' +
-      'FIELD is compared exactly.');
+    lines.push('  every session cookie, SameSite does NOT move (it is set ' +
+      'once on the state definition,');
+    lines.push('  and the private-field patch appends the Expires horizon ' +
+      'alone - approved deviation 7,');
+    lines.push('  docs/preserved-quirks.md §11.11), the horizon itself is ' +
+      'unchanged, and EVERY OTHER');
+    lines.push('  FIELD is compared exactly.');
     lines.push('  Capture a corpus with capture.js against a --secure server ' +
       'and pass --secure-corpus');
     lines.push('  for an exact comparison instead of a derived one.');
@@ -18307,6 +21212,45 @@ module.exports = {
   APPROVED_DEVIATIONS: APPROVED_DEVIATIONS,
   APPROVED_DEVIATION_IDS: APPROVED_DEVIATION_IDS,
   DEVIATION_SCENARIO_ID: DEVIATION_SCENARIO_ID,
+
+  // The authorized rendered-output difference register and the harness-origin
+  // reconciliation, exported so a harness asserts against the same values and
+  // the same probes this file applies rather than a second copy of them.
+  DEFAULT_SECURE_CORPUS: DEFAULT_SECURE_CORPUS,
+  DEFAULT_AUTHORIZED_DIFFERENCES: DEFAULT_AUTHORIZED_DIFFERENCES,
+  AUTHORIZED_REGISTER_SCHEMA: AUTHORIZED_REGISTER_SCHEMA,
+  RENDERED_CHANGE_AUTHORITIES: RENDERED_CHANGE_AUTHORITIES,
+  AUTHORITY_GUARDS: AUTHORITY_GUARDS,
+  assertAuthorityRegister: assertAuthorityRegister,
+  authorityForDifference: authorityForDifference,
+  readAuthorizedRegister: readAuthorizedRegister,
+  authorizedRegisterFor: authorizedRegisterFor,
+  authorizeGeneratedRecords: authorizeGeneratedRecords,
+  accountAuthorizedRegister: accountAuthorizedRegister,
+  encodeAuthorizedValue: encodeAuthorizedValue,
+  authorizedValueMatches: authorizedValueMatches,
+  HARNESS_ORIGIN_TOKEN: HARNESS_ORIGIN_TOKEN,
+  HARNESS_ORIGIN_RULE: HARNESS_ORIGIN_RULE,
+  HARNESS_ORIGIN_EXPRESSION: HARNESS_ORIGIN_EXPRESSION,
+  HARNESS_ORIGIN_PROBES: HARNESS_ORIGIN_PROBES,
+  SHORT_CODE_PLACEHOLDER: SHORT_CODE_PLACEHOLDER,
+  HELD_BACK_SHORT_CODE_RULE: HELD_BACK_SHORT_CODE_RULE,
+  HELD_BACK_SHORT_CODE_EXPRESSION: HELD_BACK_SHORT_CODE_EXPRESSION,
+  HELD_BACK_SHORT_CODE_PROBES: HELD_BACK_SHORT_CODE_PROBES,
+  splitOnShortCodeTokens: splitOnShortCodeTokens,
+  isHeldBackShortCodePair: isHeldBackShortCodePair,
+  heldBackShortCodePair: heldBackShortCodePair,
+  heldBackShortCodeReconciliation: heldBackShortCodeReconciliation,
+  heldBackShortCodeAccounting: heldBackShortCodeAccounting,
+  resetHeldBackShortCodeTally: resetHeldBackShortCodeTally,
+  accountHeldBackShortCodes: accountHeldBackShortCodes,
+  assertHeldBackShortCodeReconciliation: assertHeldBackShortCodeReconciliation,
+  installHarnessOrigin: installHarnessOrigin,
+  releaseHarnessOrigin: releaseHarnessOrigin,
+  reconcileHarnessOrigin: reconcileHarnessOrigin,
+  harnessOriginAccounting: harnessOriginAccounting,
+  accountHarnessOrigin: accountHarnessOrigin,
+  assertHarnessOriginReconciliation: assertHarnessOriginReconciliation,
   HEADER_RESOLVED_GROUP: HEADER_RESOLVED_GROUP,
   HEADER_RESOLVED_CHAIN_COUNT: HEADER_RESOLVED_CHAIN_COUNT,
   AUTH_OUTCOME_GROUP: AUTH_OUTCOME_GROUP,
@@ -18347,6 +21291,7 @@ module.exports = {
   PASS_BOTH: PASS_BOTH,
   STATUS_MATCH: STATUS_MATCH,
   STATUS_APPROVED: STATUS_APPROVED,
+  STATUS_AUTHORIZED: STATUS_AUTHORIZED,
   STATUS_DIFFERENCE: STATUS_DIFFERENCE,
   STATUS_UNDRIVEN: STATUS_UNDRIVEN,
   STATUS_UNREACHABLE: STATUS_UNREACHABLE,

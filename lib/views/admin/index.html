@@ -89,8 +89,20 @@ $('.update-roles').click(function(event) {
   }
 
   if (typeof rolesData !== 'undefined') {
-    $.post('/api/admin/user/' + $(this).data('userid'), {
-      roles : rolesData
+    // JSON, not jQuery's default form encoding. `roles` is an array of objects,
+    // and $.post serializes that as `roles[0][context]=site&
+    // roles[0][roles][]=user`; hapi expands no bracket notation, so the route
+    // received keys literally named `roles[0][context]` and
+    // `request.payload.roles` was undefined - which used to leave the request
+    // unanswered for 20s with nothing shown here (QA finding
+    // W001-F08-ADMIN-ROLES-BRACKET-PAYLOAD). Measured on hapi 21.4.10: a JSON
+    // body arrives as the array this editor means to send. The URL, the method
+    // and the `roles` field name are unchanged.
+    $.ajax({
+        url         : '/api/admin/user/' + $(this).data('userid')
+      , method      : 'POST'
+      , contentType : 'application/json'
+      , data        : JSON.stringify({ roles : rolesData })
     }).done(function(result) {
       if (result.success) {
         var reloadUrl = location.pathname + location.search;
@@ -100,10 +112,10 @@ $('.update-roles').click(function(event) {
         showRolesMessage('Yay! <a href="' + reloadUrl + '">Reload user roles</a>.');
       }
       else {
-        showRolesMessage('Something went wrong. ' + result);
+        showRolesMessage('Something went wrong. ' + escapeRolesText(describeRolesResult(result)));
       }
     }).fail(function(err) {
-      showRolesMessage(err);
+      showRolesMessage('Something went wrong. ' + escapeRolesText(describeRolesFailure(err)));
     });
   }
 });
@@ -113,6 +125,52 @@ $('.cancel-change').click(function(event) {
 function showRolesMessage(message) {
   $('#rolesMessage').empty().html(message);
   $('#rolesMessage').removeClass('hide');
+}
+
+/**
+ * Escapes a value for the .html() sink showRolesMessage writes into. The
+ * success path passes markup of its own (a reload link), so the sink stays as
+ * it is and the values that come from a response are escaped here instead.
+ *
+ * @param {*} value Any value; null and undefined become ''.
+ * @returns {string} HTML-escaped text.
+ */
+function escapeRolesText(value) {
+  return $('<span/>').text(value === null || typeof value === 'undefined' ? '' : String(value)).html();
+}
+
+/**
+ * A readable one-line reason from a 200 response that is not a success. The
+ * route answers `{message: ...}` through its Layer 2 mapping - for instance
+ * `roles required` when the payload carried none - and this used to be
+ * concatenated straight into the message, where it rendered as the literal
+ * text "[object Object]".
+ *
+ * @param {Object} result The parsed response body.
+ * @returns {string}
+ */
+function describeRolesResult(result) {
+  if (result && result.message) {
+    return result.message;
+  }
+
+  return JSON.stringify(result);
+}
+
+/**
+ * A readable one-line reason from a failed request. jQuery hands `.fail` the
+ * jqXHR, which rendered as "[object Object]" when passed on as the message.
+ *
+ * @param {Object} jqXHR The jQuery XHR object.
+ * @returns {string}
+ */
+function describeRolesFailure(jqXHR) {
+  var body   = jqXHR && jqXHR.responseJSON
+    , detail = (body && (body.message || body.error))
+        || (jqXHR && jqXHR.statusText)
+        || 'unknown error';
+
+  return jqXHR && jqXHR.status ? jqXHR.status + ' ' + detail : detail;
 }
 
 $('form.featured-course-form').on('submit', function(event) {

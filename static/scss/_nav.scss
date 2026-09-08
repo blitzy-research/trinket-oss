@@ -99,6 +99,65 @@ nav.top-bar {
     width: 6rem;
   }
 
+  // Keyboard focus order for the CLOSED collapsed menu (a11y: WCAG 2.1
+  // SC 2.4.3 Focus Order, and SC 2.4.7 Focus Visible for the stops that took
+  // focus off-screen). Measured at 375x812 on /home: the collapsed bar offered
+  // 15 Tab stops and 11 of them were descendants of section.top-bar-section
+  // while that section was closed - nav.top-bar carried no `expanded` class,
+  // computed `height: 45px` with `overflow: hidden`, and the section's box
+  // began at y = 53, entirely below that 45px clip, yet still computed
+  // `visibility: visible`. (The QA finding reports 19 of 25 on an account that
+  // renders more language rows and an Admin row; the ratio differs, the defect
+  // is the same one.) `overflow: hidden` clips the painting and does nothing to
+  // sequential focus navigation, so every anchor in the closed menu stayed
+  // tabbable - two of them, the JS-generated `Back` row and the first
+  // #new_trinket_list language, sitting wholly outside the viewport at x = 375.
+  // Worse, focusing the first in-menu stop scrolled the overflow-hidden nav to
+  // scrollTop: 53, exposing `Home` in the bar and pushing the logo and the menu
+  // toggle out of sight: a keyboard user silently rearranged the global chrome.
+  //
+  // `visibility: hidden` is the mechanism because browsers exclude a
+  // visibility-hidden element and its descendants from sequential focus
+  // navigation - precisely the semantic this needs - while still generating
+  // layout boxes. `display: none` would remove those boxes and break the two
+  // places that measure them: foundation.topbar.js sizes the open bar from the
+  // section's own lists (`$this.siblings('ul').outerHeight(true) +
+  // topbar.data('height')` at
+  // public/components/foundation/js/foundation/foundation.topbar.js:242, and
+  // the same calculation for the `.back` path at :287), and its `assemble()`
+  // detaches and re-appends the section to prepend those `.back` rows. It is
+  // also why this stays in CSS: `tabindex`, `inert` and `aria-hidden` are all
+  // attributes on lib/views/base.html, whose markup surface the corpus gate
+  // compares element by element, while no gate compares computed CSS.
+  //
+  // `:not(.expanded)` is exactly "collapsed and closed". Foundation opens the
+  // menu by adding `.expanded` to `.top-bar` - its own
+  // `.top-bar.expanded { background: transparent; height: auto }` is the rule
+  // that releases the 45px clip - so the moment the toggle fires this selector
+  // stops matching and the menu behaves as a normal focusable menu again. The
+  // two controls that operate it are outside the section: lib/views/base.html
+  // renders `ul.title-area` (the logo link `li.name > a[href="/"]` and the
+  // hamburger `li.toggle-topbar.menu-icon > a`) as a sibling of
+  // `section.top-bar-section`, both direct children of nav.top-bar, so both
+  // keep their tab stops and the menu remains openable from the keyboard. That
+  // sibling structure is also what makes the child combinator the exact
+  // expression here.
+  //
+  // Scoped to $small-only (max-width: 40em, 640px) like the F127 rules above,
+  // which is the complement of Foundation's `$topbar-breakpoint` (641px): from
+  // 641px up the bar is a horizontal menu with `overflow: visible` whose stops
+  // are all genuinely visible, and that navigation must not be hidden - the
+  // media scope is the only thing standing between this rule and the desktop
+  // chrome. Below 641px with JavaScript off the collapsed menu has no fallback
+  // in either state, since Foundation's `.no-js .top-bar-section` rules live
+  // inside `@media #{$topbar-media-query}` and never apply there, so this
+  // removes an invisible focus trap rather than a usable affordance.
+  @media #{$small-only} {
+    &:not(.expanded) > section.top-bar-section {
+      visibility: hidden;
+    }
+  }
+
 	.top-bar-section {
 		// Adjacent-target separation for the expanded mobile menu (a11y F128).
 		// With the menu open every pair of stacked rows measured 0px apart, and

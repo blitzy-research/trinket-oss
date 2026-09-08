@@ -21,12 +21,26 @@
 //
 // The suite has no storage backend of its own: lib/util/file.js builds a real
 // aws-sdk v2 client (`new aws.S3()` per call, from config/aws) and nothing in
-// test/helpers/** replaces it, so with the asset feature on `POST /file` would
-// dial S3 with the empty credentials config/default.yaml ships. That feature is
-// OFF under NODE_ENV=test -- config/default.yaml's `features.assets: false` is
-// now its only definition, the test-only override having been withdrawn as
-// unauthorized scope -- so this interceptor is a guard rather than a
-// precondition: it keeps any future asset-bearing case off the network.
+// test/helpers/** replaces it, so `POST /file` would dial S3 with the empty
+// credentials config/default.yaml ships.
+//
+// THIS IS A PRECONDITION, NOT A GUARD, and the distinction changed with the
+// asset flag. config/default.yaml's `features.assets: false` used to be its only
+// definition under NODE_ENV=test, which left `POST /file` answering 501 before
+// any upload ran and made this interceptor merely defensive. test/env.js now
+// merges `features.assets: true` into NODE_CONFIG as test provisioning -- the
+// same class as the `app.mail` and `cloud` blocks config/test.yaml carries, and
+// a missing fixture rather than a behaviour change, because the base commit
+// carries the identical gap: `git show 2f8712a:config/default.yaml` ships the
+// same `assets: false` and `git show 2f8712a:config/test.yaml` names no
+// `features` key either -- and four cases in test/lib/api/files.js
+// depend on it: the two `should create a new file document` cases put an object
+// through `_upload`, and the two `should download the file` cases read exactly
+// those objects back through `downloadMaterialFile`. Without the fixture below
+// the puts would reach the network, `_upload` would swallow the credentials
+// error and call back with a fully populated payload anyway, and the reads would
+// 404 on keys that were never stored -- which is the failure this file's
+// assertion further down exists to name.
 //
 // test/parity/fixtures/aws.js is
 // exactly the missing piece - a filesystem-backed putObject / getObject /

@@ -575,24 +575,58 @@ function sha1Hex(buffer) {
 }
 
 /**
- * The invitation token `lib/models/courseInvitation.js`'s `addList` derives.
+ * The token of a SEEDED invitation, looked up by the address it was issued to.
  *
- * Reproduced rather than invented, and that is the whole point of deriving it:
- * `addList` computes `md5(email + course.id).slice(0, 8)` at
- * `lib/models/courseInvitation.js:37`, and `GET /courses/accept/{token}` finds
- * an invitation by exactly that value through `findByToken`. A token made up
- * here would be just as fixed and would prove nothing about the accept route,
- * whereas this one is a pure function of two values this file already fixes -
- * the address and the seeded course id - so it stays deterministic while
- * remaining the token the application would have written.
+ * NOT a derivation, and it cannot be one. `addList` mints the token with
+ * `crypto.randomBytes(32).toString('hex')` at
+ * `lib/models/courseInvitation.js:46` and applies it through `$setOnInsert`, so
+ * a token is 64 characters of CSPRNG output that exists only in the document
+ * MongoDB holds. Nothing outside that document can compute it - which is the
+ * property `GET /courses/accept/{token}` needs, because the token is the only
+ * thing that route looks up by.
  *
- * @param {string} email the invited address, already lowercased
- * @param {string} courseId the 24-character hex course id
- * @returns {string} 8-character lowercase hex
+ * This file therefore FIXES the four tokens it seeds instead of computing them
+ * (see INVITATIONS below) and this function is the address-to-token lookup over
+ * those four. A harness that needs a `/courses/accept/{token}` path for a
+ * seeded invitation gets it here without hard-coding a 64-character literal of
+ * its own; a harness driving an address this file does not seed must read
+ * `token` off the document the application created, because there is no other
+ * source for it.
+ *
+ * An unknown address THROWS rather than returning anything. A helper that
+ * quietly returned undefined, or a plausible-looking value, would put a token
+ * that resolves to no invitation into a request path and the failure would
+ * surface as the accept route's not-found branch - a passing-looking result
+ * that proves nothing. The message names the address, the reason and the four
+ * that are available.
+ *
+ * @param {string} email the invited address; matched case-insensitively
+ * @returns {string} the seeded invitation's fixed 64-character lowercase hex
+ *   token
+ * @throws {Error} If no seeded invitation was issued to that address.
  */
-function invitationToken(email, courseId) {
-  return crypto.createHash('md5').update(email + courseId).digest('hex')
-    .substring(0, 8);
+function invitationToken(email) {
+  var wanted = String(email == null ? '' : email).toLowerCase();
+  var match  = INVITATIONS.filter(function(invitation) {
+    return invitation.email.toLowerCase() === wanted;
+  })[0];
+
+  if (!match) {
+    throw new Error(
+      LOG_PREFIX + 'no seeded invitation for address ' + JSON.stringify(email) +
+      '. Since lib/models/courseInvitation.js:46 mints the token from ' +
+      'crypto.randomBytes, a token for an address this file does not seed is ' +
+      'NOT derivable and must be read off the document the application ' +
+      'created (CourseInvitation.findOne({courseId, email}).token, or the ' +
+      '`token` field of the POST /api/courses/{courseId}/invitations ' +
+      'response). The seeded addresses are: ' +
+      INVITATIONS.map(function(invitation) {
+        return invitation.email;
+      }).join(', ') + '.'
+    );
+  }
+
+  return match.token;
 }
 
 // Derived, then checked against a committed constant. Deriving alone would make
@@ -878,9 +912,22 @@ var FOLDER_TRINKET_KEYS = Object.freeze(['trinketPython', 'trinketHtml']);
 // the seeded course, which is what makes the unique `{courseId, email}` index
 // meaningful here: four documents in one course, distinguished only by address.
 //
-// `token` is DERIVED, through `invitationToken`, for the reason stated there.
+// `token` is FIXED here, and it has to be. `addList` mints the token with
+// `crypto.randomBytes(32).toString('hex')` (lib/models/courseInvitation.js:46),
+// so it is 64 characters of CSPRNG output that no expression outside the stored
+// document can reproduce - the whole point of the change, since the token is
+// the only thing `GET /courses/accept/{token}` looks up by. These four were
+// drawn once from that same CSPRNG and committed, which keeps every harness
+// deterministic while carrying a value of exactly the SHAPE the application now
+// writes: 64 lowercase hex characters. They are fixture values and nothing
+// else - no deployment ever mints one of them, because a real token comes from
+// `randomBytes` at insert time.
+//
+// A fifth address invited through the application during a run therefore gets a
+// token this file cannot state; `invitationToken` above says where to read it.
+//
 // The 'invalid' fixture's address is deliberately not an address -
-// `lib/models/courseInvitation.js:52` writes `status: 'invalid'` for anything
+// `lib/models/courseInvitation.js:83` writes `status: 'invalid'` for anything
 // `validator.isEmail` rejects, and a fixture carrying a valid address with an
 // 'invalid' status would be a state the application never writes.
 var INVITATIONS = Object.freeze([
@@ -888,13 +935,15 @@ var INVITATIONS = Object.freeze([
     key    : 'invitationPending',
     _id    : ids.invitationPending,
     email  : 'parity-invitee-pending@example.com',
-    status : 'pending'
+    status : 'pending',
+    token  : '1366a46cfef7a5ac9881362de94e26b1cd4bc86c738421ebb0ea8e89d296f492'
   }),
   Object.freeze({
     key     : 'invitationSent',
     _id     : ids.invitationSent,
     email   : 'parity-invitee-sent@example.com',
     status  : 'sent',
+    token   : '3cd332c972bd347011a43f410ac97e16addd41fa1fcc193f77901005d442e1a3',
     // Only the 'sent' fixture carries one: `sendInvitationEmail` assigns
     // `sentOn` in the same save that moves the status to 'sent', so the two go
     // together or neither does.
@@ -904,18 +953,20 @@ var INVITATIONS = Object.freeze([
     key    : 'invitationAccepted',
     _id    : ids.invitationAccepted,
     email  : 'parity-invitee-accepted@example.com',
-    status : 'accepted'
+    status : 'accepted',
+    token  : '0771cc5eceb6a7782f2dd2654902d2ea36520c9ab96a5657df12456009189d47'
   }),
   Object.freeze({
     key    : 'invitationInvalid',
     _id    : ids.invitationInvalid,
     email  : 'parity-invitee-invalid-address',
-    status : 'invalid'
+    status : 'invalid',
+    token  : '15a26d2898f836fdaa7ebbaeabc2ccf0a3b2de8984beb51ecf2a505d93121b4b'
   })
 ]);
 
 // The statuses `findUnacceptedByCourse` returns - everything except 'accepted',
-// which is the `$ne` at `lib/models/courseInvitation.js:105`. Recorded here so
+// which is the `$ne` at `lib/models/courseInvitation.js:136`. Recorded here so
 // the self-check states the expected count rather than re-deriving the filter.
 var UNACCEPTED_INVITATION_KEYS = Object.freeze(
   INVITATIONS.filter(function(invitation) {
@@ -1101,16 +1152,19 @@ var fixtures = Object.freeze({
     trinketKeys   : FOLDER_TRINKET_KEYS
   }),
 
-  // Address, status and DERIVED token per invitation, keyed the way `ids` is,
-  // so a harness building a `/courses/accept/{token}` path never hard-codes a
-  // token and never recomputes the md5 itself.
+  // Address, status and FIXED token per invitation, keyed the way `ids` is, so
+  // a harness building a `/courses/accept/{token}` path reads the token from
+  // here instead of hard-coding 64 hex characters of its own - and instead of
+  // trying to compute one, which is no longer possible for any invitation
+  // (lib/models/courseInvitation.js:46 mints it from crypto.randomBytes).
+  // The value is the descriptor's own committed constant; nothing is derived.
   invitations : Object.freeze(INVITATIONS.reduce(function(acc, invitation) {
     acc[invitation.key] = Object.freeze({
       id       : invitation._id,
       courseId : ids.course,
       email    : invitation.email,
       status   : invitation.status,
-      token    : invitationToken(invitation.email, ids.course),
+      token    : invitation.token,
       sentOn   : invitation.sentOn || null
     });
     return acc;
@@ -1712,9 +1766,10 @@ function describeDependency(group, dependency) {
 
   if (group === 'invitations' && dependency === 'course') {
     return 'Every invitation\'s `courseId` is the seeded course, and its token ' +
-           'is md5(email + courseId) (lib/models/courseInvitation.js:37), so ' +
-           'without that course the fixtures point at nothing and ' +
-           'findUnacceptedByCourse has nothing to query.';
+           'is a fixed 64-hex constant rather than a value derived from that ' +
+           'course (lib/models/courseInvitation.js:46 mints tokens from ' +
+           'crypto.randomBytes), so without that course the fixtures point at ' +
+           'nothing and findUnacceptedByCourse has nothing to query.';
   }
 
   if (group === 'interactions' && dependency === 'trinkets') {
@@ -2777,7 +2832,9 @@ async function seedExports(models, summary) {
  * `sendEmails`, which is a class method the controller calls and not something
  * a save triggers - so a saved invitation is byte-for-byte what
  * `lib/models/courseInvitation.js`'s `addList` upsert would have produced, with
- * the same derived token.
+ * a token of the same shape: 64 lowercase hex characters, fixed on the
+ * descriptor because `addList` mints it from `crypto.randomBytes` and no
+ * expression here could reproduce what that call would have returned.
  *
  * All four sit in the seeded course, which is what exercises the unique
  * `{courseId, email}` index the model declares: four documents that differ only
@@ -2801,7 +2858,9 @@ async function seedInvitations(models, summary) {
           _id      : spec._id,
           courseId : ids.course,
           email    : spec.email,
-          token    : invitationToken(spec.email, ids.course),
+          // The descriptor's committed constant, not a computed value: see the
+          // note on INVITATIONS.
+          token    : spec.token,
           status   : spec.status,
           created  : DATES[spec.key]
         };
@@ -3730,8 +3789,8 @@ async function verify(options) {
   //     `GET /courses/accept/{token}` calls and `findUnacceptedByCourse` is what
   //     the invitation list calls, so running those two is what proves a
   //     fixture is reachable the way the application reaches it. A check that
-  //     merely confirmed the document exists would pass while the derived token
-  //     was wrong.
+  //     merely confirmed the document exists would pass while the token the
+  //     descriptor fixes and the token the document carries had drifted apart.
   if (has('invitations')) {
     var invitationKeys = Object.keys(fixtures.invitations);
 
@@ -3751,11 +3810,26 @@ async function verify(options) {
               '\'), which is what decides whether sendInvitationEmail acts on ' +
               'it and whether findUnacceptedByCourse returns it',
               invitationDoc.status === invitationFact.status);
-        check('invitation ' + invitationKeys[i] + '\'s token is the value ' +
-              'md5(email + courseId).slice(0,8) derives, so ' +
-              'GET /courses/accept/{token} addresses it with the token the ' +
-              'application would have written',
+        check('invitation ' + invitationKeys[i] + '\'s token is the fixed ' +
+              '64-hex constant the descriptor commits, so ' +
+              'GET /courses/accept/{token} addresses it with a token of the ' +
+              'shape lib/models/courseInvitation.js:46 now mints',
               invitationDoc.token === invitationFact.token);
+        check('invitation ' + invitationKeys[i] + '\'s token is 64 lowercase ' +
+              'hex characters, the shape ' +
+              'crypto.randomBytes(32).toString(\'hex\') produces, and not the ' +
+              '8-character md5 prefix that preceded it',
+              /^[0-9a-f]{64}$/.test(invitationDoc.token));
+        check('invitation ' + invitationKeys[i] + '\'s token is NOT ' +
+              'md5(email + courseId).slice(0,8), which is what made it ' +
+              'derivable from two public values',
+              invitationDoc.token !== crypto.createHash('md5')
+                .update(invitationFact.email + ids.course).digest('hex')
+                .substring(0, 8));
+        check('invitationToken(' + invitationFact.email + ') returns that ' +
+              'same token, so the exported lookup and the seeded document ' +
+              'cannot drift apart',
+              invitationToken(invitationFact.email) === invitationDoc.token);
       }
 
       var byToken = await loadModels().CourseInvitation
@@ -3797,7 +3871,7 @@ async function verify(options) {
             unaccepted.length + ')',
             unaccepted.length === fixtures.unacceptedInvitationKeys.length);
       check('the accepted invitation is excluded from that result, which is ' +
-            'the $ne filter at lib/models/courseInvitation.js:105',
+            'the $ne filter at lib/models/courseInvitation.js:136',
             !unaccepted.some(function(doc) {
               return String(doc.id) === ids.invitationAccepted;
             }));
@@ -3815,6 +3889,36 @@ async function verify(options) {
           }).filter(function(email, index, all) {
             return all.indexOf(email) === index;
           }).length === INVITATIONS.length);
+    check('the four invitations carry four DISTINCT tokens, because each is a ' +
+          'capability for one address and findByToken resolves exactly one ' +
+          'document',
+          Object.keys(fixtures.invitations).map(function(key) {
+            return fixtures.invitations[key].token;
+          }).filter(function(token, index, all) {
+            return all.indexOf(token) === index;
+          }).length === INVITATIONS.length);
+    check('invitationToken matches a seeded address case-insensitively, the ' +
+          'way addList lowercases what it stores',
+          invitationToken(
+            fixtures.invitations.invitationPending.email.toUpperCase()
+          ) === fixtures.invitations.invitationPending.token);
+
+    // The other half of that contract: an address this file does not seed has
+    // no derivable token any more, so the lookup must FAIL rather than hand a
+    // harness a value that resolves to no invitation.
+    var unseededThrew = false;
+
+    try {
+      invitationToken('parity-invitee-not-seeded@example.com');
+    }
+    catch (unseededError) {
+      unseededThrew = /NOT derivable/.test(unseededError.message);
+    }
+
+    check('invitationToken throws for an address this file does not seed, ' +
+          'because a randomBytes token exists only in the document the ' +
+          'application wrote',
+          unseededThrew);
   }
 
   // 14. The interactions, and the per-trinket counts the interactions route
@@ -4229,10 +4333,12 @@ module.exports = {
   exportFilename   : exportFilename,
   sha1Hex          : sha1Hex,
 
-  // The invitation token, derived the way lib/models/courseInvitation.js
-  // derives it, so a harness building a /courses/accept/{token} path for an
-  // address this file does not seed still gets the value the application would
-  // have written.
+  // The invitation token of a SEEDED invitation, looked up by address. Kept on
+  // the export surface because the export list in this file's header is a
+  // documented contract, but its meaning changed with
+  // lib/models/courseInvitation.js:46: a token is now 64 characters of
+  // crypto.randomBytes output, so it is NOT derivable, and an address this file
+  // does not seed throws here instead of yielding a plausible-looking value.
   invitationToken  : invitationToken,
   isJsonFileArray  : isJsonFileArray,
   VOLATILE_FIELDS  : VOLATILE_FIELDS,

@@ -16,40 +16,7 @@
   `flash.payload` rendered on the very request that consumes them, instead of
   302-ing to a 404 that leaves the flash to be mis-attributed to the visitor's
   next visit.
-
-  Field errors: the server flashes joi's own developer-facing message per field
-  (lib/util/routeParser.js runValidation -> `flash.validation.<field>`). The
-  macro below is presentation only - it maps that message onto copy an end user
-  can act on and leaves the flash itself untouched - and every chain in it ends
-  in a generic fallback so no unmapped message can reach the page verbatim.
-
-  `label`       names the field in the sentence, lower case, mid-sentence.
-  `minLength` / `maxLength` are the schema's own bounds; pass 0 where the schema
-              declares none, and the corresponding branch degrades to copy that
-              states no number.
-  `patternHint` is the copy for a regex failure - joi's own message for that case
-              echoes the submitted value back, which for the password field would
-              print the password into the page.
-  `invalidHint` is the copy for joi `.invalid(...)`, which on `username` is the
-              reserved-name list [config/reserved.yaml].
 #}
-{% macro validationMessage(message, label, minLength, maxLength, patternHint, invalidHint) %}
-{%- if "is not allowed to be empty" in message or "is required" in message -%}
-Please enter your {{ label }}.
-{%- elif "length must be at least" in message -%}
-{% if minLength %}Please use at least {{ minLength }} characters for your {{ label }}.{% else %}Please enter your {{ label }}.{% endif %}
-{%- elif "length must be less than or equal" in message -%}
-{% if maxLength %}Please use {{ maxLength }} characters or fewer for your {{ label }}.{% else %}Please use a shorter {{ label }}.{% endif %}
-{%- elif "must be a valid email" in message -%}
-Please enter a valid email address.
-{%- elif "contains an invalid value" in message -%}
-{{ invalidHint }}
-{%- elif "fails to match the required pattern" in message -%}
-{{ patternHint }}
-{%- else -%}
-Please check your {{ label }} and try again.
-{%- endif -%}
-{% endmacro %}
 <div class="auth-page-wrapper">
   <div class="row">
     <div class="medium-8 medium-offset-2 small-12 columns">{% if flash.failure.message %}
@@ -109,10 +76,31 @@ Please check your {{ label }} and try again.
         <input type="hidden" value="signup" name="formName">
         <label
           {% if flash.validation.fullname %}class="error"{% endif %}>Full Name
-          <input type="text" name="fullname" value="{{ flash.payload.fullname }}" placeholder="What's your name?" maxlength="50" required/>
+          {#
+            `autocomplete="name"` is the right token here because this is
+            one field holding a person's own complete name, which is what
+            the label and the placeholder both ask for. The granular
+            `given-name`/`additional-name`/`family-name` tokens describe
+            a name split across several controls, and either of them here
+            would have a browser fill a fragment into a field the server
+            stores whole [lib/models/user.js:11 `fullname`].
+
+            On a rejected round trip the control is marked invalid and
+            pointed at the message that rendered below it, so a screen
+            reader announces the reason at the field instead of leaving it
+            to be found. `class="input-error"` travels with `aria-invalid`
+            deliberately: the visible error border keys off that class
+            alone [static/scss/_forms.scss:36-48], so the attribute on its
+            own would leave this control invalid to assistive technology
+            and unchanged to everyone else.
+          #}
+          <input type="text" name="fullname" value="{{ flash.payload.fullname }}" placeholder="What's your name?" maxlength="50"
+                 autocomplete="name"
+                 {% if flash.validation.fullname %}class="input-error" aria-invalid="true" aria-describedby="signup-fullname-error"{% endif %}
+                 required/>
         </label>
         {% if flash.validation.fullname %}
-          <small class="error">{{ validationMessage(flash.validation.fullname, 'full name', 0, 50, 'Please use letters, numbers and ordinary punctuation in your full name.', 'That name cannot be used. Please enter a different one.') }}</small>
+          <small class="error" id="signup-fullname-error" role="alert">{{ flash.validation.fullname }}</small>
         {% endif %}
       </div>
     </div>
@@ -121,13 +109,36 @@ Please check your {{ label }} and try again.
       <div class="medium-6 medium-offset-3 small-10 small-offset-1 columns">
         <label
           {% if flash.validation.username %}class="error"{% endif %}>Username
-          <input type="text" name="username" value="{{ flash.payload.username }}" placeholder="Choose a username" minlength="3" maxlength="20" required/>
+          {#
+            `autocomplete="username"` is the account name the user is
+            choosing for this site, which is the token a password manager
+            reads to store the handle beside the credential the password
+            control below is generating. `nickname` names a display name
+            that is not an identifier, and would be offered outside the
+            saved-login group; this value IS the identifier - it is what
+            `POST /login` accepts in place of an address, through the
+            `$or` lookup on email and username in
+            [lib/models/user.js:96-103 findByLogin], called from
+            [lib/controllers/users.js:230].
+
+            Two different rejections reach this control - a schema
+            violation and a name already taken - and each renders its own
+            message, so the control describes itself with whichever one is
+            on the page, the same two-arm shape the email control uses.
+            `class="input-error"` accompanies `aria-invalid` in both arms
+            because the error border keys off the class only
+            [static/scss/_forms.scss:36-48].
+          #}
+          <input type="text" name="username" value="{{ flash.payload.username }}" placeholder="Choose a username" minlength="3" maxlength="20"
+                 autocomplete="username"
+                 {% if flash.validation.username %}class="input-error" aria-invalid="true" aria-describedby="signup-username-error"{% elif flash.duplicates.username %}class="input-error" aria-invalid="true" aria-describedby="signup-username-duplicate"{% endif %}
+                 required/>
         </label>
         {% if flash.validation.username %}
-          <small class="error">{{ validationMessage(flash.validation.username, 'username', 3, 20, 'Usernames must begin with a letter and may contain letters, numbers, hyphens (-) and underscores (_).', 'That username is reserved for the site, so it cannot be used. Please choose another one.') }}</small>
+          <small class="error" id="signup-username-error" role="alert">{{ flash.validation.username }}</small>
         {% endif %}
         {% if flash.duplicates.username %}
-          <small class="error">That username is already taken. Please choose another one.</small>
+          <small class="error" id="signup-username-duplicate" role="alert">That username is already taken. Please choose another one.</small>
         {% endif %}
       </div>
     </div>
@@ -152,7 +163,7 @@ Please check your {{ label }} and try again.
                  required/>
         </label>
         {% if flash.validation.email %}
-          <small class="error" id="signup-email-error" role="alert">{{ validationMessage(flash.validation.email, 'email address', 0, 254, 'Please enter a valid email address.', 'That email address cannot be used. Please use a different one.') }}</small>
+          <small class="error" id="signup-email-error" role="alert">{{ flash.validation.email }}</small>
         {% endif %}
         {% if flash.duplicates.email %}
           <small class="error" id="signup-email-duplicate" role="alert">An account already exists with this email{% if emailEnabled %}, need to <a href='/forgot-pass'>recover your password?</a>{% endif %}</small>
@@ -179,7 +190,7 @@ Please check your {{ label }} and try again.
                  required/>
         </label>
         {% if flash.validation.password %}
-          <small class="error" id="signup-password-error" role="alert">{{ validationMessage(flash.validation.password, 'password', 3, 0, 'Passwords may contain letters, numbers, spaces and ordinary punctuation only.', 'That password cannot be used. Please choose a different one.') }}</small>
+          <small class="error" id="signup-password-error" role="alert">{{ flash.validation.password }}</small>
         {% endif %}
       </div>
     </div>

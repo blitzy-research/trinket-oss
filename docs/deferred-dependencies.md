@@ -190,8 +190,8 @@ advisories in the four `serverside/*/manager` graphs, which are deferred in plac
 
 `marked` is a **fourteenth** deferred production package. Because retaining it is an approved deviation
 from the request's audit gate rather than an ordinary application of the rule above, it is recorded in
-[§4.2](#42-deviation-2--the-marked-fork-is-retained) instead of in this list — with its consumer, its
-version and its reasoning in the same form.
+[§4.2](#42-deviation-2--the-marked-fork-is-retained) instead of in this list — with **both** of its
+shipped consumers, its version and its reasoning in the same form.
 
 ### 2.1 `aws-sdk` 2.1693.0
 
@@ -206,7 +206,7 @@ version and its reasoning in the same form.
 `[T lib/workers/exports.js:527]`; `getObject` at `[T lib/util/file.js:83]`,
 `[T lib/util/file.js:200]` and `[T lib/workers/exports.js:70]`; `deleteObject` at
 `[T lib/util/file.js:143]`; `getSignedUrl` at `[T lib/controllers/users.js:1466]` — plus the one
-`AWS.config.update()` at `[T config/aws.js:8]`. Seven `new aws.S3()` client constructions sit across
+`AWS.config.update()` at `[T config/aws.js:60]`. Seven `new aws.S3()` client constructions sit across
 the same three modules.
 
 **This entry required a decision rather than a deferral, and the reason is the "warning-free" clause
@@ -254,7 +254,7 @@ contradicted R-a.
 suppression is set in `config/aws.js`, where the SDK is constructed:
 
 ```javascript
-// [T config/aws.js:4-6]
+// [T config/aws.js:5-7]
 // Suppress the SDK v2 end-of-support NOTE. The flag is read from a `setTimeout(..., 0)`
 // the SDK schedules as it loads, so it takes effect only while set synchronously here.
 require('aws-sdk/lib/maintenance_mode_message').suppress = true;
@@ -282,9 +282,29 @@ suppress the notice on 2.1693.0, the fallback was to record it as the single per
 with its exact text, matched literally so the gate stayed mechanical. It is not in force: the gate
 asserts the absence of the notice, not an allowance for it.
 
+**A second notice from this same retained package, on the request path, and it is not the
+maintenance NOTE.** Everything above concerns the end-of-support `NOTE` the SDK emits as it loads.
+There was a second, separate notice from the same package, and it was invisible to a boot check
+because it needs a *client*: under `node --pending-deprecation --trace-deprecation`, the first
+request that constructed an S3 client printed `[DEP0169] DeprecationWarning: url.parse()...`, from
+`AWS.util.urlParse` at `node_modules/aws-sdk/lib/util.js:59-61` — reached by `new AWS.Endpoint`
+during every `new aws.S3()`, and again by `getSignedUrl`'s query signer. The suppression flag above
+neither addressed it nor could have: they are different mechanisms with different sources. It is
+inside the gate for the same reason this entry exists at all — AAP §0.9.3's pass condition covers
+"any dependency this plan retains", and the "warning-free" clause in [§1](#1-the-deferral-rule) is
+the clause this whole entry rests on — so it was **closed at its source rather than recorded as
+accepted**: `[T config/aws.js:58]` assigns this repository's own `parseLegacy` (`lib/util/url.js`,
+written under AAP rule T-5) over that one seam, before any client is constructed. Measured 1 → 0
+notices with the built `getObject` request and both presigned URLs **byte-identical** with and
+without the line, nothing suppressed and no allowance added to
+`test/parity/warning-policy.js`, whose `ALLOWANCES` stays empty. The frame-by-frame attribution, the
+route mapping, the exposure bound and the full measurement table are in
+[`baseline-parity.md`](baseline-parity.md) §8.1. Like the suppression above, that line is a
+consequence of retaining v2 and is retired by the migration in [§3.1](#31-aws-sdk-v2--v3).
+
 **Residual risk.** The moderate rating is inherited rather than intrinsic. The SDK's own advisory is
 **low** — GHSA-j965-2qgj-vjmq, advising that v2 users validate the `region` parameter value or migrate
-to v3 — and `region` here is supplied from committed configuration at `[T config/aws.js:11]`, not from
+to v3 — and `region` here is supplied from committed configuration at `[T config/aws.js:63]`, not from
 request input. The moderate comes via the transitive `uuid` finding in
 [§5](#5-audit-result). The substantive risk in deferring v2 is not this advisory but the absence of
 future security patches, which is what [§3.1](#31-aws-sdk-v2--v3) exists to keep visible.
@@ -938,6 +958,11 @@ gate it, so that a future team can pick it up without re-deriving the analysis.
   change to how bytes reach the SDK must be proven not to change the digest: a changed key silently
   orphans every stored object with no error. The worker harness additionally covers the export
   upload and download paths.
+- **Two lines it retires.** Both compensations `config/aws.js` carries exist only because v2 does:
+  the end-of-support `NOTE` suppression, and the `AWS.util.urlParse` substitution that stops the SDK
+  emitting `[DEP0169]` on the request path ([§2.1](#21-aws-sdk-216930)). v3 emits neither, so this
+  migration deletes both rather than porting them — which is the check that they were compensations
+  and not application behaviour.
 - **The real reason to do it.** Not the advisory — the absence of future security patches for an
   end-of-support SDK.
 
@@ -1109,9 +1134,9 @@ applying one principle consistently, not of applying two.
 
 | | |
 |---|---|
-| **Package** | `marked`, a **private Git dependency** declared `git+https://github.com/trinketapp/marked.git` at `[T package.json:36]`, resolving to a fork of upstream **0.3.2** at commit `55ea824` |
-| **Consumer** | `[T lib/shared/trinket-markdown.js:1]`, the sole `require('marked')`. That module's sole requirer is `[T lib/controllers/courses.js:18]`, which renders authored course content |
-| **Finding** | **high** — range `<= 4.0.9`, `fixAvailable: false`. Eight advisories, of which four are high, the governing one being ReDoS in the inline-token regexes |
+| **Package** | `marked`, a **private Git dependency** declared `git+https://github.com/trinketapp/marked.git` at `[T package.json:dependencies."marked"]`, resolving to a fork of upstream **0.3.2** at commit `55ea824` |
+| **Consumers** | **Two shipped copies of the same bytes**, enumerated in full below. **Server:** `[T lib/shared/trinket-markdown.js:1]`, the sole `require('marked')`; its sole requirer is `[T lib/controllers/courses.js:20]`, which renders authored course content. **Browser:** `[T public/components/marked/lib/marked.js]`, byte-identical, `<script src>`-loaded and called at `[T public/js/trinket-markdown.js:449]` |
+| **Finding** | **high** — range `<= 4.0.9`, `fixAvailable: false`. **Eight** advisories, of which **four are high** and all four are ReDoS at CVSS 7.5; the four moderates split **one ReDoS and three content injection**. Every one is enumerated by ID, severity, CVSS, range and class below |
 | **Decision** | **Retained.** The residual high is a named, justified deviation from the request's audit gate |
 
 **Why the fork exists.** Upstream 0.3.2's `sanitize` option is a boolean. The fork makes it accept a
@@ -1183,16 +1208,82 @@ change the runtime without changing behaviour cannot rationally choose the first
 
 #### The exposure, stated so a reader can judge it independently
 
-The residual risk is **ReDoS** — a crafted input causing catastrophic regex backtracking and consuming
-CPU — through the eight advisories on `marked <= 4.0.9`.
+The residual risk is **two classes of exposure, not one**, and each is accepted on its own grounds.
+All eight advisories that `npm audit --omit=dev` reports against this package are enumerated below,
+and **every one of their affected ranges covers the delivered 0.3.2**. Read from
+`npm audit --omit=dev --json`, one row per `vulnerabilities.marked.via[]` entry, with the CVSS taken
+from each entry's `cvss.score` and *none published* recorded where its `cvss.vectorString` is `null`
+(**probe**):
 
-What bounds it:
+| Advisory | Title, as the advisory states it | Severity | CVSS | Affected range | Class |
+|---|---|---|---|---|---|
+| `GHSA-x5pg-88wf-qq4p` | Regular Expression Denial of Service in marked | **high** | **7.5** | `< 0.3.9` | ReDoS |
+| `GHSA-hjcp-j389-59ff` | Regular Expression Denial of Service in marked | **high** | **7.5** | `< 0.3.4` | ReDoS |
+| `GHSA-rrrm-qjm4-v8hf` | Inefficient Regular Expression Complexity in marked | **high** | **7.5** | `< 4.0.10` | ReDoS |
+| `GHSA-5v2h-r2cx-5xgj` | Inefficient Regular Expression Complexity in marked | **high** | **7.5** | `< 4.0.10` | ReDoS |
+| `GHSA-p9wx-2529-fp83` | Marked allows Regular Expression Denial of Service (ReDoS) attacks | moderate | none published | `< 0.3.17` | ReDoS |
+| `GHSA-7px7-7xjx-hxm8` | Marked vulnerable to XSS from data URIs | moderate | 6.1 | `< 0.3.7` | **content injection** |
+| `GHSA-vfvf-mqq8-rwqc` | Sanitization bypass using HTML Entities in marked | moderate | 6.1 | `< 0.3.6` | **content injection** |
+| `GHSA-cfjh-p3g4-3q2f` | VBScript Content Injection in marked | moderate | none published | `< 0.3.3` | **content injection** |
+
+**Five ReDoS — the four highs among them, every one at 7.5 — and three content injection, all
+moderate.** The aggregate figures this section has always carried are unchanged by that split: eight
+advisories, four of them high, `fixAvailable: false`, and the fork is upstream 0.3.2 at `55ea824`.
+What changes is the **characterisation**. An earlier revision of this section attributed **all eight**
+to ReDoS, and that was wrong in a way that matters rather than a wording slip: **a ReDoS argument does
+not transfer to content injection.** ReDoS bounds a CPU denial of service reached from authored input,
+and every bullet that bounds it argues from *who authors the input*. Content injection is not about
+the author — it threatens every **viewer** of a rendered page. And one of the three,
+`GHSA-vfvf-mqq8-rwqc`, is a bypass of the **`sanitize`-as-function hook that is the only reason this
+fork exists** `[T lib/shared/trinket-markdown.js:211-212]`, so it lands on the exact mechanism the
+retention is argued from. The two classes are therefore accepted separately, below.
+
+**The surface is two shipped copies of the same bytes, in two execution contexts.** An earlier
+revision of this section stated that "the consumer surface is one module … the exposure has exactly
+one entry point to reason about or to guard". That is true of `require('marked')` and false of the
+delivery, and it is the second correction this section carries — the digests are **probe**, the call
+sites and template references **static**:
+
+| | Server copy | Browser copy |
+|---|---|---|
+| Path | `node_modules/marked/lib/marked.js` | `[T public/components/marked/lib/marked.js]` |
+| `md5sum` | `3832ae05c6c7273db807ddacd97ebf20` | `3832ae05c6c7273db807ddacd97ebf20` — **byte-identical to the server copy** |
+| How it arrives | `npm ci`, from the Git declaration in `package.json` | `node scripts/fetch-components.js`, inside the SHA-256-verified component bundle |
+| Entry point | `[T lib/shared/trinket-markdown.js:1]` requires it; `[T lib/controllers/courses.js:20]` requires that module and calls it at exactly one site, `[T lib/controllers/courses.js:407]` | `[T public/js/trinket-markdown.js:449]` calls `marked(src)`; the same file patches `marked.Renderer.prototype.code`, `.image` and `.link` at `:424-426` and `.listitem` at `:436` |
+| When it runs | inside the `download` handler `[T lib/controllers/courses.js:236]` | in the reader's browser, on every page view that renders course material |
+| Where its output goes | HTML rendered into a downloadable course archive | `$sce.trustAsHtml` at `[T public/js/classPage/app.js:257]` — also `[T public/js/courseEditor/controllers/root.js:741,1139,1188]` and `[T public/js/courseEditor/controllers/dashboardControl.js:129]` — then `ng-bind-html` at `[T lib/views/classes/view.html:105]` |
+| How it is reached | one server handler | `[T config/default.yaml:72]` lists `/components/marked/lib/marked.js` in the `app.assets.jsbody` set, which `[T lib/views/base.html:411]` iterates into a `<script src>` for every page built from that layout; **nine** embed templates load it explicitly as well — `[T lib/views/embed/python.html:168]`, `python3.html:117`, `html.html:104`, `R.html:113`, `java.html:91`, `blocks.html:125`, `pygame.html:128`, `glowscript.html:357`, `glowscript-blocks.html:201`. Both are served from `./public` by the catch-all static directory route `[T lib/util/routeParser.js:1046-1056]` and the cache-prefixed asset route `[T lib/util/routeParser.js:1008-1019]` |
+
+**Two blind spots follow from that, and both bind whoever maintains this record.**
+
+1. **`npm audit` does not see the browser copy.** Its reported node set for this package is exactly
+   `["node_modules/marked"]`, so the single high in [§5](#5-audit-result) counts the **server** copy
+   alone; it is not a figure that would change if the browser copy were removed or if a second one
+   were added. Scanning the built **image** instead of the dependency graph does see both: trivy
+   reports `marked` 0.3.2 at two distinct paths,
+   `usr/local/node/trinket/node_modules/marked/package.json` and
+   `usr/local/node/trinket/public/components/marked/package.json`, each carrying the same four HIGH
+   CVEs, which are the four highs above under their CVE identifiers — `CVE-2015-8854`
+   (`GHSA-hjcp-j389-59ff`), `CVE-2017-16114` (`GHSA-x5pg-88wf-qq4p`), `CVE-2022-21680`
+   (`GHSA-rrrm-qjm4-v8hf`) and `CVE-2022-21681` (`GHSA-5v2h-r2cx-5xgj`), the pairing read from each
+   entry's own advisory reference. That scan is filtered to `CRITICAL,HIGH`, so **four** per path is
+   what the filter admits and not a second opinion on the advisory count; what it independently
+   establishes is **how many places the package ships**. The scan, its command and its counts are
+   recorded in [`dependency-inventory.md`](dependency-inventory.md) §6.7.
+2. **`git` does not see it either.** `public/components` is gitignored `[T .gitignore:4]` and
+   `git ls-files public/components` returns **0** files (**probe**), so the browser copy appears in no
+   diff, no review and no `git grep` over the checkout. It enters the image from the pinned component
+   archive, which is why the follow-up below has to name that archive explicitly.
+
+**The accepted exposure, class 1 — ReDoS.** What bounds it:
 
 - **The input is authored, not anonymous.** The parse path is course content written by **course
-  creators**, reached through a single consumer at `[T lib/controllers/courses.js:18]`. It is not an
-  anonymous public submission endpoint, so an attacker needs course-authoring access.
-- **The consumer surface is one module.** `[T lib/shared/trinket-markdown.js]` is the only module that
-  requires `marked`, so the exposure has exactly one entry point to reason about or to guard.
+  creators**, reached on the server through a single consumer at `[T lib/controllers/courses.js:20]`.
+  It is not an anonymous public submission endpoint, so an attacker needs course-authoring access.
+- **On the server the parse has one entry point.** `[T lib/shared/trinket-markdown.js]` is the only
+  module that requires the npm copy, and `[T lib/controllers/courses.js:407]` is its only call site,
+  so the server-side exposure has exactly one place to reason about or to guard. **That statement does
+  not extend past the server**, which is the whole point of the table above.
 
 What does **not** bound it, stated so the risk is not understated:
 
@@ -1200,9 +1291,55 @@ What does **not** bound it, stated so the risk is not understated:
   reach the parser.
 - ReDoS is a **denial-of-service against the Node process**, which is single-threaded; a successful
   input degrades or stalls the server for **all** users, not only the author's own session.
+- The same crafted input is also parsed **in the browser**, by the identical bytes, on the ordinary
+  course-material view. So one payload has two impacts of different shapes: a stalled server process
+  on the archive path, and a stalled rendering tab for every **reader** of that material. Neither
+  bound above touches the second one.
 - There is **no fix available** (`fixAvailable: false`), so this does not resolve by waiting, and it
   will not be cleared by a routine dependency refresh.
 - Eight advisories are involved, four of them high. The retained fork predates all of them.
+
+**The accepted exposure, class 2 — content injection.** Accepted on different and weaker terms, which
+is why it is stated separately rather than folded into the bullets above.
+
+- **Who is threatened.** Not the process — the **reader**. A content-injection vector in rendered
+  course material executes, or attempts to execute, in the browser of whoever opens that material:
+  students in a class, and anyone holding an embed URL. The author is the attacker in this class, not
+  the victim, so "the input is authored" bounds nothing here.
+- **Which sink each vector reaches**, read from the live-loaded source (**static**; the byte-identical
+  server copy carries the same lines):
+  - **data URIs** (`GHSA-7px7-7xjx-hxm8`) — `Renderer.prototype.link`
+    `[T public/components/marked/lib/marked.js:864]` gates on `this.options.sanitize` and its protocol
+    denylist tests **`javascript:` only** `[T public/components/marked/lib/marked.js:873]`, then
+    interpolates `href` into the tag **unescaped** at `:877`. `Renderer.prototype.image` at `:885` has
+    **no sanitize block at all** and interpolates `href` straight into `src` at `:886`. So both
+    `<a href="data:text/html;base64,…">` and `<img src="data:text/html;base64,…">` survive the parser,
+    and the application then adds `target="_blank"` to the anchor at
+    `[T public/js/trinket-markdown.js:417]`.
+  - **VBScript** (`GHSA-cfjh-p3g4-3q2f`) — the same denylist block. Upstream later added a
+    `vbscript:` test beside the `javascript:` one; this fork predates that, so
+    `<a href="vbscript:…">` survives.
+  - **the HTML-entity sanitization bypass** (`GHSA-vfvf-mqq8-rwqc`) — the `sanitize` function hook
+    itself, `[T lib/shared/trinket-markdown.js:211-212]`, i.e. the fork's own reason for existing.
+- **What the residual rests on: browser behaviour, and nothing this application does.** **No
+  Content-Security-Policy is served** — `grep -rin content-security-policy` over `lib/`, `config/` and
+  `app.js` returns **0** hits (**probe**) — so no header constrains what the injected markup may do.
+  On the browser path AngularJS's `$sanitize` is **deliberately bypassed**: the rendered HTML is
+  handed through `$sce.trustAsHtml` precisely so that `ng-bind-html` inserts it unfiltered, which is
+  the behaviour the course-material feature is built on. The markup the parser emits therefore reaches
+  the DOM as written.
+- **Measured, and reported as measured: this is not a demonstrated live XSS.** Two of the three
+  vectors manifest in delivered output: `<a target="_blank" href="data:text/html;base64,…">` and
+  `<a target="_blank" href="vbscript:msgbox(1">` were both present in the live DOM on the
+  application's own origin, together with `<img src="data:text/html;base64,…">`. Both anchor
+  navigations were then **refused by the browser's own mitigations** on genuine trusted clicks
+  (`Not allowed to navigate top frame to data URL`, `Not allowed to launch 'vbscript:…'`); the
+  `data:` image decoded in image context and did not execute; and the entity-bypass advisory did
+  **not** manifest at all, because entities are correctly escaped. **What has to be said alongside that is
+  that no layer of this application contributed to the safe outcome.** It is a property of the client
+  that renders the content, not of the delivery, and it is not a control this record can lean on: it
+  holds for exactly as long as every reader's browser refuses those navigations, and no longer. It is
+  recorded here neither as an exploited vulnerability nor as a harmless one.
 
 #### The named follow-up that would close this deviation
 
@@ -1215,6 +1352,19 @@ satisfied by supported extension points. `[T lib/shared/trinket-markdown.js]` an
 `highlight.js` question in [§2.4](#24-highlightjs-9185) belong to that same piece of work, since both
 consumers live in that file.
 
+**The follow-up has to reach both shipped copies, and that is a consequence of the correction above
+rather than an extension of the decision.** A rebase that lands only in `package.json` and
+`node_modules` clears the audit figure and **leaves the live browser renderer exactly as it is** — the
+component bundle is a separately pinned artifact fetched by `scripts/fetch-components.js`, so it does
+not follow a manifest change. Closing this deviation therefore also means republishing that bundle
+with the rebased parser and re-pinning its SHA-256 in that script, and driving the rendering-parity
+corpus through `[T public/js/trinket-markdown.js]` — which patches the same three renderer prototypes
+plus `.listitem`, and calls the parser as a function — as well as through the server module. Until
+both copies move, the content-injection class stated above is unchanged whatever the audit figure
+says. Serving a Content-Security-Policy is **not** part of this closure and is not claimed by it: it
+would narrow the content-injection class and would not touch the ReDoS class, and it is a
+response-header change on every route, outside this migration's scope.
+
 **This is a decision, not a placeholder.** The follow-up is what would close the deviation; the
 deviation is not conditional on it being scheduled.
 
@@ -1223,12 +1373,19 @@ deviation is not conditional on it being scheduled.
 Retaining the fork has three consequences that are recorded consistently everywhere they appear:
 
 1. **`lib/shared/trinket-markdown.js` is out of scope and unchanged** — verified: `git diff` against
-   `2f8712a` for that path is empty.
+   `2f8712a` for that path is empty. The browser half of the surface is unchanged on the same terms:
+   `git diff` against `2f8712a` for `public/js/trinket-markdown.js` is likewise empty, and
+   `public/components/**` is a fetched artifact this migration does not modify — both out of scope by
+   AAP §0.2.2, which is why the correction recorded above is a documentation correction and not a
+   renderer change.
 2. **`highlight.js` stays at 9.18.5** and is deferred on its **own** moderate-only grounds
    ([§2.4](#24-highlightjs-9185)). It is not a consequence of this decision, and the two are decoupled;
    the only thing they share is the file their consumers live in.
 3. **The audit result is 1 high, with that high named and attributed** to `marked`
    ([§5](#5-audit-result)), and the gate is reported as **not met** ([§6](#6-the-stated-gate-is-not-met)).
+   That figure counts the **server** copy, which is the whole of what `npm audit` can see; the
+   browser copy carries the identical advisories and is recorded above and in the image scan in
+   [`dependency-inventory.md`](dependency-inventory.md) §6.7 rather than in this figure.
 
 ## 5. Audit result
 
@@ -1252,8 +1409,8 @@ The seven remaining findings, each attributed to a named package with its risk n
 
 | Package | Severity | Direct | Advisory | Why it is retained | Risk note |
 |---|---|---|---|---|---|
-| `marked` | **high** | yes | 8 advisories, range `<= 4.0.9`; governing one is ReDoS in the inline-token regexes. `fixAvailable: false` | The approved deviation in [§4.2](#42-deviation-2--the-marked-fork-is-retained) — no upgrade preserves the rendered output | ReDoS over course-creator-authored markdown through one consumer; a successful input stalls the single-threaded process for all users. No fix available |
-| `aws-sdk` | moderate | yes | Own advisory is **low** (GHSA-j965-2qgj-vjmq, `region` parameter validation); the moderate rating arrives via `uuid` | v3 is a storage-layer rewrite outside R-a ([§3.1](#31-aws-sdk-v2--v3)) | `region` comes from committed configuration at `[T config/aws.js:11]`, not from request input, so the low advisory has no request-reachable path. The real risk is the absence of future patches for an end-of-support SDK |
+| `marked` | **high** | yes | 8 advisories, range `<= 4.0.9`; the four highs are ReDoS in the inline-token regexes at CVSS 7.5, and the four moderates are one further ReDoS and three content injection. `fixAvailable: false` | The approved deviation in [§4.2](#42-deviation-2--the-marked-fork-is-retained) — no upgrade preserves the rendered output | Two classes, accepted separately in [§4.2](#42-deviation-2--the-marked-fork-is-retained). ReDoS over course-creator-authored markdown; a successful input stalls the single-threaded process for all users. Content injection threatens **readers** of rendered course material, and the residual there rests on browser behaviour with no CSP served. The audited node set is `node_modules/marked` alone, while a **byte-identical** copy also ships to browsers as `public/components/marked/lib/marked.js`, so this row's single high is the server copy only. No fix available |
+| `aws-sdk` | moderate | yes | Own advisory is **low** (GHSA-j965-2qgj-vjmq, `region` parameter validation); the moderate rating arrives via `uuid` | v3 is a storage-layer rewrite outside R-a ([§3.1](#31-aws-sdk-v2--v3)) | `region` comes from committed configuration at `[T config/aws.js:63]`, not from request input, so the low advisory has no request-reachable path. The real risk is the absence of future patches for an end-of-support SDK |
 | `bull` | moderate | yes | No own advisory; the finding arrives entirely via `uuid` | Already moved to 4.16.5 by the inventory; the residual is transitive and no further bump clears it | Bounded by the `uuid` note below. The queue is internal and not driven by request input |
 | `highlight.js` | moderate | yes | GHSA-7wwv-vh3v-89cq, ReDoS across multiple grammars, range `9.0.0 - 10.4.0` | Moderate-only, so the triage rule defers it; an upgrade also changes token classes ([§2.4](#24-highlightjs-9185)) | ReDoS on the same authored-content path as `marked`, reached only for fenced code blocks in a language `hljs` recognises |
 | `jszip` | moderate | yes | GHSA-jg8v-48h5-wgxg (prototype pollution) and GHSA-36fh-84j7-cv5h (path traversal via `loadAsync`), range `<= 3.7.1` | Moderate-only ([§2.5](#25-jszip-360)) | Four delivered call sites: two **construct** archives, and two **read** one with `loadAsync` on `request.payload.zipCode` at `[T lib/controllers/trinket.js:1241]` and `[T lib/controllers/trinket.js:1336]`, so both advisories are reachable from request input. The fix is 3.10.1, inside the same major, which the moderate-only triage rule does not authorise |
@@ -1328,7 +1485,7 @@ set; these are the six that bear on the deferred set.
 | 1 | 6 moderate findings, including `mongoose` | **6 moderate**, `mongoose` among them — after the correction below | Resolved, not a disagreement. An interim delivery measured **5** because lockfile regeneration had floated `mongoose` 6.13.9 → 6.13.11 inside its unchanged `^6.0.0` declaration, and 6.13.11 is outside the `< 6.13.10` advisory range. The float was reverted rather than reported: the resolution is pinned back to 6.13.9, the advisory is listed in [§5](#5-audit-result), and the figure agrees with the plan again ([§2.2](#22-mongoose-6139)) |
 | 2 | `mongoose` 6.13.9 | **6.13.9** | Was 6.13.11 by caret float in an interim delivery; corrected. The declaration remains `^6.0.0`, so a future `npm install` will float it again unless the lockfile entry is re-checked |
 | 2a | `archiver` deferred at 2.1.1 with no residual finding | **moved 2.1.1 → 7.0.1 and off this list**, with both shortfalls closed at source | Substantive, and the largest correction in this document. The deferral was measured on the advisory axis alone, where it was right and stays right — no advisory qualifies this package at either version. Measurement on the other axes then found two failures on Node 22: `DEP0005` at module scope, and zero crc32 and zero uncompressed size in every deflated entry, which the delivered `adm-zip` 0.6.0 cannot read. AAP §0.5.1's triage rule authorizes a change for "a runtime warning", so the disposition is a version move rather than a documented exception. Two intermediate readings are recorded because both were published: an interim delivery moved the package to **6.0.2**, and a later revision restored 2.1.1 and carried both shortfalls open. The delivered tree resolves **7.0.1** under a `^7.0.1` declaration. [§2.6](#26-archiver-211--701--moved-not-deferred) records the departure and [`dependency-inventory.md`](dependency-inventory.md) §9.5 keeps the measurement, the rejected narrow remedy and the post-move gate results |
-| 3 | `marked`'s sole consumer at `lib/controllers/courses.js:13` | The `require('marked')` is at **`lib/shared/trinket-markdown.js:1`**; `lib/controllers/courses.js` requires *that* module at **`:18`** | Locator correction. Both facts are recorded in [§4.2](#42-deviation-2--the-marked-fork-is-retained) so the two-step chain is visible rather than collapsed |
+| 3 | `marked`'s sole consumer at `lib/controllers/courses.js:13` | The `require('marked')` is at **`lib/shared/trinket-markdown.js:1`**; `lib/controllers/courses.js` requires *that* module at **`:20`**, and calls it at **`:407`** inside `download`. Measured again while [§4.2](#42-deviation-2--the-marked-fork-is-retained) was corrected: an interim revision of this row and of that section said `:18`, which was one require line off | Locator correction. Both facts are recorded in [§4.2](#42-deviation-2--the-marked-fork-is-retained) so the two-step chain is visible rather than collapsed. **The consumer *count* was a separate error and is corrected there**: a byte-identical second copy of the same fork ships to browsers, so "sole consumer" was only ever true of `require('marked')` |
 | 4 | `mongoose-schema-extend` required at `lib/models/model.js:190-191` | The `require` is at **`config/db.js:4`**; `lib/models/model.js:190-191` is where the **capability** is consumed | Locator correction. The distinction matters, because the require site is what determines load order and therefore the hazard in [§2.3](#23-mongoose-schema-extend-022) |
 | 5 | `supertest` deferred at 0.8.3 as a functional harness package | **deferred at 0.8.3, as expected** — after a move to `^7.1.4` was made and then **withdrawn** | Resolved, and the deferral was right. The move was taken on a compatibility axis the deferral had not checked, and the mechanism it named is real — `superagent` 0.16.0 writes `Content-Disposition: attachment` on multipart parts, which RFC 7578 §4.2 forbids. It is also unreachable: the shipped routes never enable `payload.multipart`, so hapi answers **415** before any part header is read, and **measured**, the two upload cases and the two downloads behind them answer 415 and 404 whichever agent is installed. With no qualifying reason the package is back in [§2.11](#211-six-development-dependencies-retained-behind-their-current-lines) at its baseline resolution, and its five dev-side findings are back with it |
 

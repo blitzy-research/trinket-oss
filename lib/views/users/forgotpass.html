@@ -8,7 +8,11 @@
       <h1>Forgot Password</h1>
       {% if emailEnabled %}
       <form id="password-reset-form" action="/send-pass-reset" method="post">
-        <input type="text" name="email" placeholder="Email"/>
+        {# This field asks for the visitor's own address - the account whose
+           password is being reset is theirs - so it declares the `email`
+           input purpose (WCAG 2.1 SC 1.3.5) and browsers may offer the
+           address they already hold for this person. #}
+        <input type="text" name="email" placeholder="Email" autocomplete="email"/>
         <button class="g-recaptcha button" data-sitekey="{{ config.app.recaptcha.sitekey }}" data-callback="submitPasswordResetForm" data-badge="bottomleft">Send Instructions</button>
       </form>
       {% else %}

@@ -170,20 +170,38 @@
       // so it captured New Folder's centre and a real tap dismissed search
       // instead of opening the modal.
       //
-      // Two changes, both $small-only. Narrow the plate to the width the input
-      // is actually given at this breakpoint (the `input` rule below already
-      // uses 150px here), which removes the geometric overlap; and let pointer
-      // events pass through the container so only the visible input and its
-      // results list are hit-testable, which removes the click capture even
-      // while the open-state transition is still running.
+      // The pointer-events pass-through below is therefore NOT breakpoint
+      // specific, and scoping it to $small-only (as an earlier revision did)
+      // left the same capture in place at every wider viewport. Measured at
+      // 768x900 on /library/trinkets: the plate is {x 318.19, y 58, w 450,
+      // h 48} with `pointer-events: auto`, while "New Trinket" is centred at
+      // (689.73, 82) and "new folder" at (598.82, 82) - `elementFromPoint`
+      // returned DIV.search-input at both, and real clicks at both opened
+      // nothing. 768px is $medium-only, where the input itself is only 225px
+      // wide (the `input` rule below), so the transparent remainder of the
+      // 450px plate is what covers the two controls.
+      //
+      // So: pointer events pass through the container at EVERY width, leaving
+      // only the visible input and its results list hit-testable, which also
+      // removes the click capture while the open-state transition is still
+      // running. `&.focus`'s raised z-index needs no companion rule, because
+      // `pointer-events: none` is inherited by descendants unless overridden
+      // and the pair below is the override that keeps the control usable in
+      // every state. None of this participates in layout: the plate still
+      // measures 450x48 at 768px, only its hit-testing changes.
+      pointer-events: none;
+
+      input,
+      .f-dropdown {
+        pointer-events: auto;
+      }
+
+      // The width narrowing stays $small-only: it is the separate geometry
+      // half of the 375px fix, matching the plate to the width the input is
+      // actually given at that breakpoint (the `input` rule below also uses
+      // 150px here), and it must not change the plate at any wider viewport.
       @media #{$small-only} {
         width: 150px;
-        pointer-events: none;
-
-        input,
-        .f-dropdown {
-          pointer-events: auto;
-        }
       }
 
       input {

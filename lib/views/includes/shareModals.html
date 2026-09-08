@@ -111,7 +111,7 @@
           <label class="inline" for="share-email">Send To</label>
         </div>
         <div class="small-12 medium-9 columns">
-          <input type="email" id="share-email" name="email" placeholder="What email address should we send the link to?" required />
+          <input type="email" id="share-email" name="email" placeholder="What email address should we send the link to?" required autocomplete="off" />
         </div>
       </div>
       <div class="row">
@@ -119,7 +119,7 @@
           <label class="inline" for="share-yourname">Your Name</label>
         </div>
         <div class="small-12 medium-9 columns">
-          <input type="text" id="share-yourname" name="yourname" placeholder="What is your name?" required />
+          <input type="text" id="share-yourname" name="yourname" placeholder="What is your name?" required autocomplete="name" />
         </div>
       </div>
       <div class="row">
@@ -127,7 +127,7 @@
           <label class="inline" for="share-youremail">Your Email</label>
         </div>
         <div class="small-12 medium-9 columns">
-          <input type="email" id="share-youremail" name="youremail" value="{% if user %}{{ user.email }}{% endif %}" placeholder="Your email address - so the recipient can reply to you" {% if user %}disabled{% endif %}/>
+          <input type="email" id="share-youremail" name="youremail" value="{% if user %}{{ user.email }}{% endif %}" placeholder="Your email address - so the recipient can reply to you" autocomplete="email" {% if user %}disabled{% endif %}/>
         </div>
       </div>
       <div class="row">

@@ -87,9 +87,12 @@
 // the reset mail links to the reset route with a `key` parameter is what a
 // reviewer needs, and lib/controllers/users.js:306, :1319 and :1331 put the
 // live key in exactly that position. The path rule exists because
-// lib/models/courseInvitation.js:37,70 puts an 8-character md5 token in a path
-// SEGMENT instead - '/courses/accept/<token>' - so a rule that only redacted
-// long segments would leak a live invitation token. Userinfo never survives:
+// lib/models/courseInvitation.js puts its invitation token in a path SEGMENT
+// instead - '/courses/accept/<token>' - so a rule that only redacted long
+// segments would leak a live invitation token. That token is now 64 hex
+// characters from `crypto.randomBytes`, but the rule's eight-character floor is
+// what covers the 8-character md5 tokens still held by rows written before that
+// change, which `$setOnInsert` deliberately leaves in place. Userinfo never survives:
 // the skeleton is built from URL.origin, which excludes it. The list is
 // deduplicated and capped, with an explicit truncation marker, so a
 // pathological body cannot produce an unbounded line. Parsing is `new URL`,
@@ -357,11 +360,13 @@ function digestOf(text) {
 // True when a URL path segment is a credential rather than a route name. Each
 // disjunct covers a call site:
 //   HEX_SEGMENT_PATTERN starts at EIGHT characters because
-//     lib/models/courseInvitation.js builds its invitation token as
-//     crypto.createHash('md5').update(email + course.id).digest('hex')
-//     .substring(0, 8) and puts it in a path segment - the one mail URL whose
-//     secret is in the path - so a rule that only redacted long segments would
-//     leak a live token. Eight also covers the 24-character ObjectId in
+//     lib/models/courseInvitation.js puts its invitation token in a path
+//     segment - the one mail URL whose secret is in the path - so a rule that
+//     only redacted long segments would leak a live token. The token itself is
+//     now `crypto.randomBytes(32).toString('hex')`, 64 characters, which any
+//     floor would catch; the EIGHT-character floor is what still covers the
+//     8-character md5 tokens on rows written before that change, which
+//     `$setOnInsert` leaves valid. Eight also covers the 24-character ObjectId in
 //     lib/workers/exports.js's download URL, whose skeleton becomes
 //     /api/exports/REDACTED/download and still shows the route.
 //   JWT_SEGMENT_PATTERN covers a dot-separated signed token in a path. No

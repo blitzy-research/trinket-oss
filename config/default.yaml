@@ -34,6 +34,20 @@ app:
   usersubdomains: false
   templates: lib/views/
   staticPages: static
+  security:
+    # Host authorities, besides this application's own, that may send a
+    # state-changing request (POST, PUT, PATCH, DELETE) carrying the session
+    # cookie. Empty means only this application's own origin may: the origin
+    # `app.url` composes and whatever host the request was actually reached
+    # by. A cross-origin credentialed write is answered 403 and one warn line
+    # is logged (app.js).
+    #
+    # A deployment that serves its UI from another host - user subdomains, a
+    # separate marketing origin - lists those hosts here rather than patching
+    # code. Either form is accepted: 'https://sub.example.com' or
+    # 'sub.example.com:8443'. Anonymous cross-origin requests are not affected
+    # by this list, and neither is any GET.
+    trustedOrigins: []
   plugins:
     session:
       cookieOptions:
@@ -138,6 +152,23 @@ app:
     user: ''      # SMTP username
     pass: ''      # SMTP password
     secure: false # true for port 465, false for other ports
+    # HMAC key for the email-share capability token that authorizes
+    # POST /api/trinkets/{trinketId}/email. Set it, in config/local.yaml or the
+    # runtime environment, to a high-entropy value of your own; treat it as a
+    # credential and never commit one. It is declared here, empty like its
+    # siblings above, because it is read by name on both sides of that token -
+    # lib/util/helpers.js's emailTokenSecret, which the three jwt.sign sites in
+    # lib/controllers/trinket.js also call - and an undeclared key resolved to
+    # the literal string "undefined", which combined with the trinket's public
+    # short code made the whole key derivable by anyone.
+    #
+    # Left unset, emailTokenSecret follows the treatment the session cookie
+    # password already uses: outside production it derives one ephemeral value
+    # per process and logs a single line, so share tokens work but do not
+    # survive a restart; in production it derives nothing and the share route
+    # refuses, because a per-worker key in a clustered deployment would accept
+    # or refuse depending on which worker answered.
+    secret: ''
   cachePrefix: cache-prefix-
   prefixes: # static routes
     components:

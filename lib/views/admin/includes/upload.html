@@ -20,7 +20,10 @@ user2@example.com,password456,user2,User Two"></textarea>
 <div class="row">
   <div class="small-12 columns">
     <div class="alert-box success">
-      Successfully created: {{ success }} users
+      {# `success` is a genuine number (admin.uploadUsers initialises it to 0
+         and increments it), so this numeric comparison is type-safe and the
+         noun agrees with the count instead of always reading "1 users". #}
+      Successfully created: {{ success }} user{% if success != 1 %}s{% endif %}
     </div>
     {% if errors > 0 %}
     <div class="alert-box warning">

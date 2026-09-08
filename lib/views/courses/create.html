@@ -45,9 +45,18 @@
               red banner above a name field that rendered exactly like an
               accepted one, with nothing tying the two together.
             #}
+            {#
+              Every control on this form collects course data, not data about
+              the person filling it in, so none of them has a semantic
+              `autocomplete` token to declare and all four carry `off`. The
+              purpose is still declared - WCAG 2.1 SC 1.3.5 is about naming
+              the purpose, and `off` names "no autofill purpose" - and it
+              stops the browser heuristically offering the visitor's own
+              saved name for a field literally called `name`.
+            #}
             <input type="text" name="name" id="course-name" value="{{ flash.payload.name }}"
                    {% if flash.validation.name %}class="input-error" aria-invalid="true" aria-describedby="course-name-error"{% elif flash.failure and flash.failure.message %}class="input-error" aria-invalid="true" aria-describedby="course-form-error"{% endif %}
-                   {% if flash.validation.name or not flash.validation.description %}autofocus{% endif %} required />
+                   {% if flash.validation.name or not flash.validation.description %}autofocus{% endif %} required autocomplete="off" />
             {% if flash.validation.name %}
               <small class="error" id="course-name-error" role="alert">{{ flash.validation.name }}</small>
             {% endif %}
@@ -59,7 +68,7 @@
             <label for="course-description">What Description should show up on the page?</label>
             <textarea name="description" id="course-description" rows="4" cols="50"
               {% if flash.validation.description %}class="input-error" aria-invalid="true" aria-describedby="course-description-error"{% if not flash.validation.name %} autofocus{% endif %}{% endif %}
-              placeholder="Include additional information students need to know about this course." required>{{ flash.payload.description }}</textarea>
+              placeholder="Include additional information students need to know about this course." required autocomplete="off">{{ flash.payload.description }}</textarea>
             {% if flash.validation.description %}
               <small class="error" id="course-description-error" role="alert">{{ flash.validation.description }}</small>
             {% endif %}
@@ -69,15 +78,15 @@
         <div class="row">
           <div class="large-12 columns">
             <label for="course-type">Is this course public or private?</label>
-            <select name="courseType" id="course-type">
+            <select name="courseType" id="course-type" autocomplete="off">
               <option {% if flash.payload and flash.payload.courseType == "public" %}selected{% endif %} value="public">
-                Public - anyone with the URL will be able to view the course
+                Public &mdash; anyone with the URL will be able to view the course
               </option>
               <option {% if flash.payload and flash.payload.courseType == "private" %}selected{% endif %} value="private">
-                Private - only you and those to whom you grant access will be able to view the course
+                Private &mdash; only you and those to whom you grant access will be able to view the course
               </option>
               <option {% if flash.payload and flash.payload.courseType == "open" %}selected{% endif %} value="open">
-                Open - anyone can make a copy of this course and edit their own copy
+                Open &mdash; anyone can make a copy of this course and edit their own copy
               </option>
             </select>
           </div>
@@ -86,12 +95,12 @@
         <div class="row">
           <div class="large-12 columns">
             <label for="content-default">Should course content be published or draft when created?</label>
-            <select name="contentDefault" id="content-default">
+            <select name="contentDefault" id="content-default" autocomplete="off">
               <option {% if flash.payload and flash.payload.contentDefault == "publish" %}selected{% endif %} value="publish">
-                Published - pages and assignments will be published when created
+                Published &mdash; pages and assignments will be published when created
               </option>
               <option {% if flash.payload and flash.payload.contentDefault == "draft" %}selected{% endif %} value="draft">
-                Draft - pages and assignments will be marked as draft when created
+                Draft &mdash; pages and assignments will be marked as draft when created
               </option>
             </select>
           </div>
@@ -99,7 +108,22 @@
 
         <div class="row">
           <div class="large-12 columns">
-            <a id="save-course-button" class="button small primary"><i class="fa fa-save"></i>&nbsp;save</a>
+            {#
+              A native <button> rather than an href-less <a>: the anchor never
+              entered sequential focus navigation and was exposed as a link, so
+              the only submit control on this page was unreachable by keyboard
+              (pressing Enter in the required #course-name input fires native
+              constraint validation instead of submitting). `button` and
+              `.button` are one shared Foundation rule, so the box is unchanged.
+
+              `type="button"`, deliberately not `type="submit"`: the click
+              handler in extra_js below already calls preventDefault() and then
+              submits #add-course itself, which stays the single submit path. A
+              submit button would either double-submit or have its own default
+              suppressed by that handler. The icon is decorative; the visible
+              "save" text names the control.
+            #}
+            <button type="button" id="save-course-button" class="button small primary"><i class="fa fa-save" aria-hidden="true"></i>&nbsp;save</button>
             <a class="button small caution" href="/home">cancel</a>
           </div>
         </div>

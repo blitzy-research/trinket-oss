@@ -4872,7 +4872,7 @@ cases.push({
 
 cases.push({
   name : 'avatar-reject',
-  pins : 'lib/util/file.js:97-98',
+  pins : 'lib/util/file.js:97-98, :241-249 (the 415 the refusal now carries)',
   run  : async function(ctx) {
     var rejected = ['image/gif', 'image/svg+xml', 'text/plain', 'image/pngx', ''];
     var before   = callsFor(ctx, 'putObject').length;
@@ -4895,6 +4895,26 @@ cases.push({
         outcome.err.message, 'unsupported image type, must be png or jpg',
         'the message is asserted EXACTLY: lib/controllers/users.js surfaces it ' +
         'to the user, so it is part of the observable contract'
+      );
+
+      // THE STATUS THE REJECTION CARRIES, which CHANGED in this checkpoint.
+      // The gate used to call back a plain Error, leaving `uploadAvatar` in
+      // lib/controllers/files.js nothing but `errors.badImplementation`, and
+      // Boom's 5xx serialization then replaced the message with generic text:
+      // a gif - a type the profile page's own accept list advertised - was
+      // answered 500 "An internal server error occurred" with the reason
+      // dropped, where baseline answered 415 (QA finding W001-F16). The gate
+      // now calls back `Boom.unsupportedMediaType` with the same message, and
+      // the handler returns an isBoom error AS-IS, so the value asserted here
+      // IS the status the profile page receives. The accept set is untouched -
+      // gif is still refused, and `avatar-accept` proves what is admitted.
+      assert.strictEqual(outcome.err.isBoom, true,
+        JSON.stringify(rejected[i]) + ' is refused with a Boom, which is what ' +
+        'lets the handler serve the refusal rather than report a server fault'
+      );
+      assert.strictEqual(outcome.err.output.statusCode, 415,
+        'and that Boom carries 415 - the status the handler returns unchanged, ' +
+        'and the status baseline answered for an unsupported avatar type'
       );
       assert.strictEqual(outcome.result, undefined,
         'the reject path calls back with the error alone (:98)');
@@ -4923,6 +4943,8 @@ cases.push({
     measured(ctx, {
       rejectedTypes  : rejected,
       errorMessage   : 'unsupported image type, must be png or jpg',
+      errorIsBoom    : outcome.err.isBoom === true,
+      errorStatusCode: outcome.err.output.statusCode,
       uploadsAttempted: callsFor(ctx, 'putObject').length - before,
       sourceRemoved  : fs.existsSync(source.path) === false
     });

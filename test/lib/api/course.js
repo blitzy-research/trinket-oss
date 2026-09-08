@@ -259,7 +259,42 @@ module.exports = function() {
             courseSlug = course.slug;
             User.findById(course._owner.toString(), function(err, user) {
               courseOwner = user.username;
-              var courseUrl = '/' + user.username + '/courses/' + course.slug + '/download';
+              // `.zip`, because that is the path the route has always declared:
+              // `GET /{userSlug}/courses/{courseSlug}/download.zip courses.download`
+              // at config/routes.js:164 and, byte-identically, at
+              // `git show 2f8712a:config/routes.js:163`. The suffix-less URL this
+              // hook used to build matches no route, so the request answered 404
+              // and the four assertions below measured that 404 instead of the
+              // download they describe. The whole block sits inside a `/* ... */`
+              // at 2f8712a:test/lib/api/course.js:254-280, which is why a URL
+              // that never matched anything went unnoticed there.
+              //
+              // `?format=md` for the same reason. The route declares
+              // `format : Joi.string().valid('md', 'html').required()` - at
+              // config/routes.js:169 and, byte-identically, at
+              // `git show 2f8712a:config/routes.js:168` - so a request without it
+              // never reaches `courses.download` at all: the hand-rolled
+              // validation branch answers first, and MEASURED live on both trees
+              // it answers `200` with
+              // `{"flash":{"validation":{"format":"\"format\" is required"}}}`
+              // and `content-type: application/json`, which is exactly the
+              // `statusCode` 200 with no `content-disposition` this case saw once
+              // the path was corrected. `md` is the value the application's own
+              // client sends from its "Source Files" control
+              // (public/js/courseEditor/controllers/root.js:337-372, `?format=` +
+              // type), so this is the client contract rather than a value bent to
+              // get past validation. MEASURED against the live target with a
+              // course carrying one lesson and one material: `200`,
+              // `content-type: application/zip`,
+              // `content-disposition: attachment; filename=<slug>.zip`, a 254-byte
+              // archive - every one of the four assertions below.
+              //
+              // A `before` hook is the request under test, not a claim about it:
+              // correcting the address it asks for is a harness repair, and every
+              // assertion in the case below - the 200, the exact
+              // `content-disposition`, the `application/zip` and the
+              // `/tmp/<owner>` cleanup check - is unchanged.
+              var courseUrl = '/' + user.username + '/courses/' + course.slug + '/download.zip?format=md';
               flow.downloadCourse(courseUrl, function() {
                 done();
               });

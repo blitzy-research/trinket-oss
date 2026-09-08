@@ -17,7 +17,7 @@ from them:
 
 | Document | Owns |
 |---|---|
-| [`deferred-dependencies.md`](deferred-dependencies.md) | Every package deliberately **left in place** — unmaintained-but-functional, moderate-only, or otherwise not qualifying — with its per-package reasoning, and the full precedence argument for the retained `marked` fork (deviation 2) |
+| [`deferred-dependencies.md`](deferred-dependencies.md) | Every package deliberately **left in place** — unmaintained-but-functional, moderate-only, or otherwise not qualifying — with its per-package reasoning, and the retained `marked` fork (deviation 2) in full: the precedence argument, all eight advisories enumerated by ID and split by class, and the two byte-identical copies the delivery ships |
 | [`preserved-quirks.md`](preserved-quirks.md) | Behaviour preserved unchanged, including behaviour that is a defect, with the target disposition that reproduces each — and the **canonical register of the approved deviations**, §11, which is closed at four: the served stream response, the retained `marked` fork, the ZIP container change these dependency moves carry (§11.7), and the per-request course-archive work tree (§11.8) |
 | [`baseline-parity.md`](baseline-parity.md) | How baseline was captured and compared: worktree provenance, corpus method, coverage accounting and the resolution log |
 
@@ -128,7 +128,11 @@ $ node -e "const p=require('./package.json'); \
 Seventeen packages moved. Registry is the public npm registry for every row — each `resolved` field in
 the delivered lockfile is a `https://registry.npmjs.org/...` URL. No row is a private, vendored or
 Git dependency; the repository's one Git dependency, the `marked` fork, is unchanged and is owned by
-the deferred list.
+the deferred list. **Its declaration is not the whole of what ships of it:** a byte-identical copy of
+the same fork also reaches browsers inside the fetched component bundle, as
+`public/components/marked/lib/marked.js`, which is neither a manifest entry nor visible to
+`npm audit`. [`deferred-dependencies.md`](deferred-dependencies.md) §4.2 records both copies and
+§6.7 below records the image scan that sees them.
 
 | Package | Registry | Baseline declared | Baseline resolved | Target declared | Target resolved | Reason category | Reason | Verification |
 |---|---|---|---|---|---|---|---|---|
@@ -715,6 +719,13 @@ Measured contents of the pinned image: **node v22.23.2, npm 10.9.8** — both in
 `npm ci` and before the `COPY`, failing with the offending version named rather than surfacing later
 as a confusing resolution error.
 
+**Which stage holds which npm, since the two differ by a patch.** The figure above is the base image
+as pulled, and it is what every build stage runs. The **shipped** stage then pins the image's npm CLI
+to an exact **10.9.9** — measured in the built image as `npm -v` → `10.9.9`, still node v22.23.2 —
+for the vulnerability reason [§6.7](#67-the-images-vulnerability-posture) records. Both values are
+inside the same declared ranges, and the pin re-asserts the exact version and the major so that layer
+can never be the reason the image leaves the range the base was checked against.
+
 ### 6.2 The `pm2` pin, and the one version it holds across the delivery
 
 `pm2` is pinned to **5.4.3**, and it is pinned by a **committed manifest pair** rather than by an
@@ -998,6 +1009,8 @@ advisories exist.
 | Install | `RUN npm install --legacy-peer-deps` | `RUN npm ci` | The delivered lockfile resolves without the flag, so dropping it is what keeps the image's dependency tree identical to the one tested on the host. Verified: `npm ci --dry-run --no-audit --no-fund` exits 0 with no peer-resolution flag |
 | Components | `curl -L --silent -o ./public-components.tgz`, then a separate `&&`-chained `tar xzf` of the file it wrote, inside one `RUN` — with two established defects: **`curl` carried no `--fail`**, so an HTTP error status still exited 0 and the error body was saved *as* the archive, and **no cryptographic digest was checked**, so any well-formed archive was extracted unverified | `RUN node scripts/fetch-components.js` | One digest-verified, idempotent, atomic implementation shared by the host and the image. The two baseline defects did not fail equally: an HTML error body did stop the build, because `tar xzf` rejects it (`gzip: stdin: not in gzip format`) and the `&&` chain fails the layer — but as a late extraction error attributed to `tar` rather than to the download that actually failed — while a **well-formed but wrong, substituted or truncated-yet-still-valid archive was accepted silently**, which is exactly what the SHA-256 verification now prevents |
 | CSS | *absent* | `RUN npm run build:css` | `public/css/base.css` and `public/css/embed.css` are gitignored build outputs, so **the baseline image contained neither stylesheet** and every page rendered unstyled. It runs after `npm ci` (it needs vite and sass) and after the component fetch (the SCSS entry imports from `public/components`) |
+| OS security refresh | *absent* — `apt-get` appeared only in the build toolchain, which the shipped stage deliberately does not inherit, so the shipped image received no Debian security update at all | `RUN … apt-get update && apt-get upgrade -y && apt-get clean && rm -rf /var/lib/apt/lists/*`, as the last root step before `USER trinket` | The digest is the reproducibility anchor and this layer is the security refresh on top of it. Nine packages upgrade, all from oldstable-security; the measured before/after counts are [§6.7](#67-the-images-vulnerability-posture). `upgrade` not `dist-upgrade`, so nothing is added, removed or replaced; the lists and archives are dropped in the same layer, measured empty in the built image |
+| npm CLI pin | *absent* — the image shipped whatever npm the base carried, 10.9.8, whose bundled `tar` 7.5.11 was the image's only fixable **critical** | `RUN … npm install -g --ignore-scripts npm@10.9.9`, with the exact version and the `engines` major both asserted | Same style as the exact `pm2` pin (§6.2), and the same reason: a shipped tree should not carry a published fix it has not taken. 10.9.9 bundles `tar` 7.5.22 and stays inside `engines: npm >=10.0.0 <11.0.0`; the remaining npm-CLI findings need npm 11+ and are recorded as residual in [§6.7](#67-the-images-vulnerability-posture) |
 
 ### 6.6 Three `serverside` pins that are not the Node runtime
 
@@ -1054,6 +1067,124 @@ compose alike. The fix is in the images rather than `init: true` in
 `serverside/README.md` documents — gets no benefit from a compose flag; layering `--init` on top
 remains harmless (measured: 263 ms, exit 143).
 
+### 6.7 The image's vulnerability posture
+
+§6.1 to §6.6 record what the images are pinned **to**. This subsection records what the pinned root
+image **contains** on the advisory axis — its base-image posture — because a pin is a reproducibility
+statement and not a security statement, and an unassessed base-image posture is a residual nobody has
+sized. `npm audit` cannot answer it: it audits the dependency graph, while an image ships an
+operating system, a Node runtime, an npm CLI with its own bundled tree, and a fetched component
+bundle that no manifest mentions. Everything below is a measurement of the image this `Dockerfile`
+builds, taken before and after the security-update layer it now carries.
+
+**Scanner and command, exactly as run** — `aquasec/trivy` (latest at time of measurement), against
+the locally built image, with the Docker socket mounted so it reads the image from the daemon:
+
+```console
+$ docker build -t <tag> .
+$ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v <cache>:/root/.cache \
+    aquasec/trivy:latest image --scanners vuln --severity CRITICAL,HIGH --quiet --format json <tag>
+```
+
+**Measured before and after the security-update layer** the `Dockerfile`'s final stage now carries.
+"Fixable" means the finding carries a `FixedVersion`; "unfixed" means the scanner has no fixed
+version to name. Both figures count **rows**, so one CVE affecting two packages or one package at two
+paths counts twice — which is deliberate, because that is what the image ships:
+
+| | Rows | Fixable | Unfixed |
+|---|---:|---|---|
+| Before the layer | 522 | **25** — 1 critical, 24 high | **497** — 32 critical, 465 high |
+| After the layer | 513 | **16** — 0 critical, 16 high | **497** — 32 critical, 465 high |
+
+**Exactly nine rows cleared and none appeared**, verified by diffing the two result sets row by row
+rather than by comparing totals:
+
+- **six OS rows**, all Debian-Security: `libaom3` 3.6.0-1+deb12u2 → 3.6.0-1+deb12u3
+  (`CVE-2026-56208`, `-56209`, `-56210`, `-56211`) and `libssh2-1` 1.10.0-3+b1 → 1.10.0-3+deb12u1
+  (`CVE-2026-58050`, `CVE-2026-7598`);
+- **three npm-CLI rows** in the bundled `tar`, cleared by the exact npm pin rather than by apt:
+  `tar` 7.5.11 → 7.5.22, closing `CVE-2026-59873` (**the only fixable critical anywhere in this
+  image**), `CVE-2026-59874` and `CVE-2026-73566`.
+
+The same transaction also took `libexpat1` and `libexpat1-dev` to 2.5.0-1+deb12u3 and the five
+`libpcre2` packages to 10.42-1+deb12u1 — nine packages upgraded in total, every one from
+oldstable-security. Those two sets carry no critical or high row, so they move the shipped versions
+without moving the table above.
+
+**The 16 fixable rows that remain, each attributed:**
+
+| Package | Rows | Where it ships | Why it remains |
+|---|---:|---|---|
+| `marked` | **8** | `node_modules/marked` **and** `public/components/marked` — 4 CVEs against each copy | The approved deviation. Cleared only by its follow-up, which must move **both** copies: [`deferred-dependencies.md`](deferred-dependencies.md) §4.2 |
+| `brace-expansion` | 3 | the npm CLI's own bundled tree | Fixed only in lines npm 11+ carries, outside `engines: npm >=10.0.0 <11.0.0` |
+| `pacote` | 2 | as above, at two depths (19.0.2 and 20.0.1) | As above — the fix is `pacote` 21.5.1, npm 11 territory |
+| `ip-address`, `picomatch`, `sigstore` | 1 each | as above | As above |
+
+**Four of the sixteen are the vendored browser `marked` copy**, and this scan is the only place in the
+delivery that can see it: `npm audit`'s node set for the package is `node_modules/marked` alone. That
+is the second half of the deviation's exposure, and it is closed by that deviation's follow-up, not by
+anything in this section.
+
+**The unfixed set is inherent, not accepted by omission, and the distinction is the point.** All 497
+unfixed rows are Debian 12 OS packages (`lang-pkgs` contributes **zero** unfixed rows, before and
+after). Every one of them has **no upstream fixed version** — there is nothing an `apt-get upgrade`,
+a digest refresh or a different pin could install. They are dominated by `linux-libc-dev` (207 rows —
+kernel headers, no kernel), `libglib2.0` (35 rows across five packages), `libopenexr` (34 across two)
+and the `perl` family (32 across four). Recording them as *accepted* would misdescribe the decision:
+nothing was declined here, because nothing was offered.
+
+**Most findings are also unreachable by this application, which bounds the residual without
+excusing it.** The container's `CMD` is `pm2-docker`, so the npm CLI tree under
+`/usr/local/lib/node_modules/npm` — which contributes 8 of the 16 remaining fixable rows and 3 of the
+9 cleared ones — never executes at runtime; it is present because the base image ships it, and it is
+scanner-visible shipped software rather than a reachable path. The same holds for most of the OS set:
+`libaom3` is an AV1 codec and `libssh2` an SSH client transport, neither of which this application
+loads. Reachability is not the reason the fixable rows were cleared — a shipped image should not carry
+a published fix it has not taken — but it is why the unfixed remainder is a documented residual rather
+than an outage waiting to happen.
+
+**Comparative bases, measured with the same command, and why `bookworm` stays.** The `Dockerfile`
+argues the base choice on the toolchain axis in-line: `npm ci` builds native modules (`bcrypt`,
+`nodejieba`, `@parcel/watcher`) against glibc, which musl cannot host. The advisory axis was measured
+separately so the choice is not defended on one axis alone:
+
+Each row below is the **bare base image**, scanned as pulled, so the four are comparable with one
+another rather than with the built image above:
+
+| Base image, scanned bare | Rows | Fixable | Unfixed |
+|---|---:|---|---|
+| `node:22-bookworm` at the pinned digest — this image's base | 514 | 1 critical, 16 high | 32 critical, 465 high |
+| `node:22-alpine` | 13 | 1 critical, 12 high | **0** |
+| `node:22-slim` | 67 | 1 critical, 10 high | 4 critical, 52 high |
+| `nginx:alpine` — the `serverside` nginx unit's base | 7 | 7 high | **0** |
+
+**How that reconciles with the table above**, so the two sets of figures can be read together: the
+bare pinned base is 514 rows; the build adds exactly the **8** `marked` rows (four CVEs against each
+of the two copies) and nothing else on this severity filter, giving the 522 measured before the layer;
+the layer then removes 9, giving 513. Every fixable row in the built image except those 8 is therefore
+inherited from the base rather than introduced by this application.
+
+Alpine's zero-unfixed column is real and is the honest reason its row looks best: a smaller package
+set has fewer packages to carry unfixable advisories. It is still not available here — the native
+builds decide that — and two measurements bound what switching would have bought. First, **the one
+fixable critical is base-independent**: in both `node:22-alpine` and `node:22-slim` it is the *same*
+npm-CLI `tar` `CVE-2026-59873`, so no base choice clears it and the exact npm pin is what does.
+Second, the 465 unfixed highs are overwhelmingly `linux-libc-dev` and the `-dev` packages a full
+Debian base carries; they are the cost of the toolchain compatibility the build needs, and they are
+inherent per the paragraph above rather than a decision that could be taken differently while keeping
+glibc and the native builds.
+
+**The refresh obligation, which is what makes this posture a state rather than a claim.** Two things
+age here and they age differently. The **digest** (§6.1) is immutable by design, so it falls behind
+the published base over time and refreshing it is a deliberate edit — resolve the new value, re-run
+the build-time assertion, update §6.1. The **security layer** resolves against the suite at build
+time, so it is only as current as the last build: two builds of this same commit on different dates
+can install different patch versions, and an image built once and kept for a year has a year-old
+security state no matter what the digest says. So the obligation is both — rebuild on a schedule to
+re-take the refresh, and refresh the digest deliberately when the base moves — and re-run the scan
+above afterwards, because the counts in this subsection are a **measurement with a date**, exactly as
+[§7](#7-audit-result)'s figures are.
+
 ## 7. Audit result
 
 `npm audit --omit=dev`, measured on both trees.
@@ -1094,6 +1225,17 @@ granted: the single high is `marked`, a deliberate, named, single-package deviat
 precedence argument, its risk attribution and the follow-up that would close it. Nothing about it is
 argued in this document. Every other listed finding is likewise recorded there with its attribution
 and risk note. **Any *additional* critical or high finding is a failure**, not a deviation.
+
+**Two things about that row are a characterisation rather than an argument, so they are stated here
+and reasoned about there.** First, the row is **one finding over eight advisories**, and they are not
+one class: four highs, all ReDoS at CVSS 7.5, plus four moderates that split one further ReDoS and
+**three content injection**. Second, `npm audit`'s node set for the package is exactly
+`node_modules/marked`, so this figure covers the **server** copy; a byte-identical copy of the same
+fork also ships to browsers from `public/components`, carrying the same advisories where no audit of
+the dependency graph can count it. Neither point changes any figure in this section — the measured
+result is 0 critical, 1 high, 6 moderate either way. Both are enumerated, with every advisory ID and
+both consumers, in [`deferred-dependencies.md`](deferred-dependencies.md) §4.2, and the image scan
+that sees both copies is [§6.7](#67-the-images-vulnerability-posture).
 
 ### A methodological warning that changed how this list was built
 
@@ -1315,7 +1457,7 @@ than a resolution:
    else differs between them — the restoration is a single-field edit and every other byte is
    identical, verified by substituting the field and re-hashing. The commit pin is intact and the
    install succeeds over the codeload HTTPS tarball either way, so nothing is broken by the `ssh`
-   form; what it does is name a credential-bearing transport that `package.json:36` does not, which is
+   form; what it does is name a credential-bearing transport that `package.json`'s own `dependencies."marked"` declaration does not, which is
    exactly the condition this item exists to prevent. **Restoring it is a `package-lock.json` change
    and that file is not this document's to edit**, so it is recorded here as the mandatory
    pre-commit re-assertion, owned by whoever holds the manifest pair.
@@ -1493,7 +1635,7 @@ So the only remedy that reaches both defects is the version move, which is the r
 | Boot under `node --pending-deprecation --trace-deprecation` | **zero** warning or deprecation lines, and `GET /` answers **200**. The previously recorded `[DEP0005]` residual is gone **at its source**, not suppressed: no `--no-deprecation`, `--disable-warning` or `NODE_NO_WARNINGS` is in force, which is what `test/parity/warning-policy.js` asserts independently |
 | `npm run verify:storage` | **35 of 35** cases passed, gate PASSED, exit 0 — `archive-layout` among them. It closed **34 of 35** with one captured warning and one emitted finding before the move |
 | `npm run verify:worker` | **VERDICT PASS**, **109 of 109** named checks, 7 jobs driven on real `bull` 4.16.5, **0 notices** under the gate's own flags. It returned a **FAIL** verdict before the move |
-| `npm audit --omit=dev` | **unchanged**: 0 critical, 1 high, 6 moderate, over the same seven advisories — `aws-sdk`, `bull`, `highlight.js`, `jszip`, `marked`, `mongoose` and transitive `uuid`. The single high is still `marked` alone (§7) |
+| `npm audit --omit=dev` | **unchanged**: 0 critical, 1 high, 6 moderate, over the same seven **findings** — `aws-sdk`, `bull`, `highlight.js`, `jszip`, `marked`, `mongoose` and transitive `uuid`; a finding is a package, not an advisory, and `marked`'s one finding covers eight advisories (§7). The single high is still `marked` alone (§7) |
 | Call sites | **unchanged** — the 25-call surface enumerated under *Import transparency* in §3 |
 
 **The one consequence for stored output, stated rather than buried.** Newly written archives now carry

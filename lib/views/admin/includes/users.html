@@ -101,7 +101,7 @@
         <a id="admin-roles" class="button small" data-userid="{{ data._id }}" data-username="{{ data.username }}">Change Roles</a>
       </li>
       <li class="content {% if active == 'json' %}active{% endif %}" id="json">
-        <pre>{{ data | json("pretty") | safe }}</pre>
+        <pre>{{ data | json("pretty") }}</pre>
       </li>
     </ul>
   </div>
@@ -142,7 +142,7 @@ Roles for {{username}}
 {% endraw %}
 
 <script type="text/json" id="rolesData">
-{{ data.roles | json | safe }}
+{{ data.roles | jsonSafe }}
 </script>
 {% endif %}
 

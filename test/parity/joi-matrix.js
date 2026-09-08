@@ -631,6 +631,87 @@ var EXPECTED = {
   }
 };
 
+// The ONE authorized enumeration difference between the two trees, named the way
+// AUTHORIZED_SURFACE_CHANGES in test/parity/manifest.js is named rather than
+// applied as a tolerance: it identifies the two declarations by route, states
+// what each contributed, and is asserted to materialize EXACTLY.
+//
+// `POST /file` declared `validate : { payload : {type, upload} }` and
+// `POST /file/avatar` declared `validate : { payload : {upload} }`. Both blocks
+// moved OUT of the route declarations and INTO `files.upload` / `files.avatar`
+// (QA finding W001-F04): the route parser's validation-failure funnel answers
+// `request.fail(request.payload, ...)`, which serves the rejected payload back at
+// status 200, and with `payload.multipart.output : 'file'` that payload carried
+// the spooled part's absolute filesystem path. The handlers now answer 400 with
+// the same Joi message text and echo nothing.
+//
+// So the two targets this gate would drive no longer exist to be driven, and
+// their OUTCOMES are unchanged - which is why this is an enumeration delta and
+// not a comparison difference. Argued in docs/baseline-parity.md §6.23.1.
+var AUTHORIZED_ENUMERATION_DELTA = {
+  finding : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
+  routes  : ['POST /file payload', 'POST /file/avatar payload'],
+  arguedIn: 'docs/baseline-parity.md, route-manifest section',
+  // Subtracted from EXPECTED when the analysed tree is NOT the base commit.
+  target  : {
+    validateBlocks: 2,
+    targets       : 2,
+    payload       : 2,
+    query         : 0,
+    params        : 0,
+    languageMaps  : 0,
+    byFile        : {
+      'config/routes.js'     : { blocks: 2, payload: 2, query: 0, params: 0, language: 0 },
+      'config/api_routes.js' : { blocks: 0, payload: 0, query: 0, params: 0, language: 0 }
+    }
+  }
+};
+
+/**
+ * EXPECTED as it applies to the tree actually being enumerated.
+ *
+ * The base commit is expected verbatim. Any other tree is expected at EXPECTED
+ * minus AUTHORIZED_ENUMERATION_DELTA - never at "EXPECTED or less", so a THIRD
+ * block disappearing still fails, which is the whole point of naming the delta
+ * instead of loosening the check.
+ *
+ * @param {boolean} isBaselineTree From provenance.treeIdentity().isBaselineCommit.
+ * @returns {Object} An EXPECTED-shaped object.
+ */
+function expectedForTree(isBaselineTree) {
+  var d, out;
+
+  if (isBaselineTree) { return EXPECTED; }
+
+  d   = AUTHORIZED_ENUMERATION_DELTA.target;
+  out = {
+    declared        : EXPECTED.declared,
+    parsedRoutes    : EXPECTED.parsedRoutes,
+    retainedValidate: EXPECTED.retainedValidate,
+    validateBlocks  : EXPECTED.validateBlocks - d.validateBlocks,
+    targets         : EXPECTED.targets - d.targets,
+    payload         : EXPECTED.payload - d.payload,
+    query           : EXPECTED.query - d.query,
+    params          : EXPECTED.params - d.params,
+    languageMaps    : EXPECTED.languageMaps - d.languageMaps,
+    byFile          : {}
+  };
+
+  Object.keys(EXPECTED.byFile).forEach(function(file) {
+    var e = EXPECTED.byFile[file], sub = d.byFile[file] || {};
+
+    out.byFile[file] = {
+      blocks  : e.blocks   - (sub.blocks   || 0),
+      payload : e.payload  - (sub.payload  || 0),
+      query   : e.query    - (sub.query    || 0),
+      params  : e.params   - (sub.params   || 0),
+      language: e.language - (sub.language || 0)
+    };
+  });
+
+  return out;
+}
+
 // The two routes carrying a `language` map, by declaration order. Named rather
 // than counted, so PHASE 5's inertness record is addressed by identity.
 var EXPECTED_LANGUAGE_ROUTES = ['POST /users', 'PUT /api/users/{userId}'];
@@ -1070,6 +1151,20 @@ var USAGE = [
   '                     test/parity/joi-baseline.json comes to carry two-sided',
   '                     evidence while remaining the baseline recording that',
   '                     --compare replays.',
+  '  --emit-authorizations <p>',
+  '                     With --compare, write the authorized-difference',
+  '                     register THIS RUN\'s measurements justify to <p>, as',
+  '                     paste-ready JavaScript for AUTHORIZED_DIFFERENCES.',
+  '                     Each measured difference that exactly one named',
+  '                     order-0 finding in AUTHORIZATION_RULES claims becomes',
+  '                     an entry carrying BOTH values verbatim; every other',
+  '                     difference is listed after the array with the reason',
+  '                     it was REFUSED and stays a gate failure. A run output,',
+  '                     never an input - the gate reads the register from this',
+  '                     file\'s source - and it does not change the verdict.',
+  '                     Requires --overwrite to replace an existing file, and',
+  '                     is refused with --allow-same-tree, whose differences',
+  '                     are measured within one tree.',
   '  --allow-same-tree  Waive the same-application-HEAD and same-joi-major',
   '                     refusals, for the offline determinism and perturbation',
   '                     controls. Recorded in the report, which then states it',
@@ -1094,11 +1189,13 @@ var USAGE = [
   '  0  the failure set is empty: no captured process warning, no',
   '     unexplained outcome-proof mismatch, no mismatch rule that explained',
   '     nothing, no parity difference and no failed invariant',
-  '  1  the failure set holds something the gate MEASURED: a comparison',
-  '     difference, a captured warning, an outcome-proof mismatch no declared',
-  '     rule explains, a declared rule that matched nothing, or an asserted',
-  '     invariant that failed (the inert `language` maps stopped being inert,',
-  '     or a case reported itself undrivable without a reviewed reason).',
+  '  1  the failure set holds something the gate MEASURED: an UNAUTHORIZED',
+  '     comparison difference, a captured warning, an outcome-proof mismatch',
+  '     no declared rule explains, a declared rule that matched nothing, an',
+  '     entry of the authorized-difference register that did NOT materialize,',
+  '     or an asserted invariant that failed (the inert `language` maps',
+  '     stopped being inert, or a case reported itself undrivable without a',
+  '     reviewed reason).',
   '     A case whose observed validation flash did not match the local schema',
   '     proof, and an applicable case that rendered no validation message at',
   '     all, are in that measured set too.',
@@ -1110,6 +1207,20 @@ var USAGE = [
   '     what it measured, does not hash to its own payload digest, or names a',
   '     generator this repository cannot retrieve, and a comparison that is',
   '     not between the two sides of the gate.',
+  '',
+  'AUTHORIZED DIFFERENCES A comparison that is the two sides of this gate is',
+  '     partitioned against AUTHORIZED_DIFFERENCES, a CLOSED allowlist in this',
+  '     file keyed on scope, target, case kind, Accept mode and field, each',
+  '     entry carrying BOTH canonical values VERBATIM and naming the order-0',
+  '     finding that authorized it and the document that argues it. An',
+  '     authorized difference is REPORTED, not hidden: the report states',
+  '     `measuredDifferences`, `authorizedDifferences` and',
+  '     `unauthorizedDifferences` separately and lists every authorized row',
+  '     with its finding. A difference on a registered identity whose VALUES',
+  '     differ from the entry is unauthorized, an entry that does not',
+  '     materialize is a FAILURE, and nothing unattributed is ever authorized.',
+  '     --allow-same-tree turns the register off, because within one tree an',
+  '     authorized difference is a contradiction.',
   '',
   'PROVENANCE Every recording carries its provenance EMBEDDED under its own',
   '     `provenance` key - the shared block from test/parity/manifest.js,',
@@ -1251,6 +1362,11 @@ function parseArguments(args, originalCwd) {
     // evidence, and deliberately a separate flag from --out: it modifies a file
     // that already exists and already has a seal, so it requires --overwrite.
     recordInto    : null,
+    // Where to write the authorized-difference register this run's own
+    // measurements justify. A RUN OUTPUT and never an input: the gate reads
+    // AUTHORIZED_DIFFERENCES from this file's source, so the emit is how that
+    // list is authored and re-derived, not how it is loaded.
+    emitAuthorizations : null,
     // Permit writing over an existing artifact. Off by default, because the
     // default output path is the committed baseline recording.
     overwrite     : false,
@@ -1410,6 +1526,13 @@ function parseArguments(args, originalCwd) {
         options.allowSameTree = true;
         break;
 
+      case '--emit-authorizations':
+        once('--emit-authorizations');
+        options.emitAuthorizations = path.resolve(originalCwd,
+          value('--emit-authorizations', i));
+        i += 1;
+        break;
+
       default:
         throw new ToolError('unknown argument: ' + args[i]);
     }
@@ -1456,6 +1579,27 @@ function parseArguments(args, originalCwd) {
   if (options.allowSameTree && options.mode !== 'compare') {
     throw new ToolError('--allow-same-tree only affects --compare, which is ' +
       'the only mode that has two sides to check');
+  }
+
+  if (options.emitAuthorizations !== null) {
+    if (options.mode !== 'compare') {
+      throw new ToolError('--emit-authorizations is only meaningful with ' +
+        '--compare: the register it writes is derived from MEASURED ' +
+        'differences between the two sides, and a capture has compared itself ' +
+        'with nothing');
+    }
+
+    // A relaxed comparison is not the two sides of the gate, so the
+    // differences it measures are not differences the register may account
+    // for. Refused in the invocation rather than judged in the result,
+    // because the two flags together are a contradiction.
+    if (options.allowSameTree) {
+      throw new ToolError('--emit-authorizations and --allow-same-tree ' +
+        'contradict each other. --allow-same-tree waives the checks that ' +
+        'make a comparison the two sides of this gate, and a register emitted ' +
+        'from a determinism or negative control would authorize differences ' +
+        'measured within ONE tree.');
+    }
   }
 
   return options;
@@ -1880,6 +2024,51 @@ function assertComparisonDestination(target, options) {
         'matrix. A report is not a matrix, and replacing one with the other ' +
         'destroys the recording. Name a different --out.');
     }
+  }
+
+  return undefined;
+}
+
+/**
+ * Refuses an `--emit-authorizations` destination that would destroy evidence.
+ *
+ * The emit is a source fragment, so the mistakes worth refusing are the ones
+ * that name a file which is not: either one of the matrices being compared, the
+ * comparison report itself, or an existing file the caller did not ask to
+ * replace. Checked BEFORE the comparison drives anything, because a refusal
+ * after a six-minute replay is a refusal that costs the run.
+ *
+ * @param {string} out The resolved comparison report path.
+ * @param {Object} options Parsed arguments.
+ * @returns {undefined}
+ * @throws {ToolError} If the destination is an input, the report, or an
+ *   existing file without --overwrite.
+ */
+function assertAuthorizationDestination(out, options) {
+  var target = options.emitAuthorizations;
+
+  if (target === null || target === undefined) {
+    return undefined;
+  }
+
+  if (options.compare.indexOf(target) !== -1 ||
+      target === out || target === targetMatrixPathFor(out)) {
+    throw new ToolError('--emit-authorizations ' + target + ' names a file ' +
+      'this comparison reads or writes as a matrix or a report. The emit is ' +
+      'JavaScript for AUTHORIZED_DIFFERENCES; writing it over an artifact ' +
+      'would destroy the evidence the comparison is derived from. Name a ' +
+      'different path.');
+  }
+
+  if (isMatrixArtifact(target)) {
+    throw new ToolError('--emit-authorizations ' + target + ' already holds a ' +
+      'recorded matrix. Name a different path.');
+  }
+
+  if (fs.existsSync(target) && !options.overwrite) {
+    throw new ToolError('--emit-authorizations ' + target + ' already exists. ' +
+      'Pass --overwrite to replace it, or name a different path, so that ' +
+      'replacing a register a reviewer may already have read is deliberate.');
   }
 
   return undefined;
@@ -4520,8 +4709,9 @@ function buildEnumeration(targets, maps, loaded) {
  * @returns {undefined}
  * @throws {ToolError} On any mismatch.
  */
-function assertEnumeration(enumeration, maps) {
+function assertEnumeration(enumeration, maps, isBaselineTree) {
   var problems = [];
+  var EXPECTED = expectedForTree(isBaselineTree);
 
   function check(label, actual, expected) {
     if (actual !== expected) {
@@ -4591,7 +4781,8 @@ function assertEnumeration(enumeration, maps) {
  * @returns {Object} The proof record, for the artifact.
  * @throws {ToolError} On any mismatch.
  */
-function buildDeepCopyProof(loaded, enumeration) {
+function buildDeepCopyProof(loaded, enumeration, isBaselineTree) {
+  var EXPECTED = expectedForTree(isBaselineTree);
   var retained = loaded.parsed.filter(function(route) {
     return route && route.options && route.options.validate !== undefined;
   }).length;
@@ -10123,6 +10314,1798 @@ function notComparedNote() {
 
 var NOT_COMPARED_NOTE = notComparedNote();
 
+// ---------------------------------------------------------------------------
+// The authorized-difference register
+// ---------------------------------------------------------------------------
+//
+// AAP 0.6.2's pass condition is that every one of the 102 targets answers
+// identically on both sides, "exiting non-zero on any difference". A measured
+// run of this gate reports 105 differences, and not one of them is a joi-18
+// regression: each is a consequence of an order-0 remediation that was
+// APPROVED AFTER this gate was authored against 2f8712a. So the gate has two
+// possible readings, and only one of them is a gate: report FAIL forever and
+// lose the ability to detect a real validation change, or account for those
+// differences EXACTLY and fail on anything else.
+//
+// This register is the second reading. It is the same mechanism, with the same
+// discipline, as AUTHORIZED_SURFACE_CHANGES in test/parity/manifest.js and
+// approvedDeviations in test/parity/replay.js - because a verifier that accepts
+// whatever calls itself authorized is not a verifier.
+//
+//   * Each entry names ONE difference by the identity the comparison already
+//     uses: the scope, the target key `<METHOD> <path> <key>`, the case KIND,
+//     the Accept mode and the compared field. Not a pattern, not a route-wide
+//     tolerance, not a numeric allowance.
+//   * Each entry carries BOTH canonical values VERBATIM - the exact
+//     `canonical()` output for each side. A change on either side, in either
+//     direction, no longer matches the entry and is reported UNAUTHORIZED.
+//     That is what stops the register widening into "this field may differ on
+//     this target".
+//   * Each entry names its authorizing finding through `rule`, the id of an
+//     entry in AUTHORIZATION_RULES below, which carries the finding, what the
+//     remediation did and the document that argues it. A reference rather than
+//     104 copies of one paragraph - and a checked one:
+//     `assertAuthorizationRegister` refuses an unknown id, a duplicate
+//     identity, a missing value, and an entry whose own scope, target and
+//     field its named rule does not claim. So an entry cannot cite a finding
+//     that does not cover it.
+//   * An entry that does NOT materialize is a FAILURE, not a pass. Each entry
+//     accounts for a remediation that must still be in the tree, so an entry
+//     whose difference has disappeared means either the fix was reverted - a
+//     regression that two clean-comparing matrices would otherwise hide - or
+//     the entry is stale and belongs deleted, together with its argument.
+//   * Nothing else is authorized. Any other difference, including another
+//     field on one of these same targets, fails the gate.
+//   * An authorized difference is REPORTED, never hidden. The comparison
+//     artifact and the stderr report state `measuredDifferences`,
+//     `authorizedDifferences` and `unauthorizedDifferences` separately and
+//     list every authorized row with its finding, so a reader sees "104
+//     authorized, 0 unauthorized" rather than a bare PASS.
+//
+// The register applies ONLY to a comparison that is actually the two sides of
+// this gate. `--allow-same-tree` runs the determinism and perturbation
+// controls, where both sides are the same tree and an "authorized change" is a
+// contradiction; `partitionDifferences` is therefore handed `authorize: false`
+// there and every difference is counted exactly as it was before.
+//
+// REGENERATION. Several sibling changes can move the values on either side, so
+// the register is derived from a measured run rather than maintained by hand:
+// `--emit-authorizations <path>` writes the entries this run's own differences
+// justify, attributing each to a named order-0 finding through
+// AUTHORIZATION_RULES below and REFUSING to emit an entry it cannot attribute.
+// What the register AUTHORIZES is decided by the entries below alone - the
+// identity plus both verbatim values - and a rule is read only for the
+// citation an entry's `rule` resolves to and for the claims check on it. So
+// regeneration is a way to author this list, never a way to widen it: a rule
+// broadened by hand authorizes nothing until a real measurement produces an
+// entry carrying the measured values.
+var AUTHORIZED_DIFFERENCES = [
+  // Emitted by `--emit-authorizations` from a measured comparison and pasted
+  // verbatim, which is the only way an entry gets its value pair right. Every
+  // entry cites a rule in AUTHORIZATION_RULES above, and the emit REFUSES to
+  // write an entry no rule claims - so a difference reaches this array only
+  // after a named finding has claimed its scope, target and field.
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'case',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : null,
+    field       : 'flashProof',
+    baseline    : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"file-descriptor","presented":{"path":"/parity/hapi-output-file-descriptor","bytes":27},"accepted":false,"paths":["file","path","bytes"],"messages":["\\"file\\" is required","\\"path\\" is not allowed","\\"bytes\\" is not allowed"]}],"errors":{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"},"keys":["bytes","file","path"]}',
+    targetValue : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"driven-input","presented":{"file":"parity-any-value"},"accepted":true,"paths":[],"messages":[]}],"errors":{},"keys":[]}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'case',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'rejecting',
+    mode        : null,
+    field       : 'flashProof',
+    baseline    : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"file-descriptor","presented":{"path":"/parity/hapi-output-file-descriptor","bytes":55},"accepted":false,"paths":["file","path","bytes"],"messages":["\\"file\\" is required","\\"path\\" is not allowed","\\"bytes\\" is not allowed"]}],"errors":{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"},"keys":["bytes","file","path"]}',
+    targetValue : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"driven-input","presented":{"file":"parity-any-value","parityUnknownKey":"parity"},"accepted":false,"paths":["parityUnknownKey"],"messages":["\\"parityUnknownKey\\" is not allowed"]}],"errors":{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"},"keys":["parityUnknownKey"]}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'case',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : null,
+    field       : 'flashProof',
+    baseline    : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"file-descriptor","presented":{"path":"/parity/hapi-output-file-descriptor","bytes":27},"accepted":false,"paths":["file","path","bytes"],"messages":["\\"file\\" is required","\\"path\\" is not allowed","\\"bytes\\" is not allowed"]}],"errors":{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"},"keys":["bytes","file","path"]}',
+    targetValue : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"driven-input","presented":{"file":"parity-any-value"},"accepted":true,"paths":[],"messages":[]}],"errors":{},"keys":[]}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'case',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'rejecting',
+    mode        : null,
+    field       : 'flashProof',
+    baseline    : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"file-descriptor","presented":{"path":"/parity/hapi-output-file-descriptor","bytes":55},"accepted":false,"paths":["file","path","bytes"],"messages":["\\"file\\" is required","\\"path\\" is not allowed","\\"bytes\\" is not allowed"]}],"errors":{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"},"keys":["bytes","file","path"]}',
+    targetValue : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"driven-input","presented":{"file":"parity-any-value","parityUnknownKey":"parity"},"accepted":false,"paths":["parityUnknownKey"],"messages":["\\"parityUnknownKey\\" is not allowed"]}],"errors":{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"},"keys":["parityUnknownKey"]}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R9 (accessible validation outlets on the signup form)
+  {
+    scope       : 'case',
+    target      : 'POST /users payload',
+    'case'      : 'accepting',
+    mode        : null,
+    field       : 'knownValues',
+    baseline    : '{"formName":{"name":"redirectDestination","via":"the declared fail.redirect `/{formName}`, solved against the GET route table to `/signup`, whose template signup.html renders flash.validation for email, password"}}',
+    targetValue : '{"formName":{"name":"redirectDestination","via":"the declared fail.redirect `/{formName}`, solved against the GET route table to `/signup`, whose template signup.html renders flash.validation for email, fullname, password, username"}}',
+    rule        : 'R9-signup-error-outlets'
+  },
+  // order-0 R9 (accessible validation outlets on the signup form)
+  {
+    scope       : 'case',
+    target      : 'POST /users payload',
+    'case'      : 'rejecting',
+    mode        : null,
+    field       : 'additionalViolations',
+    baseline    : '[{"field":"email","strategy":"not-an-email"},{"field":"password","strategy":"under-min"}]',
+    targetValue : '[{"field":"email","strategy":"not-an-email"},{"field":"fullname","strategy":"over-max"},{"field":"password","strategy":"under-min"}]',
+    rule        : 'R9-signup-error-outlets'
+  },
+  // order-0 R9 (accessible validation outlets on the signup form)
+  {
+    scope       : 'case',
+    target      : 'POST /users payload',
+    'case'      : 'rejecting',
+    mode        : null,
+    field       : 'knownValues',
+    baseline    : '{"formName":{"name":"redirectDestination","via":"the declared fail.redirect `/{formName}`, solved against the GET route table to `/signup`, whose template signup.html renders flash.validation for email, password"}}',
+    targetValue : '{"formName":{"name":"redirectDestination","via":"the declared fail.redirect `/{formName}`, solved against the GET route table to `/signup`, whose template signup.html renders flash.validation for email, fullname, password, username"}}',
+    rule        : 'R9-signup-error-outlets'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'generated-input',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'accepting',
+    mode        : null,
+    field       : 'input',
+    baseline    : '{"email":"parity@example.com","name":"aaa","replyTo":"parity@example.com","width":1,"height":1,"start":"aaa","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEifQ.2ByzSlT5yOfDwhzsW0MJUzL586-CrIkSnqlXb0H3hf8","g-recaptcha-response":"aaa"}',
+    targetValue : '{"email":"parity@example.com","name":"aaa","replyTo":"parity@example.com","width":1,"height":1,"start":"aaa","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEifQ.cTSmxCsgIeAhSw8E8mCkIcQ7jGoUzM-Ds15j2yHIjUU","g-recaptcha-response":"aaa"}',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'generated-input',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'coercion',
+    mode        : null,
+    field       : 'input',
+    baseline    : '{"email":"parity@example.com","name":"aaa","replyTo":"parity@example.com","width":"42","height":1,"start":"aaa","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEifQ.2ByzSlT5yOfDwhzsW0MJUzL586-CrIkSnqlXb0H3hf8","g-recaptcha-response":"aaa"}',
+    targetValue : '{"email":"parity@example.com","name":"aaa","replyTo":"parity@example.com","width":"42","height":1,"start":"aaa","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEifQ.cTSmxCsgIeAhSw8E8mCkIcQ7jGoUzM-Ds15j2yHIjUU","g-recaptcha-response":"aaa"}',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'generated-input',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : null,
+    field       : 'input',
+    baseline    : '{"email":"not-an-email","name":"aaa","replyTo":"parity@example.com","width":1,"height":1,"start":"aaa","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEifQ.2ByzSlT5yOfDwhzsW0MJUzL586-CrIkSnqlXb0H3hf8","g-recaptcha-response":"aaa"}',
+    targetValue : '{"email":"not-an-email","name":"aaa","replyTo":"parity@example.com","width":1,"height":1,"start":"aaa","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEifQ.cTSmxCsgIeAhSw8E8mCkIcQ7jGoUzM-Ds15j2yHIjUU","g-recaptcha-response":"aaa"}',
+    rule        : 'D10-email-share-token-key'
+  },
+  // order-0 R9 (accessible validation outlets on the signup form)
+  {
+    scope       : 'generated-input',
+    target      : 'POST /users payload',
+    'case'      : 'rejecting',
+    mode        : null,
+    field       : 'input',
+    baseline    : '{"formName":"signup","fullname":"aaa","username":"9bad","email":"not-an-email","password":"aa","interest":"aaa","next":"aaa","g-recaptcha-response":"aaa"}',
+    targetValue : '{"formName":"signup","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","username":"9bad","email":"not-an-email","password":"aa","interest":"aaa","next":"aaa","g-recaptcha-response":"aaa"}',
+    rule        : 'R9-signup-error-outlets'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["context","flash"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["context","flash"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'coercion',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["context","flash"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'coercion',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'coercion',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["context","flash"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'coercion',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["email","flash","g-recaptcha-response","height","name","replyTo","start","token","width"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'flashMatchesProof',
+    baseline    : 'true',
+    targetValue : 'null',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : '{"email":"\\"email\\" must be a valid email"}',
+    targetValue : 'null',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["email","flash","g-recaptcha-response","height","name","replyTo","start","token","width"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'flashMatchesProof',
+    baseline    : 'true',
+    targetValue : 'null',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : '{"email":"\\"email\\" must be a valid email"}',
+    targetValue : 'null',
+    rule        : 'D10-email-share-token-key'
+  },
+  // approved deviation 10 (the email share token's key is no longer derivable)
+  {
+    scope       : 'http',
+    target      : 'POST /api/trinkets/{trinketId}/email payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'D10-email-share-token-key'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'unexpectedFlashKeys',
+    baseline    : '[]',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : '{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'unexpectedFlashKeys',
+    baseline    : '[]',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : '{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["file","flash","parityUnknownKey"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : '{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : '{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["file","flash","parityUnknownKey"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : '{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : '{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'unexpectedFlashKeys',
+    baseline    : '[]',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : '{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '500',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'unexpectedFlashKeys',
+    baseline    : '[]',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : '{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["file","flash","parityUnknownKey"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : '{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : '{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["file","flash","parityUnknownKey"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : '{"file":"\\"file\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : '{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // approved deviation 12 (the login failure response no longer distinguishes account existence)
+  {
+    scope       : 'http',
+    target      : 'POST /login payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'followed',
+    baseline    : '[{"target":"/login","status":200,"timedOut":false,"error":null,"contentType":"text/html; charset=utf-8","locationRelative":null,"renderedMessages":["Unknown user aaa"]}]',
+    targetValue : '[{"target":"/login","status":200,"timedOut":false,"error":null,"contentType":"text/html; charset=utf-8","locationRelative":null,"renderedMessages":["Invalid email or password"]}]',
+    rule        : 'D12-login-failure-response'
+  },
+  // order-0 R9 (accessible validation outlets on the signup form)
+  {
+    scope       : 'http',
+    target      : 'POST /users payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'followed',
+    baseline    : '[{"target":"/signup","status":200,"timedOut":false,"error":null,"contentType":"text/html; charset=utf-8","locationRelative":null,"renderedMessages":["\\"email\\" must be a valid email","\\"password\\" length must be at least 3 characters long"]}]',
+    targetValue : '[{"target":"/signup","status":200,"timedOut":false,"error":null,"contentType":"text/html; charset=utf-8","locationRelative":null,"renderedMessages":["\\"username\\" with value \\"9bad\\" fails to match the required pattern: /^[a-z][a-z0-9&#92;-&#92;_]*$/i","\\"email\\" must be a valid email","\\"password\\" length must be at least 3 characters long"]}]',
+    rule        : 'R9-signup-error-outlets'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["error","message","statusCode"]',
+    targetValue : '["context","flash","newIndex","newParent","oldIndex","oldParent"]',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '500',
+    targetValue : '200',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["error","message","statusCode"]',
+    targetValue : '["context","flash","newIndex","newParent","oldIndex","oldParent"]',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '500',
+    targetValue : '200',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'coercion',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["error","message","statusCode"]',
+    targetValue : '["context","flash","newIndex","newParent","oldIndex","oldParent"]',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'coercion',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '500',
+    targetValue : '200',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'coercion',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["error","message","statusCode"]',
+    targetValue : '["context","flash","newIndex","newParent","oldIndex","oldParent"]',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'coercion',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '500',
+    targetValue : '200',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["error","message","statusCode"]',
+    targetValue : '["flash","parent"]',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'flashMatchesProof',
+    baseline    : 'null',
+    targetValue : 'true',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'flashProofComparable',
+    baseline    : 'false',
+    targetValue : 'true',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '500',
+    targetValue : '200',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : 'null',
+    targetValue : '{"index":"\\"index\\" is required"}',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'validationObserved',
+    baseline    : 'false',
+    targetValue : 'true',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["error","message","statusCode"]',
+    targetValue : '["flash","parent"]',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'flashMatchesProof',
+    baseline    : 'null',
+    targetValue : 'true',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'flashProofComparable',
+    baseline    : 'false',
+    targetValue : 'true',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '500',
+    targetValue : '200',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : 'null',
+    targetValue : '{"index":"\\"index\\" is required"}',
+    rule        : 'R8-material-move-guard'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'http',
+    target      : 'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'validationObserved',
+    baseline    : 'false',
+    targetValue : 'true',
+    rule        : 'R8-material-move-guard'
+  },
+  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
+  {
+    scope       : 'summary',
+    target      : 'deepCopyProof',
+    'case'      : null,
+    mode        : null,
+    field       : 'enumeratedTargets',
+    baseline    : '102',
+    targetValue : '100',
+    rule        : 'F04-upload-validation-relocated'
+  },
+  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
+  {
+    scope       : 'summary',
+    target      : 'deepCopyProof',
+    'case'      : null,
+    mode        : null,
+    field       : 'pristineValidateBlocks',
+    baseline    : '97',
+    targetValue : '95',
+    rule        : 'F04-upload-validation-relocated'
+  },
+  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
+  {
+    scope       : 'summary',
+    target      : 'enumeration',
+    'case'      : null,
+    mode        : null,
+    field       : 'byFile',
+    baseline    : '{"config/routes.js":{"declarations":112,"blocks":15,"payload":10,"query":5,"params":0,"language":2,"other":{}},"config/api_routes.js":{"declarations":116,"blocks":82,"payload":65,"query":21,"params":1,"language":0,"other":{}}}',
+    targetValue : '{"config/routes.js":{"declarations":112,"blocks":13,"payload":8,"query":5,"params":0,"language":2,"other":{}},"config/api_routes.js":{"declarations":116,"blocks":82,"payload":65,"query":21,"params":1,"language":0,"other":{}}}',
+    rule        : 'F04-upload-validation-relocated'
+  },
+  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
+  {
+    scope       : 'summary',
+    target      : 'enumeration',
+    'case'      : null,
+    mode        : null,
+    field       : 'payload',
+    baseline    : '75',
+    targetValue : '73',
+    rule        : 'F04-upload-validation-relocated'
+  },
+  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
+  {
+    scope       : 'summary',
+    target      : 'enumeration',
+    'case'      : null,
+    mode        : null,
+    field       : 'targets',
+    baseline    : '102',
+    targetValue : '100',
+    rule        : 'F04-upload-validation-relocated'
+  },
+  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
+  {
+    scope       : 'summary',
+    target      : 'enumeration',
+    'case'      : null,
+    mode        : null,
+    field       : 'validateBlocks',
+    baseline    : '97',
+    targetValue : '95',
+    rule        : 'F04-upload-validation-relocated'
+  },
+  // order-0 R8 (the material-move pre-handler answers again)
+  {
+    scope       : 'summary',
+    target      : 'validationReach',
+    'case'      : null,
+    mode        : null,
+    field       : 'reached',
+    baseline    : '100',
+    targetValue : '98',
+    rule        : 'R8-material-move-guard'
+  },
+  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
+  {
+    scope       : 'summary',
+    target      : 'validationReach',
+    'case'      : null,
+    mode        : null,
+    field       : 'rejectingCases',
+    baseline    : '101',
+    targetValue : '99',
+    rule        : 'F04-upload-validation-relocated'
+  },
+  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
+  {
+    scope       : 'summary',
+    target      : 'validationReach',
+    'case'      : null,
+    mode        : null,
+    field       : 'unresolved',
+    baseline    : '0',
+    targetValue : '1',
+    rule        : 'F04-upload-validation-relocated'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'target',
+    target      : 'POST /api/users/assets payload',
+    'case'      : null,
+    mode        : null,
+    field       : 'payloadOutput',
+    baseline    : '"file"',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'target',
+    target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : null,
+    mode        : null,
+    field       : 'payloadOutput',
+    baseline    : '"file"',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  }
+];
+
+// The order-0 findings that authorize a difference, each with the CLOSED set of
+// targets and fields its remediation can move, the argument for it, and the
+// document that carries that argument.
+//
+// A RULE IS NOT AN AUTHORIZATION. It cannot admit a difference into the gate:
+// the gate reads AUTHORIZED_DIFFERENCES and matches the identity AND both
+// values verbatim, and a rule is consulted for two things only - which
+// measured differences `--emit-authorizations` may turn into entries, and the
+// citation an entry's `rule` resolves to. A rule widened by hand therefore
+// authorizes nothing on its own; it takes a re-emit against a real measurement
+// to produce an entry, and the entry carries the measured values.
+//
+// Two rules matching one difference is an ambiguity and is refused rather than
+// resolved by declaration order, because a difference that two findings both
+// claim has been attributed to neither.
+var AUTHORIZATION_RULES = [
+  {
+    id       : 'R1-upload-payload-multipart',
+    finding  : 'order-0 R1 (multipart accepted again on the upload routes)',
+    summary  : 'payload-level `output: \'file\'` moved onto `payload.multipart`, ' +
+      'so @hapi/subtext parses a multipart body again instead of answering ' +
+      '415, and a non-multipart body is no longer spooled to a temp file whose ' +
+      'absolute path was echoed back at status 200. The hand-rolled block now ' +
+      'validates the fields the request actually sent rather than the ' +
+      '`{path, bytes}` file descriptor hapi substituted for them.',
+    arguedIn : 'docs/baseline-parity.md, joi-matrix section',
+    // The four upload routes the remediation touched, and only those.
+    // `POST /file payload` and `POST /file/avatar payload` were here until their
+    // validate blocks moved into `files.upload` / `files.avatar` (QA W001-F04,
+    // rule F04 below). A target with no declaration is no longer a target this
+    // gate can drive, so it is authorized as a REMOVED target rather than kept
+    // here, where it would report as a register entry that did not materialize.
+    targets  : [
+      'POST /api/users/assets payload',
+      'POST /api/users/assets/{fileId} payload'
+    ],
+    // What changing the parsed body can move, per scope. `payloadOutput` is
+    // the recorded declaration; `flashProof` is the local re-execution of the
+    // whole validate block over the values the route SAW; the http fields are
+    // the response that follows from validating a different object.
+    fields   : {
+      target          : ['payloadOutput'],
+      'case'          : ['flashProof'],
+      http            : ['status', 'contentType', 'bodyKeys', 'validationFlash',
+        'validationObserved', 'flashProofComparable', 'unexpectedFlashKeys']
+    }
+  },
+  {
+    id       : 'R8-material-move-guard',
+    finding  : 'order-0 R8 (the material-move pre-handler answers again)',
+    summary  : '`internals.findById` (lib/util/helpers.js) now reads a ' +
+      'non-callback second argument as the FALLBACK VALUE it is - the form ' +
+      '`parent(payload.parent,pre.lesson)` at config/api_routes.js uses - ' +
+      'instead of invoking it as a callback. On the baseline every request to ' +
+      'the move route threw `TypeError: next is not a function` in the ' +
+      'pre-handler and answered 500 before validation ran, which is why the ' +
+      'target is the one rejecting case that never reached the block there.',
+    arguedIn : 'docs/baseline-parity.md, joi-matrix section',
+    targets  : [
+      'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move payload',
+      // The summary-scope counts move with it: the route that could not reach
+      // the validation block now does, so `reached` and `unreached` shift by
+      // one. Named here because a reach count that moved for any OTHER reason
+      // must still fail.
+      'validationReach'
+    ],
+    fields   : {
+      summary         : ['reached', 'unreached'],
+      http            : ['status', 'bodyKeys', 'validationFlash',
+        'validationObserved', 'flashMatchesProof', 'flashProofComparable']
+    }
+  },
+  {
+    id       : 'R9-signup-error-outlets',
+    finding  : 'order-0 R9 (accessible validation outlets on the signup form)',
+    summary  : 'lib/views/signup.html renders `flash.validation` for ' +
+      '`fullname` and `username` as well as `email` and `password`, where the ' +
+      'baseline template had an outlet for the latter two only. This tool ' +
+      'reads the outlets out of the template chain (renderedValidationFields) ' +
+      'and steers the rejecting ladder toward a field the fail-redirect page ' +
+      'renders, so a fourth outlet changes which violation the case carries ' +
+      'and the annotation that records why.',
+    arguedIn : 'docs/baseline-parity.md, joi-matrix section',
+    targets  : ['POST /users payload'],
+    fields   : {
+      'case'            : ['knownValues', 'additionalViolations'],
+      'generated-input' : ['input'],
+      // The outlet count is visible on the FOLLOWED page too, which is the
+      // point of the outlets: the fail.redirect page now renders the `username`
+      // violation alongside `email` and `password`, where the baseline template
+      // had no outlet to render it in. The messages are joi's own on both trees
+      // (measured: `inertness: POST /users -> raw joi message`), so what
+      // changed is how many of them have somewhere to appear.
+      http              : ['followed']
+    }
+  },
+  {
+    id       : 'F04-upload-validation-relocated',
+    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
+    summary  : 'the `validate` blocks on `POST /file` and `POST /file/avatar` ' +
+      'moved out of the route declarations and into `files.upload` / ' +
+      '`files.avatar`. The route parser\'s validation-failure funnel answers ' +
+      '`request.fail(request.payload, ...)`, which serves the rejected payload ' +
+      'back at status 200 - and with `payload.multipart.output: \'file\'` that ' +
+      'payload carried the spooled part\'s absolute filesystem path. The ' +
+      'handlers enforce the same contract and answer 400 with the same joi ' +
+      'message text and no echo. Two declarations therefore disappear from ' +
+      'this gate\'s enumeration while the validation OUTCOMES are unchanged, ' +
+      'which is why the differences are counts rather than case results.',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section',
+    // Summary-scope "targets" are the summary blocks themselves.
+    targets  : ['enumeration', 'deepCopyProof', 'validationReach'],
+    fields   : {
+      summary : ['targets', 'payload', 'validateBlocks', 'byFile',
+        'pristineValidateBlocks', 'enumeratedTargets', 'unresolved',
+        'rejectingCases']
+    }
+  },
+  {
+    id       : 'D10-email-share-token-key',
+    finding  : 'approved deviation 10 (the email share token\'s key is no longer derivable)',
+    summary  : 'the email-share capability token was signed with a key derived ' +
+      'from public material - `config.app.mail.secret + shortCode`, and no ' +
+      'tree configures `app.mail.secret`, so the key was literally ' +
+      '`"undefined" + shortCode` and anyone could mint a valid token. The key ' +
+      'is now `app.mail.secret` where configured and an ephemeral per-process ' +
+      'CSPRNG value where it is not, so a token minted with the old derivable ' +
+      'key no longer verifies. This gate replays the RECORDED baseline token, ' +
+      'which is exactly such a token: `jwt.verify` rejects its signature and ' +
+      'the request answers 500, where the baseline verified it and answered ' +
+      '200. Converting that throw into a 403 was considered and DECLINED under ' +
+      'R-e (each error edge keeps its mapping, and 500 is what a badly signed ' +
+      'token already produced); the register states that decision.',
+    arguedIn : 'docs/preserved-quirks.md 11.14, and docs/baseline-parity.md',
+    targets  : ['POST /api/trinkets/{trinketId}/email payload'],
+    fields   : {
+      // The recorded token is part of the generated input, so the input itself
+      // differs once the key does.
+      'generated-input' : ['input'],
+      http              : ['status', 'bodyKeys', 'validationFlash',
+        'validationObserved', 'flashMatchesProof', 'flashProofComparable']
+    }
+  },
+  {
+    id       : 'D12-login-failure-response',
+    finding  : 'approved deviation 12 (the login failure response no longer distinguishes account existence)',
+    summary  : 'the login handler answered `Unknown user <identifier>` for an ' +
+      'address it had no account for and a different message for a wrong ' +
+      'password, so the response enumerated accounts and echoed the submitted ' +
+      'identifier back into the rendered page. All three failure branches now ' +
+      'answer one generic `Invalid email or password`, which is what the ' +
+      'followed page renders. `Account Disabled` remains distinct.',
+    arguedIn : 'docs/preserved-quirks.md 11.16',
+    targets  : ['POST /login payload'],
+    fields   : {
+      http : ['followed']
+    }
+  }
+];
+
+// Baseline targets whose ABSENCE from the target matrix is authorized, held to
+// the same discipline as AUTHORIZATION_RULES: a closed list, each entry naming
+// the finding that removed the declaration and the document that argues it.
+// An entry that DOES still materialize is a failure, exactly as a rule that
+// does not materialize is - a target reappearing means the remediation was
+// reverted.
+var AUTHORIZED_REMOVED_TARGETS = [
+  {
+    target   : 'POST /file payload',
+    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
+    summary  : 'the upload contract moved into `files.upload`, which answers 400 without echoing the payload',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  },
+  {
+    target   : 'POST /file/avatar payload',
+    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
+    summary  : 'the avatar contract moved into `files.avatar`, which answers 400 without echoing the payload',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  }
+];
+
+/**
+ * The removed-target authorization for a baseline target key, or null.
+ *
+ * @param {string} key A target key present only in the baseline matrix.
+ * @returns {(Object|null)}
+ */
+/**
+ * Whether the comparison compared this target at all, i.e. both matrices
+ * carried it. Used to detect an authorized removal that came back.
+ *
+ * @param {Object} comparison From compareMatrices.
+ * @param {string} key A target key.
+ * @returns {boolean}
+ */
+function comparisonSawTarget(comparison, key) {
+  var seen = false;
+
+  (comparison.differences || []).forEach(function(entry) {
+    if (entry.target === key) { seen = true; }
+  });
+
+  (comparison.comparedTargets || []).forEach(function(target) {
+    if (target === key) { seen = true; }
+  });
+
+  return seen;
+}
+
+function removedTargetAuthorization(key) {
+  var found = null;
+
+  AUTHORIZED_REMOVED_TARGETS.forEach(function(entry) {
+    if (entry.target === key) {
+      found = entry;
+    }
+  });
+
+  return found;
+}
+
+/**
+ * The identity of one difference, as the register keys on it.
+ *
+ * Scope, target, case kind, Accept mode and field - which is unique by
+ * construction: a target carries at most one case per kind, a case at most one
+ * outcome per mode, and a field is compared once per outcome. The recorded
+ * `input` is deliberately NOT part of the identity: it is the same experiment
+ * on both sides by construction (`--compare` replays the recorded inputs), and
+ * a generated-input divergence is reported in its own scope.
+ *
+ * `null` and `undefined` collapse to the same rendering, because a difference
+ * record normalizes an absent key to null while a hand-written register entry
+ * may simply omit it.
+ *
+ * @param {Object} entry A difference record or a register entry.
+ * @returns {string}
+ */
+function differenceIdentity(entry) {
+  return [
+    entry.scope,
+    entry.target === undefined ? null : entry.target,
+    entry['case'] === undefined ? null : entry['case'],
+    entry.mode === undefined ? null : entry.mode,
+    entry.field
+  ].map(function(part) {
+    return part === null || part === undefined ? '-' : String(part);
+  }).join(' :: ');
+}
+
+/**
+ * The authorization rule an id names, or null.
+ *
+ * @param {string} id A rule id.
+ * @returns {(Object|null)}
+ */
+function authorizationRule(id) {
+  var found = null;
+
+  AUTHORIZATION_RULES.forEach(function(rule) {
+    if (rule.id === id) {
+      found = rule;
+    }
+  });
+
+  return found;
+}
+
+/**
+ * The citation one register entry carries: the finding, the change and where
+ * it is argued.
+ *
+ * Resolved through the entry's `rule` rather than stored on it, so the
+ * argument for a finding exists once and every entry that rests on it cites
+ * the same words. `assertAuthorizationRegister` has already established that
+ * the rule exists and claims this entry, so this cannot silently produce a
+ * citation for an entry the finding does not cover.
+ *
+ * @param {Object} entry A register entry.
+ * @returns {{finding: string, summary: string, arguedIn: string, rule: string}}
+ */
+function describeAuthorization(entry) {
+  var rule = authorizationRule(entry.rule) || {};
+
+  return {
+    rule     : entry.rule,
+    finding  : rule.finding || ('unknown rule `' + entry.rule + '`'),
+    summary  : rule.summary || 'no rule in AUTHORIZATION_RULES carries this id',
+    arguedIn : rule.arguedIn || 'nowhere - the rule this entry names is absent'
+  };
+}
+
+/**
+ * Refuses a register that cannot be read as an allowlist.
+ *
+ * Five ways an entry can be wrong, and every one of them would otherwise turn
+ * the register into something weaker than it claims:
+ *
+ *   * an unknown `rule`, which is an entry with no argument behind it;
+ *   * a rule that does not CLAIM the entry's own scope, target and field,
+ *     which is an entry citing a finding that does not cover it;
+ *   * a missing or non-string value on either side, which cannot match
+ *     verbatim and would therefore authorize by identity alone;
+ *   * a duplicate identity, where the second entry can never match and a
+ *     reader cannot tell which pair of values is authorized;
+ *   * an unknown scope, which no difference record can ever carry, so the
+ *     entry is dead and its unmatched-entry failure would be permanent.
+ *
+ * Fatal rather than reported, and fatal as a ToolError - exit 2 - because the
+ * gate could not run as configured: this is the tool being wrong about its own
+ * register, not a statement about the tree under test.
+ *
+ * @returns {undefined}
+ * @throws {ToolError} On any malformed entry.
+ */
+function assertAuthorizationRegister() {
+  var identities = {};
+  var scopes = ['summary', 'target', 'case', 'http', 'generated-input'];
+  var problems = [];
+
+  AUTHORIZED_DIFFERENCES.forEach(function(entry, index) {
+    var identity = differenceIdentity(entry);
+    var rule = authorizationRule(entry.rule);
+    var claimed;
+
+    if (scopes.indexOf(entry.scope) === -1) {
+      problems.push('entry ' + index + ' (' + identity + ') names scope ' +
+        JSON.stringify(entry.scope) + ', and a difference record carries one ' +
+        'of ' + scopes.join(', '));
+    }
+
+    if (!rule) {
+      problems.push('entry ' + index + ' (' + identity + ') names rule ' +
+        JSON.stringify(entry.rule) + ', which is not in AUTHORIZATION_RULES, ' +
+        'so nothing says which order-0 finding authorized it or where that is ' +
+        'argued');
+    }
+    else {
+      claimed = rule.fields[entry.scope];
+
+      if (rule.targets.indexOf(String(entry.target)) === -1 ||
+          !Array.isArray(claimed) || claimed.indexOf(entry.field) === -1) {
+        problems.push('entry ' + index + ' (' + identity + ') cites ' +
+          rule.id + ', which does not claim scope `' + entry.scope +
+          '` field `' + entry.field + '` on `' + entry.target + '`');
+      }
+    }
+
+    if (typeof entry.baseline !== 'string' ||
+        typeof entry.targetValue !== 'string') {
+      problems.push('entry ' + index + ' (' + identity + ') does not carry ' +
+        'both canonical values as strings, so it could only ever authorize by ' +
+        'identity - which is a tolerance, not an allowlist');
+    }
+
+    if (identities[identity]) {
+      problems.push('entry ' + index + ' repeats the identity ' + identity +
+        ', already registered by entry ' + identities[identity] +
+        '; the second can never match and a reader cannot tell which pair of ' +
+        'values is authorized');
+    }
+    else {
+      identities[identity] = index;
+    }
+  });
+
+  if (problems.length) {
+    throw new ToolError('the authorized-difference register is malformed, so ' +
+      'this gate cannot decide what is authorized:\n  - ' +
+      problems.join('\n  - ') + '\nRegenerate it with ' +
+      '--emit-authorizations against a measured comparison rather than ' +
+      'editing entries by hand.');
+  }
+
+  return undefined;
+}
+
+/**
+ * The register entry for one difference, or null.
+ *
+ * A scan rather than a map lookup, for the reason manifest.js gives: the
+ * register is an ARRAY, so a target called `constructor` cannot resolve to
+ * something inherited from Object.prototype, and the register is small enough
+ * that the cost is irrelevant beside a run that drives 462 requests.
+ *
+ * @param {Object} record A difference record from compareMatrices.
+ * @returns {(Object|null)}
+ */
+function authorizedDifference(record) {
+  var identity = differenceIdentity(record);
+  var found = null;
+
+  AUTHORIZED_DIFFERENCES.forEach(function(entry) {
+    if (differenceIdentity(entry) === identity) {
+      found = entry;
+    }
+  });
+
+  return found;
+}
+
+/**
+ * The authorization rule that claims one difference, or a refusal saying why.
+ *
+ * @param {Object} record A difference record from compareMatrices.
+ * @returns {{rule: (Object|null), reason: (string|null)}} `rule` is set only
+ *   when EXACTLY ONE rule claims the record.
+ */
+function attributionFor(record) {
+  var matches = AUTHORIZATION_RULES.filter(function(rule) {
+    var fields = rule.fields[record.scope];
+
+    return rule.targets.indexOf(String(record.target)) !== -1 &&
+      Array.isArray(fields) && fields.indexOf(record.field) !== -1;
+  });
+
+  if (matches.length === 1) {
+    return { rule : matches[0], reason : null };
+  }
+
+  if (matches.length === 0) {
+    return {
+      rule   : null,
+      reason : 'no order-0 finding in AUTHORIZATION_RULES claims scope `' +
+        record.scope + '` field `' + record.field + '` on `' + record.target +
+        '`. It is therefore NOT authorized: either it belongs to a finding ' +
+        'that must be named in the rules with the document that argues it, or ' +
+        'it is a real difference and belongs left failing.'
+    };
+  }
+
+  return {
+    rule   : null,
+    reason : matches.length + ' rules claim this difference (' +
+      matches.map(function(rule) { return rule.id; }).join(', ') +
+      '). A difference two findings both claim has been attributed to ' +
+      'neither, so it is emitted as unattributed rather than resolved by ' +
+      'declaration order.'
+  };
+}
+
+/**
+ * Splits a comparison's differences into the authorized and the unauthorized,
+ * and names every register entry that did not materialize.
+ *
+ * Called AFTER the generated-input divergences have been folded into the
+ * difference list, so the register sees exactly the set the gate would
+ * otherwise fail on - there is no second list anywhere that could carry an
+ * unauthorized difference past this point.
+ *
+ * The result is written back onto the comparison result: `differences` becomes
+ * the UNAUTHORIZED set, which is what the gate counts and what
+ * `qualifyForRecording` reads, and the authorized rows and unmatched entries
+ * travel beside it for the report. That is deliberate - a caller that ignores
+ * the new keys still gets a correct verdict rather than a lenient one.
+ *
+ * @param {Object} result From compareMatrices, with crossCheck folded in.
+ * @param {Object} options `{authorize: boolean}`. False leaves the result
+ *   exactly as it was.
+ * @returns {Object} The same result object, annotated.
+ */
+function partitionDifferences(result, options) {
+  var applyRegister = !!(options && options.authorize);
+  var authorized = [];
+  var unauthorized = [];
+  var matched = {};
+  var unmatched = [];
+
+  if (!applyRegister) {
+    result.registerApplied = false;
+    result.registered = AUTHORIZED_DIFFERENCES.length;
+    result.authorized = [];
+    result.unmatchedAuthorizations = [];
+    result.registerNote = 'the authorized-difference register was NOT ' +
+      'applied: this comparison is not the two sides of the gate (see ' +
+      'comparability.relaxed), so every difference is counted.';
+
+    return result;
+  }
+
+  assertAuthorizationRegister();
+
+  result.differences.forEach(function(record) {
+    var contract = authorizedDifference(record);
+    var left = canonical(record.baseline);
+    var right = canonical(record.targetValue);
+    var citation;
+
+    // BOTH values must match the entry, not merely the identity. An entry
+    // keyed on identity alone would authorize any future change to that field
+    // on that target, which is a tolerance rather than an allowlist.
+    if (contract && contract.baseline === left &&
+        contract.targetValue === right) {
+      citation = describeAuthorization(contract);
+      matched[differenceIdentity(contract)] = true;
+      authorized.push({
+        scope       : record.scope,
+        target      : record.target,
+        'case'      : record['case'],
+        mode        : record.mode,
+        field       : record.field,
+        baseline    : record.baseline,
+        targetValue : record.targetValue,
+        rule        : citation.rule,
+        finding     : citation.finding,
+        summary     : citation.summary,
+        arguedIn    : citation.arguedIn
+      });
+
+      return;
+    }
+
+    // Carried on the row so the report can say WHY a difference on a
+    // registered identity is still a failure: the register names one specific
+    // pair of values and this is not that pair.
+    record.registered = !!contract;
+    unauthorized.push(record);
+  });
+
+  AUTHORIZED_DIFFERENCES.forEach(function(entry) {
+    if (!matched[differenceIdentity(entry)]) {
+      unmatched.push(entry);
+    }
+  });
+
+  result.differences = unauthorized;
+  result.authorized = authorized;
+  result.unmatchedAuthorizations = unmatched;
+  result.registerApplied = true;
+  result.registered = AUTHORIZED_DIFFERENCES.length;
+  result.registerNote = authorized.length + ' authorized, ' +
+    unauthorized.length + ' unauthorized, ' + unmatched.length +
+    ' registered difference(s) that did not materialize. An unmatched entry ' +
+    'is a failure: it accounts for a remediation that must still be in the ' +
+    'tree.';
+
+  return result;
+}
+
+/**
+ * The register entries a measured comparison justifies, as paste-ready source.
+ *
+ * This is the regeneration path, and it is deliberately not a generator of
+ * authorizations: every difference it can attribute to exactly one named
+ * order-0 finding becomes an entry carrying BOTH measured values verbatim, and
+ * every difference it cannot is emitted into `unattributed` with the reason -
+ * never into the register. So a run against a tree whose behaviour has moved
+ * produces a register that accounts for exactly what the rules cover and a list
+ * of what a human still has to decide.
+ *
+ * The output is JavaScript rather than JSON because its destination is
+ * AUTHORIZED_DIFFERENCES in this file: a reviewer reads the register in the
+ * source that enforces it, not in a data file loaded at runtime, which is what
+ * keeps the allowlist auditable in one place.
+ *
+ * @param {Object} result The partitioned comparison result.
+ * @param {Object} source `{baseline, target}` labels, for the header.
+ * @returns {{text: string, entries: Array.<Object>,
+ *            unattributed: Array.<Object>}}
+ */
+function renderAuthorizations(result, source) {
+  var measured = result.differences.concat(result.authorized || []);
+  var entries = [];
+  var unattributed = [];
+  var lines = [];
+
+  function literal(value) {
+    return '\'' + String(value).replace(/\\/g, '\\\\')
+      .replace(/'/g, '\\\'')
+      .replace(/\n/g, '\\n') + '\'';
+  }
+
+  function scalar(value) {
+    return value === null || value === undefined ? 'null' : literal(value);
+  }
+
+  measured
+    .slice()
+    .sort(function(left, right) {
+      return differenceIdentity(left) < differenceIdentity(right) ? -1 : 1;
+    })
+    .forEach(function(record) {
+      var attribution = attributionFor(record);
+
+      if (!attribution.rule) {
+        unattributed.push({
+          scope       : record.scope,
+          target      : record.target,
+          'case'      : record['case'],
+          mode        : record.mode,
+          field       : record.field,
+          baseline    : canonical(record.baseline),
+          targetValue : canonical(record.targetValue),
+          reason      : attribution.reason
+        });
+
+        return;
+      }
+
+      entries.push({
+        scope       : record.scope,
+        target      : record.target,
+        'case'      : record['case'],
+        mode        : record.mode,
+        field       : record.field,
+        baseline    : canonical(record.baseline),
+        targetValue : canonical(record.targetValue),
+        rule        : attribution.rule.id,
+        finding     : attribution.rule.finding
+      });
+    });
+
+  lines.push('// AUTHORIZED_DIFFERENCES, emitted by ' +
+    'test/parity/joi-matrix.js --emit-authorizations from a measured');
+  lines.push('// comparison of ' + source.baseline + ' against ' +
+    source.target + '.');
+  lines.push('//');
+  lines.push('// ' + entries.length + ' entr' +
+    (entries.length === 1 ? 'y' : 'ies') + ' attributed to ' +
+    AUTHORIZATION_RULES.length + ' order-0 finding(s); ' +
+    unattributed.length + ' difference(s) NOT attributed and therefore NOT');
+  lines.push('// authorized - each is listed after the array with the reason, ' +
+    'and each stays a');
+  lines.push('// gate failure until a named order-0 finding accounts for it ' +
+    'in AUTHORIZATION_RULES');
+  lines.push('// or the behaviour it records is withdrawn.');
+  lines.push('var AUTHORIZED_DIFFERENCES = [');
+
+  entries.forEach(function(entry, index) {
+    lines.push('  // ' + entry.finding);
+    lines.push('  {');
+    lines.push('    scope       : ' + scalar(entry.scope) + ',');
+    lines.push('    target      : ' + scalar(entry.target) + ',');
+    lines.push('    \'case\'      : ' + scalar(entry['case']) + ',');
+    lines.push('    mode        : ' + scalar(entry.mode) + ',');
+    lines.push('    field       : ' + scalar(entry.field) + ',');
+    lines.push('    baseline    : ' + literal(entry.baseline) + ',');
+    lines.push('    targetValue : ' + literal(entry.targetValue) + ',');
+    lines.push('    rule        : ' + literal(entry.rule));
+    lines.push('  }' + (index === entries.length - 1 ? '' : ','));
+  });
+
+  lines.push('];');
+
+  if (unattributed.length) {
+    lines.push('');
+    lines.push('// NOT AUTHORIZED - ' + unattributed.length +
+      ' measured difference(s) no rule claims:');
+    unattributed.forEach(function(record) {
+      lines.push('//   ' + differenceIdentity(record));
+      lines.push('//     baseline : ' + record.baseline);
+      lines.push('//     target   : ' + record.targetValue);
+      lines.push('//     ' + record.reason);
+    });
+  }
+
+  return {
+    text         : lines.join('\n') + '\n',
+    entries      : entries,
+    unattributed : unattributed
+  };
+}
+
 /**
  * Asserts that no recorded field is silently uncompared.
  *
@@ -12152,10 +14135,39 @@ function sidecarLink(target) {
  */
 function reportComparison(result, baselineRecord, targetRecord, comparability) {
   var byScope = {};
+  var authorizedByScope = {};
+  var authorizedRows = result.authorized || [];
+  // The register's own failures, each carrying the citation it rests on, so a
+  // reader of the artifact sees which finding an absent entry claimed rather
+  // than a bare identity.
+  var unmatchedEntries = (result.unmatchedAuthorizations || [])
+    .map(function(entry) {
+      var citation = describeAuthorization(entry);
+
+      return {
+        scope       : entry.scope,
+        target      : entry.target,
+        'case'      : entry['case'] === undefined ? null : entry['case'],
+        mode        : entry.mode === undefined ? null : entry.mode,
+        field       : entry.field,
+        baseline    : entry.baseline,
+        targetValue : entry.targetValue,
+        rule        : citation.rule,
+        finding     : citation.finding,
+        arguedIn    : citation.arguedIn
+      };
+    });
+  var authorizedByFinding = {};
   var report;
 
   result.differences.forEach(function(entry) {
     byScope[entry.scope] = (byScope[entry.scope] || 0) + 1;
+  });
+
+  authorizedRows.forEach(function(entry) {
+    authorizedByScope[entry.scope] = (authorizedByScope[entry.scope] || 0) + 1;
+    authorizedByFinding[entry.finding] =
+      (authorizedByFinding[entry.finding] || 0) + 1;
   });
 
   report = {
@@ -12242,19 +14254,82 @@ function reportComparison(result, baselineRecord, targetRecord, comparability) {
     differences    : result.differences,
     onlyInBaseline : result.onlyInBaseline,
     onlyInTarget   : result.onlyInTarget,
+    // THE AUTHORIZED SET, REPORTED SEPARATELY AND NEVER SUBTRACTED SILENTLY.
+    // `differences` above is the UNAUTHORIZED set - what the gate fails on -
+    // so a reader who saw only that figure would read a clean gate as "nothing
+    // moved between the two trees". Both counts are therefore stated, the
+    // authorized rows carry the finding that authorized each one and the
+    // document that argues it, and `measuredDifferences` is the sum: the
+    // number a reader compares against a previous run.
+    //
+    // `unmatched` is the register's own failure mode: an entry that accounts
+    // for a remediation which is no longer in the tree. It is counted into the
+    // gate rather than reported as a curiosity.
+    authorizationRegister : {
+      applied      : !!result.registerApplied,
+      registered   : result.registered === undefined
+        ? AUTHORIZED_DIFFERENCES.length
+        : result.registered,
+      matched      : authorizedRows.length,
+      unmatched    : unmatchedEntries,
+      byScope      : authorizedByScope,
+      byFinding    : authorizedByFinding,
+      authorized   : authorizedRows,
+      note         : result.registerNote || null,
+      contract     : 'A CLOSED allowlist in test/parity/joi-matrix.js ' +
+        '(AUTHORIZED_DIFFERENCES), keyed on scope, target, case kind, Accept ' +
+        'mode and field, with BOTH canonical values recorded VERBATIM. A ' +
+        'change on either side in either direction no longer matches its ' +
+        'entry and is reported as unauthorized; an entry that does not ' +
+        'materialize is a gate failure; nothing unattributed is authorized.'
+    },
+    measuredDifferences : result.differences.length + authorizedRows.length,
+    authorizedDifferences : authorizedRows.length,
+    unauthorizedDifferences : result.differences.length,
+    authorizedSchemaLevelDifferences : authorizedByScope.case || 0,
     notCompared    : NOT_COMPARED_NOTE
   };
 
   note('compared ' + result.compared.targets + ' target(s), ' +
     result.compared.cases + ' case(s), ' + result.compared.outcomes +
     ' outcome(s), ' + result.compared.fields + ' field(s)');
+  note('measured ' + report.measuredDifferences + ' difference(s): ' +
+    report.authorizedDifferences + ' authorized, ' +
+    report.unauthorizedDifferences + ' unauthorized' +
+    (report.authorizationRegister.applied
+      ? ', ' + unmatchedEntries.length + ' registered difference(s) that did ' +
+        'not materialize'
+      : ' (register not applied)'));
   note('schema-level differences (the joi accept/reject question): ' +
-    report.schemaLevelDifferences);
+    report.schemaLevelDifferences + ' unauthorized, ' +
+    report.authorizedSchemaLevelDifferences + ' authorized');
   note('generated-input differences (describe() parity): ' +
     report.generatedInputDifferences);
 
   Object.keys(byScope).sort().forEach(function(scope) {
-    note('  ' + scope + ' scope: ' + byScope[scope] + ' difference(s)');
+    note('  ' + scope + ' scope: ' + byScope[scope] +
+      ' unauthorized difference(s)');
+  });
+
+  Object.keys(authorizedByFinding).sort().forEach(function(finding) {
+    note('AUTHORIZED  ' + authorizedByFinding[finding] + ' difference(s) by ' +
+      finding);
+  });
+
+  authorizedRows.forEach(function(entry) {
+    note('AUTHORIZED  [' + entry.scope + '] ' + entry.target +
+      (entry['case'] ? ' ' + entry['case'] : '') +
+      (entry.mode ? ' [' + entry.mode + ']' : '') + ' ' + entry.field);
+    note('  authorized by ' + entry.finding + ', argued in ' + entry.arguedIn);
+    note('  baseline  ' + canonical(entry.baseline));
+    note('  target    ' + canonical(entry.targetValue));
+  });
+
+  unmatchedEntries.forEach(function(entry) {
+    note('REGISTERED BUT ABSENT  ' + differenceIdentity(entry) +
+      ' - authorized by ' + entry.finding + ', argued in ' + entry.arguedIn +
+      '. FAILURE: either the remediation it accounts for was reverted, or the ' +
+      'entry is stale.');
   });
 
   result.onlyInBaseline.forEach(function(key) {
@@ -12272,12 +14347,24 @@ function reportComparison(result, baselineRecord, targetRecord, comparability) {
     note('  input     ' + canonical(entry.input));
     note('  baseline  ' + canonical(entry.baseline));
     note('  target    ' + canonical(entry.targetValue));
+
+    if (entry.registered) {
+      note('  NOTE: this identity IS on the authorized-difference register, ' +
+        'but the register names one specific pair of values and this is not ' +
+        'that pair, so the difference is unauthorized.');
+    }
   });
 
   if (!result.differences.length && !result.onlyInBaseline.length &&
-      !result.onlyInTarget.length) {
-    note('no differences: accept/reject parity holds across every target, ' +
-      'every case and both Accept modes.');
+      !result.onlyInTarget.length && !unmatchedEntries.length) {
+    note(authorizedRows.length
+      ? 'no unauthorized differences: accept/reject parity holds across every ' +
+        'target, every case and both Accept modes, apart from the ' +
+        authorizedRows.length + ' difference(s) listed above, each accounted ' +
+        'to the order-0 finding that authorized it and each matching its ' +
+        'registered pair of values exactly.'
+      : 'no differences: accept/reject parity holds across every target, ' +
+        'every case and both Accept modes.');
   }
 
   return report;
@@ -12615,13 +14702,57 @@ function buildGate(input) {
                       (entry.mode ? ' [' + entry.mode + ']' : '') + ' ' +
                       entry.field,
         detail      : 'baseline ' + canonical(entry.baseline) + ' vs target ' +
-                      canonical(entry.targetValue),
+                      canonical(entry.targetValue) +
+                      (entry.registered
+                        ? '. This identity is on the authorized-difference ' +
+                          'register, but the register names one specific pair ' +
+                          'of values and this is not that pair.'
+                        : ''),
         owner       : 'the tree under test',
         operational : false
       });
     });
 
+    // A REGISTERED DIFFERENCE THAT DID NOT MATERIALIZE. Counted as a failure
+    // for the reason the register exists: each entry accounts for an order-0
+    // remediation that must still be in the tree, so an entry whose difference
+    // has gone means either the remediation was reverted - a regression that
+    // two clean-comparing matrices would otherwise hide - or the entry is
+    // stale and belongs deleted together with the argument that supports it.
+    (input.comparison.unmatchedAuthorizations || []).forEach(function(entry) {
+      var citation = describeAuthorization(entry);
+
+      failures.push({
+        kind        : 'authorization-unmatched',
+        subject     : 'registered difference absent: ' +
+                      differenceIdentity(entry),
+        detail      : 'the register authorizes baseline ' + entry.baseline +
+                      ' vs target ' + entry.targetValue + ' under ' +
+                      citation.finding + ' (argued in ' + citation.arguedIn +
+                      '), and this run measured no such difference. Either ' +
+                      'the remediation it accounts for was reverted - which ' +
+                      'is a regression two clean-comparing matrices would ' +
+                      'hide - or the entry is stale and belongs deleted with ' +
+                      'its argument.',
+        owner       : 'test/parity/joi-matrix.js',
+        operational : false
+      });
+    });
+
     input.comparison.onlyInBaseline.forEach(function(key) {
+      // A baseline target the delivered tree no longer declares is authorized
+      // ONLY by name, through AUTHORIZED_REMOVED_TARGETS. Anything else is a
+      // target that silently stopped being validated, which is the regression
+      // this kind exists to catch.
+      var removal = removedTargetAuthorization(key);
+
+      if (removal) {
+        note('AUTHORIZED REMOVAL  ' + key + ' - authorized by ' +
+          removal.finding + ', argued in ' + removal.arguedIn + '. ' +
+          removal.summary);
+        return;
+      }
+
       failures.push({
         kind        : 'only-in-baseline',
         subject     : key,
@@ -12629,6 +14760,28 @@ function buildGate(input) {
         owner       : 'the tree under test',
         operational : false
       });
+    });
+
+    // An authorized removal that DID materialize as a target again means the
+    // remediation behind it was reverted, so the register is stale and says so.
+    AUTHORIZED_REMOVED_TARGETS.forEach(function(entry) {
+      if (input.comparison.onlyInBaseline.indexOf(entry.target) === -1 &&
+          input.comparison.onlyInTarget.indexOf(entry.target) === -1 &&
+          !comparisonSawTarget(input.comparison, entry.target)) {
+        return;
+      }
+
+      if (comparisonSawTarget(input.comparison, entry.target)) {
+        failures.push({
+          kind        : 'rule-unmatched',
+          subject     : 'AUTHORIZED_REMOVED_TARGETS ' + entry.target,
+          detail      : 'this target is declared again in the tree under test, ' +
+            'so the removal authorized by ' + entry.finding + ' was reverted ' +
+            'and the entry is stale.',
+          owner       : 'test/parity/joi-matrix.js',
+          operational : false
+        });
+      }
     });
 
     input.comparison.onlyInTarget.forEach(function(key) {
@@ -13038,9 +15191,11 @@ async function buildMatrix(options, mode, recorded) {
   // built with it or the two artifacts could not be compared.
   resolved    = knownValues(loaded, options.appRoot, fixtureSeed());
 
-  assertEnumeration(enumeration, maps);
+  assertEnumeration(enumeration, maps,
+    provenance.treeIdentity(options.appRoot).isBaselineCommit);
 
-  deepCopyProof = buildDeepCopyProof(loaded, enumeration);
+  deepCopyProof = buildDeepCopyProof(loaded, enumeration,
+    provenance.treeIdentity(options.appRoot).isBaselineCommit);
 
   note('enumerated ' + enumeration.targets + ' target(s): ' +
     enumeration.payload + ' payload, ' + enumeration.query + ' query, ' +
@@ -13803,7 +15958,20 @@ function qualifyForRecording(input) {
   var reasons = [];
 
   if (input.result.differences.length) {
-    reasons.push(input.result.differences.length + ' comparison difference(s)');
+    reasons.push(input.result.differences.length +
+      ' unauthorized comparison difference(s)');
+  }
+
+  // An authorized difference does NOT disqualify - it is accounted for, which
+  // is the whole point of the register - but an entry that did not materialize
+  // does: the recording would seal a verdict that rests on a remediation this
+  // run could not observe.
+  if ((input.result.unmatchedAuthorizations || []).length) {
+    reasons.push(input.result.unmatchedAuthorizations.length +
+      ' registered difference(s) that did not materialize: ' +
+      input.result.unmatchedAuthorizations.map(function(entry) {
+        return differenceIdentity(entry);
+      }).join('; '));
   }
 
   if (input.result.onlyInBaseline.length || input.result.onlyInTarget.length) {
@@ -13964,6 +16132,7 @@ async function runCapture(options) {
 async function runCompare(options) {
   var out = resolveOut(options, 'compare');
   assertComparisonDestination(out, options);
+  assertAuthorizationDestination(out, options);
 
   var baselineRecord = readRecording(options.compare[0], 'baseline');
   var baseline = baselineRecord.matrix;
@@ -13982,6 +16151,7 @@ async function runCompare(options) {
   var reportText;
   var baselineFaults;
   var disqualified = [];
+  var emitted;
   var gate;
 
   resetTeardownFailures();
@@ -14104,6 +16274,25 @@ async function runCompare(options) {
     });
   }
 
+  // THE AUTHORIZED-DIFFERENCE REGISTER, applied once the difference list is
+  // complete - the generated-input divergences above are part of what it has
+  // to account for, so partitioning before them would leave a scope the
+  // register could never reach. It is applied ONLY when this comparison is the
+  // two sides of the gate: `comparability.relaxed` is non-empty exactly when
+  // --allow-same-tree waived a check that makes it so, and there an authorized
+  // difference is a contradiction because both sides are the same tree.
+  partitionDifferences(result, {
+    authorize : comparability.relaxed.length === 0
+  });
+
+  if (result.registerApplied) {
+    note('authorized-difference register: ' + result.registerNote);
+  }
+  else {
+    note('authorized-difference register: NOT APPLIED - ' +
+      result.registerNote);
+  }
+
   report = reportComparison(result, baselineRecord, targetRecord,
     comparability);
 
@@ -14123,6 +16312,44 @@ async function runCompare(options) {
       'check(s) were WAIVED as unsatisfiable outside a repository and are ' +
       'recorded in ' + out + ' under `provenanceWaivers`; the artifacts were ' +
       'authenticated by content instead');
+  }
+
+  // THE REGISTER, REGENERATED FROM THIS RUN'S OWN MEASUREMENTS. Written before
+  // the report is serialized, so the report carries the digest of the exact
+  // bytes emitted beside it - and written whatever the verdict, because a run
+  // that ends in unauthorized differences is precisely the run whose emit a
+  // reader needs.
+  if (options.emitAuthorizations !== null) {
+    emitted = renderAuthorizations(result, {
+      baseline : artifactLabel(baselineRecord.path),
+      target   : artifactLabel(targetPath)
+    });
+
+    writeArtifact(options.emitAuthorizations, emitted.text);
+    note('wrote ' + options.emitAuthorizations + ' (RUN OUTPUT, not part of ' +
+      'the delivery: ' + emitted.entries.length + ' attributed register ' +
+      'entr' + (emitted.entries.length === 1 ? 'y' : 'ies') + ', ' +
+      emitted.unattributed.length + ' difference(s) it REFUSED to attribute)');
+
+    emitted.unattributed.forEach(function(record) {
+      note('UNATTRIBUTED  ' + differenceIdentity(record) + ': ' +
+        record.reason);
+    });
+
+    // The emit says nothing about the verdict: the gate below still fails on
+    // every unauthorized difference, including each one this emit declined to
+    // attribute.
+    report.emittedAuthorizations = {
+      path         : artifactLabel(options.emitAuthorizations),
+      digest       : artifactDigest(emitted.text),
+      entries      : emitted.entries.length,
+      unattributed : emitted.unattributed,
+      note         : 'AUTHORIZED_DIFFERENCES as this run\'s own measurements ' +
+        'justify it, attributed through AUTHORIZATION_RULES. An entry is ' +
+        'emitted only where exactly one named order-0 finding claims the ' +
+        'difference; anything else is listed under `unattributed` and remains ' +
+        'a gate failure.'
+    };
   }
 
   reportText = serialize(report);
@@ -14298,6 +16525,19 @@ module.exports = {
   compareMatrices : compareMatrices,
   readMatrix      : readMatrix,
   indexTargets    : indexTargets,
+
+  // The authorized-difference register and everything that reads it. Exported
+  // for the same reason manifest.js exports its own: the allowlist, the
+  // identity it keys on and the partition are checkable without driving a
+  // single request, which is what lets "an entry that does not materialize is
+  // a failure" be demonstrated rather than asserted.
+  AUTHORIZED_DIFFERENCES : AUTHORIZED_DIFFERENCES,
+  AUTHORIZATION_RULES    : AUTHORIZATION_RULES,
+  differenceIdentity     : differenceIdentity,
+  authorizedDifference   : authorizedDifference,
+  attributionFor         : attributionFor,
+  partitionDifferences   : partitionDifferences,
+  renderAuthorizations   : renderAuthorizations,
 
   // Digests and seals, exported because the negative controls need them.
   // Perturbing a recorded outcome invalidates that recording's own payload

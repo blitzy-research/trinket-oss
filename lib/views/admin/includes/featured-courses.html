@@ -17,15 +17,29 @@
       </div>
     {% endfor %}
     </section>
+    <p id="featuredMessage" class="hide" role="alert"></p>
     <div id="new-course-featured" class="row new-featured-course-inputs">
+      {#
+        Each field carries a real <label for>, not a placeholder alone: a
+        placeholder is a last-resort accessible-name source and it stops naming
+        the field the moment the admin types into it. Foundation's
+        `show-for-sr` keeps the label out of the visual flow
+        (position: absolute, clipped to 1px), so the wording reaches assistive
+        technology and label-based tooling while the row renders exactly as it
+        did before. The placeholders stay as the visible hint, and no
+        aria-label is added - the label is the one name source.
+      #}
       <div class="small-2 columns">
-        <input type="text" name="ownerSlug" placeholder="owner slug" />
+        <label for="featured-owner-slug" class="show-for-sr">owner slug</label>
+        <input type="text" id="featured-owner-slug" name="ownerSlug" placeholder="owner slug" />
       </div>
       <div class="small-2 columns">
-        <input type="text" name="slug" placeholder="course slug" />
+        <label for="featured-course-slug" class="show-for-sr">course slug</label>
+        <input type="text" id="featured-course-slug" name="slug" placeholder="course slug" />
       </div>
       <div class="small-3 columns">
-        <input type="text" name="page" placeholder="course page (optional)" />
+        <label for="featured-course-page" class="show-for-sr">course page (optional)</label>
+        <input type="text" id="featured-course-page" name="page" placeholder="course page (optional)" />
       </div>
       <div class="small-3 columns end">
         <button type="submit" class="button tiny secondary">Add Course</button>
@@ -54,20 +68,151 @@
 {% block extra_js %}
 <script src="//cdnjs.cloudflare.com/ajax/libs/Sortable/1.4.2/Sortable.min.js"></script>
 <script>
+/*
+ * Featured-course reordering.
+ *
+ * Two defects on this control are guarded below.
+ *
+ *   1. Sortable 1.4.2 does not always report `evt.newIndex` on `onEnd`. The
+ *      payload is assembled by jQuery.ajax, which deep-extends its options
+ *      through jQuery.extend and therefore drops keys whose value is
+ *      `undefined` before $.param serialises anything: an undefined
+ *      `evt.newIndex` left `newIndex` off the wire entirely — the observed
+ *      body was `currentIndex=0&courseId=...&page=` — and the route's
+ *      `newIndex : Joi.number().required()` then refused the move. Both
+ *      indexes are resolved to real numbers here, falling back to the dragged
+ *      row's own position among #featured's children, which is authoritative
+ *      by the time `onEnd` fires because Sortable has already moved the node.
+ *
+ *   2. A refused move answers **200** and carries its reason in
+ *      `flash.validation`, so success cannot be read off the status code. The
+ *      refusal used to reach the console only, leaving the admin looking at a
+ *      list that silently did not move; it now also reaches #featuredMessage.
+ */
+
+/**
+ * Shows a message in the featured list's alert region, and hides the region
+ * again when `message` is empty. Text is applied with .text() rather than
+ * .html() so server-supplied strings cannot reach an HTML sink. Follows the
+ * showRolesMessage pattern in admin/index.html.
+ *
+ * @param {string} message Human-readable text, or '' to clear and hide.
+ */
+function showFeaturedMessage(message) {
+  var $message = $('#featuredMessage');
+
+  if (message) {
+    $message.text(message).removeClass('hide');
+  }
+  else {
+    $message.text('').addClass('hide');
+  }
+}
+
+/**
+ * Renders a `flash.validation` object — field name to reason — as one readable
+ * sentence, e.g. `newIndex: "newIndex" is required`.
+ *
+ * @param {Object} validation The response's flash.validation object.
+ * @returns {string}
+ */
+function featuredValidationText(validation) {
+  return Object.keys(validation).map(function(field) {
+    return field + ': ' + validation[field];
+  }).join('; ');
+}
+
+/**
+ * Posts one reorder and reports its outcome. Success is judged on the body,
+ * because the route answers 200 either way.
+ *
+ * @param {Object} payload currentIndex, newIndex, courseId and page.
+ * @returns {jqXHR}
+ */
+function postFeaturedMove(payload) {
+  return $.post('/api/admin/featured-course/move', payload)
+    .done(function(result) {
+      console.log("result:", result);
+
+      var validation = result && result.flash && result.flash.validation;
+
+      if (validation && Object.keys(validation).length) {
+        showFeaturedMessage('That course was not moved. The server rejected the request — '
+          + featuredValidationText(validation));
+      }
+      else {
+        showFeaturedMessage('');
+      }
+    })
+    .fail(function(err) {
+      console.log("err:", err);
+      showFeaturedMessage('That course was not moved. The request failed'
+        + (err && err.status ? ' with status ' + err.status : '')
+        + '. Reload the page and try again.');
+    });
+}
+
+/**
+ * The row's position among the featured list's own children, or -1 when the
+ * row is not in the list.
+ *
+ * @param {Element} item The dragged row.
+ * @returns {number}
+ */
+function featuredRowIndex(item) {
+  return $('#featured').children().index(item);
+}
+
+/**
+ * Resolves one index reported by Sortable onto a real number, falling back to
+ * the row's position in the DOM when the event carries no usable value.
+ *
+ * @param {number|undefined} reported evt.oldIndex or evt.newIndex.
+ * @param {number} domIndex The row's position in #featured.
+ * @returns {number}
+ */
+function resolveFeaturedIndex(reported, domIndex) {
+  return (typeof reported === 'number' && !isNaN(reported)) ? reported : domIndex;
+}
+
+/**
+ * Handles one completed drag: resolves both indexes, then posts the move.
+ * Issues no request when the row did not change position — the behaviour the
+ * original handler had — and reports rather than guesses when the row's
+ * position cannot be established at all.
+ *
+ * @param {Object} evt A Sortable onEnd event: item, oldIndex, newIndex.
+ * @returns {jqXHR|undefined} undefined when no request is warranted.
+ */
+function moveFeaturedCourse(evt) {
+  var $item        = $(evt.item)
+    , domIndex     = featuredRowIndex(evt.item)
+    , currentIndex = resolveFeaturedIndex(evt.oldIndex, domIndex)
+    , newIndex     = resolveFeaturedIndex(evt.newIndex, domIndex);
+
+  if (currentIndex < 0 || newIndex < 0) {
+    showFeaturedMessage('That course was not moved: its new position could not be determined. '
+      + 'Reload the page and try again.');
+    return;
+  }
+
+  if (currentIndex === newIndex) {
+    return;
+  }
+
+  return postFeaturedMove({
+      currentIndex : currentIndex
+    , newIndex     : newIndex
+    , courseId     : $item.data('id')
+    , page         : $item.data('page')
+  });
+}
+
 $(document).ready(function() {
   Sortable.create($('#featured').get(0), {
     group: 'featured',
     onEnd: function(evt) {
-      if (evt.oldIndex !== evt.newIndex) {
-        $.post('/api/admin/featured-course/move', {
-            currentIndex : evt.oldIndex
-          , newIndex     : evt.newIndex
-          , courseId     : $(evt.item).data('id')
-          , page         : $(evt.item).data('page')
-        }).done(function(result) {
-          console.log("result:", result);
-        });
-      }
+      moveFeaturedCourse(evt);
     }
   });
 });

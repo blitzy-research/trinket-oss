@@ -2645,7 +2645,10 @@
           , $activeContent        = this.$contentWrapper.children().eq($activeTab.index()).first()
           , newIndex = origIndex  = $activeTab.index()
           , fileName              = $activeTab.find('.file-name').text()
-          , $restore              = $(UNDO_REMOVE_TEMPLATE({name : escapeHtml(fileName)}))
+          // The raw name goes in: `UNDO_REMOVE_TEMPLATE` escapes its own input
+          // because it concatenates the name into markup three times, so
+          // escaping it here as well showed the user `&amp;` and `&lt;`.
+          , $restore              = $(UNDO_REMOVE_TEMPLATE({name : fileName}))
           , fileToRestore         = this._files.splice(origIndex, 1)[0]
           , isLastTab             = origIndex === this._files.length
           , closeUndoAlertTimeout = setTimeout(function() {

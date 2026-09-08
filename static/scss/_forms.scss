@@ -92,6 +92,381 @@ small.error,
 	overflow-wrap: break-word;
 }
 
+// Give text inputs and textareas a focus indicator at all.
+//
+// Foundation's `form-element` mixin ends with
+// `&:focus { background-color: $input-focus-bg-color; border-color:
+// $input-focus-border-color; outline: none; }`
+// [public/components/foundation/scss/foundation/components/_forms.scss:136-141],
+// applied to `input:not([type]), #{text-inputs(all, 'input')}` at :423 of
+// that file. It is the only `outline: none` in the entire compiled
+// stylesheet, and it means every text control on the site computed
+// `outline-style: none` in BOTH the resting and the focused state -
+// measured on `#login-email`, `#password-box`, all four `/signup` inputs,
+// `#display-name`, `#username`, `#course-name` and `#course-description`.
+// The whole of the focus cue was a border going `rgb(204, 204, 204)` ->
+// `rgb(153, 153, 153)`, a background going `rgb(255, 255, 255)` ->
+// `rgb(250, 250, 250)`, and the caret. That is a WCAG 2.1 SC 2.4.7 (Focus
+// Visible) failure outright, and the border delta on its own is 1.7741:1
+// (`#ccc` against `#999`) - nowhere near the 3:1 SC 1.4.11 bar for a
+// non-text indicator, so a low-vision user tabbing through a form could
+// not tell which field had focus.
+//
+// `outline`, not `box-shadow`. `form-element` also sets
+// `box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1)` on the resting control
+// and the whole site's field styling depends on that inset; a focus
+// `box-shadow` would replace it rather than add to it, so the resting look
+// would change the moment a field took focus. An `outline` is a separate
+// property, so the inset shadow, the `#ccc` -> `#999` border and the
+// `border-color`/`background` transition all survive untouched: this rule
+// adds a cue and changes nothing that was already there. Outlines are also
+// outside the box model, so a field growing a ring shifts no layout.
+//
+// `outline-offset: 2px` puts the ring clear of the control's own 1px
+// border rather than on top of it. That is what keeps the error state and
+// the focus state readable at the same time: `input.input-error:focus`
+// above deliberately holds its `#c00` border through focus, and this ring
+// is drawn 2px outside that border, so a rejected field under focus shows
+// both the red border and the blue ring. Confirmed by reading that rule -
+// it sets `border-color` only, and this rule sets `outline` only, so
+// neither can override the other.
+//
+// The colour is `$primary-color`, referenced rather than written out so the
+// indicator tracks the palette instead of pinning a hex that the token
+// surface would later contradict. Both values it takes across this wave
+// clear the 3:1 SC 1.4.11 bar, and the colours to measure it against are
+// the ones the 2px offset gap exposes - the ring is separated from the
+// field's own border, so what abuts it on both sides is whatever the page
+// paints behind the control: `#008AFF` is 3.4543:1 against `#FFF`, and
+// `#0074d6` is 4.6989:1 against `#FFF`, 4.5018:1 against the `#fafafa`
+// focused-field fill and 4.0499:1 against the `#EEE` chrome. 2px of
+// thickness rather than 1px so the ring reads as a ring and not as a
+// second border.
+//
+// `:focus` and not `:focus-visible`, for three reasons: the rule this has
+// to beat is itself a `:focus` rule, so matching the pseudo-class keeps the
+// specificity story a tie broken by import order rather than an escalation;
+// Chrome paints its own ring on text controls for pointer focus as well as
+// keyboard focus, so `:focus` is what the platform behaviour on these
+// controls already is; and a text control that has focus has a caret in it
+// either way, so there is no pointer-focus case where the ring is noise.
+//
+// Specificity is (0,2,1) - `[type="..."]` plus `:focus` plus the element -
+// which exactly ties Foundation's own `:focus` rule. This file is imported
+// at base.scss:13 and Foundation at :6, so this wins on source order rather
+// than by escalating, the same mechanism the `.show-for-sr` rule below
+// relies on.
+//
+// The selector set is Foundation's own broad list verbatim - `text-inputs`
+// [public/components/foundation/scss/foundation/_functions.scss:52-88]
+// already appends bare `textarea` as its last member - written out in full
+// so a reviewer can diff it against the compiled Foundation rule directly.
+// It deliberately does NOT reach four control kinds, each verified to keep
+// Chrome's UA ring (`outline: auto 1px`) today: `select`, native `button`,
+// `input[type="submit"]` and real links. Foundation's `select:focus` sets
+// only `background-color` and `border-color`, and no rule in this tree
+// suppresses an outline on any of them - so adding a ring there would be
+// replacing a working indicator with a different one for no benefit.
+// `input[type="file"]` is likewise absent from the list, which is what
+// keeps the visually-hidden blocks upload below out of scope.
+input:not([type]),
+input[type="text"],
+input[type="password"],
+input[type="date"],
+input[type="datetime"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="week"],
+input[type="email"],
+input[type="number"],
+input[type="search"],
+input[type="tel"],
+input[type="time"],
+input[type="url"],
+input[type="color"],
+textarea {
+	&:focus {
+		outline: 2px solid $primary-color;
+		outline-offset: 2px;
+	}
+}
+
+// Bring every base-styled text control and `select` up to a 44px target.
+//
+// Foundation sizes the whole broad input list from the type scale:
+// `height: ($input-font-size + ($form-spacing * 1.5) - rem-calc(1))`
+// [public/components/foundation/scss/foundation/components/_forms.scss:128],
+// which with this project's `$input-font-size: rem-calc(16)`
+// [_settings.scss] and the default `$form-spacing: rem-calc(16)` resolves
+// to `2.4375rem` = 39px, and it gives `select` the same 39px. Measured at
+// 39px on `/login` (470x39), `/signup` (470x39), `/account/profile`
+// (216.3x39), `/courses/new` (803x39) and the new-folder modal's
+// `#new-folder-name` (420x39). 44px is this project's own established bar,
+// not an imported one: _nav.scss:12-36,48-94 already did exactly this work
+// for the mobile nav's rows, logo link and menu toggle, citing WCAG 2.1
+// failure techniques F127 and F128 - a target too small to hit reliably,
+// and targets packed too close to separate - by name. A text field is the
+// most-tapped control on the site and had been left out of that pass.
+//
+// `min-height` and not `height`, deliberately, so nothing that legitimately
+// grows is capped: `textarea[rows]` sets `height: auto` and a
+// `select[multiple]` does the same, and both must be free to size to their
+// content above the floor rather than be pinned to it. It also means this
+// rule adds a lower bound and overrides no author height that is already
+// 44px or more - the library search plate's inner input (48px) and the
+// materials toolbar's (45px) are unchanged by it.
+//
+// GUARD - `textarea` is deliberately absent from this selector list, and
+// that is not an oversight. Foundation's own `text-inputs()` list, which
+// the focus rule above uses verbatim, DOES include `textarea`, and
+// Foundation separately floors it at
+// `textarea { height: auto; min-height: 50px }`. This file is imported
+// after Foundation, so a 44px `min-height` reaching `textarea` would LOWER
+// an existing 50px floor and make a compliant control less compliant.
+// Textareas are already past the bar - measured 98px on `/courses/new` -
+// so the focus list includes `textarea` and this list must not. The two
+// lists are intentionally different by exactly that one member.
+//
+// GUARD - `input[type="file"]`, `[type="checkbox"]`, `[type="radio"]` and
+// `[type="submit"]` are outside this list because they are outside
+// Foundation's text-input list; their sizing is not base-owned here.
+// `input.show-for-sr` IS reached by the list and is neutralised below.
+//
+// Vertical rhythm was checked rather than assumed. `* { box-sizing:
+// border-box }` is global, so 44px is the border-box height, and this
+// file's own `input[type="text"] { padding: 8px 10px 6px }` at the top is
+// asymmetric by 2px. Chrome centres a single-line input's editor block in
+// the content box, so that asymmetry offsets the text 1px below the box
+// centre at ANY height: at 39px the content box is 39-2-14 = 23px spanning
+// y=9..32, centre 20.5 against a box centre of 19.5; at 44px it is 28px
+// spanning y=9..37, centre 23.0 against a box centre of 22.0. Growing the
+// box from 39 to 44 adds 2.5px above and 2.5px below the text and so does
+// not change the offset at all. The padding is therefore left exactly as
+// it is: equalising it to `7px 10px 7px` would move the text on every text
+// input in the application for a 1px pre-existing offset unrelated to this
+// finding, and would invalidate the measured floor arithmetic the
+// `.show-for-sr` comment below depends on ("8+6+1+1 = 16 down").
+//
+// What this deliberately does not reach: the nine `...` row menus, the
+// admin "Add Course" control, the featured-course delete, the library
+// typeahead and the trinket-card glyphs are all sized by page-specific
+// rules in _admin.scss, _library.scss, _modals.scss and _homepage.scss,
+// which are owned elsewhere. Growing them from here would be a base rule
+// reaching into page layout it cannot see.
+//
+// The attached-element chrome that shares a row with these controls has to
+// move with them, and the rule below this one is what moves it.
+input:not([type]),
+input[type="text"],
+input[type="password"],
+input[type="date"],
+input[type="datetime"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="week"],
+input[type="email"],
+input[type="number"],
+input[type="search"],
+input[type="tel"],
+input[type="time"],
+input[type="url"],
+input[type="color"],
+select {
+	min-height: 44px;
+}
+
+// Carry the same floor to the control-shaped chrome that sits in a row with
+// those controls, so raising them does not leave a step in the middle of a
+// composed field.
+//
+// Foundation's `.prefix, .postfix { height: 2.4375rem; line-height: 2.4375rem }`
+// is the attached element of a `.row.collapse` field, and _shared.scss:169-192
+// fixes `.faux-input` at the same 2.4375rem as a non-input element styled to
+// read as one. Both were flush with a 39px input and neither tracks the
+// control it is attached to, so the floor above opened a visible 5px step on
+// the course editor's "Add Trinket User" row
+// [public/partials/course_editor.html:439-442], where a text input is butted
+// against a `.button.secondary.collapse.postfix`.
+//
+// All three selectors move together, and that is the point: flooring only
+// `.prefix, .postfix` would close that step and open an identical one on the
+// access-code row directly above it [:397-405], where the same `.postfix` is
+// paired with a `<p class="join-code faux-input">` that no input selector can
+// reach. Flooring `.faux-input` too also keeps the two remaining consumers
+// consistent with every real control on the page rather than 5px short of
+// them: `#shareUrl` in includes/shareModals.html:17, which is a genuinely
+// interactive `role="textbox" tabindex="0"` copy-link field, and the value
+// cells on /docs/colors [views/docs/colors.html:106-137], which are rendered
+// as fake inputs on purpose.
+//
+// `min-height` rather than `height`, so `.faux-input.textarea`
+// (_shared.scss:191, `height: 3.9rem` = 62.4px) is not pulled down to 44px;
+// min-height only ever raises a used height. The `line-height: 2.4375rem`
+// that centres the postfix label is deliberately left alone: matching it to
+// 44px would make any postfix whose label wraps at a narrow width 88px tall,
+// which is a worse defect than the 2.5px optical offset it corrects, and
+// flex centring is not available here either - the postfix content is an
+// `<i class="fa">` glyph followed by a text node, exactly the case
+// _nav.scss:19-22 records flex layout as collapsing into a joined glyph and
+// label.
+.prefix,
+.postfix,
+.faux-input {
+	min-height: 44px;
+}
+
+// Keep the 44px floor off the code editor's file-rename field.
+//
+// This file is not only base.scss's: embed.scss imports it too
+// [static/scss/embed/embed.scss:11], so both rules above reach the embedded
+// code editor as well as the server-rendered pages. One control there
+// cannot take the floor. `_editFileName` swaps a tab's filename span for
+// `<input type="text" class="file-name-input">`
+// [public/js/plugins/code-editor.js:1401,2518], inside a strip that
+// embed/_code_editor.scss:332-336 fixes at `height: 2.275rem` (36.39px)
+// with `overflow: hidden`, and embed/_code_editor.scss:401-411
+// deliberately strips that input to `height: auto; padding: 0;
+// border: none; box-shadow: none; display: inline` so it reads as the tab
+// label rather than as a field.
+//
+// Measured on a harness carrying the verbatim tab markup, with the base
+// floor applied and no neutralisation: the input went 18.00px -> 44.00px,
+// the renaming tab went 37.59px -> 56.00px while the same tab not renaming
+// stayed at 37.59px, the 36.39px strip hid 15.61px of the field, and the
+// neighbouring idle tab was pushed from top 6.00px to top 15.00px and
+// clipped at the bottom. Renaming a file visibly broke the tab bar.
+//
+// A 44px floor is also the wrong goal for this control: it is not a
+// standalone field a user aims at, it is a two-second inline rename opened
+// from a menu item that is itself the touch target, inside a strip whose
+// height is the editor's layout contract with the pane below it. Growing
+// the strip to fit is not available - that is a page-owned decision in
+// embed/_code_editor.scss, and it would move the editor pane on every
+// trinket.
+//
+// So the floor is removed rather than worked around, exactly as it is for
+// `input.show-for-sr` below, and for the same reason: a control that has
+// been deliberately sized away by the page that owns it must not be
+// re-inflated by a base rule that cannot see why. `min-height: 0` restores
+// the authored `height: auto` and nothing else - the focus ring above is
+// left in place, and with the field back at 18px its 2px ring at a 2px
+// offset spans 10.00px..36.00px inside the strip's 2.00px..38.39px box, so
+// it lands complete and unclipped and the rename field ends up with the
+// visible focus indicator it never had.
+//
+// Scoped to `.tab-nav .tab input`, at (0,2,1) against the floor's (0,1,1),
+// so it holds on specificity and not on import order - embed.scss loads
+// _code_editor.scss after this file, and a rule that depended on order
+// would be silently undone by a reordering there. `.tab` rather than
+// `.tab.active`, because `_editFileName` accepts a tab from the options
+// menu that need not be the active one, and the field must behave the same
+// in both. It is the only `input` that can appear inside a `.tab`: the
+// upload control is an `input[type="file"].hidden` in its own form
+// [code-editor.js:1489], outside `.tab` and outside both lists above.
+//
+// It compiles into base.css as well, where it is inert: the code editor is
+// loaded only by lib/views/embed/*.html, and `_code_editor.scss` is
+// imported only by embed.scss, so no base-rendered page has a `.tab-nav`
+// at all. Three lines of dead CSS there is the cost of the rule living in
+// the file whose declaration it cancels, which is where it can be
+// understood.
+//
+// The embed's two other authored `height: auto` text inputs were measured
+// and deliberately left on the floor, because neither is clipped and both
+// are real targets: `.voice-inputs input` [embed/_music.scss:154-165] went
+// 39.00px -> 44.00px inside a scrolling pane, and the off-screen noVNC
+// keyboard capture input [embed/_python.scss:21-31] went 14.00px ->
+// 44.00px while staying at `left: -40px` with `z-index: -1`, its right
+// edge at -19.00px and its focus ring's outer edge at -15.00px, so neither
+// the box nor the ring can ever enter the viewport.
+.tab-nav .tab input {
+	min-height: 0;
+}
+
+// Bring the `tiny` button size up to a 44px target.
+//
+// Foundation's `button-size` gives this class
+// `padding: .625rem 1.25rem .6875rem 1.25rem; font-size: .6875rem`
+// [compiled: `button.tiny, .button.tiny, .tiny.faux-button`], which is
+// 10px of padding, a ~14px line box for 11px Merriweather at
+// `line-height: normal`, and 11px of padding - the 35px measured. That is
+// the finding's "Upload new picture 143x35": the control is
+// `<button id="upload-button" class="tiny file-upload">`
+// [lib/views/users/includes/profile.html:24] and it carries no size rule of
+// its own anywhere in this tree, so its height comes from this base rule
+// and from nowhere else. Same WCAG 2.1 F127/F128 basis as the input floor
+// above and as _nav.scss:12-36,48-94.
+//
+// `inline-flex` with centring, not `display: block` and not a bigger
+// `padding`, following the pattern _nav.scss:66-75 established for exactly
+// this problem: a block-level control would stretch to its container's full
+// width and swallow taps aimed at neighbouring chrome, whereas inline-flex
+// keeps the button shrink-to-fit around its label while `align-items:
+// center` centres that label in the taller box, so the text does not appear
+// to move. Padding alone would have worked only by changing the horizontal
+// padding too, since `padding` is one shorthand here.
+//
+// `.tiny.faux-button` is in the selector set because _shared.scss:99 has
+// `.faux-button { @extend .button }`, so Foundation's `.button.tiny` rule
+// compiles with that third selector appended; matching all three keeps the
+// non-interactive faux variant the same size as the real one.
+//
+// Checked: `.button.tiny.dropdown` also carries `padding-right: 2.625rem`
+// to reserve room for its caret, and the caret itself is
+// `::after { position: absolute; top: 50%; right: 1.125rem; margin-top:
+// -.125rem }` against a `position: relative` parent. An absolutely
+// positioned pseudo-element is out of flow, so it is NOT a flex item and
+// neither `align-items` nor `justify-content` can move it, and because
+// `top` is a percentage it tracks the height: the caret's centre sits at
+// `50%` + `margin-top` + `border-width`, a fixed 4px below the box centre
+// at 35px and at 44px alike, so the change does not move it relative to
+// the control at all. Measured on the 44px box: `position: absolute;
+// top: 21px; right: 18px; margin-top: -2px; border-width: 6px`.
+// `justify-content: center` centres the label within the content box,
+// which is exactly where the base `text-align: center` centred it before,
+// so the reserved `padding-right` still holds the label clear of the
+// caret. The dropdown caret is therefore undisturbed in both position and
+// clearance.
+//
+// The two alignment pairs below exist because `justify-content` supersedes
+// `text-align` for a flex container's contents: the label becomes an
+// anonymous flex item sized to its own text, so it is `justify-content`
+// that decides where in the button it sits, and `text-align` inside an
+// item that is exactly as wide as its text has nothing left to do. Without
+// them the change would silently re-centre every label that an alignment
+// utility had deliberately pushed to one side. Measured case:
+// `a.button.tiny.text-left.user-role-button`
+// [public/partials/course_editor.html:554,557] is given a fixed
+// `width: 8.5rem` by _course-edit.scss:368-375, so its role label is
+// visibly left-aligned inside a 136px box - centring it would have been an
+// obvious regression on the course editor's user list. `.text-left` is
+// Foundation's `text-align: left !important` utility and `.left-align` is
+// its `.button` counterpart, which also carries `text-indent: .75rem`;
+// under `flex-start` the item begins at the content-box edge and that
+// indent still applies inside it, exactly as before. The right-hand pair
+// is included for the same reason in the other direction: nothing pairs it
+// with `.tiny` today, so it emits a rule that matches nothing now, and
+// leaving it out would have hidden the identical defect behind whichever
+// template used it next.
+button.tiny,
+.button.tiny,
+.tiny.faux-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 44px;
+
+	&.text-left,
+	&.left-align {
+		justify-content: flex-start;
+	}
+
+	&.text-right,
+	&.right-align {
+		justify-content: flex-end;
+	}
+}
+
 // Make `.show-for-sr` actually collapse a text input.
 //
 // The utility declares `width: 1px; height: 1px` at specificity (0,1,0),
@@ -126,11 +501,53 @@ small.error,
 // rule, it is clipped to zero area, and it is operated through its own
 // `<label for="blocks-upload">` and read by fileReaderJS - neither of which
 // depends on its rendered size.
+//
+// The two base rules added above both reach this element and both had to be
+// neutralised here, or each would have undone part of what this rule exists
+// to do. This element is `#change-password-username`
+// [lib/views/users/includes/password.html:39], an `input[type="text"]`, so
+// it is a member of both new selector lists.
+//
+// `min-height: 0` cancels the 44px touch-target floor. `min-height` beats a
+// smaller `height` regardless of specificity or order, so without this the
+// `height: 1px` above would have been ignored and the field would have
+// re-inflated to a 44px-tall, full-width box lying across the change-password
+// form - the exact defect the paragraphs above were written to close, and a
+// larger one than the 39px it started at. It is `0` rather than `1px`
+// because `height: 1px` already sets the size and a floor equal to it would
+// be redundant; `0` states that this element has no floor.
+//
+// The focus ring is cancelled for the same reason in the other dimension: a
+// 2px outline offset 2px outside a 1px box is a 7px artefact around
+// something that is meant to have no visual presence at all. Removing a
+// focus indicator is normally the defect this file just fixed, and it is
+// safe here for a measured reason rather than a general one - this input is
+// `readonly tabindex="-1" aria-hidden="true"`, so it is out of the
+// sequential focus order and cannot be reached by keyboard, and `clip`
+// already suppresses its painting. The `clip` argument alone is the same
+// defence-in-depth reasoning as the size assertion above: it is asserted
+// here rather than left to `clip`, because a stylesheet edit that relaxed
+// the clip would otherwise make the ring visible.
+//
+// `:not([type="file"])` keeps that cancellation off the blocks upload.
+// `input[type="file"]` is absent from Foundation's text-input list, so the
+// focus rule above never reaches it and there is nothing to cancel; the
+// exclusion matters because that input, unlike this one, carries no
+// `tabindex="-1"` and so IS sequentially focusable, and Chrome's UA
+// `outline: auto` is the only focus indicator it has. Cancelling it would
+// have been an unrelated regression. Specificity here is (0,4,1) against
+// the focus rule's (0,2,1), so this holds on specificity and does not
+// depend on staying below it in the file.
 input.show-for-sr {
 	width: 1px;
 	height: 1px;
 	padding: 0;
 	border: 0;
+	min-height: 0;
+
+	&:not([type="file"]):focus {
+		outline: none;
+	}
 }
 
 #bottom-page-interest {

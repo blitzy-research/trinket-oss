@@ -1,3 +1,13 @@
+<!--
+  This route's own top-level heading, naming the folder being viewed. The
+  subnav below opens at the breadcrumb, so the view had no h1 and its outline
+  started mid-level. `show-for-sr` is Foundation's clip-based screen-reader-only
+  utility (already in public/css/base.css), so this renders no pixels - the same
+  treatment as lib/views/embed/base.html. It belongs here rather than in the
+  lib/views/trinket/library.html shell, whose single `ui-view` also hosts the
+  list and trinket-detail routes and could not name the folder.
+-->
+<h1 class="show-for-sr">Folder: {{ folder.name }}</h1>
 <div class="library-subnav clearfix row gutterless" data-magellan-expedition="fixed">
   <section class="left">
     <nav class="title breadcrumbs">
@@ -29,7 +39,15 @@
   <ul id="trinkets-list" infinite-scroll="moreTrinkets()" infinite-scroll-distance='1' class="{{viewType}}-view">
     <li ng-repeat="item in items" ng-click="gotoTrinket(item.shortCode)">
       <a class="snapshot" ng-class="{titled: item.name}" ui-sref="detail({shortCode: item.shortCode})">
-        <img ng-class="{'set-height': item.lang != 'glowscript' && item.lang != 'glowscript-blocks'}" ng-src="{{item.snapshot}}" alt="{{item.snapshot}}">
+        <!--
+          The snapshot is decorative, so its alt is empty: interpolating the
+          snapshot's own src into it read a storage URL out on every card. The
+          <h3 class="title"> below sits inside this same link and already
+          supplies the link's accessible name, so an empty alt is correct here
+          rather than a duplicate of that name. lib/views/home.html carries
+          alt="" on this same image.
+        -->
+        <img ng-class="{'set-height': item.lang != 'glowscript' && item.lang != 'glowscript-blocks'}" ng-src="{{item.snapshot}}" alt="">
         <h3 ng-class="{titled: item.name}" class="title trinket-list-with-lang {{viewType}}-view lang-{{item.lang}} trinketLabel">{{item.name || 'Untitled'}}</h3>
       </a>
       <div class="trinket-stats">

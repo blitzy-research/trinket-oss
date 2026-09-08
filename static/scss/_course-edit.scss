@@ -53,6 +53,120 @@ body.course {
           }
         }
       }
+
+      // Below $large-up the subnav's two children stop fitting on one line.
+      // They are floats, so they stack -- and #course-nav is a fixed 80px box,
+      // absolutely positioned at z-index 10 with visible overflow, so the row
+      // that no longer fits does not make the header taller: it escapes it and
+      // paints over the page underneath. Measured on the course page, the
+      // subnav lays out 178px tall at 375px and 119px at 768px against that
+      // 80px header. Two things are underneath it and both were casualties:
+      // the material's heading and body text, whose leading characters the
+      // wrapped next-page control covered, and #outline-expander, which sat
+      // under the overflow and so recorded 0 of 25 hit points at 375px and 20
+      // of 25 at 768px -- painted, and inert, with no way to open the outline.
+      //
+      // Laying the children out in one flex row that cannot wrap makes the
+      // subnav's height max(title, controls) plus its padding for any course
+      // name, which stays inside 80px. That matters beyond the overflow: the
+      // 80px is also hardcoded into #course-content's padding-top, #outline's
+      // top offset and the .ui-scrollfix variants of both, so keeping the
+      // header's contents within it is what lets those four values stay true
+      // rather than needing a second set for small screens.
+      @media #{$course-compact} {
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+
+        // .clearfix and .row each generate a display:table :before and :after
+        // to contain the floats being replaced here. In a flex container those
+        // pseudo-elements become flex items of their own.
+        &:before, &:after {
+          display: none;
+        }
+
+        // Foundation gives every .button a 1.25rem bottom margin. `a.button`
+        // above already drops it, which covers the course page's whole
+        // cluster, but the dashboard variants of this header put a
+        // <button class="button"> in .left -- and once the row is laid out
+        // rather than stacked, that 20px is 20px of the row's height. It was
+        // enough on its own to keep the dashboard header 12px past its 80px
+        // box after the wrap was fixed, so the reset is widened to the class.
+        .button {
+          margin-bottom: 0;
+        }
+
+        .left {
+          float: none;
+          flex: 1 1 auto;
+          // A flex item will not shrink below its content's intrinsic minimum
+          // width unless told to, and the title's intrinsic width is what was
+          // pushing the controls off the row to begin with.
+          min-width: 0;
+          display: flex;
+          align-items: center;
+
+          &:before, &:after {
+            display: none;
+          }
+        }
+
+        // The title is the one part with no natural width limit, so it is the
+        // part that gives: one line, ellipsised at whatever room the controls
+        // leave. Foundation's crumb mixin floats each crumb and text-overflow
+        // has no effect on a float, so the crumbs return to inline flow first;
+        // their generated "/" separators sit on those same elements and are
+        // unaffected. `overflow: hidden` already comes from the crumb
+        // container.
+        .title {
+          float: none;
+          flex: 1 1 auto;
+          min-width: 0;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+
+          > * {
+            float: none;
+            display: inline;
+          }
+        }
+
+        // The dashboard variants put their view-options control in .left
+        // beside the title; it keeps its own width and the title ellipsises
+        // around it.
+        #dashboard-list-options {
+          float: none;
+          flex: 0 0 auto;
+        }
+
+        .right {
+          float: none;
+          flex: 0 0 auto;
+          white-space: nowrap;
+        }
+      }
+
+      @media #{$small-only} {
+        padding-left: rem-calc(12);
+        padding-right: rem-calc(12);
+
+        .right {
+          // Every label in these controls is .show-for-large-up, so at this
+          // width they are glyphs in a lot of horizontal padding and that
+          // padding is what gives. The vertical padding is deliberately left
+          // alone: it is what keeps them 48px tall, clear of the 44px pointer
+          // target a control on a touch screen needs.
+          a.button {
+            padding-left: rem-calc(12);
+            padding-right: rem-calc(12);
+          }
+
+          // The dropdown keeps the extra right inset its caret is drawn in.
+          a.button.dropdown-blue {
+            padding-right: rem-calc(30);
+          }
+        }
+      }
     }
   }
 
@@ -266,6 +380,27 @@ body.course {
 
     &.open {
       margin-left: 0;
+    }
+
+    // This bar belongs to the outline drawer -- it carries the New Topic
+    // control and the outline/done toggle, and it slides with the drawer. At
+    // $small-only the drawer stops short of the right edge so its close
+    // control stays on screen (_course-view.scss), and the bar follows it, so
+    // the two controls line up with the panel above them instead of sitting
+    // 23px wider than it and hanging past its edge.
+    //
+    // Sliding with the drawer is also what makes the outline's exit reachable
+    // at all on a small screen: #done-outline-button is the only way out of
+    // outline editing, and while the drawer is closed it is off canvas at
+    // x=-175. It comes back on canvas the moment the drawer opens, which is
+    // what the expander fix above restored the ability to do.
+    @media #{$small-only} {
+      max-width: calc(100% - #{$outline-drawer-inset});
+      margin-left: calc(-100% + #{$outline-drawer-inset});
+
+      &.open {
+        margin-left: 0;
+      }
     }
 
     // #done-outline-button is the outline control's other state; it used to

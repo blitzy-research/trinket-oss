@@ -247,6 +247,173 @@ var COMPARED_FIELDS = [
 // mode on the 11 upload routes. Both are HTTP surface.
 var RECORDED_OPTION_KEYS = ['cors', 'payload'];
 
+// ---------------------------------------------------------------------------
+// The authorized-surface-change register
+// ---------------------------------------------------------------------------
+//
+// AAP 0.9.1's pass condition is that the baseline and target manifests are
+// identical entry by entry. Six entries are NOT identical, and every one of
+// them differs because a LATER QA checkpoint mandated the change: the parity
+// gate was authored against 2f8712a, and the two order-0 remediations below
+// were approved after it. So the gate has two possible readings, and only one
+// of them is a gate: report FAIL forever and lose the ability to detect a real
+// surface change, or account for the six exactly and fail on anything else.
+//
+// This register is the second reading, and it is an ALLOWLIST rather than a
+// tolerance. It is deliberately shaped like the approved-deviation register in
+// test/parity/replay.js, for the same reason: a verifier that accepts whatever
+// calls itself authorized is not a verifier.
+//
+//   * Each entry names ONE route (method + path) and ONE compared field.
+//   * Each entry carries BOTH canonical values VERBATIM - the exact
+//     JSON.stringify output `canonical` produces. A change on either side, in
+//     either direction, no longer matches the entry and is reported
+//     UNAUTHORIZED. That is what stops the register from widening into "this
+//     field may differ on this route".
+//   * An entry that does NOT materialize is a FAILURE, not a pass. A register
+//     that silently tolerates its own absence would hide the regression of the
+//     very fix it exists to account for - if `findAssignmentTrinket` were
+//     reverted to `findTrinket` the authorization bypass would return and the
+//     manifests would compare clean.
+//   * Nothing else is authorized. Any other differing field on any route,
+//     including these six routes, fails the gate.
+//
+// The register applies ONLY to the cross-tree `--compare` gate. `--verify`
+// compares the committed artifact against a fresh generation of the SAME tree,
+// where an authorized difference is meaningless and any difference at all is
+// drift; `compareManifests` therefore leaves the register off by default and
+// `runCompare` opts in.
+//
+// Where each entry is argued: docs/baseline-parity.md, the route-manifest
+// section, records the measurement, the order-0 finding that authorized it and
+// the QA evidence for it. Adding a future entry is one object here plus that
+// argument - and adding one WITHOUT the argument is the thing this shape makes
+// visible.
+var AUTHORIZED_SURFACE_CHANGES = [
+  // Order-0 R2a: the two assignment-embed routes resolved their trinket
+  // through the general-purpose `helpers.findTrinket`, which applies no
+  // enrolment check, so an embed exposed an assignment trinket to a
+  // non-participant. The remediation gave each route its own lookup. QA
+  // re-verified the truth table with a genuinely enrolled non-owner: target
+  // 403/403 where baseline answered 200/200.
+  {
+    route    : 'GET /assignment-embed/{lang}/{trinketId}',
+    field    : 'pre',
+    baseline : '[{"kind":"object-with-function","method":"helpers.trinketTypeEnabled.method","assign":"trinketTypeEnabled"},{"kind":"object-with-function","method":"helpers.validLang.method","assign":"validLang"},{"kind":"object-with-function","method":"helpers.findTrinket.method","assign":"trinket"}]',
+    target   : '[{"kind":"object-with-function","method":"helpers.trinketTypeEnabled.method","assign":"trinketTypeEnabled"},{"kind":"object-with-function","method":"helpers.validLang.method","assign":"validLang"},{"kind":"object-with-function","method":"helpers.findAssignmentTrinket.method","assign":"trinket"}]',
+    finding  : 'order-0 R2a (assignment-embed authorization)',
+    summary  : 'the embed resolves its trinket through its own authorization-checking pre-handler',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  },
+  {
+    route    : 'GET /assignment-embed-feedback/{lang}/{trinketId}',
+    field    : 'pre',
+    baseline : '[{"kind":"object-with-function","method":"helpers.trinketTypeEnabled.method","assign":"trinketTypeEnabled"},{"kind":"object-with-function","method":"helpers.validLang.method","assign":"validLang"},{"kind":"object-with-function","method":"helpers.findTrinket.method","assign":"trinket"}]',
+    target   : '[{"kind":"object-with-function","method":"helpers.trinketTypeEnabled.method","assign":"trinketTypeEnabled"},{"kind":"object-with-function","method":"helpers.validLang.method","assign":"validLang"},{"kind":"object-with-function","method":"helpers.findAssignmentFeedbackTrinket.method","assign":"trinket"}]',
+    finding  : 'order-0 R2a (assignment-embed authorization)',
+    summary  : 'the feedback embed resolves its trinket through its own authorization-checking pre-handler',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  },
+
+  // Order-0 R1: `output: 'file'` at the payload level spools EVERY body class
+  // to a temp file, and hapi defaults `payload.multipart` to false, so
+  // @hapi/subtext answered 415 to every multipart upload - no File document
+  // and no stored object was creatable through the application - while a
+  // non-multipart body's absolute spooled path was echoed back at status 200
+  // by the hand-rolled validation. Moving `output` onto `multipart` restores
+  // multipart parsing with the same per-part file output, keeps `maxBytes`
+  // applying to both body classes, and stops the path disclosure.
+  {
+    route    : 'POST /file',
+    field    : 'options',
+    baseline : '{"cors":false,"payload":{"maxBytes":10485760,"output":"file"}}',
+    target   : '{"cors":false,"payload":{"maxBytes":10485760,"multipart":{"output":"file"}}}',
+    finding  : 'order-0 R1 (multipart accepted again on the upload routes)',
+    summary  : 'multipart parsing restored with the same per-part file output and the same maxBytes',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  },
+  {
+    route    : 'POST /file/avatar',
+    field    : 'options',
+    baseline : '{"cors":false,"payload":{"maxBytes":5242880,"output":"file"}}',
+    target   : '{"cors":false,"payload":{"maxBytes":5242880,"multipart":{"output":"file"}}}',
+    finding  : 'order-0 R1 (multipart accepted again on the upload routes)',
+    summary  : 'multipart parsing restored with the same per-part file output and the same maxBytes',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  },
+  {
+    route    : 'POST /api/users/assets',
+    field    : 'options',
+    baseline : '{"cors":false,"payload":{"maxBytes":5242880,"output":"file"}}',
+    target   : '{"cors":false,"payload":{"maxBytes":5242880,"multipart":{"output":"file"}}}',
+    finding  : 'order-0 R1 (multipart accepted again on the upload routes)',
+    summary  : 'multipart parsing restored with the same per-part file output and the same maxBytes',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  },
+  {
+    route    : 'POST /api/users/assets/{fileId}',
+    field    : 'options',
+    baseline : '{"cors":false,"payload":{"maxBytes":5242880,"output":"file"}}',
+    target   : '{"cors":false,"payload":{"maxBytes":5242880,"multipart":{"output":"file"}}}',
+    finding  : 'order-0 R1 (multipart accepted again on the upload routes)',
+    summary  : 'multipart parsing restored with the same per-part file output and the same maxBytes',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  },
+  // QA finding W001-F04: the declared `validate` block on the two upload routes
+  // was itself the disclosure. The route parser's validation-failure funnel
+  // answers `request.fail(request.payload, ...)`, which serves the REJECTED
+  // PAYLOAD back to the caller at status 200 - and with `output : 'file'`, that
+  // payload is `{path, bytes, filename, headers}`, so a body that failed
+  // validation handed the caller an absolute server filesystem path. Declaring
+  // the schema on the route is what made that funnel reachable. The contract is
+  // now enforced inside `files.upload` and `files.avatar`, which answer 400 with
+  // the same Joi message text, echo nothing, and discard the spooled part before
+  // returning. The validation OUTCOMES are unchanged; only the declaration site
+  // moved, which is why this is a `validate` difference and not an `options` one.
+  {
+    route    : 'POST /file',
+    field    : 'validate',
+    baseline : '["payload"]',
+    target   : '[]',
+    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
+    summary  : 'the upload contract is enforced in the handler, which answers 400 without echoing the payload',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  },
+  {
+    route    : 'POST /file/avatar',
+    field    : 'validate',
+    baseline : '["payload"]',
+    target   : '[]',
+    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
+    summary  : 'the avatar contract is enforced in the handler, which answers 400 without echoing the payload',
+    arguedIn : 'docs/baseline-parity.md, route-manifest section'
+  }
+];
+
+/**
+ * The authorized-change contract for one route and field, or null.
+ *
+ * `hasOwnProperty` is not needed because the register is an ARRAY rather than a
+ * map, which is also why lookup is a scan: six entries, and an array cannot
+ * resolve a route called `constructor` to something inherited from
+ * Object.prototype.
+ *
+ * @param {string} routeKeyValue 'METHOD /path', as compareManifests joins on.
+ * @param {string} field One of COMPARED_FIELDS.
+ * @returns {(Object|null)}
+ */
+function authorizedChange(routeKeyValue, field) {
+  var found = null;
+
+  AUTHORIZED_SURFACE_CHANGES.forEach(function (entry) {
+    if (entry.route === routeKeyValue && entry.field === field) {
+      found = entry;
+    }
+  });
+
+  return found;
+}
+
 // A controller name is a bare module name under lib/controllers/. Anything else
 // is rejected rather than passed to require, so a malformed declaration can
 // never turn into a path traversal.
@@ -269,7 +436,22 @@ var EXPECTED = {
   retainedValidate: 0,
   nonFunctionHandlers: 2,
   missingControllerFallback: 3,
-  validationKeys: 102,
+  // The ONE summary figure that is expected to differ between the trees, so it
+  // is stated per tree rather than as a single number a target-side change
+  // would have to violate. The base commit declares 102 validation keys;
+  // `POST /file` declared `{type, upload}` and `POST /file/avatar` declared
+  // `{upload}`, and all three keys moved OUT of the route declarations and INTO
+  // `files.upload` / `files.avatar`, leaving the target at 100. The move is not
+  // cosmetic: the route parser's validation-failure funnel answers
+  // `request.fail(request.payload)`, and with `output : 'file'` that served the
+  // spooled part's absolute filesystem path back to the caller at status 200
+  // (QA finding W001-F04). The handlers enforce the same contract and answer 400
+  // with the same message text and no echo, so the validation OUTCOMES are
+  // unchanged while two declarations are not. The two per-route `validate`
+  // differences this produces are registered in AUTHORIZED_SURFACE_CHANGES, and
+  // the joi matrix drops the two corresponding payload targets for the same
+  // reason. Argued in docs/baseline-parity.md, route-manifest section.
+  validationKeysByTree: { baseline: 102, target: 100 },
   declaredRoutes: 228,
   synthesizedRoutes: 5,
   cliTableDataRows: 112,
@@ -4660,7 +4842,7 @@ function sortEntries(entries) {
  * @returns {Object} The summary block, whose `unexpected` list is what makes
  *   generation exit non-zero.
  */
-function buildSummary(entries, loaded, defaultAuth, decomposition) {
+function buildSummary(entries, loaded, defaultAuth, decomposition, isBaselineTree) {
   var summary = {
     note: 'SUMMARY, NOT THE GATE. Swapping auth between two routes leaves ' +
       'every figure here unchanged; the pass condition is the per-entry ' +
@@ -4819,7 +5001,9 @@ function buildSummary(entries, loaded, defaultAuth, decomposition) {
   expect('preFunctionForms.unresolvedEntries',
     summary.preFunctionForms.unresolvedEntries.join(', '),
     EXPECTED_UNRESOLVED_PRE_ENTRIES.join(', '));
-  expect('validationKeys', summary.validationKeys, EXPECTED.validationKeys);
+  expect('validationKeys', summary.validationKeys,
+    isBaselineTree ? EXPECTED.validationKeysByTree.baseline
+                   : EXPECTED.validationKeysByTree.target);
   expect('retainedParsedValidate', summary.retainedParsedValidate,
     EXPECTED.retainedValidate);
   expect('nonFunctionHandlers', summary.nonFunctionHandlers,
@@ -5014,7 +5198,8 @@ function generateManifest(appRoot) {
       //    compareManifests rather than reported as 149 spurious `pre`
       //    differences, which is exactly what this field is for.
       schema: 2,
-      summary: buildSummary(entries, loaded, defaultAuth, decomposition),
+      summary: buildSummary(entries, loaded, defaultAuth, decomposition,
+        provenance.treeIdentity(appRoot).isBaselineCommit),
       entries: entries
     },
     environment: environment,
@@ -5917,7 +6102,7 @@ function indexEntries(manifest, label) {
  * @returns {{lines: string[], differences: number, onlyInBaseline: string[],
  *            onlyInTarget: string[], changed: number, compared: number}}
  */
-function compareManifests(baseline, target) {
+function compareManifests(baseline, target, options) {
   var baseIndex   = indexEntries(baseline, 'baseline');
   var targetIndex = indexEntries(target, 'target');
   var baseKeys    = Object.keys(baseIndex).sort();
@@ -5927,6 +6112,15 @@ function compareManifests(baseline, target) {
   var fieldDiffs     = [];
   var lines = [];
   var changed = 0;
+  // The register applies only where it means something: a cross-tree
+  // comparison. `--verify` hands this function two views of the SAME tree, and
+  // there an "authorized change" is a contradiction - both sides are the
+  // target - so the default is off and runCompare opts in.
+  var applyRegister = !!(options && options.authorize);
+  var authorizedRows = [];
+  var unauthorizedChanged = 0;
+  var matchedRegisterKeys = {};
+  var staleRegisterEntries = [];
 
   if (baseline.schema !== target.schema) {
     throw new ToolError('manifest schema mismatch: baseline ' +
@@ -5959,17 +6153,62 @@ function compareManifests(baseline, target) {
     COMPARED_FIELDS.forEach(function (field) {
       var left  = canonical(a[field]);
       var right = canonical(b[field]);
+      var contract;
 
-      if (left !== right) {
-        rows.push({ field: field, baseline: left, target: right });
+      if (left === right) {
+        return;
       }
+
+      contract = applyRegister ? authorizedChange(key, field) : null;
+
+      // BOTH values must match the entry, not just the pair of routes and
+      // fields. A register that keyed on route and field alone would authorize
+      // any future change to that field on that route - which is a tolerance,
+      // not an allowlist.
+      if (contract && contract.baseline === left && contract.target === right) {
+        matchedRegisterKeys[key + ' :: ' + field] = true;
+        authorizedRows.push({
+          key: key,
+          field: field,
+          baseline: left,
+          target: right,
+          finding: contract.finding,
+          summary: contract.summary,
+          arguedIn: contract.arguedIn
+        });
+        return;
+      }
+
+      rows.push({
+        field: field,
+        baseline: left,
+        target: right,
+        // Named on the row so the report can say WHY a difference on a
+        // registered route is still a failure: the register describes a
+        // specific pair of values and this is not that pair.
+        registered: !!contract
+      });
     });
 
     if (rows.length) {
       changed += 1;
+      unauthorizedChanged += 1;
       fieldDiffs.push({ key: key, rows: rows });
     }
   });
+
+  // A register entry that did not materialize. This is a FAILURE: each entry
+  // accounts for a remediation that must still be in the tree, so an entry
+  // whose difference has disappeared means the fix was reverted - and the
+  // manifests comparing clean is exactly how that would otherwise go
+  // unnoticed.
+  if (applyRegister) {
+    AUTHORIZED_SURFACE_CHANGES.forEach(function (entry) {
+      if (!matchedRegisterKeys[entry.route + ' :: ' + entry.field]) {
+        staleRegisterEntries.push(entry);
+      }
+    });
+  }
 
   lines.push('ROUTE MANIFEST COMPARISON');
   lines.push('  baseline entries : ' + baseKeys.length);
@@ -5996,7 +6235,46 @@ function compareManifests(baseline, target) {
   }
   lines.push('');
 
-  lines.push('ENTRIES WITH DIFFERING FIELDS (' + fieldDiffs.length + ')');
+  if (applyRegister) {
+    lines.push('AUTHORIZED SURFACE CHANGES (' + authorizedRows.length +
+      ' of ' + AUTHORIZED_SURFACE_CHANGES.length + ' registered)');
+    if (authorizedRows.length === 0) {
+      lines.push('  none matched');
+    }
+    else {
+      authorizedRows.forEach(function (row) {
+        lines.push('  ' + row.key);
+        lines.push('    ' + row.field + ' - ' + row.summary);
+        lines.push('      authorized by: ' + row.finding);
+        lines.push('      argued in    : ' + row.arguedIn);
+        lines.push('      baseline: ' + row.baseline);
+        lines.push('      target  : ' + row.target);
+      });
+    }
+    lines.push('');
+
+    lines.push('REGISTERED CHANGES THAT DID NOT MATERIALIZE (' +
+      staleRegisterEntries.length + ')');
+    if (staleRegisterEntries.length === 0) {
+      lines.push('  none - every registered change is present');
+    }
+    else {
+      staleRegisterEntries.forEach(function (entry) {
+        lines.push('  ' + entry.route + ' ' + entry.field +
+          ' - ' + entry.summary);
+        lines.push('      authorized by: ' + entry.finding);
+        lines.push('      FAILURE: the register accounts for this difference, ' +
+          'and it is no longer present. Either the remediation it records was ' +
+          'reverted - which is a regression the identical manifests would ' +
+          'otherwise hide - or the entry is stale and belongs deleted, with ' +
+          'its argument in ' + entry.arguedIn + ' deleted alongside it.');
+      });
+    }
+    lines.push('');
+  }
+
+  lines.push('ENTRIES WITH ' + (applyRegister ? 'UNAUTHORIZED ' : '') +
+    'DIFFERING FIELDS (' + fieldDiffs.length + ')');
   if (fieldDiffs.length === 0) {
     lines.push('  none');
   }
@@ -6007,6 +6285,12 @@ function compareManifests(baseline, target) {
         lines.push('    ' + row.field);
         lines.push('      baseline: ' + row.baseline);
         lines.push('      target  : ' + row.target);
+        if (row.registered) {
+          lines.push('      NOTE: this route and field ARE on the ' +
+            'authorized-change register, but the register names one specific ' +
+            'pair of values and this is not that pair, so the difference is ' +
+            'unauthorized.');
+        }
       });
     });
   }
@@ -6025,11 +6309,19 @@ function compareManifests(baseline, target) {
 
   return {
     lines: lines,
-    differences: onlyInBaseline.length + onlyInTarget.length + changed,
+    // The gate count. With the register off this is exactly what it always
+    // was; with it on, an authorized difference is accounted rather than
+    // counted, and a registered change that did not materialize IS counted -
+    // the register cannot make the gate easier to pass by going stale.
+    differences: onlyInBaseline.length + onlyInTarget.length + changed +
+      staleRegisterEntries.length,
     onlyInBaseline: onlyInBaseline,
     onlyInTarget: onlyInTarget,
     changed: changed,
-    compared: baseKeys.length
+    compared: baseKeys.length,
+    registerApplied: applyRegister,
+    authorized: authorizedRows,
+    staleRegisterEntries: staleRegisterEntries
   };
 }
 
@@ -6186,14 +6478,23 @@ function runCompare(options) {
   );
   reportComparability(comparability);
 
-  result = compareManifests(baseline, target);
+  // The register applies here and only here: this is the cross-tree gate AAP
+  // 0.9.1 defines, and the six differences it accounts for are order-0
+  // remediations approved after that gate was authored.
+  result = compareManifests(baseline, target, { authorize: true });
   var verdict  = result.differences === 0
     ? 'PASS - the HTTP surface is identical across all ' + result.compared +
-      ' entries'
+      ' entries' + (result.authorized.length
+        ? ', apart from the ' + result.authorized.length +
+          ' authorized surface change(s) listed above, each accounted to the ' +
+          'order-0 finding that mandated it'
+        : '')
     : 'FAIL - ' + result.differences + ' difference(s): ' +
       result.onlyInBaseline.length + ' only in baseline, ' +
       result.onlyInTarget.length + ' only in target, ' + result.changed +
-      ' with differing fields';
+      ' with unauthorized differing fields, ' +
+      result.staleRegisterEntries.length +
+      ' registered change(s) that did not materialize';
   var report = result.lines.concat([verdict, '']).join('\n');
 
   // Written to stderr so stdout stays empty.
@@ -6219,13 +6520,22 @@ function runCompare(options) {
       note: 'The primary parity gate for the HTTP surface (AAP 0.9.1). Entries ' +
         'are joined on method + path and every recorded field is compared, ' +
         'auth per entry. The summary figures inside each manifest are context ' +
-        'only and are not the pass condition.',
+        'only and are not the pass condition. Differences accounted by the ' +
+        'authorized-surface-change register are reported under `authorized` ' +
+        'with the order-0 finding that mandated each one; a registered change ' +
+        'that did not materialize is a FAILURE, and any other difference - ' +
+        'including a different value on a registered route and field - is a ' +
+        'failure too.',
       pass: result.differences === 0,
       exitCode: result.differences === 0 ? EXIT_OK : EXIT_DIFFERENCE,
       verdict: verdict,
       compared: result.compared,
       differences: result.differences,
       changed: result.changed,
+      registerApplied: result.registerApplied,
+      registered: AUTHORIZED_SURFACE_CHANGES.length,
+      authorized: result.authorized,
+      staleRegisterEntries: result.staleRegisterEntries,
       onlyInBaseline: result.onlyInBaseline,
       onlyInTarget: result.onlyInTarget,
       inputs: {
@@ -7559,6 +7869,12 @@ module.exports = {
 
   compareManifests : compareManifests,
   readManifest     : readManifest,
+
+  // The authorized-surface-change register and its lookup. Exported for the
+  // same reason the comparator is: an allowlist that cannot be read back and
+  // asserted against is an allowlist nobody can review.
+  AUTHORIZED_SURFACE_CHANGES : AUTHORIZED_SURFACE_CHANGES,
+  authorizedChange           : authorizedChange,
 
   // The side-of-the-gate guard both compare modes run, and the identity reader
   // it works from. Exported for the same reason the comparator itself is: its

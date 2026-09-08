@@ -1,0 +1,52 @@
+{
+  "provenanceSchema": 2,
+  "artifact": "corpus.authorized.json",
+  "role": "analysis",
+  "generator": {
+    "path": "test/parity/replay.js",
+    "blob": "9cc19477c98ca48c3a3c6bfdeef83dd41a18bfdc",
+    "commit": "4ebe242f1fa0e7fbe373de00d6ab9331dece4556",
+    "commitState": "contains-this-exact-source",
+    "verified": true,
+    "deliveredHead": "4ebe242f1fa0e7fbe373de00d6ab9331dece4556",
+    "deliveredHeadShort": "4ebe242",
+    "matchesDeliveredHead": true
+  },
+  "analysedTree": {
+    "head": "4ebe242f1fa0e7fbe373de00d6ab9331dece4556",
+    "headShort": "4ebe242",
+    "subject": "Re-seal the joi parity baseline against the committed generator blob",
+    "isBaselineCommit": false,
+    "worktreeState": "dirty"
+  },
+  "delivered": {
+    "head": "4ebe242f1fa0e7fbe373de00d6ab9331dece4556",
+    "headShort": "4ebe242",
+    "subject": "Re-seal the joi parity baseline against the committed generator blob",
+    "isBaselineCommit": false,
+    "worktreeState": "dirty"
+  },
+  "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+  "runtime": {
+    "node": "v22.23.2",
+    "platform": "linux"
+  },
+  "detail": {
+    "registerSchema": 1,
+    "records": 15140,
+    "authorities": 6,
+    "corpusDigest": "bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798",
+    "secureCorpusDigest": "361dc8898f991038e7891ebe628ef513a97aa73cf5a4b3c6fa78ab8d6b14909d"
+  },
+  "payloadDigest": {
+    "algorithm": "sha256",
+    "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
+    "value": "f791f7f9d885f95d80f52a33568c571c459c1bbaea96bb86893b7714ee58ca91"
+  },
+  "artifactDigest": {
+    "algorithm": "sha256",
+    "canonicalization": "the artifact bytes as written, verbatim",
+    "value": "cb48a9c35bdeb38f47084c8e89552ddf0393c8e8a9b00c58a6da0c6a3538703e"
+  },
+  "note": "RUN OUTPUT - not a delivery artifact, and not to be committed. Every field above except artifactDigest is also embedded in corpus.authorized.json under its own `provenance` key, which is the committed record; this file adds only a digest of the exact bytes written, for a scratch run that compares two artifacts byte for byte and needs the provenance outside the compared region."
+}

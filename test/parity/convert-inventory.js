@@ -939,30 +939,49 @@ var ANCHORED_QUIRK_SECTIONS = {
 // precedence argument lives there in full; this document states the target and
 // points at it.
 //
-// There are TWO, and generated prose must not collapse them to one -- the
-// closing paragraph of docs/preserved-quirks.md Appendix A is explicit about
-// why. The count is the smaller half of it; the KIND is what makes the
-// reference useful to a row:
+// The register is CLOSED AT EIGHT (docs/preserved-quirks.md \u00a711.0, which is
+// the register of record), and generated prose must not collapse them -- the
+// closing paragraph of that document's Appendix A is explicit about why. An
+// earlier revision of this generator hardcoded a count of TWO and the claim
+// that deviation 1 is the only one a conversion row can be affected by; both
+// were true when written and both are now false, so both are withdrawn here
+// rather than in the emitted document, which is digest-bound and cannot be
+// corrected by hand without detaching its own provenance.
+//
+// The count is the smaller half of it; the KIND is what makes the reference
+// useful to a row:
 //
 //   deviation 1 (\u00a711.1) is a RESPONSE deviation -- the never-settling
-//   image-download branch is served -- and it is the only one a row in this
-//   checklist can be affected by, because it is the only row whose target
-//   changes observable behaviour;
+//   image-download branch is served -- and it is the one a conversion row
+//   CITES, because the row it changes is a row in this checklist;
 //
 //   deviation 2 (\u00a711.2) is an AUDIT deviation -- the `marked` fork is
 //   retained, leaving one named high advisory -- and no conversion row touches
 //   it, because retaining the fork is precisely what keeps rendered output
-//   identical.
+//   identical;
 //
-// So a row cites \u00a711.1, and the cross-reference section names both and says
-// which is which.
+//   deviations 3 to 15 (\u00a711.7 to \u00a711.19) were admitted later, by
+//   measurement, through the same rule T-6 procedure. Two of them reach routes
+//   whose handlers hold rows here without changing any row's RETURN SHAPE,
+//   which is the only thing a row states: deviation 6 (\u00a711.10) answers
+//   where the baseline process died, and deviation 14 (\u00a711.18) lets the
+//   four `output:'file'` upload routes parse a multipart body the baseline
+//   refused with 415, so their handlers now run where they previously were
+//   never reached. A row's target shape is unaffected by both; what changed is
+//   whether the handler is entered at all.
+//
+// So a row still cites \u00a711.1, and the cross-reference section names the
+// register, its count and the kinds rather than enumerating fifteen entries a row
+// cannot act on.
 var DEVIATION_QUIRK_SECTION = '11.1';
-// The rest of the deviation register. There are TWO deviations and they differ
-// in kind, which is what makes the reference useful to a row: deviation 1 is a
-// RESPONSE deviation and the only one a conversion row touches, deviation 2 is
-// an AUDIT deviation with no conversion site.
 var AUDIT_DEVIATION_QUIRK_SECTION = '11.2';
 var DEVIATION_REGISTER_QUIRK_SECTION = '11';
+// The register's own count and the section that owns it, kept as data so the
+// emitted prose cannot drift from the register the way the hardcoded "two" did.
+var DEVIATION_REGISTER_COUNT = 'fifteen';
+var DEVIATION_REGISTER_INDEX_SECTION = '11.0';
+// The two later deviations that reach a route whose handler holds a row here.
+var ENTRY_DEVIATION_QUIRK_SECTIONS = ['11.10', '11.18'];
 var DEFERRED_DEPENDENCY_DOC = 'docs/deferred-dependencies.md';
 var AUDIT_DEVIATION_DEFERRED_SECTION = '4.2';
 
@@ -7070,7 +7089,10 @@ function renderPreamble(model) {
   out.push('| Site | The carrier SYMBOL the row is anchored on, plus its coordinate in the analysed tree. Where another document cites a baseline coordinate, that coordinate is shown too, because a line number stops being an address once a file is edited. |');
   out.push('| Kind | One of: routed handler, routed pre-handler, inline pre-handler, promise chain, callback boundary, reply chain, stream site. |');
   out.push('| Current shape | What the code does **now**, measured -- not what it looks like. |');
-  out.push('| Target disposition | The exact converted shape. Under R-d this is always the *preserved* behaviour, with one approved exception among these rows, labelled as such -- the migration approves two deviations in total and only one of them reaches a row here. |');
+  // The count comes from DEVIATION_REGISTER_COUNT rather than from a literal,
+  // for the same reason the rest of this header's numbers do: a hardcoded
+  // "two" is what went stale here while the register grew.
+  out.push('| Target disposition | The exact converted shape. Under R-d this is always the *preserved* behaviour, with one approved exception among these rows, labelled as such -- the migration approves ' + DEVIATION_REGISTER_COUNT + ' deviations in total and only one of them reaches a row here. |');
   out.push('');
   out.push('### What closes a row, by kind');
   out.push('');
@@ -7143,22 +7165,31 @@ function renderPreamble(model) {
   out.push('');
   out.push('| Document | What it owns about a site in this checklist |');
   out.push('| --- | --- |');
-  // Both deviations are named, with their kinds: there are two, and which of
-  // the two a row can be affected by is what a reader holding a row needs. The
+  // The register is named with its count and its kinds rather than enumerated:
+  // which deviation a row can be affected by is what a reader holding a row
+  // needs, and eight entries most of which no row can act on is noise. The
   // authority for this wording is the closing paragraph of
-  // docs/preserved-quirks.md Appendix A.
+  // docs/preserved-quirks.md Appendix A; the count comes from that document's
+  // register index rather than from a literal here.
   out.push('| `' + QUIRK_DOC + '` | The measured baseline **outcome** of a quirk, and the ' +
-    'precedence argument in full for each of the migration\'s **two** approved deviations ' +
-    '(\u00a7' + DEVIATION_REGISTER_QUIRK_SECTION + ', a closed register). The two have ' +
-    'different roles and this table does not collapse them: **deviation 1** (\u00a7' +
-    DEVIATION_QUIRK_SECTION + '), the never-settling image-download branch that the target ' +
-    'serves, is a **response** deviation and the only one a row in this checklist can be ' +
-    'affected by -- it is the one row whose target changes observable behaviour; ' +
+    'precedence argument in full for each of the migration\'s **' +
+    DEVIATION_REGISTER_COUNT + '** approved deviations (\u00a7' +
+    DEVIATION_REGISTER_QUIRK_SECTION + ', a register closed at that count and indexed at \u00a7' +
+    DEVIATION_REGISTER_INDEX_SECTION + '). They differ in kind and this table does not ' +
+    'collapse them: **deviation 1** (\u00a7' + DEVIATION_QUIRK_SECTION + '), the ' +
+    'never-settling image-download branch that the target serves, is a **response** deviation ' +
+    'and the one a row in this checklist **cites**, because the site it changes is a row here; ' +
     '**deviation 2** (\u00a7' + AUDIT_DEVIATION_QUIRK_SECTION + ', reasoned in full in `' +
     DEFERRED_DEPENDENCY_DOC + '` \u00a7' + AUDIT_DEVIATION_DEFERRED_SECTION + '), the ' +
     'retained `marked` fork and its one named high advisory, is an **audit** deviation that ' +
     'no conversion row touches, because retaining the fork is what keeps rendered output ' +
-    'identical. A row whose target reproduces a defect says so and cites the section. |');
+    'identical. Of the six admitted later by measurement, two reach a route whose handler ' +
+    'holds a row here **without changing any row\'s return shape** -- \u00a7' +
+    ENTRY_DEVIATION_QUIRK_SECTIONS[0] + ' answers where the baseline process died, and \u00a7' +
+    ENTRY_DEVIATION_QUIRK_SECTIONS[1] + ' lets the four `output:\'file\'` upload routes parse ' +
+    'a multipart body the baseline refused with 415, so those handlers now run where they were ' +
+    'previously never reached. What a row states is its return shape, and that is unaffected ' +
+    'by both. A row whose target reproduces a defect says so and cites the section. |');
   out.push('| `' + ERROR_EDGE_DOC + '` | The **status, payload, side effects and timing** of every changed error edge. Rows that are themselves error edges -- a chain carrying a `.catch(` link, an error-first callback, an unreturned `reply(err)` -- cite the per-file section that owns them. |');
   out.push('');
   out.push('Neither reference is decorative. R-d requires that a preserved defect be recorded');

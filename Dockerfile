@@ -274,14 +274,112 @@ ENV PATH="/usr/local/pm2/node_modules/.bin:${PATH}"
 # the names are read out of pm2's own `bin` map rather than listed here: that
 # reproduces the previous behaviour precisely, keeps `semver`, `js-yaml` and the
 # other transitive executables in that tree out of the system bin directory, and
-# cannot go stale if a bump adds or drops one. This is the last step before the
-# USER switch, so it is also the last thing in this image that runs as root.
+# cannot go stale if a bump adds or drops one. This is the last root step that
+# touches the process-manager tree; two further root steps follow it -- the
+# Debian security refresh and the npm CLI pin below -- and the USER switch after
+# those is where root ends in this image.
 RUN set -euo pipefail \
     && pm2_bins="$(node -e 'process.stdout.write(Object.keys(require("/usr/local/pm2/node_modules/pm2/package.json").bin).join(" "))')" \
     && for pm2_bin in $pm2_bins; do \
          ln -s "/usr/local/pm2/node_modules/.bin/${pm2_bin}" "/usr/local/bin/${pm2_bin}"; \
        done \
     && echo "pm2: linked into /usr/local/bin -- ${pm2_bins}"
+
+# Refresh the base image's Debian packages against the security suite.
+#
+# Why the SHIPPED stage needs its own apt layer although `toolchain` has one:
+# `toolchain` is inherited by the build stages only, deliberately, so that no
+# build toolchain reaches the image that runs. The consequence nobody had drawn
+# is that the shipped stage then received no apt transaction at all, and
+# therefore no Debian security update published after the pinned digest was
+# built. Measured against the digest at the top of this file, `apt-get -s
+# upgrade` offers nine packages and every one of them comes from
+# oldstable-security: libssh2-1 1.10.0-3+b1 -> 1.10.0-3+deb12u1, libexpat1 and
+# libexpat1-dev 2.5.0-1+deb12u2 -> 2.5.0-1+deb12u3, libaom3 3.6.0-1+deb12u2 ->
+# 3.6.0-1+deb12u3, and the five libpcre2 packages 10.42-1 -> 10.42-1+deb12u1.
+#
+# The digest pin and this layer are not in tension, and the division between
+# them is the whole design: the DIGEST is the reproducibility anchor -- one
+# immutable base, identical on every build -- and this layer is the SECURITY
+# REFRESH applied on top of it. It resolves against the suite at build time, so
+# two builds of this same commit on different dates can install different patch
+# versions of those nine packages. That is the intended trade, stated rather
+# than hidden: the base is pinned, the security state of that base is current,
+# and the build log below records that the transaction ran.
+#
+# What it does NOT clear, so that the residual is visible instead of implied:
+# the packages in this base carrying critical or high advisories with NO
+# published fix are untouched, because there is no version to install -- they
+# are inherent to Debian 12 rather than accepted by omission. It also does not
+# touch anything in the npm graph or in the fetched component bundle, which are
+# manifest and artifact questions. docs/dependency-inventory.md section 6.7
+# carries the image scan with the fixable and unfixed counts split out, both
+# before and after this layer.
+#
+# The obligation this creates: an `apt-get upgrade` is only as current as the
+# last build. Rebuild on a schedule so the refresh is re-taken, and refresh the
+# digest deliberately when the base moves, so the pin does not age behind the
+# suite it is being patched from.
+#
+# `upgrade` and not `dist-upgrade`: this may take newer versions of packages the
+# base already carries and must not add, remove or replace any. DEBIAN_FRONTEND
+# is exported inside this RUN only, so no interactive prompt can stall a build
+# and nothing about it persists into the shipped environment. The lists and the
+# downloaded archives are removed in the same layer, so neither reaches a
+# shipped layer -- the same reason `toolchain` autocleans.
+RUN set -euo pipefail \
+    && export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "security: Debian packages refreshed against the security suite," \
+            "apt lists and archives removed -- ok"
+
+# Pin the image's npm CLI to an exact patch.
+#
+# This is the same style as the exact pm2 pin above and it is here for one
+# measured reason: the npm CLI that ships inside the base image bundles its own
+# dependency tree under /usr/local/lib/node_modules/npm, and an image scan reads
+# that tree as shipped software. At the pinned digest it carries npm 10.9.8,
+# whose bundled `tar` is 7.5.11 -- the single CRITICAL finding with a published
+# fix anywhere in this image (an archive-extraction advisory, CVE-2026-59873,
+# fixed in tar 7.5.19) plus two HIGHs in the same package. npm 10.9.9 bundles
+# tar 7.5.22, which clears all three at once.
+#
+# 10.9.9 and not the newest npm: package.json declares `npm >=10.0.0 <11.0.0`
+# and the assertion at the top of this file enforces that major, so the pin has
+# to stay inside the 10 line. It is asserted twice below rather than trusted --
+# the exact version, so a silently different install fails the build, and the
+# major, so this layer can never be the reason the image leaves the engines
+# range the base was checked against.
+#
+# What it does not do: the remaining HIGH findings in that tree
+# (brace-expansion, ip-address, pacote, picomatch, sigstore) have fixes only in
+# npm 11 and above, outside the declared range, so they are left in place and
+# recorded in docs/dependency-inventory.md section 6.7. Nothing in that tree
+# executes at runtime -- the CMD at the end of this file is pm2-docker, and the
+# application's own dependencies are installed by the `deps` stage -- so the
+# residual is scanner-visible shipped software rather than a reachable path.
+#
+# `--ignore-scripts` for the same reason the pm2 stage uses it: this step runs
+# as root, and refusing to run install scripts removes that class of problem
+# rather than the instance of it. The update notifier is disabled so this layer
+# performs one registry install and nothing else.
+RUN set -euo pipefail \
+    && export npm_config_update_notifier=false \
+    && npm install -g --ignore-scripts npm@10.9.9 \
+    && npm_version="$(npm -v)" \
+    && npm_major="${npm_version%%.*}" \
+    && if [ "$npm_version" != "10.9.9" ]; then \
+         echo "npm: pinned install reports ${npm_version}, this layer pins 10.9.9" >&2; \
+         exit 1; \
+       fi \
+    && if [ "$npm_major" != "10" ]; then \
+         echo "npm: v${npm_version} does not satisfy package.json '>=10.0.0 <11.0.0'" >&2; \
+         exit 1; \
+       fi \
+    && echo "npm: CLI pinned to v${npm_version}, inside the declared engines range -- ok"
 
 USER trinket
 

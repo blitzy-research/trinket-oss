@@ -38,6 +38,15 @@ db:
 # OPTIONAL: Email (for password reset)
 # =============================================================================
 # Without email, users can still register and log in, but password reset won't work.
+#
+# `secret` is separate from the SMTP settings: it is the HMAC key for the
+# email-share capability token that authorizes POST /api/trinkets/{id}/email.
+# REQUIRED IN PRODUCTION, and required in any deployment running more than one
+# process - left unset, the server derives one ephemeral key per process, so
+# share tokens do not survive a restart and are not accepted by a sibling
+# worker. In production, left unset, the share route refuses outright rather
+# than accepting a key an attacker could derive. Use a high-entropy value of
+# your own; it is a credential.
 
 # app:
 #   mail:
@@ -46,6 +55,7 @@ db:
 #     port: 587
 #     user: 'your-smtp-username'
 #     pass: 'your-smtp-password'
+#     secret: 'change-this-to-a-long-random-string'
 
 # =============================================================================
 # OPTIONAL: File Storage (for asset uploads in trinkets)

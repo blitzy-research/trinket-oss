@@ -79,6 +79,16 @@
   {% if user and user.roles %}
   <input id="roles" type='hidden' value='{{ user.roles | encrypt }}'>
   {% endif %}
+  {# The screen-reader heading further down reads this instead of `trinket.name`,
+     and the capture has to stay above the <script> block below. The `escapeJSON`
+     filter [lib/util/nunjucks.js:52-76] escapes the object it is handed IN PLACE,
+     so once that block has run, `trinket.name` in this render context already
+     holds escaped markup and autoescape would escape it a second time — the
+     heading would announce `&amp;` and `&lt;` literally. Strings are immutable,
+     so this copy keeps the raw name whatever the filter does to the object
+     afterwards. Moving it below the block reintroduces the double escape. The
+     tag trims its own trailing newline so that the served markup is unchanged.
+  #}{% set srHeadingName = trinket.name if trinket.name else config.app.siteName -%}
   <script>
     trinketObject = {% if trinket %}{{ trinket | escapeJSON | json | safe }}{% else %}{}{% endif %};
   {% if not outputOnly %}
@@ -97,7 +107,7 @@
       {# The editor chrome carries no visible heading by design. This one names
          the document for assistive technology only: `show-for-sr` is the
          framework's screen-reader-only utility, so nothing is rendered. #}
-      <h1 class="show-for-sr">{{ trinket.name if trinket.name else config.app.siteName }} — {{ lang }} code editor</h1>
+      <h1 class="show-for-sr">{{ srHeadingName }} — {{ lang }} code editor</h1>
 
       {# Single unified nav structure with conditional content #}
       <nav id="menu" class="trinket-header {% if snapshot %}hide{% endif %}" data-interface="top-menu" aria-label="Trinket toolbar">

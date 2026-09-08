@@ -1,13 +1,28 @@
+<!--
+  Both toggle controls below are labelled by text that never renders as text: their only child is
+  an icon whose glyph comes from a `::before` pseudo-element carrying a private-use codepoint -
+  "\f002" for FontAwesome's `.fa-search`, "\e900" for icomoon's `.trinket-key`. A glyph so placed
+  participates in accessible-name computation and outranks `title`, so the name Chrome exposed was
+  the raw codepoint. Marking each icon `aria-hidden="true"` removes it from the name computation;
+  the navbar button is then named by `aria-label` (searchLabelText, defaulted from the consumer's
+  placeholder in trinket-search.js) and the toolbar anchor by its existing `title`.
+-->
 <!-- for navbar -->
-<button ng-cloak ng-if="navbar && !toolbar && !noLabel" id="{{ searchLabelId }}" class="button small" ng-click="toggleSearchInput()">
-  <i ng-class="loadingTrinkets ? 'fa fa-circle-o-notch fa-spin' : buttonIcon"></i>
+<button ng-cloak ng-if="navbar && !toolbar && !noLabel" id="{{ searchLabelId }}" class="button small" type="button" aria-label="{{ searchLabelText }}" ng-click="toggleSearchInput()">
+  <i ng-class="loadingTrinkets ? 'fa fa-circle-o-notch fa-spin' : buttonIcon" aria-hidden="true"></i>
 </button>
 <!-- for toolbar -->
 <a ng-cloak ng-if="toolbar && !noLabel" id="{{ searchLabelId }}" ng-click="toggleSearchInput()" title="Insert Trinket">
-  <i ng-class="loadingTrinkets ? 'fa fa-circle-o-notch fa-spin' : 'trinket-key'"></i>
+  <i ng-class="loadingTrinkets ? 'fa fa-circle-o-notch fa-spin' : 'trinket-key'" aria-hidden="true"></i>
 </a>
+<!--
+  `ng-attr-id` rather than `id`: its interpolation is all-or-nothing, so when no consumer passes
+  `input-id` the attribute is omitted entirely instead of rendering `id=""`. The library subnav is
+  a Magellan expedition and Magellan clones it wholesale when it goes fixed, which duplicated this
+  id on scroll; an id-less input cannot be duplicated. See trinket-search.js for the measurement.
+-->
 <div class="search-input" ng-class="{focus:searchInputOpen, active:searchInputActive}">
-  <input type="text" id="{{ inputId }}" ng-model="trinketSearchValue" placeholder="{{ placeholderText }}"
+  <input type="text" ng-attr-id="{{ inputId }}" ng-model="trinketSearchValue" placeholder="{{ placeholderText }}"
          typeahead="trinkets for trinkets in searchTrinkets($viewValue)"
          typeahead-loading="loadingTrinkets" typeahead-template-url="searchResultsTemplate.html"
          typeahead-on-select="onSelectResult($item)" typeahead-wait-ms="400" />

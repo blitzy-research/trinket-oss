@@ -35,7 +35,13 @@
           <label for="email-address" class="right inline">New Email Address</label>
         </div>
         <div class="small-6 columns end">
-          <input type="text" id="email-address" name="email" required />
+          {# The new address is still the visitor's own, so the `email` input
+             purpose applies here exactly as it does on the sign-up form's
+             address field [lib/views/signup.html:193-194] (WCAG 2.1 SC 1.3.5).
+             Not `username`: that is what /login declares, because its one
+             control accepts either an address or a handle, which this one
+             does not. The submit control below takes no `autocomplete`. #}
+          <input type="text" id="email-address" name="email" required autocomplete="email" />
         </div>
       </div>
 

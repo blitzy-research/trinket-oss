@@ -1,0 +1,173 @@
+{
+  "provenanceSchema": 2,
+  "artifact": "corpus.secure.json",
+  "role": "baseline",
+  "generator": {
+    "path": "test/parity/capture.js",
+    "blob": "93266288728d9a059fe3f95a2d1cd3ab6756f134",
+    "commit": "0dd0f7d27affe560cb7028dc1b860063d799a080",
+    "commitState": "contains-this-exact-source",
+    "verified": true,
+    "deliveredHead": "0dd0f7d27affe560cb7028dc1b860063d799a080",
+    "deliveredHeadShort": "0dd0f7d",
+    "matchesDeliveredHead": true
+  },
+  "analysedTree": {
+    "head": "2f8712a112db46f923918c4507c75abc732d83d0",
+    "headShort": "2f8712a",
+    "subject": "chore: extend catalog tags (security, web-app)",
+    "isBaselineCommit": true,
+    "worktreeState": "clean"
+  },
+  "delivered": {
+    "head": "0dd0f7d27affe560cb7028dc1b860063d799a080",
+    "headShort": "0dd0f7d",
+    "subject": "Harden the request path and finish the accessibility and delivery work",
+    "isBaselineCommit": false,
+    "worktreeState": "dirty"
+  },
+  "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+  "runtime": {
+    "node": "v22.23.2",
+    "platform": "linux"
+  },
+  "detail": {
+    "corpusSchema": 1,
+    "baselineAsserted": true,
+    "baselineAssertionWaived": false,
+    "server": {
+      "launched": true,
+      "attached": false,
+      "secure": true,
+      "nodeFlags": [
+        "--pending-deprecation",
+        "--trace-deprecation"
+      ],
+      "scrubbedEnv": [],
+      "overlay": "tool:test/parity/server-overlay.json",
+      "nodeConfigDigest": {
+        "algorithm": "sha256",
+        "canonicalization": "secret-labelled values replaced with <redacted>, address-labelled values dropped, URI userinfo removed, then JSON with object keys sorted lexicographically and no whitespace",
+        "value": "69ea60bc2ffd4d505b18960fd052ef96b99610184856e0cb8ac5d0ba29744541"
+      },
+      "nodeConfigKeys": [
+        "app",
+        "aws",
+        "db",
+        "features"
+      ],
+      "nodeConfigRedactedKeys": [
+        "app.auth.google.clientSecret",
+        "app.plugins.session.cookieOptions.password"
+      ],
+      "httpProfile": "default",
+      "objectStore": "ephemeral:s3",
+      "evidenceLogs": {
+        "http": "ephemeral:http.log",
+        "mail": "ephemeral:mail.log",
+        "s3": "ephemeral:s3.log"
+      }
+    },
+    "configuration": {
+      "secure": true,
+      "googleClient": {
+        "expectedClientId": "parity-harness-client-id.apps.example.invalid",
+        "state": "confirmed",
+        "confirmedInChildConfiguration": true,
+        "clientConfigured": true,
+        "childConfigurationObservable": true,
+        "interceptedTokenCalls": 0,
+        "interceptedUserinfoCalls": 0,
+        "oauthScenariosSelected": 7,
+        "oauthScenariosDriven": 7,
+        "reason": "the child's effective configuration carries this tool's fake client, so the OAuth handlers reached their real branches",
+        "handshakeObserved": false,
+        "sufficient": true
+      },
+      "oauthIdentities": {
+        "existing": "parity-existing@example.com",
+        "new": "parity-newcomer@example.com",
+        "source": "test/parity/seed.js oauthIdentities",
+        "appliedToChild": true
+      },
+      "redactions": [
+        {
+          "category": "generated-ids",
+          "name": "per-request upload output path",
+          "placeholder": "<upload-path>"
+        },
+        {
+          "category": "generated-ids",
+          "name": "bcrypt password hash",
+          "placeholder": "<bcrypt-hash>"
+        },
+        {
+          "category": "generated-ids",
+          "name": "JWT-shaped token",
+          "placeholder": "<generated-token>"
+        }
+      ],
+      "seeded": {
+        "attempted": true,
+        "ok": true,
+        "reason": null
+      },
+      "objectStoreSeed": {
+        "prepared": true,
+        "manifest": "ephemeral:s3-seed.json",
+        "entries": 6,
+        "reason": null
+      },
+      "timeoutMs": 15000,
+      "selection": "filtered",
+      "selectionPatterns": [
+        "pattern:/^route\\.get\\.cache-prefix-timestamp-assetType-path\\.(html|json)$/"
+      ],
+      "appended": true,
+      "quirks": true
+    },
+    "fixtureProfiles": [
+      "default",
+      "recaptcha:success",
+      "recaptcha:rejected",
+      "recaptcha:non-200",
+      "recaptcha:non-object-body",
+      "recaptcha:transport-failure",
+      "recaptcha:malformed-json",
+      "oauth:success-existing-user",
+      "oauth:success-new-user",
+      "oauth:token-non-2xx",
+      "oauth:token-malformed-body",
+      "oauth:token-non-object-body",
+      "oauth:token-transport-failure",
+      "oauth:profile-missing-email",
+      "oauth:profile-non-object-body",
+      "oauth:profile-transport-failure",
+      "asset:success",
+      "asset:non-2xx",
+      "asset:server-error",
+      "asset:redirect",
+      "asset:redirect-within-limit",
+      "asset:redirect-beyond-limit",
+      "asset:transport-refused",
+      "asset:midstream-failure",
+      "none"
+    ],
+    "routeManifest": {
+      "artifact": "ephemeral:route-manifest.baseline.json",
+      "routes": 233,
+      "expected": 233
+    }
+  },
+  "payloadDigest": {
+    "algorithm": "sha256",
+    "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
+    "value": "9013e4ad09d79d51c8df78ecd1ca024a011b47456fd2466f0d679025c9debd8e"
+  },
+  "artifactDigest": {
+    "algorithm": "sha256",
+    "canonicalization": "the artifact bytes as written, verbatim",
+    "value": "361dc8898f991038e7891ebe628ef513a97aa73cf5a4b3c6fa78ab8d6b14909d"
+  },
+  "note": "RUN OUTPUT - not a delivery artifact, and not to be committed. Every field above except artifactDigest is also embedded in corpus.secure.json under its own `provenance` key, which is the committed record; this file adds only a digest of the exact bytes written, for a scratch run that compares two artifacts byte for byte and needs the provenance outside the compared region."
+}

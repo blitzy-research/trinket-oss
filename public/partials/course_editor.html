@@ -60,7 +60,22 @@
     <div ui-tree="outlineDragOptions" data-drag-delay="200">
       <ul ui-tree-nodes ng-model="course.lessons" data-type="lesson" class="outline-list lessons">
         <li class="outline-list-item lesson" ng-repeat="lesson in course.lessons" ui-tree-node data-type="lesson" ng-class="{isDraft:lesson.isDraft,past:lesson.isPast,current:lesson.isCurrent,future:lesson.isFuture}">
-          <div class="lesson-title angular-ui-tree-handle clearfix">
+          <!--
+            `ui-tree-handle` is what makes this row the node's drag handle.
+            Angular UI Tree's uiTreeHandle directive is attribute-only
+            (restrict: 'A') and it is the directive that adds the
+            angular-ui-tree-handle class, so the class alone is its effect
+            rather than its trigger: with the class present but the attribute
+            absent, the directive never linked, uiTreeNode's dragStart saw a
+            mousedown target that was neither a tree node nor a handle, and
+            returned without starting a drag. Declaring the attribute makes the
+            whole title row draggable. It also means dragStart now refuses a
+            mousedown on the <li> itself, because a node that contains a handle
+            drags only by that handle -- so the narrow strip of <li> padding
+            beside the row, which was the only surface that used to work, is
+            superseded by the row it sits next to.
+          -->
+          <div class="lesson-title angular-ui-tree-handle clearfix" ui-tree-handle>
             <i class="fa fa-bars"></i>
             <span class="lesson-name">{{ lesson.name }}</span>
             <div data-tooltip class="draft-circle in-aside right has-tip" title="Marked as draft" ng-if="lesson.isDraft">&nbsp;</div>
@@ -77,7 +92,7 @@
                 attribute outright when the interpolation is undefined, so only the
                 current row carries aria-current="page" and the rest carry nothing.
               -->
-              <div class="material-title angular-ui-tree-handle clearfix" ng-click="viewMaterial(material.slideIndex, true)" ng-attr-aria-current="{{ material.isCurrent ? 'page' : undefined }}">
+              <div class="material-title angular-ui-tree-handle clearfix" ui-tree-handle ng-click="viewMaterial(material.slideIndex, true)" ng-attr-aria-current="{{ material.isCurrent ? 'page' : undefined }}">
                 <!-- add title or tooltip with dates info? -->
                 <i ng-if="usingDates(material)" class="fa fa-fw fa-clock-o dates-active-icon"></i>
                 <!-- change icon depending on what kind of material this is -->
@@ -193,7 +208,7 @@
       </div>
       <ul ui-tree-nodes ng-model="course.lessons" data-type="edit-outline-lesson" class="outline-list edit-lessons">
         <li class="outline-list-item lesson" ng-repeat="lesson in course.lessons" ui-tree-node data-type="edit-outline-lesson" ng-class="{isDraft:lesson.isDraft}">
-          <div class="edit-lesson-title angular-ui-tree-handle clearfix">
+          <div class="edit-lesson-title angular-ui-tree-handle clearfix" ui-tree-handle>
             <i class="fa fa-bars"></i>
 
             <div data-tooltip class="draft-circle in-outline has-tip" title="Marked as draft" ng-if="lesson.isDraft">&nbsp;</div>
@@ -221,7 +236,7 @@
           </div>
           <ul ui-tree-nodes ng-model="lesson.materials" data-type="edit-outline-material" class="outline-list edit-materials" ng-class="{isDraft:lesson.isDraft}">
             <li ng-repeat="material in lesson.materials" ui-tree-node data-type="edit-outline-material" class="outline-list-item material">
-              <div ng-switch="material.type" class="edit-material-title angular-ui-tree-handle clearfix">
+              <div ng-switch="material.type" class="edit-material-title angular-ui-tree-handle clearfix" ui-tree-handle>
                 <i ng-switch-when="page" class="fa fa-file-text-o fa-fw"></i>
                 <!-- add title or tooltip with dates info? -->
                 <i ng-if="usingDates(material)" class="fa fa-fw fa-clock-o dates-active-icon"></i>
@@ -272,7 +287,7 @@
           <form class='add-material' ng-submit="addMaterial($event, lesson)" data-nodrag>
             <div class="row collapse">
               <div class="small-12 new-page-wrap">
-                <input type="text" class="form-control material" ng-model="lesson.newPageTitle" placeholder="Enter new page title" aria-label="Enter new page title" required>
+                <input type="text" class="form-control material" ng-model="lesson.newPageTitle" placeholder="Enter new page title" aria-label="Enter new page title" required autocomplete="off">
               </div>
             </div>
           </form>
@@ -280,7 +295,7 @@
       </ul>
       <div data-nodrag>
         <form ng-submit="addLesson($event, course)">
-          <input type="text" class="form-control lesson" ng-model="course.newLessonName" placeholder="Enter new topic name" aria-label="Enter new topic name" required>
+          <input type="text" class="form-control lesson" ng-model="course.newLessonName" placeholder="Enter new topic name" aria-label="Enter new topic name" required autocomplete="off">
         </form>
       </div>
     </div>
@@ -294,26 +309,26 @@
     <div class="row">
       <div class="large-12 columns">
         <label for="course-settings-name">Course name</label>
-        <input type="text" id="course-settings-name" name="name" ng-model="courseForm.name" aria-label="Course name" />
+        <input type="text" id="course-settings-name" name="name" ng-model="courseForm.name" aria-label="Course name" autocomplete="off" />
       </div>
     </div>
     <div class="row">
       <div class="large-12 columns">
         <label for="course-settings-description">Course description</label>
-        <textarea id="course-settings-description" name="description" rows="4" ng-model="courseForm.description" aria-label="Course description"></textarea>
+        <textarea id="course-settings-description" name="description" rows="4" ng-model="courseForm.description" aria-label="Course description" autocomplete="off"></textarea>
       </div>
     </div>
     <div class="row">
       <div class="large-12 columns">
         <label for="course-settings-type">Course visibility</label>
-        <select id="course-settings-type" name="courseType" ng-model="courseForm.courseType" aria-label="Course visibility" ng-options="t.id as t.name for t in [{'id':'public','name':'Public'},{'id':'private','name':'Private'},{'id':'open','name':'Open'}]">
+        <select id="course-settings-type" name="courseType" ng-model="courseForm.courseType" aria-label="Course visibility" ng-options="t.id as t.name for t in [{'id':'public','name':'Public'},{'id':'private','name':'Private'},{'id':'open','name':'Open'}]" autocomplete="off">
         </select>
       </div>
     </div>
     <div class="row">
       <div class="large=12 columns">
         <label for="course-settings-content-default">Default page and assignment visibility</label>
-        <select id="course-settings-content-default" name="contentDefault" ng-model="courseForm.contentDefault" aria-label="Default page and assignment visibility" ng-options="o.id as o.name for o in [{'id':'publish','name':'Published'},{'id':'draft','name':'Marked as Draft'}]">
+        <select id="course-settings-content-default" name="contentDefault" ng-model="courseForm.contentDefault" aria-label="Default page and assignment visibility" ng-options="o.id as o.name for o in [{'id':'publish','name':'Published'},{'id':'draft','name':'Marked as Draft'}]" autocomplete="off">
         </select>
       </div>
     </div>
@@ -363,7 +378,7 @@
               </div>
               <div class="row" data-equalizer data-equalizer-mq="large-up">
                 <div class="medium-12 large-6 columns" data-equalizer-watch>
-                  <textarea rows="4" ng-model="inviteForm.emailList" aria-label="Email addresses, one per line"></textarea>
+                  <textarea rows="4" ng-model="inviteForm.emailList" aria-label="Email addresses, one per line" autocomplete="off"></textarea>
                 </div>
                 <div class="medium-12 large-6 columns" data-equalizer-watch>
                   <button type="submit" class="button small secondary bottom" ng-class="{'disabled':sendingInvitations}">
@@ -436,7 +451,7 @@
             </div>
             <div class="row collapse">
               <div class="small-6 columns">
-                <input class="collapse" type="text" ng-model="user.lookup" name="user-lookup" placeholder="enter username or email address" aria-label="enter username or email address" required />
+                <input class="collapse" type="text" ng-model="user.lookup" name="user-lookup" placeholder="enter username or email address" aria-label="enter username or email address" required autocomplete="off" />
               </div>
               <div class="small-1 columns end">
                 <button type="submit" class="button secondary collapse postfix"><i ng-class="addingUser ? 'fa fa-circle-o-notch fa-spin' : 'fa fa-user-plus'"></i> Add</button>
@@ -604,7 +619,21 @@
   <form name="new-topic-form" ng-submit="addLesson($event, course)">
     <div class="row">
       <label for="new-topic-name">Topic name</label>
-      <input type="text" id="new-topic-name" name="topic-name" ng-model="course.newLessonName" focus-me="$root.focusMe" aria-label="Topic name" />
+      <input type="text" id="new-topic-name" name="topic-name" ng-model="course.newLessonName" focus-me="$root.focusMe" aria-label="Topic name" autocomplete="off" />
+    </div>
+    <!--
+      A visible commit control, so the Enter key is no longer the only way out
+      of this modal. It is a plain submit button inside the same form, which
+      means it runs the same ng-submit expression Enter already ran -- one
+      commit path with two ways to reach it, rather than a second path with its
+      own behaviour. Deliberately no `required` and no disabled state: adding
+      either would change what Enter does today, and addLesson already returns
+      without posting when the name is empty.
+    -->
+    <div class="row">
+      <div class="large-12 columns">
+        <button type="submit" class="primary small"><i class="fa fa-plus-circle" aria-hidden="true"></i> Add Topic</button>
+      </div>
     </div>
   </form>
   <a class="close-reveal-modal" aria-label="Close">&#215;</a>
@@ -616,7 +645,13 @@
     <div class="row">
       <div class="large-12 columns">
         <label for="new-page-title">Page title</label>
-        <input type="text" id="new-page-title" name="page-title" ng-model="thisLesson.newPageTitle" focus-me="$root.focusMe" aria-label="Page title" />
+        <input type="text" id="new-page-title" name="page-title" ng-model="thisLesson.newPageTitle" focus-me="$root.focusMe" aria-label="Page title" autocomplete="off" />
+      </div>
+    </div>
+    <!-- Same contract as #newTopicDialog's control: one commit path, two ways in. -->
+    <div class="row">
+      <div class="large-12 columns">
+        <button type="submit" class="primary small"><i class="fa fa-plus-circle" aria-hidden="true"></i> Add Page</button>
       </div>
     </div>
   </form>
@@ -630,7 +665,7 @@
   <form name="remove-page-form" ng-submit="removeMaterial($event, thisPage)">
     <div class="row">
       <div class="large-12 columns">
-        <input type="text" id="confirm-page-name" name="page-name" value="" ng-model="confirmPageName" ng-change="comparePageNames()" />
+        <input type="text" id="confirm-page-name" name="page-name" value="" ng-model="confirmPageName" ng-change="comparePageNames()" autocomplete="off" />
       </div>
     </div>
     <div class="row">
@@ -654,7 +689,7 @@
   <form name="remove-lesson-form" ng-submit="removeLesson($event, thisLesson)">
     <div class="row">
       <div class="large-12 columns">
-        <input type="text" id="confirm-lesson-name" name="lesson-name" value="" ng-model="confirmLessonName" ng-change="compareLessonNames()" />
+        <input type="text" id="confirm-lesson-name" name="lesson-name" value="" ng-model="confirmLessonName" ng-change="compareLessonNames()" autocomplete="off" />
       </div>
     </div>
     <div class="row">
@@ -678,7 +713,7 @@
   <form name="delete-course-form" ng-submit="deleteCourse($event)">
     <div class="row">
       <div class="large-12 columns">
-        <input type="text" id="confirm-course-name" name="course-name" value="" ng-model="confirmCourseName" ng-change="compareCourseNames()" />
+        <input type="text" id="confirm-course-name" name="course-name" value="" ng-model="confirmCourseName" ng-change="compareCourseNames()" autocomplete="off" />
       </div>
     </div>
     <div class="row">
@@ -816,7 +851,7 @@
     <div class="row">
       <div class="small-12 columns">
         <label for="copy-course-name">Course name</label>
-        <input type="text" id="copy-course-name" name="course-name" ng-model="courseCopyName" focus-me="$root.focusMe" aria-label="Course name" />
+        <input type="text" id="copy-course-name" name="course-name" ng-model="courseCopyName" focus-me="$root.focusMe" aria-label="Course name" autocomplete="off" />
       </div>
     </div>
   </form>

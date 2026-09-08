@@ -95,7 +95,13 @@
 Dropzone.autoDiscover = false;
 var avatarDropzone = new Dropzone("div#avatar-dropzone", {
     url : "/file/avatar"
-  , acceptedFiles : "image/jpeg,image/png,image/gif,image/jpg"
+  // The gif entry was dropped: the server gate in lib/util/file.js has never
+  // admitted that type and answers 415, so offering it in the file picker could
+  // only produce a rejected upload (QA finding W001-F16). Written without the
+  // media-type literal deliberately -- this script is delivered to the client,
+  // and a reader scanning the served page for an accepted type should find only
+  // the three below.
+  , acceptedFiles : "image/jpeg,image/png,image/jpg"
   , dictDefaultMessage : ""
   , previewsContainer : "#hidden-previews"
   , clickable : "#upload-button"
@@ -113,7 +119,12 @@ var avatarDropzone = new Dropzone("div#avatar-dropzone", {
       });
 
       this.on("error", function(err) {
-        $('#message').text("There was a problem uploading your new picture. Picture format must be one of png, jpeg, jpg, or gif.");
+        // The format list names exactly what the server gate admits. It read
+        // "png, jpeg, jpg, or gif" while `uploadUserAvatar` in lib/util/file.js
+        // refused gif, so the one message a rejected gif produced told the user
+        // gif was acceptable (QA finding W001-F16, the same contradiction as the
+        // `acceptedFiles` list above).
+        $('#message').text("There was a problem uploading your new picture. Picture format must be one of png, jpeg, or jpg.");
         showAlert("#profileError");
       });
 

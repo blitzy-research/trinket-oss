@@ -373,13 +373,30 @@ routes = [
       payload : {
         maxBytes  : 1048576 * 10, // 10MB
         multipart : { output : 'file' }
-      },
-      validate : {
-        payload : {
-          type   : Joi.string().valid('embed', 'download').optional(),
-          upload : Joi.any().required()
-        }
       }
+      /*
+       * The declared validation moved into `files.upload`, and this route
+       * deliberately has no `validate` block.
+       *
+       * This route's payload can carry a SPOOLED FILE PART, and the route
+       * parser's validation-failure funnel answers
+       * `request.fail(request.payload, ...)`
+       * [lib/util/routeParser.js:867-884], which serves the rejected payload
+       * back to the client at status 200 -- so with `output : 'file'` above, a
+       * body that failed validation disclosed an absolute server filesystem
+       * path (`{path, bytes, filename, headers}`) to the caller (QA finding
+       * W001-F04). Declaring the schema here is what made that funnel
+       * reachable; the funnel itself is out of scope for this delivery.
+       *
+       * `files.upload` now enforces the same contract -- `upload` required and
+       * `type` one of ['embed', 'download'] -- and answers 400 with the Joi
+       * message text and no payload echo, discarding any spooled part before
+       * it returns. Where the paragraph above says "the `upload` key validated
+       * below" and "this route's own validation", it is that handler-side
+       * enforcement it now describes; nothing else in that paragraph changed,
+       * and the 415-from-the-payload-parser reasoning it records still holds
+       * because `multipart` is still declared.
+       */
     }
   },
   {
@@ -395,12 +412,18 @@ routes = [
       payload : {
         maxBytes  : 1048576 * 5, // 5MB
         multipart : { output : 'file' }
-      },
-      validate : {
-        payload : {
-          upload : Joi.any().required()
-        }
       }
+      /*
+       * No `validate` block, for the same reason as `POST /file` above: this
+       * payload can carry a spooled file part, and the route parser's
+       * validation-failure funnel [lib/util/routeParser.js:867-884] echoes
+       * `request.payload` back at status 200, disclosing the absolute server
+       * path of that part (QA finding W001-F04).
+       *
+       * `files.uploadAvatar` enforces the same contract -- `upload` required --
+       * and answers 400 with the Joi message text and no payload echo,
+       * discarding any spooled part before it returns.
+       */
     },
     reply : {
       host : true,

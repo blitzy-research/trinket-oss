@@ -1,4 +1,4 @@
-<!-- provenance-json: {"analysedTree":{"head":"37e3d74edbd81da2a7ed2e7e341377da77142bae","headShort":"37e3d74","isBaselineCommit":false,"subject":"QA o002: re-stamp the authorized-difference register at its generator commit","worktreeState":"dirty"},"artifact":"conversion-inventory.md","baselineCommit":"2f8712a112db46f923918c4507c75abc732d83d0","bodyDigest":{"algorithm":"sha256","canonicalization":"the document with its provenance-json line removed and trailing whitespace stripped per line, hashed as utf8","value":"14590fe2d30001ea596c656c430005e2a0e65315ff0e7a5d050188cdcb9afdc3"},"delivered":{"head":"37e3d74edbd81da2a7ed2e7e341377da77142bae","headShort":"37e3d74","isBaselineCommit":false,"subject":"QA o002: re-stamp the authorized-difference register at its generator commit","worktreeState":"dirty"},"detail":{"analysedFiles":13,"analysedSourceDigest":"sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe","analysedTreeLabel":"the repository containing the generator (no --app given)","artifactLabel":"tool:docs/conversion-inventory.md","atBaseline":false,"evidenceAvailable":true,"evidenceCaptured":false,"invocation":"node test/parity/convert-inventory.js --replay \"$REPLAY_RESULT\" --out docs/conversion-inventory.md"},"generator":{"blob":"1d39ab4c14d91af3bde9784e8133490850dacbf6","commit":"37e3d74edbd81da2a7ed2e7e341377da77142bae","commitState":"contains-this-exact-source","deliveredHead":"37e3d74edbd81da2a7ed2e7e341377da77142bae","deliveredHeadShort":"37e3d74","matchesDeliveredHead":true,"path":"test/parity/convert-inventory.js","verified":true},"provenanceSchema":2,"role":"analysis","runtime":{"node":"v22.23.2","platform":"linux"}} -->
+<!-- provenance-json: {"analysedTree":{"head":"1ad5b38a75e8bb168d58f57fca6c9ffcccac8632","headShort":"1ad5b38","isBaselineCommit":false,"subject":"QA o002: make the corpus gate port-independent, and regenerate its register","worktreeState":"clean"},"artifact":"conversion-inventory.md","baselineCommit":"2f8712a112db46f923918c4507c75abc732d83d0","bodyDigest":{"algorithm":"sha256","canonicalization":"the document with its provenance-json line removed and trailing whitespace stripped per line, hashed as utf8","value":"9ef1fa9490b10f9c80f7118c2ec6b5e29f927c6908eb155302e1e98a0c813fc3"},"delivered":{"head":"1ad5b38a75e8bb168d58f57fca6c9ffcccac8632","headShort":"1ad5b38","isBaselineCommit":false,"subject":"QA o002: make the corpus gate port-independent, and regenerate its register","worktreeState":"clean"},"detail":{"analysedFiles":13,"analysedSourceDigest":"sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe","analysedTreeLabel":"the repository containing the generator (no --app given)","artifactLabel":"tool:docs/conversion-inventory.md","atBaseline":false,"evidenceAvailable":true,"evidenceCaptured":false,"invocation":"node test/parity/convert-inventory.js --replay \"$REPLAY_RESULT\" --out docs/conversion-inventory.md"},"generator":{"blob":"1d39ab4c14d91af3bde9784e8133490850dacbf6","commit":"1ad5b38a75e8bb168d58f57fca6c9ffcccac8632","commitState":"contains-this-exact-source","deliveredHead":"1ad5b38a75e8bb168d58f57fca6c9ffcccac8632","deliveredHeadShort":"1ad5b38","matchesDeliveredHead":true,"path":"test/parity/convert-inventory.js","verified":true},"provenanceSchema":2,"role":"analysis","runtime":{"node":"v22.23.2","platform":"linux"}} -->
 <!--
   GENERATED FILE -- do not hand-edit it. Every line below this block is written
   by the generator named here from the analysed tree named here. An edit made by
@@ -10,10 +10,10 @@
   generator sha256     : sha256:6ec1da793d0cb6c53a4204d46dfed6aae8c1d8f2c5a1807374e49545bd951ecf
   generator blob       : 1d39ab4c14d91af3bde9784e8133490850dacbf6
                          `git cat-file blob 1d39ab4c14d9` retrieves the exact source that ran
-  generator commit     : 37e3d74edbd81da2a7ed2e7e341377da77142bae  <-- verified: this commit's tree holds the blob above at that path
+  generator commit     : 1ad5b38a75e8bb168d58f57fca6c9ffcccac8632  <-- verified: this commit's tree holds the blob above at that path
   exact command        : node test/parity/convert-inventory.js --replay "$REPLAY_RESULT" --out docs/conversion-inventory.md
   analysed tree        : the repository containing the generator (no --app given)
-  analysed tree HEAD   : 37e3d74edbd81da2a7ed2e7e341377da77142bae
+  analysed tree HEAD   : 1ad5b38a75e8bb168d58f57fca6c9ffcccac8632
   analysed source      : 13 files, sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe
   analysed source state: clean -- every analysed file matches that revision
   parity evidence      : test/parity/corpus.json, sha256:bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798, captured: no
@@ -459,13 +459,13 @@ depended on which builder method ran last, and whether a stream still errors
 after the response has begun is a timing question. What closes them is
 `test/parity/replay.js` driving `test/parity/corpus.json` against this tree and
 recording a verdict per scenario. This tree carries 392 scenarios, 392 with a captured
-baseline and **353 with a confirming replay**, so
+baseline and **380 with a confirming replay**, so
 the comparison exists on one side. Each open row below names the scenario whose
 verdict would close it, or states that no scenario is pinned to its branch.
 
 **The replay artifact this run was given.** `replay-result.json`, written by
-`test/parity/replay.js`, digest `sha256:ce2bf6ba2f2b2a93...`, verdict "PASS". It carries 392 scenario
-verdicts, 353 of them confirming, of which 392 matched a scenario in the corpus.
+`test/parity/replay.js`, digest `sha256:b2536296151ec9df...`, verdict "PASS". It carries 392 scenario
+verdicts, 380 of them confirming, of which 392 matched a scenario in the corpus.
 
 
 The row count is **derived, not targeted**. It is not 154, and it should not be: the 154 counts hapi-invoked
@@ -1197,7 +1197,7 @@ now serves; and a captured baseline alone says only what the OLD code did, which
 is one side of a comparison. Both sides are required, because a row that closed on
 the baseline half would be asserting a match nothing had checked.
 
-Evidence state in this tree: 353 of 392 scenarios in `test/parity/corpus.json` carry both a
+Evidence state in this tree: 380 of 392 scenarios in `test/parity/corpus.json` carry both a
 captured baseline and a confirming replay verdict. 8 of 8 rows below close on that
 recorded comparison; the rest name the scenario whose verdict is still missing.
 

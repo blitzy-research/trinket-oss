@@ -6171,27 +6171,27 @@
     "role": "analysis",
     "generator": {
       "path": "test/parity/replay.js",
-      "blob": "964fff6430465c567be7f2d2d07015b8a64d8a4b",
-      "commit": "6beca88ab30ac65e3a84c2364b48ad789094c566",
+      "blob": "37e96f1e34ff30437dbdde22b5417dcaf151f6ef",
+      "commit": "c60078d3d58543424739191b548755365823c613",
       "commitState": "contains-this-exact-source",
       "verified": true,
-      "deliveredHead": "6beca88ab30ac65e3a84c2364b48ad789094c566",
-      "deliveredHeadShort": "6beca88",
+      "deliveredHead": "c60078d3d58543424739191b548755365823c613",
+      "deliveredHeadShort": "c60078d",
       "matchesDeliveredHead": true
     },
     "analysedTree": {
-      "head": "6beca88ab30ac65e3a84c2364b48ad789094c566",
-      "headShort": "6beca88",
-      "subject": "QA o002: resolve 155 findings - restore AAP-excluded scope, close parity gates",
+      "head": "c60078d3d58543424739191b548755365823c613",
+      "headShort": "c60078d",
+      "subject": "QA o002: close the four provenance-dependent evidence gates",
       "isBaselineCommit": false,
-      "worktreeState": "dirty"
+      "worktreeState": "clean"
     },
     "delivered": {
-      "head": "6beca88ab30ac65e3a84c2364b48ad789094c566",
-      "headShort": "6beca88",
-      "subject": "QA o002: resolve 155 findings - restore AAP-excluded scope, close parity gates",
+      "head": "c60078d3d58543424739191b548755365823c613",
+      "headShort": "c60078d",
+      "subject": "QA o002: close the four provenance-dependent evidence gates",
       "isBaselineCommit": false,
-      "worktreeState": "dirty"
+      "worktreeState": "clean"
     },
     "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
     "runtime": {

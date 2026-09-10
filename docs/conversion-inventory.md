@@ -1,4 +1,4 @@
-<!-- provenance-json: {"analysedTree":{"head":"1ad5b38a75e8bb168d58f57fca6c9ffcccac8632","headShort":"1ad5b38","isBaselineCommit":false,"subject":"QA o002: make the corpus gate port-independent, and regenerate its register","worktreeState":"clean"},"artifact":"conversion-inventory.md","baselineCommit":"2f8712a112db46f923918c4507c75abc732d83d0","bodyDigest":{"algorithm":"sha256","canonicalization":"the document with its provenance-json line removed and trailing whitespace stripped per line, hashed as utf8","value":"9ef1fa9490b10f9c80f7118c2ec6b5e29f927c6908eb155302e1e98a0c813fc3"},"delivered":{"head":"1ad5b38a75e8bb168d58f57fca6c9ffcccac8632","headShort":"1ad5b38","isBaselineCommit":false,"subject":"QA o002: make the corpus gate port-independent, and regenerate its register","worktreeState":"clean"},"detail":{"analysedFiles":13,"analysedSourceDigest":"sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe","analysedTreeLabel":"the repository containing the generator (no --app given)","artifactLabel":"tool:docs/conversion-inventory.md","atBaseline":false,"evidenceAvailable":true,"evidenceCaptured":false,"invocation":"node test/parity/convert-inventory.js --replay \"$REPLAY_RESULT\" --out docs/conversion-inventory.md"},"generator":{"blob":"1d39ab4c14d91af3bde9784e8133490850dacbf6","commit":"1ad5b38a75e8bb168d58f57fca6c9ffcccac8632","commitState":"contains-this-exact-source","deliveredHead":"1ad5b38a75e8bb168d58f57fca6c9ffcccac8632","deliveredHeadShort":"1ad5b38","matchesDeliveredHead":true,"path":"test/parity/convert-inventory.js","verified":true},"provenanceSchema":2,"role":"analysis","runtime":{"node":"v22.23.2","platform":"linux"}} -->
+<!-- provenance-json: {"analysedTree":{"head":"e5e7ad170be58faf55ff4d9b7db8439bbc3bd977","headShort":"e5e7ad1","isBaselineCommit":false,"subject":"QA o002: re-stamp the authorized-difference register at a committed generator","worktreeState":"clean"},"artifact":"conversion-inventory.md","baselineCommit":"2f8712a112db46f923918c4507c75abc732d83d0","bodyDigest":{"algorithm":"sha256","canonicalization":"the document with its provenance-json line removed and trailing whitespace stripped per line, hashed as utf8","value":"3b5787fa7f3cbdcff0f2d0afe777d83faeba06565d81cab0214d78dfce4a2e73"},"delivered":{"head":"e5e7ad170be58faf55ff4d9b7db8439bbc3bd977","headShort":"e5e7ad1","isBaselineCommit":false,"subject":"QA o002: re-stamp the authorized-difference register at a committed generator","worktreeState":"clean"},"detail":{"analysedFiles":13,"analysedSourceDigest":"sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe","analysedTreeLabel":"the repository containing the generator (no --app given)","artifactLabel":"tool:docs/conversion-inventory.md","atBaseline":false,"evidenceAvailable":true,"evidenceCaptured":false,"invocation":"node test/parity/convert-inventory.js --replay \"$REPLAY_RESULT\" --out docs/conversion-inventory.md"},"generator":{"blob":"1d39ab4c14d91af3bde9784e8133490850dacbf6","commit":"e5e7ad170be58faf55ff4d9b7db8439bbc3bd977","commitState":"contains-this-exact-source","deliveredHead":"e5e7ad170be58faf55ff4d9b7db8439bbc3bd977","deliveredHeadShort":"e5e7ad1","matchesDeliveredHead":true,"path":"test/parity/convert-inventory.js","verified":true},"provenanceSchema":2,"role":"analysis","runtime":{"node":"v22.23.2","platform":"linux"}} -->
 <!--
   GENERATED FILE -- do not hand-edit it. Every line below this block is written
   by the generator named here from the analysed tree named here. An edit made by
@@ -10,10 +10,10 @@
   generator sha256     : sha256:6ec1da793d0cb6c53a4204d46dfed6aae8c1d8f2c5a1807374e49545bd951ecf
   generator blob       : 1d39ab4c14d91af3bde9784e8133490850dacbf6
                          `git cat-file blob 1d39ab4c14d9` retrieves the exact source that ran
-  generator commit     : 1ad5b38a75e8bb168d58f57fca6c9ffcccac8632  <-- verified: this commit's tree holds the blob above at that path
+  generator commit     : e5e7ad170be58faf55ff4d9b7db8439bbc3bd977  <-- verified: this commit's tree holds the blob above at that path
   exact command        : node test/parity/convert-inventory.js --replay "$REPLAY_RESULT" --out docs/conversion-inventory.md
   analysed tree        : the repository containing the generator (no --app given)
-  analysed tree HEAD   : 1ad5b38a75e8bb168d58f57fca6c9ffcccac8632
+  analysed tree HEAD   : e5e7ad170be58faf55ff4d9b7db8439bbc3bd977
   analysed source      : 13 files, sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe
   analysed source state: clean -- every analysed file matches that revision
   parity evidence      : test/parity/corpus.json, sha256:bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798, captured: no
@@ -464,7 +464,7 @@ the comparison exists on one side. Each open row below names the scenario whose
 verdict would close it, or states that no scenario is pinned to its branch.
 
 **The replay artifact this run was given.** `replay-result.json`, written by
-`test/parity/replay.js`, digest `sha256:b2536296151ec9df...`, verdict "PASS". It carries 392 scenario
+`test/parity/replay.js`, digest `sha256:36364c9f24fb024b...`, verdict "PASS". It carries 392 scenario
 verdicts, 380 of them confirming, of which 392 matched a scenario in the corpus.
 
 

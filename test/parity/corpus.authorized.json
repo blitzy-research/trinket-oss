@@ -5088,26 +5088,26 @@
     "generator": {
       "path": "test/parity/replay.js",
       "blob": "04f0c8fe2b378700e92a49df80ea8458e5153e1e",
-      "commit": null,
-      "commitState": "uncommitted-source",
-      "verified": false,
-      "deliveredHead": "bfcc252d4d2753fca2ff5460fb453b200fb14745",
-      "deliveredHeadShort": "bfcc252",
-      "matchesDeliveredHead": false
+      "commit": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+      "commitState": "contains-this-exact-source",
+      "verified": true,
+      "deliveredHead": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+      "deliveredHeadShort": "9f6573c",
+      "matchesDeliveredHead": true
     },
     "analysedTree": {
-      "head": "bfcc252d4d2753fca2ff5460fb453b200fb14745",
-      "headShort": "bfcc252",
-      "subject": "QA o002: poll out a teardown race in the worker gate rather than absorb it",
+      "head": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+      "headShort": "9f6573c",
+      "subject": "QA o002: re-seal the two generated inventories against the port-independent run",
       "isBaselineCommit": false,
-      "worktreeState": "dirty"
+      "worktreeState": "clean"
     },
     "delivered": {
-      "head": "bfcc252d4d2753fca2ff5460fb453b200fb14745",
-      "headShort": "bfcc252",
-      "subject": "QA o002: poll out a teardown race in the worker gate rather than absorb it",
+      "head": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+      "headShort": "9f6573c",
+      "subject": "QA o002: re-seal the two generated inventories against the port-independent run",
       "isBaselineCommit": false,
-      "worktreeState": "dirty"
+      "worktreeState": "clean"
     },
     "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
     "runtime": {

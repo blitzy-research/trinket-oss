@@ -5,26 +5,26 @@
   "generator": {
     "path": "test/parity/replay.js",
     "blob": "04f0c8fe2b378700e92a49df80ea8458e5153e1e",
-    "commit": null,
-    "commitState": "uncommitted-source",
-    "verified": false,
-    "deliveredHead": "bfcc252d4d2753fca2ff5460fb453b200fb14745",
-    "deliveredHeadShort": "bfcc252",
-    "matchesDeliveredHead": false
+    "commit": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+    "commitState": "contains-this-exact-source",
+    "verified": true,
+    "deliveredHead": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+    "deliveredHeadShort": "9f6573c",
+    "matchesDeliveredHead": true
   },
   "analysedTree": {
-    "head": "bfcc252d4d2753fca2ff5460fb453b200fb14745",
-    "headShort": "bfcc252",
-    "subject": "QA o002: poll out a teardown race in the worker gate rather than absorb it",
+    "head": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+    "headShort": "9f6573c",
+    "subject": "QA o002: re-seal the two generated inventories against the port-independent run",
     "isBaselineCommit": false,
-    "worktreeState": "dirty"
+    "worktreeState": "clean"
   },
   "delivered": {
-    "head": "bfcc252d4d2753fca2ff5460fb453b200fb14745",
-    "headShort": "bfcc252",
-    "subject": "QA o002: poll out a teardown race in the worker gate rather than absorb it",
+    "head": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+    "headShort": "9f6573c",
+    "subject": "QA o002: re-seal the two generated inventories against the port-independent run",
     "isBaselineCommit": false,
-    "worktreeState": "dirty"
+    "worktreeState": "clean"
   },
   "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
   "runtime": {
@@ -46,7 +46,7 @@
   "artifactDigest": {
     "algorithm": "sha256",
     "canonicalization": "the artifact bytes as written, verbatim",
-    "value": "e3ca7f14c2d3fd637d1c0c4bc60c988329ba93e31967f03fb1ef893a8eaaefa1"
+    "value": "8f806157a9a2d13ac43f227dfab4db122b920204c44b8a1ec6a695e8fc4b862a"
   },
   "note": "RUN OUTPUT - not a delivery artifact, and not to be committed. Every field above except artifactDigest is also embedded in corpus.authorized.json under its own `provenance` key, which is the committed record; this file adds only a digest of the exact bytes written, for a scratch run that compares two artifacts byte for byte and needs the provenance outside the compared region."
 }

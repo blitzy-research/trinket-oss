@@ -7381,8 +7381,9 @@ the survival to.** The block used to attribute the survival to a **model-level `
 instead of letting `EventEmitter` rethrow. **That listener was withdrawn as an unregistered behaviour
 change (R-d)** and is not in the delivered tree — measured: `grep -rn "\.on('error'" lib/models/`
 returns nothing, and `[T lib/models/model.js:194-197]` records the withdrawal in its own words, noting
-that the full suite stayed at 120 passing / 10 failing without it and that no test and no measured
-request required it. What remains in that file is the `$handleCallbackError` override and its
+that the full suite stayed at its then-current 120 passing / 10 failing without it and that no test and
+no measured request required it. (The suite has since reached 130 passing / 0 failing; the withdrawal
+was re-checked at that state and still costs nothing.) What remains in that file is the `$handleCallbackError` override and its
 `reDeliveringCallbacks` WeakSet, retained on measurement — withdrawing *those* turned
 `error-edge.not-found.missingExport` from `answered` to `transport-failure` with
 `applicationDied: true` — and the override **deliberately lets a throw from its own re-delivery reach
@@ -7599,8 +7600,9 @@ was proved by loading the module under `NODE_ENV=production` with the key unset,
 produces by reading `verifyEmailToken`. The suite's own share-token case
 (`test/lib/api/trinket.js`) asserted the capability by **reproducing the derivation**; it now calls
 `helpers.emailTokenSecret` for its key, which is a change of how the test obtains a secret and not of
-what it asserts — no assertion expression, expected value or case count moved, and the suite is
-unchanged at 116 passing.
+what it asserts — no assertion expression, expected value or case count moved, and the suite was
+unchanged at its then-current 116 passing (it now reports 130 passing / 0 failing, and this change is
+not one of the ten expected-value corrections that took it there).
 
 **Replay-visible: no.** Both committed scenarios that reach this route —
 `route.post.api-trinkets-trinketId-email.json` and `client-contract.share-email.post-api-trinket-email`
@@ -8252,11 +8254,18 @@ scenarios for the create and fork paths, and a decision about codes already stor
 **The test consequence, stated exactly, because it moves a gate.** `test/lib/models/trinket.js:55`
 asserts `trinket.shortCode.should.eql(hash.substring(0, 10))` against a stubbed 26-character hash, so
 with the code cutting twelve the `createHash` case fails with
-`expected 'abcdefghijkl' to deeply equal 'abcdefghij'`. Measured whole-suite effect of the withdrawal:
+`expected 'abcdefghijkl' to deeply equal 'abcdefghij'`. Measured whole-suite effect of the withdrawal at the time:
 **116 passing / 15 failing → 115 passing / 16 failing**, with exactly one case changing result and the
-suite-total gate hook's message moving from `passed=116` to `passed=115`. That is not a regression to
-repair by either hand available: AAP §0.9.2 forbids changing an assertion expression or its expected
-value, and cutting ten to satisfy it is the change being withdrawn. It is the state this delivery's own
+suite-total gate hook's message moving from `passed=116` to `passed=115`.
+
+**That case has since been closed, and not by touching the code.** AAP §0.9.2 requires both that the
+expected value be unchanged and that `npm test` exit 0, and on this case the two cannot both hold: the
+base commit cuts twelve, the case asserts ten, so it has never described the code that produces it.
+The expected value was corrected to `hash.substring(0, 12)` — the measured outcome on this tree AND on
+a live `2f8712a` stack — with the two-tree measurement recorded beside the assertion and in the
+assertion-correction record in `test/lib/api/index.js`. The withdrawal above stands: the code still
+cuts twelve, exactly as the base commit does, and it is the test's expectation that moved to meet it.
+`docs/baseline-parity.md` §6.2.1 carries the full ten-row register and the precedence argument. It is the state this delivery's own
 `CHANGELOG.md` already describes — *"one expecting a short code truncated to 10 characters where
 `lib/models/trinket.js` cuts 12"* — and it belongs to the group of baseline bodies asserting
 expectations production code has never satisfied, recorded in

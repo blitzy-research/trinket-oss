@@ -2834,6 +2834,38 @@ var HARNESS_ORIGIN_RULE = 'harness-origin:application self-origin';
 var HARNESS_ORIGIN_EXPRESSION =
   /https?:\/\/(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(?::\d{1,5})?/g;
 
+// The SAME value in its other spelling, and the reason this exists.
+//
+// The rule above reconciles `scheme://host[:port]`, and its own note explains
+// why: the recorded side carries the capture run's port and the live side
+// carries this run's, so an anchored expression with an optional port makes
+// both comparable. What it does not cover is the bare AUTHORITY spelling
+// `host:port`, with no scheme in front of it - and the application emits
+// exactly that, into an inline script on every rendered page:
+//
+//     trinket = { config : { apphostname : '127.0.0.1:3010', ... } }
+//
+// Measured: the committed corpus carries `127.0.0.1:3010` 69 times, 42 of them
+// inside a scheme-ful URL the rule above already reconciles and 27 of them
+// bare. Replaying at any port other than 3010 therefore moved
+// `html.inlineScriptDigests[0]` on 54 scenarios - two thirds of every page in
+// the corpus - and reported each as an unapproved difference, while ALSO
+// failing two of the five auth-scheme outcomes for the same reason. None of
+// that was a difference in the application: the same tree at the capture port
+// compares clean.
+//
+// So this is the existing reconciliation applied to the same value in its
+// second spelling, not a new allowance. It is anchored on this run's own host,
+// its port group is required (a bare host with no port is not an authority and
+// is left alone), and the lookbehind keeps it away from anything that already
+// carries a scheme - which is what preserves the `foreign-scheme-untouched`
+// property, since `https://host:port` must remain a difference against an
+// `http` recording. The token is DISTINCT from the origin token because the
+// values are: one stands for an origin, the other for an authority, and
+// collapsing them would let `//<app-origin>` and `<app-authority>` compare
+// equal.
+var HARNESS_AUTHORITY_TOKEN = '<app-authority>';
+
 // {scheme, host, port, origin, expression, ports:{}, occurrences} or null.
 var harnessOrigin = null;
 
@@ -2889,8 +2921,17 @@ function installHarnessOrigin(baseUrl) {
       escapeForRegExp(parsed.protocol.replace(/:$/, '')) + ':\\/\\/' +
       escapeForRegExp(parsed.hostname.indexOf(':') >= 0 ? '[' + host + ']' : host) +
       '(?::(\\d{1,5}))?(?![0-9A-Za-z.-])', 'g'),
+    // The bare-authority companion, anchored on the same host. The port is
+    // REQUIRED here and the lookbehind excludes anything preceded by `//`, so
+    // this expression can only see an authority that stands on its own - never
+    // the host part of a URL, whatever its scheme.
+    authorityExpression: new RegExp(
+      '(?<!\\/\\/)' +
+      escapeForRegExp(parsed.hostname.indexOf(':') >= 0 ? '[' + host + ']' : host) +
+      ':(\\d{1,5})(?![0-9A-Za-z.-])', 'g'),
     ports: Object.create(null),
-    occurrences: 0
+    occurrences: 0,
+    authorityOccurrences: 0
   };
 
   return true;
@@ -2940,6 +2981,21 @@ function reconcileHarnessOrigin(value) {
     harnessOrigin.occurrences += 1;
 
     return HARNESS_ORIGIN_TOKEN;
+  });
+
+  // Second, and only over what the first pass left: every scheme-ful origin is
+  // already a token by now, so what remains for this expression is the bare
+  // authority spelling and nothing else. Both spellings are ONE rule, reported
+  // under one name - they reconcile one value - and the port accounting is
+  // shared, so a report still says which ports were reconciled and how often.
+  text = text.replace(harnessOrigin.authorityExpression, function(match, port) {
+    var key = port ? String(port) : '(default)';
+
+    harnessOrigin.ports[key] = (harnessOrigin.ports[key] || 0) + 1;
+    harnessOrigin.occurrences += 1;
+    harnessOrigin.authorityOccurrences += 1;
+
+    return HARNESS_AUTHORITY_TOKEN;
   });
 
   if (text !== value) {
@@ -3001,10 +3057,17 @@ function harnessOriginAccounting() {
     }),
     otherPorts: foreign,
     portlessOccurrences: harnessOrigin.ports['(default)'] || 0,
+    authorityToken: HARNESS_AUTHORITY_TOKEN,
+    authorityOccurrences: harnessOrigin.authorityOccurrences,
     note: 'the scheme ' + harnessOrigin.scheme + ' and host ' +
       harnessOrigin.host + ' are this pass\'s own address, so an occurrence ' +
       'of them was replaced with ' + HARNESS_ORIGIN_TOKEN +
-      ' on both sides before comparison. Everything after the origin - path, ' +
+      ' on both sides before comparison, and the same host in the bare ' +
+      'authority spelling `host:port` - which the application writes into an ' +
+      'inline script on every page - was replaced with ' +
+      HARNESS_AUTHORITY_TOKEN + ' the same way, ' +
+      harnessOrigin.authorityOccurrences + ' time(s) in this pass. ' +
+      'Everything after the origin - path, ' +
       'query and fragment - and every origin on any other scheme or host was ' +
       'compared exactly.'
   };
@@ -3089,6 +3152,50 @@ var HARNESS_ORIGIN_PROBES = Object.freeze([
       'already-reconciled value is a no-op',
     input: HARNESS_ORIGIN_TOKEN + '/signup',
     expected: HARNESS_ORIGIN_TOKEN + '/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'bare-authority-replaced',
+    what: 'the bare authority spelling `host:port` is replaced too - this is ' +
+      'the form the application writes into `trinket.config.apphostname` on ' +
+      'every rendered page, and leaving it literal made two thirds of the ' +
+      'corpus port-dependent',
+    input: 'apphostname : \'127.0.0.1:39999\',',
+    expected: 'apphostname : \'' + HARNESS_AUTHORITY_TOKEN + '\',',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'bare-authority-other-port-replaced',
+    what: 'the same host in the bare spelling on ANOTHER port is replaced as ' +
+      'well, which is the recorded side of that same inline script',
+    input: 'apphostname : \'127.0.0.1:3010\',',
+    expected: 'apphostname : \'' + HARNESS_AUTHORITY_TOKEN + '\',',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'bare-authority-needs-a-port',
+    what: 'a bare host with NO port is not an authority and is left alone, so ' +
+      'a hostname appearing in prose or in a configuration value is still ' +
+      'compared exactly',
+    input: 'the host is 127.0.0.1 and nothing follows it',
+    expected: 'the host is 127.0.0.1 and nothing follows it',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'bare-authority-does-not-reach-into-a-url',
+    what: 'the authority inside a FOREIGN-scheme URL is not matched by the ' +
+      'bare rule, so https -> http remains a difference rather than being ' +
+      'reconciled through the back door',
+    input: 'https://127.0.0.1:39999/signup',
+    expected: 'https://127.0.0.1:39999/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'authority-token-is-idempotent',
+    what: 'the authority placeholder does not itself match either half of the ' +
+      'rule',
+    input: HARNESS_AUTHORITY_TOKEN + '/signup',
+    expected: HARNESS_AUTHORITY_TOKEN + '/signup',
     fires: false
   }),
   Object.freeze({

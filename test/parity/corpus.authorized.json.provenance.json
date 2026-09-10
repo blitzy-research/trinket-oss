@@ -4,27 +4,27 @@
   "role": "analysis",
   "generator": {
     "path": "test/parity/replay.js",
-    "blob": "37e96f1e34ff30437dbdde22b5417dcaf151f6ef",
-    "commit": "c60078d3d58543424739191b548755365823c613",
-    "commitState": "contains-this-exact-source",
-    "verified": true,
-    "deliveredHead": "c60078d3d58543424739191b548755365823c613",
-    "deliveredHeadShort": "c60078d",
-    "matchesDeliveredHead": true
+    "blob": "04f0c8fe2b378700e92a49df80ea8458e5153e1e",
+    "commit": null,
+    "commitState": "uncommitted-source",
+    "verified": false,
+    "deliveredHead": "bfcc252d4d2753fca2ff5460fb453b200fb14745",
+    "deliveredHeadShort": "bfcc252",
+    "matchesDeliveredHead": false
   },
   "analysedTree": {
-    "head": "c60078d3d58543424739191b548755365823c613",
-    "headShort": "c60078d",
-    "subject": "QA o002: close the four provenance-dependent evidence gates",
+    "head": "bfcc252d4d2753fca2ff5460fb453b200fb14745",
+    "headShort": "bfcc252",
+    "subject": "QA o002: poll out a teardown race in the worker gate rather than absorb it",
     "isBaselineCommit": false,
-    "worktreeState": "clean"
+    "worktreeState": "dirty"
   },
   "delivered": {
-    "head": "c60078d3d58543424739191b548755365823c613",
-    "headShort": "c60078d",
-    "subject": "QA o002: close the four provenance-dependent evidence gates",
+    "head": "bfcc252d4d2753fca2ff5460fb453b200fb14745",
+    "headShort": "bfcc252",
+    "subject": "QA o002: poll out a teardown race in the worker gate rather than absorb it",
     "isBaselineCommit": false,
-    "worktreeState": "clean"
+    "worktreeState": "dirty"
   },
   "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
   "runtime": {
@@ -33,7 +33,7 @@
   },
   "detail": {
     "registerSchema": 1,
-    "records": 294,
+    "records": 240,
     "authorities": 7,
     "corpusDigest": "bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798",
     "secureCorpusDigest": "13fa998efd74b3503b54dcb1d11f202049c18e52dc1b5becb4216908ee38d0b1"
@@ -41,12 +41,12 @@
   "payloadDigest": {
     "algorithm": "sha256",
     "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
-    "value": "bec201ca9ec096a8906e51a5271f49d67c749d6c9ca2ee07cf29205b7bd3b2bd"
+    "value": "b222fc0d8d2424f49e931fc67038a1037527937d1db6c68f6d3e6b26db7e3341"
   },
   "artifactDigest": {
     "algorithm": "sha256",
     "canonicalization": "the artifact bytes as written, verbatim",
-    "value": "f5d166fc0e0cad11819c788f5d6bdd9547444924120e4f1a78b8c8c3995d09df"
+    "value": "e3ca7f14c2d3fd637d1c0c4bc60c988329ba93e31967f03fb1ef893a8eaaefa1"
   },
   "note": "RUN OUTPUT - not a delivery artifact, and not to be committed. Every field above except artifactDigest is also embedded in corpus.authorized.json under its own `provenance` key, which is the committed record; this file adds only a digest of the exact bytes written, for a scratch run that compares two artifacts byte for byte and needs the provenance outside the compared region."
 }

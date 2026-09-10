@@ -14,8 +14,8 @@ Trinket lets students and educators write and run code directly in the browser, 
 
 ## Prerequisites
 
-- Docker and Docker Compose
-- Node.js 22 LTS with npm 10 (for local development without Docker) - `.nvmrc` pins the line, so `nvm use 22` selects it
+- Docker and Docker Compose - the commands below use the Compose plugin (`docker compose`), not the standalone `docker-compose` script
+- Node.js 22 LTS with npm 10 (for local development without Docker). The requirement is the version, not any particular version manager: `package.json` declares `node >=22.0.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and `.nvmrc` contains `22`. If you use nvm, `nvm use 22` selects it; if you do not, install Node 22 however your platform prefers - `node -v` and `npm -v` are the whole of the check
 - MongoDB 5.0+
 - Redis (optional - falls back to in-memory)
 
@@ -34,15 +34,17 @@ Trinket lets students and educators write and run code directly in the browser, 
 
 3. Build the stylesheets into the checkout:
    ```bash
-   docker-compose run --rm --user root app npm run build
-   # or, with Node 22 on the host: npm ci && npm run build
+   npm ci && npm run build
+   # or instead of that line, with no Node on the host, run the same build
+   # in a Node 22 container:
+   docker run --rm -v "$PWD":/app -w /app node:22-bookworm sh -c 'npm ci && npm run build'
    ```
 
-   `docker-compose.yml` mounts the checkout over the application directory, so `/css/base.css` and `/css/embed.css` are served from `public/css/` in the checkout rather than from the copies the image built. Both are generated and gitignored, so on a fresh clone they are absent and those two requests answer 404 until this step has run. See [GETTING_STARTED.md](GETTING_STARTED.md) for the detail, including why the container command needs `--user root`.
+   `docker-compose.yml` mounts the checkout over the application directory, so `/css/base.css` and `/css/embed.css` are served from `public/css/` in the checkout rather than from the copies the image built. Both are generated and gitignored, so on a fresh clone they are absent and those two requests answer 404 until this step has run. The build has to happen outside the `app` container: the shipped image installs production dependencies only, so `vite` and `sass` are not in it and `npm run build:css` there answers `vite: not found`. See [GETTING_STARTED.md](GETTING_STARTED.md) for the detail.
 
 4. Start the services:
    ```bash
-   docker-compose up
+   docker compose up
    ```
 
 5. Visit http://localhost:3000 in your browser.
@@ -55,7 +57,7 @@ Configuration is managed through YAML files in the `config/` directory:
 - `local.yaml` - Local overrides and secrets (not committed)
 - `production.yaml` - Production overrides (not committed)
 
-Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required values.
+Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required values. **One value in that file is Compose-specific**: it ships `db.mongo.host: mongodb`, which is the service name inside the Compose network. Running the application directly on the host, set it to `localhost` — the example file carries the same note inline against that key (**measured**: `config/local.example.yaml:29`).
 
 ### Required Configuration
 
@@ -90,7 +92,7 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
    npm run build
    ```
 
-   The frontend components are not committed - they live in the gitignored `public/components/` and are distributed separately as `public-components.tgz`, so without them the SCSS build fails at `static/scss/_settings.scss:8`. `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. On a clean checkout the two commands above exit 0 and write `public/css/base.css` and `public/css/embed.css`; the SCSS compile prints several hundred Sass deprecation notices from the vendored Foundation tree along the way, which is expected.
+   The frontend components are not committed - they live in the gitignored `public/components/` and are distributed separately as `public-components.tgz`, so without them the SCSS build fails at `static/scss/_settings.scss:8`. `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. On a clean checkout the two commands above exit 0 and write `public/css/base.css` and `public/css/embed.css`; the SCSS compile prints 58 Sass deprecation notices from the vendored Foundation tree along the way, followed by two `WARNING: 435 repetitive deprecation warnings omitted` summaries, all of which are expected.
 
 3. Start MongoDB locally (Redis is optional)
 

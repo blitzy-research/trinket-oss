@@ -4,11 +4,11 @@ This guide will help you get Trinket running locally for development.
 
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose. Every Compose command below is written for the **Compose plugin** - `docker compose <verb>`, which `docker compose version` confirms is installed. The standalone hyphenated script is a separate, superseded package; where it is absent, the hyphenated spelling answers `command not found` and only the plugin spelling runs. `docker-compose.yml` is a file name and is unaffected either way.
 - Git
-- Node.js 22 LTS with npm 10 - optional, and only for local development without Docker. `package.json` declares `node >=22.0.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and `.nvmrc` pins the line, so `nvm use 22` selects it.
+- Node.js 22 LTS with npm 10 - optional, and only for local development without Docker. `package.json` declares `node >=22.0.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and `.nvmrc` contains `22`. **That version is the requirement; how you arrive at it is yours.** With nvm installed, `nvm use 22` reads `.nvmrc` and selects the line; nvm is one route rather than a prerequisite, and on a host without it any Node 22 install does equally well. `node -v` and `npm -v` are the check.
 
-For the Docker workflow that's it - everything else runs inside Docker. Where a step can also be run on the host, the host command is given alongside the Docker one.
+For the Docker workflow that's it - everything else runs inside a container, including the one build step the `app` image cannot do itself. Where a step can also be run on the host, the host command is given alongside the container one.
 
 ## Quick Start
 
@@ -21,12 +21,15 @@ cd trinket-oss
 cp config/local.example.yaml config/local.yaml
 
 # Build the stylesheets into the checkout - Compose serves them from there,
-# not from the image. See "Building CSS" below for why.
-docker-compose run --rm --user root app npm run build
-# or, with Node 22 on the host: npm ci && npm run build
+# not from the image, and the app image cannot build them itself.
+# See "Building CSS" below for both halves of why.
+npm ci && npm run build
+# or instead of that line, with no Node on the host, run the same build
+# in a Node 22 container:
+docker run --rm -v "$PWD":/app -w /app node:22-bookworm sh -c 'npm ci && npm run build'
 
 # Start the services
-docker-compose up
+docker compose up
 ```
 
 Wait for the services to start. You'll see `Server started on port:` when ready.
@@ -61,19 +64,7 @@ See [COMPONENTS.md](COMPONENTS.md) for the release URL, its expected SHA-256, an
 
 ### Building CSS
 
-The project uses SCSS for stylesheets. To compile:
-
-```bash
-# One-time build
-docker-compose exec --user root app npm run build:css
-
-# Watch mode (recompiles on changes)
-docker-compose exec --user root app npm run watch:css
-```
-
-`--user root` is required and is not a convenience: the container runs as the unprivileged `trinket` user (uid 999), the checkout it writes into belongs to whoever cloned it, and `public/components` is a named volume owned by the image's user. Without it the build fails with `EACCES` - either writing Vite's bundled config beside `vite.config.mjs`, or copying `public/components` while preparing the output directory. As root the build writes both stylesheets into the mounted checkout. The files then belong to root on your host, which is the price of building this way; the host build below does not have that effect.
-
-The same scripts run on the host:
+The project uses SCSS for stylesheets. The build runs where the devDependencies are, which is the host or a Node 22 container over your checkout - **not** the `app` container:
 
 ```bash
 # Fetch the components if needed, then build the CSS
@@ -82,19 +73,27 @@ npm run build
 # CSS only, when the components are already present
 npm run build:css
 
-# Watch mode
+# Watch mode (recompiles on changes)
 npm run watch:css
 ```
 
-Either way the outputs are `public/css/base.css` and `public/css/embed.css`, both gitignored build artifacts. On a clean checkout, `npm ci` followed by `npm run build` exits 0 and writes both of them, and the SCSS compile prints several hundred Sass deprecation notices from the vendored Foundation tree in `public/components` on the way - they are expected, and the artifacts are correct.
+With no Node on the host, the same build runs in a container over the checkout, which needs nothing installed but Docker:
 
-A container built from the current `Dockerfile` contains both stylesheets, because the image build fetches the components, installs with `npm ci` and then runs `npm run build:css` - so the image serves `/css/base.css` and `/css/embed.css` from copies it built itself. Earlier images shipped neither. **That does not carry over to `docker-compose up`**, because the bind mount described in the Quick Start puts your checkout's `public/css/` in front of the image's - so under Compose these commands, or the host build, are what produce the stylesheets, and the image's copies are what you get when nothing is mounted over them. The application serves the files from disk as they are requested, so a build while the container is running takes effect without a restart.
+```bash
+docker run --rm -v "$PWD":/app -w /app node:22-bookworm sh -c 'npm ci && npm run build'
+```
+
+Either way the outputs are `public/css/base.css` and `public/css/embed.css`, both gitignored build artifacts. On a clean checkout, `npm ci` followed by `npm run build` exits 0 and writes both of them - 265,727 and 296,352 bytes, identical from either route - and the SCSS compile prints 58 Sass deprecation notices from the vendored Foundation tree in `public/components` on the way, then two `WARNING: 435 repetitive deprecation warnings omitted` summaries. All of that is expected, and the artifacts are correct.
+
+**Why not in the `app` container.** `npm run build:css` is `vite build`, and `vite` and `sass` are devDependencies. The image is built in stages so that the dev-inclusive tree never ships: the stage that builds the CSS installs everything, and the shipped stage installs `npm ci --omit=dev` and is audited at build time to contain no declared devDependency at all. So `docker compose exec app npm run build:css` answers `sh: 1: vite: not found` - measured, in an image built from the current `Dockerfile` - and no `--user root` changes that. Commands that need only the production tree do run there, `npm run make-admin` below among them.
+
+A container built from the current `Dockerfile` still *contains* both stylesheets, because its asset stage fetches the components, installs the full graph and runs `npm run build:css`, and the shipped stage copies the two files out of it and fails the build if either is missing or empty - so the image serves `/css/base.css` and `/css/embed.css` from copies it built itself. Earlier images shipped neither. **That does not carry over to `docker compose up`**, because the bind mount described in the Quick Start puts your checkout's `public/css/` in front of the image's - so under Compose the builds above are what produce the stylesheets, and the image's copies are what you get when nothing is mounted over them. The application serves the files from disk as they are requested, so a build while the container is running takes effect without a restart.
 
 ### Viewing Logs
 
 ```bash
 # All services
-docker-compose logs -f
+docker compose logs -f
 
 # Just the app
 docker logs -f trinket
@@ -103,7 +102,7 @@ docker logs -f trinket
 ### Restarting the App
 
 ```bash
-docker-compose restart app
+docker compose restart app
 ```
 
 ### Creating an Admin User
@@ -111,7 +110,7 @@ docker-compose restart app
 After registering a user through the web interface, promote them to admin:
 
 ```bash
-docker-compose exec app npm run make-admin user@example.com
+docker compose exec app npm run make-admin user@example.com
 ```
 
 Admin users can access `/admin` for site administration features.
@@ -150,25 +149,25 @@ These are the services `docker-compose.yml` defines. The repository's only nginx
 
 ### CSS not loading?
 
-A 404 for `/css/base.css` under Compose means the checkout has no generated stylesheets, because that is where the bind mount makes the application look. Build them:
+A 404 for `/css/base.css` under Compose means the checkout has no generated stylesheets, because that is where the bind mount makes the application look. Build them into the checkout:
 ```bash
-docker-compose exec --user root app npm run build:css
+npm run build
 ```
 
-On the host, use `npm run build` instead - it fetches the frontend components first, which is what the SCSS compile needs. Either way no restart is required: the files are read from disk per request.
+Use `npm run build` rather than `npm run build:css` on a fresh clone - it fetches the frontend components first, which is what the SCSS compile needs. With no Node on the host, `docker run --rm -v "$PWD":/app -w /app node:22-bookworm sh -c 'npm ci && npm run build'` does the same job. It is not a command for the `app` container, which has no `vite` - see [Building CSS](#building-css). No restart is required either way: the files are read from disk per request.
 
 ### Container won't start?
 
 Check logs:
 ```bash
-docker-compose logs app
+docker compose logs app
 ```
 
 ### Need to rebuild the container?
 
 ```bash
-docker-compose build app
-docker-compose up -d
+docker compose build app
+docker compose up -d
 ```
 
 ---

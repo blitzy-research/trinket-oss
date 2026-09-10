@@ -4,9 +4,9 @@ This guide walks through the prerequisites, configuration, and commands needed t
 
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose - the Compose commands here are the plugin form, `docker compose <verb>`, and not the standalone `docker-compose` script
 - Git
-- Node.js 22 LTS with npm 10 (only required for local development without Docker) - `.nvmrc` pins the line, so `nvm use` selects it
+- Node.js 22 LTS with npm 10 (only required for local development without Docker). The version is the requirement, not a version manager: `package.json` declares `node >=22.0.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and `.nvmrc` contains `22`. `nvm use` reads that file where nvm is installed; without nvm, any Node 22 install satisfies it just as well
 - MongoDB 5.0+ (runs inside Docker by default)
 - Redis (optional - falls back to in-memory store when disabled)
 
@@ -27,15 +27,17 @@ When using the Docker workflow, Docker and Git are all you need - everything els
 
 3. Build the stylesheets into the checkout:
    ```bash
-   docker-compose run --rm --user root app npm run build
-   # or, with Node 22 on the host: npm ci && npm run build
+   npm ci && npm run build
+   # or instead of that line, with no Node on the host, run the same build
+   # in a Node 22 container:
+   docker run --rm -v "$PWD":/app -w /app node:22-bookworm sh -c 'npm ci && npm run build'
    ```
 
-   Compose bind-mounts the checkout over the application directory and keeps only `node_modules` and `public/components` as named volumes, so `/css/base.css` and `/css/embed.css` are served from the checkout's `public/css/` rather than from the copies the image built. Those two files are generated and gitignored: on a fresh clone they are absent and both requests answer 404 until this step has run. An image run without the checkout mounted over it serves its own copies and needs no such step.
+   Compose bind-mounts the checkout over the application directory and keeps only `node_modules` and `public/components` as named volumes, so `/css/base.css` and `/css/embed.css` are served from the checkout's `public/css/` rather than from the copies the image built. Those two files are generated and gitignored: on a fresh clone they are absent and both requests answer 404 until this step has run. An image run without the checkout mounted over it serves its own copies and needs no such step. The build does not run inside the `app` container - the shipped image carries production dependencies only, so `vite` and `sass` are absent there - which is why both forms above build outside it.
 
 4. Start the services:
    ```bash
-   docker-compose up
+   docker compose up
    ```
 
    Wait until you see `Server started on port:` in the logs.
@@ -52,7 +54,7 @@ Configuration is managed through YAML files in the `config/` directory:
 | `local.yaml` | Local overrides and secrets (gitignored) |
 | `production.yaml` | Production overrides (gitignored) |
 
-Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required values.
+Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required values. **One value in that file is Compose-specific**: it ships `db.mongo.host: mongodb`, which is the service name inside the Compose network. Running the application directly on the host, set it to `localhost` — the example file carries the same note inline against that key (**measured**: `config/local.example.yaml:29`).
 
 ### Required Configuration
 
@@ -119,7 +121,7 @@ These are the services `docker-compose.yml` defines. The repository's only nginx
 After registering a user through the web interface, promote them to admin:
 
 ```bash
-docker-compose exec app npm run make-admin user@example.com
+docker compose exec app npm run make-admin user@example.com
 ```
 
 Admin users can access `/admin` for site administration features.

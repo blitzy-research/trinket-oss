@@ -5502,9 +5502,19 @@ three and four and were left stacked on top of one another**; they are replaced 
 register table in §11.0 remains the canonical list.
 
 **A number in this register is retired, never reused, and a withdrawal is recorded rather than
-deleted.** Five of the eighteen no longer describe the delivered tree, because the change each
-approved was withdrawn after this register was written — deviations **7, 8, 11 (in part), 13 and 15**,
-each measured against the tree in §11.0's table and each carrying the measurement in its own section.
+deleted.** **Six** of the eighteen no longer describe the delivered tree in full, because the change
+each approved was withdrawn, wholly or in part, after this register was written — deviations **7, 8,
+13 and 15** outright, and **11** and **12** in part — each measured against the tree in §11.0's table
+and each carrying the measurement in its own section. An earlier revision of this paragraph listed
+five and omitted 12, whose message half is withdrawn while its rate half is retained; the table has
+always marked it `PART WITHDRAWN`, so the omission was in this sentence rather than in the register.
+
+**The counting convention, stated so that eighteen and thirteen can be checked rather than taken.**
+§11.0's per-entry column marks twelve entries `LIVE` (1-6, 9, 10, 14, 16-18), four `WITHDRAWN`
+(7, 8, 13, 15) and two `PART WITHDRAWN` (11, 12). Of the two partials, **12 counts as live** — its
+rate half is a behaviour of the delivered tree — and **11 does not**, because the token derivability
+its argument turned on is back at base-commit behaviour and nothing of it remains in force. Twelve
+plus one is the thirteen.
 A withdrawn entry keeps its number and its argument: renumbering would move every citation of it in
 this file and in four others, and deleting it would hide the fact that the change was once approved and
 is now gone, which is precisely the history a reader of a register needs. **The count of eighteen is
@@ -6455,7 +6465,60 @@ fields is the one in row 7 below and belongs there.
 | 4 | **`grantRole`'s response publishes credential material; the admin user page no longer does** | Both sites serialized the whole `User` document, `password` included. `userSearch`, which feeds the page, now strips it — see row 7. `grantRole`'s response body is unchanged and still carries it | [§9.11](#911-the-admin-controller-publishes-the-whole-user-document-bcrypt-hash-included), which carries the measurement and the follow-up, and row 7's after-measurement for the page | R-d, and AAP §0.9.3's exact body comparison — which is what still holds `grantRole`, because that response IS compared by a committed scenario while the page's `?q=` rendering is not | §9.11's named follow-up, now scoped to `grantRole` alone |
 | 5 | **The route's only in-tree caller is commented out** | `public/js/debug.js:31` holds the single `$.post('/api/ohnoes', …)` and it is commented out, so nothing in the application posts here | **static** | R-a — an unreferenced route is not a route to remove, and AAP §0.2.2 makes the route surface an invariant | None. Recorded so that "nothing calls it" is not mistaken for "nothing can call it": the route is registered and answers, which is exactly why the exposures above are reachable |
 | 6 | **A cross-origin HTML form can grant itself the site-admin role** — **now answered 403 by approved deviation 8** ([§11.12](#1112-deviation-8-a-credentialed-cross-origin-state-changing-request-is-rejected)), which rejects a state-changing request that carries the session cookie and reports an origin that is not this application's, `Sec-Fetch-Site: same-site` included. The row stays because the closure is conditional and its limits are stated there: a deployment that lists its sibling hosts in `app.security.trustedOrigins` re-opens it for those hosts, a jar replayed with no origin header is unaffected, and the durable answer is still the token work named below | Every session-authenticated admin write is declared with `auth: 'session'` and an `isAdmin(user)` pre-handler and **nothing else**: no CSRF token is issued or checked anywhere in the tree, and no `Origin`, `Referer` or Fetch-Metadata check exists. The session cookie is `SameSite=Lax`, which does not restrain a **same-site** sibling origin, and committed configuration sets a parent-domain cookie (`config/default.yaml:38-46`), so any host under it is same-site. A plain auto-submitting form on such an origin, carrying only `role=admin`, is accepted while an administrator is signed in | **probe**, closing re-verification: a form served from an independent origin POSTed to `/api/admin/user/{id}/grant` with `Sec-Fetch-Site: same-site` and no token; the response was 200 `success:true` and a fresh read showed the target's roles as `user, admin`. CORS does not apply — a top-level form POST is not a preflighted request | R-d, and scope: any check rejects requests baseline accepts, and the declaration, the cookie and the extension points sit in `config/api_routes.js`, `config/default.yaml` and `app.js`, of which the latter two belong to other units | Add server-validated CSRF tokens to every session-authenticated state-changing route, reject untrusted `Origin`/`Referer`, and reconsider both the parent-domain session cookie and the hosting of untrusted sibling origins — as one approved security change with its own AAP amendment. **This is the highest-severity item in this document and it is not this unit's to close** |
-| 7 | **CLOSED — a persisted user field became executable markup in an administrator's session** | Row 4's wholesale projection was rendered by `lib/views/admin/includes/users.html` through Nunjucks' `\| safe`, so the pretty-printed JSON was emitted **unescaped** inside a `<pre>` and a persisted value containing `</pre>` closed the element, leaving whatever followed to be parsed as markup. `rolesData` was a second `\| safe` sink on the same page, in script-data context, where a persisted `</script>` did the same. **The planting precondition recorded here was wrong and is corrected: it is any anonymous signup, not "an admin write — or row 6's cross-origin equivalent".** Signup's `fullname` is `Joi.string().max(50)` with no character constraint, and the `ensureName` pre-save hook copies it to `name`, so one unauthenticated `POST /users` plants the payload twice over. A role name reaches the same sinks through `admin.updateUser`, which writes `request.payload.roles` with no validation of the strings inside it — that is the second vector, not the only one. No CSP is served, and that is still true | **probe**, twice. **Before**: an anonymous signup carrying `fullname=</pre><img src=x onerror=alert(9)><pre>` returned 302 to `/welcome`, and the admin's `GET /admin/users?q=<username>` then answered 200 carrying the raw payload at both the `fullname` and `name` keys, 5 `<pre>` elements against a template of 3, and the victim's `$2b$10$…` hash; a planted role name `</script><img src=x onerror=alert(8)>…` was emitted raw inside `#rolesData`. Two native `alert`s fired during parsing at `readyState=loading` **while `#json` was still `display:none`**, from `HTMLImageElement.onerror`, and the injected image's own request carried the admin's session cookie. **After**: the identical sequence, re-driven with both payloads planted, answers 200 with a document-start tripwire count of **0**, `img[src="x"]` **0**, `<pre>` back to **3**, zero injected `img`/`script` inside `#json`, the payload present as literal **text**, `#rolesData` still `JSON.parse`-able with the role string byte-exact, and `$2b$10$` absent from both `innerHTML` and `textContent` — zero console messages, no request to `/x` | **No longer preserved.** R-d was argued away by AAP §0.7's own mechanism on the precedence stated above the table, on QA findings `W001-F06-ADMIN-USERS-STORED-XSS` and `W002-I2-ADMIN-JSON-TAB-XSS`. The change is measured **invisible to AAP §0.9.3's exact comparison**: all 11 admin scenarios in `test/parity/corpus.json` drive `/admin/users` with no `?q=`, so `admin.index` leaves `data` undefined and neither sink renders in any of the 392 scenarios | **Done**: `lib/views/admin/includes/users.html:104` drops `\| safe` so Nunjucks autoescaping renders the JSON dump as inert text — the entity-decoded pane is byte-identical to baseline's, measured, so an administrator sees the same JSON; `:145` moves to a new `jsonSafe` filter in `lib/util/nunjucks.js` that escapes `<`, `>`, `&`, U+2028 and U+2029 as `\uXXXX` JSON escapes and marks its own output safe, which keeps `lib/views/admin/index.html:66`'s `JSON.parse($('#rolesData').text())` and the Change Roles round-trip byte-exact; and `lib/controllers/admin.js`'s `userSearch` strips `password` and any provider token from the projection, which closes row 4 for this page. **Still open, and not this change**: role-name validation in `admin.updateUser` (it would reject writes baseline accepts), a restrictive CSP as defence in depth, `grantRole`'s response body (§9.11), and the §11.0 register row named above |
+| 7 | **PART CLOSED — the credential half holds, the markup half is PRESERVED AGAIN.** The status below was measured while the escaped views were in the tree; they are not any longer, and the re-measurement is in the note directly beneath this table | Row 4's wholesale projection was rendered by `lib/views/admin/includes/users.html` through Nunjucks' `\| safe`, so the pretty-printed JSON was emitted **unescaped** inside a `<pre>` and a persisted value containing `</pre>` closed the element, leaving whatever followed to be parsed as markup. `rolesData` was a second `\| safe` sink on the same page, in script-data context, where a persisted `</script>` did the same. **The planting precondition recorded here was wrong and is corrected: it is any anonymous signup, not "an admin write — or row 6's cross-origin equivalent".** Signup's `fullname` is `Joi.string().max(50)` with no character constraint, and the `ensureName` pre-save hook copies it to `name`, so one unauthenticated `POST /users` plants the payload twice over. A role name reaches the same sinks through `admin.updateUser`, which writes `request.payload.roles` with no validation of the strings inside it — that is the second vector, not the only one. No CSP is served, and that is still true | **probe**, twice. **Before**: an anonymous signup carrying `fullname=</pre><img src=x onerror=alert(9)><pre>` returned 302 to `/welcome`, and the admin's `GET /admin/users?q=<username>` then answered 200 carrying the raw payload at both the `fullname` and `name` keys, 5 `<pre>` elements against a template of 3, and the victim's `$2b$10$…` hash; a planted role name `</script><img src=x onerror=alert(8)>…` was emitted raw inside `#rolesData`. Two native `alert`s fired during parsing at `readyState=loading` **while `#json` was still `display:none`**, from `HTMLImageElement.onerror`, and the injected image's own request carried the admin's session cookie. **After** — measured on a tree that carried the escaped views, which the delivered tree no longer does; read it with the note beneath this table: the identical sequence, re-driven with both payloads planted, answered 200 with a document-start tripwire count of **0**, `img[src="x"]` **0**, `<pre>` back to **3**, zero injected `img`/`script` inside `#json`, the payload present as literal **text**, `#rolesData` still `JSON.parse`-able with the role string byte-exact, and `$2b$10$` absent from both `innerHTML` and `textContent` — zero console messages, no request to `/x` | **No longer preserved.** R-d was argued away by AAP §0.7's own mechanism on the precedence stated above the table, on QA findings `W001-F06-ADMIN-USERS-STORED-XSS` and `W002-I2-ADMIN-JSON-TAB-XSS`. The change is measured **invisible to AAP §0.9.3's exact comparison**: all 11 admin scenarios in `test/parity/corpus.json` drive `/admin/users` with no `?q=`, so `admin.index` leaves `data` undefined and neither sink renders in any of the 392 scenarios | **Done**: `lib/views/admin/includes/users.html:104` drops `\| safe` so Nunjucks autoescaping renders the JSON dump as inert text — the entity-decoded pane is byte-identical to baseline's, measured, so an administrator sees the same JSON; `:145` moves to a new `jsonSafe` filter in `lib/util/nunjucks.js` that escapes `<`, `>`, `&`, U+2028 and U+2029 as `\uXXXX` JSON escapes and marks its own output safe, which keeps `lib/views/admin/index.html:66`'s `JSON.parse($('#rolesData').text())` and the Change Roles round-trip byte-exact; and `lib/controllers/admin.js`'s `userSearch` strips `password` and any provider token from the projection, which closes row 4 for this page. **Still open, and not this change**: role-name validation in `admin.updateUser` (it would reject writes baseline accepts), a restrictive CSP as defence in depth, `grantRole`'s response body (§9.11), and the §11.0 register row named above |
+
+**Re-measured after the frontend restoration, and row 7 is now half of what it says.** The closure
+above had two independent halves and only one of them is in the delivered tree.
+
+- **The credential half holds.** `lib/controllers/admin.js` still strips credential material in
+  `userSearch` before the object goes anywhere — `withoutCredentialMaterial` over
+  `CREDENTIAL_FIELDS` and `PROVIDER_CREDENTIAL_FIELDS` — and that is controller code, which this
+  migration is entitled to carry.
+- **The markup half is preserved baseline behaviour again.** The escaping that closed it lived in
+  `lib/views/admin/includes/users.html`, and AAP §0.2.2 excludes `lib/views/**` from this migration.
+  This checkpoint restored all 63 files under `lib/views/**`, `public/js/**`, `public/partials/**`
+  and `static/scss/**` to their base-commit bytes (**measured**: `git diff --stat 2f8712a --
+  lib/views public/js public/partials static/scss` prints nothing), so both `\| safe` sinks are back
+  exactly as the base commit has them.
+
+**The re-measurement, driven end to end against the delivered tree** — an anonymous
+`POST /users` planting `fullname=</pre><img src=x onerror=alert(9)><pre>`, that account promoted with
+`npm run make-admin`, then its own `GET /admin/users?q=<username>` with the session cookie:
+
+| What | Measured now | What row 7's table recorded |
+|---|---|---|
+| `GET /admin/users?q=…` | 200, 24 022 bytes | 200 |
+| raw `<img src=x` in the response | **2** | 0 |
+| raw `onerror=` | **4** | 0 |
+| `<pre` elements | **5**, against a template of 3 | 3 |
+| the same payload rendered as escaped text | 2 (`&lt;img`) — the fields outside the `\| safe` sinks | payload present as literal text |
+| bcrypt hash (`$2b$` / `$2a$`) anywhere in the body | **absent** | absent |
+
+So the injection is reachable again and the hash is not. **That is the outcome the AAP requires, not a
+regression this checkpoint chose**: R-d prohibits behaviour improvements, §0.2.2 puts the only sink
+that can be edited out of scope, and the QA findings this checkpoint answers are the ones that
+required the excluded scope be restored. Re-escaping the view would mean editing a file the plan
+declares unchanged in order to depart from base-commit behaviour — both halves of exactly what R-a
+and R-d forbid.
+
+**A filter written for that sink was withdrawn with it.** The delivered tree had added a `jsonSafe`
+Nunjucks filter to `lib/util/nunjucks.js` — 69 lines — whose only consumer was the reverted
+`#rolesData` block. AAP §0.3.1 lists `lib/util/nunjucks.js` as **unchanged**, and after the
+restoration **no template, controller or view referenced the filter** (**measured**: zero matches for
+`jsonSafe` across `lib/`, `public/`, `config/` and `app.js`). It is restored to its base-commit bytes
+(**measured**: `git diff --stat 2f8712a -- lib/util/nunjucks.js` prints nothing; 222 lines back to
+153), which changes no rendered output because nothing called it, and the suite is unmoved at 130
+passing / 0 failing. Keeping a security filter with no sink would have read, to anyone auditing this
+tree, as a closure that is not there.
+
+**What a human must do to close the markup half properly**, since this delivery cannot: serve a
+Content-Security-Policy (none is served, which row 7 already records), or authorize a follow-up whose
+scope includes `lib/views/**` and escape at the two sinks — ideally by restoring the withdrawn filter
+together with its consumer, so the guarantee and the sink land in one reviewable change. The planting
+precondition is unchanged and is the cheap part to fix independently: signup's `fullname` is
+`Joi.string().max(50)` with no character constraint, and `admin.updateUser` writes
+`request.payload.roles` without validating the strings inside it.
+
 
 #### Why this withdrawal needs no new scenario, and what it does need
 

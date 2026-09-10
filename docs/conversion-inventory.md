@@ -1,4 +1,4 @@
-<!-- provenance-json: {"analysedTree":{"head":"dd0d99879efe08da55a0ae7151b132115ed2c016","headShort":"dd0d998","isBaselineCommit":false,"subject":"Close the security, accessibility and validation findings across the request path, admin pane, uploads and delivery records","worktreeState":"dirty"},"artifact":"conversion-inventory.md","baselineCommit":"2f8712a112db46f923918c4507c75abc732d83d0","bodyDigest":{"algorithm":"sha256","canonicalization":"the document with its provenance-json line removed and trailing whitespace stripped per line, hashed as utf8","value":"c4091e2959fb336b5dcf670a01f89d3053cd4b2d8e05f36c5deaacb4c4f3a1e6"},"delivered":{"head":"dd0d99879efe08da55a0ae7151b132115ed2c016","headShort":"dd0d998","isBaselineCommit":false,"subject":"Close the security, accessibility and validation findings across the request path, admin pane, uploads and delivery records","worktreeState":"dirty"},"detail":{"analysedFiles":13,"analysedSourceDigest":"sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe","analysedTreeLabel":"the repository containing the generator (no --app given)","artifactLabel":"tool:docs/conversion-inventory.md","atBaseline":false,"evidenceAvailable":true,"evidenceCaptured":false,"invocation":"node test/parity/convert-inventory.js --replay \"$REPLAY_RESULT\" --out docs/conversion-inventory.md"},"generator":{"blob":"1d39ab4c14d91af3bde9784e8133490850dacbf6","commit":null,"commitState":"uncommitted-source","deliveredHead":"dd0d99879efe08da55a0ae7151b132115ed2c016","deliveredHeadShort":"dd0d998","matchesDeliveredHead":false,"path":"test/parity/convert-inventory.js","verified":false},"provenanceSchema":2,"role":"analysis","runtime":{"node":"v22.23.2","platform":"linux"}} -->
+<!-- provenance-json: {"analysedTree":{"head":"6beca88ab30ac65e3a84c2364b48ad789094c566","headShort":"6beca88","isBaselineCommit":false,"subject":"QA o002: resolve 155 findings - restore AAP-excluded scope, close parity gates","worktreeState":"dirty"},"artifact":"conversion-inventory.md","baselineCommit":"2f8712a112db46f923918c4507c75abc732d83d0","bodyDigest":{"algorithm":"sha256","canonicalization":"the document with its provenance-json line removed and trailing whitespace stripped per line, hashed as utf8","value":"4303818a278c2053784db97c383148d765174b1c2afdbecf7791e95b6939acba"},"delivered":{"head":"6beca88ab30ac65e3a84c2364b48ad789094c566","headShort":"6beca88","isBaselineCommit":false,"subject":"QA o002: resolve 155 findings - restore AAP-excluded scope, close parity gates","worktreeState":"dirty"},"detail":{"analysedFiles":13,"analysedSourceDigest":"sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe","analysedTreeLabel":"the repository containing the generator (no --app given)","artifactLabel":"tool:docs/conversion-inventory.md","atBaseline":false,"evidenceAvailable":true,"evidenceCaptured":false,"invocation":"node test/parity/convert-inventory.js --replay \"$REPLAY_RESULT\" --out docs/conversion-inventory.md"},"generator":{"blob":"1d39ab4c14d91af3bde9784e8133490850dacbf6","commit":"6beca88ab30ac65e3a84c2364b48ad789094c566","commitState":"contains-this-exact-source","deliveredHead":"6beca88ab30ac65e3a84c2364b48ad789094c566","deliveredHeadShort":"6beca88","matchesDeliveredHead":true,"path":"test/parity/convert-inventory.js","verified":true},"provenanceSchema":2,"role":"analysis","runtime":{"node":"v22.23.2","platform":"linux"}} -->
 <!--
   GENERATED FILE -- do not hand-edit it. Every line below this block is written
   by the generator named here from the analysed tree named here. An edit made by
@@ -10,12 +10,12 @@
   generator sha256     : sha256:6ec1da793d0cb6c53a4204d46dfed6aae8c1d8f2c5a1807374e49545bd951ecf
   generator blob       : 1d39ab4c14d91af3bde9784e8133490850dacbf6
                          `git cat-file blob 1d39ab4c14d9` retrieves the exact source that ran
-  generator commit     : none -- `uncommitted-source`. The generator that produced this document is in no commit of this repository, so the blob above is its identity
+  generator commit     : 6beca88ab30ac65e3a84c2364b48ad789094c566  <-- verified: this commit's tree holds the blob above at that path
   exact command        : node test/parity/convert-inventory.js --replay "$REPLAY_RESULT" --out docs/conversion-inventory.md
   analysed tree        : the repository containing the generator (no --app given)
-  analysed tree HEAD   : dd0d99879efe08da55a0ae7151b132115ed2c016
+  analysed tree HEAD   : 6beca88ab30ac65e3a84c2364b48ad789094c566
   analysed source      : 13 files, sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe
-  analysed source state: 8 of 13 analysed files differ from that revision (config/api_routes.js, config/routes.js, lib/controllers/classes.js, lib/controllers/course.js, lib/controllers/courses.js, lib/controllers/folders.js, lib/controllers/trinket.js, lib/controllers/users.js), so the digest above identifies what was read, not the revision
+  analysed source state: clean -- every analysed file matches that revision
   parity evidence      : test/parity/corpus.json, sha256:bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798, captured: no
   base commit          : 2f8712a  <-- the analysed tree is NOT the base commit, so the
                          baseline-calibrated self-checks are reported as deltas
@@ -459,13 +459,13 @@ depended on which builder method ran last, and whether a stream still errors
 after the response has begun is a timing question. What closes them is
 `test/parity/replay.js` driving `test/parity/corpus.json` against this tree and
 recording a verdict per scenario. This tree carries 392 scenarios, 392 with a captured
-baseline and **380 with a confirming replay**, so
+baseline and **353 with a confirming replay**, so
 the comparison exists on one side. Each open row below names the scenario whose
 verdict would close it, or states that no scenario is pinned to its branch.
 
 **The replay artifact this run was given.** `replay-result.json`, written by
-`test/parity/replay.js`, digest `sha256:2e110ee65c0e2369...`, verdict "PASS". It carries 392 scenario
-verdicts, 380 of them confirming, of which 392 matched a scenario in the corpus.
+`test/parity/replay.js`, digest `sha256:8d63a2ea08279e2a...`, verdict "PASS". It carries 392 scenario
+verdicts, 353 of them confirming, of which 392 matched a scenario in the corpus.
 
 
 The row count is **derived, not targeted**. It is not 154, and it should not be: the 154 counts hapi-invoked
@@ -1197,7 +1197,7 @@ now serves; and a captured baseline alone says only what the OLD code did, which
 is one side of a comparison. Both sides are required, because a row that closed on
 the baseline half would be asserting a match nothing had checked.
 
-Evidence state in this tree: 380 of 392 scenarios in `test/parity/corpus.json` carry both a
+Evidence state in this tree: 353 of 392 scenarios in `test/parity/corpus.json` carry both a
 captured baseline and a confirming replay verdict. 8 of 8 rows below close on that
 recorded comparison; the rest name the scenario whose verdict is still missing.
 

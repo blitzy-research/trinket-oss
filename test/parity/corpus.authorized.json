@@ -150,19 +150,22 @@
     }
   ],
   "summary": {
-    "records": 240,
-    "scenarios": 22,
+    "records": 294,
+    "scenarios": 76,
     "passes": [
       "non-secure",
       "secure"
     ],
     "byPass": {
-      "non-secure": 120,
-      "secure": 120
+      "non-secure": 147,
+      "secure": 147
     },
     "byFinding": {
+      "order-0 F2 (colour swatches exposed as named, focusable buttons)": 2,
+      "order-0 F67/F68/F69 (the sign-up form ships every validated field and its failure redirect resolves)": 2,
       "order-0 R1 (multipart accepted again on the upload routes)": 214,
-      "order-0 R8 (the material-move pre-handler answers again)": 26
+      "order-0 R8 (the material-move pre-handler answers again)": 26,
+      "order-0 R9 (the accessibility contract)": 50
     },
     "byField": {
       "body.json.bytes": 12,
@@ -202,6 +205,7 @@
       "header.cache-control": 8,
       "header.content-length": 16,
       "header.set-cookie": 8,
+      "html.inlineScriptDigests[]": 54,
       "status": 8,
       "statusMessage": 8
     },
@@ -282,6 +286,526 @@
   "records": [
     {
       "pass": "non-secure",
+      "scenario": "route.get.root.html",
+      "group": "route-sweep",
+      "route": "GET /",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.about.html",
+      "group": "route-sweep",
+      "route": "GET /about",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.about.json",
+      "group": "route-sweep",
+      "route": "GET /about",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.activate-account.html",
+      "group": "route-sweep",
+      "route": "GET /activate-account",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.admin-adminPage.html",
+      "group": "route-sweep",
+      "route": "GET /admin/{adminPage*}",
+      "identity": "admin",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.assignment-embed-feedback-lang-trinketId.html",
+      "group": "route-sweep",
+      "route": "GET /assignment-embed-feedback/{lang}/{trinketId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.assignment-embed-viewonly-lang-trinketId.html",
+      "group": "route-sweep",
+      "route": "GET /assignment-embed-viewonly/{lang}/{trinketId}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.assignment-embed-lang-trinketId.html",
+      "group": "route-sweep",
+      "route": "GET /assignment-embed/{lang}/{trinketId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.courses-new.html",
+      "group": "route-sweep",
+      "route": "GET /courses/new",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.docs-colors.html",
+      "group": "route-sweep",
+      "route": "GET /docs/colors",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 F2 (colour swatches exposed as named, focusable buttons)",
+      "arguedIn": "qa/testing/o000_75576941e3f7e7ff.md F2; docs/preserved-quirks.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.embed-lang.html",
+      "group": "route-sweep",
+      "route": "GET /embed/{lang}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.embed-lang-trinketId.html",
+      "group": "route-sweep",
+      "route": "GET /embed/{lang}/{trinketId}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.forgot-pass.html",
+      "group": "route-sweep",
+      "route": "GET /forgot-pass",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.help.html",
+      "group": "route-sweep",
+      "route": "GET /help",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.help.json",
+      "group": "route-sweep",
+      "route": "GET /help",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.home.html",
+      "group": "route-sweep",
+      "route": "GET /home",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.library-folder-slug.html",
+      "group": "route-sweep",
+      "route": "GET /library/folder/{slug}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.login.html",
+      "group": "route-sweep",
+      "route": "GET /login",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.python.html",
+      "group": "route-sweep",
+      "route": "GET /python",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.python-shortCode.html",
+      "group": "route-sweep",
+      "route": "GET /python/{shortCode}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.signup.html",
+      "group": "route-sweep",
+      "route": "GET /signup",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 F67/F68/F69 (the sign-up form ships every validated field and its failure redirect resolves)",
+      "arguedIn": "qa/testing/o000_75576941e3f7e7ff.md F67/F68/F69; docs/preserved-quirks.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.tools-version-jekyll-embed-lang.html",
+      "group": "route-sweep",
+      "route": "GET /tools/{version}/jekyll/embed/{lang}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.u-username-classes.html",
+      "group": "route-sweep",
+      "route": "GET /u/{username}/classes",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.get.u-username-classes-courseSlug.html",
+      "group": "route-sweep",
+      "route": "GET /u/{username}/classes/{courseSlug}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "auth.outcome.valid-user",
+      "group": "auth-outcome",
+      "route": "GET /home",
+      "identity": "user",
+      "step": "drive-as-seeded-user",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "auth.outcome.lookup-error",
+      "group": "auth-outcome",
+      "route": "GET /home",
+      "identity": "user",
+      "step": "drive-again-with-the-fault-spent",
+      "stepIndex": 3,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "non-secure",
       "scenario": "route.post.api-users-assets.json",
       "group": "route-sweep",
       "route": "POST /api/users/assets",
@@ -1119,6 +1643,26 @@
       },
       "finding": "order-0 R1 (multipart accepted again on the upload routes)",
       "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.send-pass-reset.html",
+      "group": "route-sweep",
+      "route": "POST /send-pass-reset",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
     },
     {
       "pass": "non-secure",
@@ -2682,6 +3226,526 @@
     },
     {
       "pass": "secure",
+      "scenario": "route.get.root.html",
+      "group": "route-sweep",
+      "route": "GET /",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.about.html",
+      "group": "route-sweep",
+      "route": "GET /about",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.about.json",
+      "group": "route-sweep",
+      "route": "GET /about",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.activate-account.html",
+      "group": "route-sweep",
+      "route": "GET /activate-account",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.admin-adminPage.html",
+      "group": "route-sweep",
+      "route": "GET /admin/{adminPage*}",
+      "identity": "admin",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.assignment-embed-feedback-lang-trinketId.html",
+      "group": "route-sweep",
+      "route": "GET /assignment-embed-feedback/{lang}/{trinketId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.assignment-embed-viewonly-lang-trinketId.html",
+      "group": "route-sweep",
+      "route": "GET /assignment-embed-viewonly/{lang}/{trinketId}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.assignment-embed-lang-trinketId.html",
+      "group": "route-sweep",
+      "route": "GET /assignment-embed/{lang}/{trinketId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.courses-new.html",
+      "group": "route-sweep",
+      "route": "GET /courses/new",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.docs-colors.html",
+      "group": "route-sweep",
+      "route": "GET /docs/colors",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 F2 (colour swatches exposed as named, focusable buttons)",
+      "arguedIn": "qa/testing/o000_75576941e3f7e7ff.md F2; docs/preserved-quirks.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.embed-lang.html",
+      "group": "route-sweep",
+      "route": "GET /embed/{lang}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.embed-lang-trinketId.html",
+      "group": "route-sweep",
+      "route": "GET /embed/{lang}/{trinketId}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.forgot-pass.html",
+      "group": "route-sweep",
+      "route": "GET /forgot-pass",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.help.html",
+      "group": "route-sweep",
+      "route": "GET /help",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.help.json",
+      "group": "route-sweep",
+      "route": "GET /help",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.home.html",
+      "group": "route-sweep",
+      "route": "GET /home",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.library-folder-slug.html",
+      "group": "route-sweep",
+      "route": "GET /library/folder/{slug}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.login.html",
+      "group": "route-sweep",
+      "route": "GET /login",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.python.html",
+      "group": "route-sweep",
+      "route": "GET /python",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.python-shortCode.html",
+      "group": "route-sweep",
+      "route": "GET /python/{shortCode}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.signup.html",
+      "group": "route-sweep",
+      "route": "GET /signup",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 F67/F68/F69 (the sign-up form ships every validated field and its failure redirect resolves)",
+      "arguedIn": "qa/testing/o000_75576941e3f7e7ff.md F67/F68/F69; docs/preserved-quirks.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.tools-version-jekyll-embed-lang.html",
+      "group": "route-sweep",
+      "route": "GET /tools/{version}/jekyll/embed/{lang}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "4c2c4e0fd5b8f1881375cb67e996f0517b7eb72937c6a4e14a719d751cc4f97f",
+        "digest": null
+      },
+      "target": {
+        "value": "bd9ccb39b3f8a16251e5d3e4fc7fbd1be8373f2b18c06d6290d1ee6465ac1c61",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.u-username-classes.html",
+      "group": "route-sweep",
+      "route": "GET /u/{username}/classes",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.get.u-username-classes-courseSlug.html",
+      "group": "route-sweep",
+      "route": "GET /u/{username}/classes/{courseSlug}",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "auth.outcome.valid-user",
+      "group": "auth-outcome",
+      "route": "GET /home",
+      "identity": "user",
+      "step": "drive-as-seeded-user",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
+      "scenario": "auth.outcome.lookup-error",
+      "group": "auth-outcome",
+      "route": "GET /home",
+      "identity": "user",
+      "step": "drive-again-with-the-fault-spent",
+      "stepIndex": 3,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
+    },
+    {
+      "pass": "secure",
       "scenario": "route.post.api-users-assets.json",
       "group": "route-sweep",
       "route": "POST /api/users/assets",
@@ -3519,6 +4583,26 @@
       },
       "finding": "order-0 R1 (multipart accepted again on the upload routes)",
       "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.send-pass-reset.html",
+      "group": "route-sweep",
+      "route": "POST /send-pass-reset",
+      "identity": "anonymous",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "html.inlineScriptDigests[0]",
+      "baseline": {
+        "value": "48abd808d9a3636ea40d2d748df74b90751f3c4b06aae31b4e759fee1a1425ec",
+        "digest": null
+      },
+      "target": {
+        "value": "b63d5bae4f490ff049769d9ff98a4852911a5015efbffb851a002331222ac24b",
+        "digest": null
+      },
+      "finding": "order-0 R9 (the accessibility contract)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md"
     },
     {
       "pass": "secure",
@@ -5088,24 +6172,24 @@
     "generator": {
       "path": "test/parity/replay.js",
       "blob": "964fff6430465c567be7f2d2d07015b8a64d8a4b",
-      "commit": null,
-      "commitState": "uncommitted-source",
-      "verified": false,
-      "deliveredHead": "dd0d99879efe08da55a0ae7151b132115ed2c016",
-      "deliveredHeadShort": "dd0d998",
-      "matchesDeliveredHead": false
+      "commit": "6beca88ab30ac65e3a84c2364b48ad789094c566",
+      "commitState": "contains-this-exact-source",
+      "verified": true,
+      "deliveredHead": "6beca88ab30ac65e3a84c2364b48ad789094c566",
+      "deliveredHeadShort": "6beca88",
+      "matchesDeliveredHead": true
     },
     "analysedTree": {
-      "head": "dd0d99879efe08da55a0ae7151b132115ed2c016",
-      "headShort": "dd0d998",
-      "subject": "Close the security, accessibility and validation findings across the request path, admin pane, uploads and delivery records",
+      "head": "6beca88ab30ac65e3a84c2364b48ad789094c566",
+      "headShort": "6beca88",
+      "subject": "QA o002: resolve 155 findings - restore AAP-excluded scope, close parity gates",
       "isBaselineCommit": false,
       "worktreeState": "dirty"
     },
     "delivered": {
-      "head": "dd0d99879efe08da55a0ae7151b132115ed2c016",
-      "headShort": "dd0d998",
-      "subject": "Close the security, accessibility and validation findings across the request path, admin pane, uploads and delivery records",
+      "head": "6beca88ab30ac65e3a84c2364b48ad789094c566",
+      "headShort": "6beca88",
+      "subject": "QA o002: resolve 155 findings - restore AAP-excluded scope, close parity gates",
       "isBaselineCommit": false,
       "worktreeState": "dirty"
     },
@@ -5116,7 +6200,7 @@
     },
     "detail": {
       "registerSchema": 1,
-      "records": 240,
+      "records": 294,
       "authorities": 7,
       "corpusDigest": "bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798",
       "secureCorpusDigest": "13fa998efd74b3503b54dcb1d11f202049c18e52dc1b5becb4216908ee38d0b1"
@@ -5124,7 +6208,7 @@
     "payloadDigest": {
       "algorithm": "sha256",
       "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
-      "value": "b222fc0d8d2424f49e931fc67038a1037527937d1db6c68f6d3e6b26db7e3341"
+      "value": "bec201ca9ec096a8906e51a5271f49d67c749d6c9ca2ee07cf29205b7bd3b2bd"
     }
   }
 }

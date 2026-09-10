@@ -20541,9 +20541,21 @@ function renderAuthorizedSection(lines, result, heading, bullet) {
 
   account.byPass.forEach(function(entry) {
     lines.push('');
+    // "N unauthorized" is what this line used to say, and on a PASSING run it
+    // read as the report contradicting its own verdict: the GATES block above
+    // prints `0 unauthorized` and the gate fails on the first unaccounted
+    // difference, so a passing run cannot have any. The figure is real but it
+    // is a different quantity - differences this REGISTER did not match, which
+    // on a passing run are the ones accounted for by an approved-deviation
+    // marker on the scenario or by a registered framework rule. Naming the
+    // quantity rather than mislabelling it changes no predicate: the gate's
+    // own count is computed elsewhere and is untouched.
     lines.push('  ' + entry.pass.toUpperCase() + ' PASS: ' + entry.authorized +
       ' authorized across ' + entry.scenarios + ' scenario(s), ' +
-      entry.unauthorized + ' unauthorized');
+      entry.unauthorized + ' difference(s) not matched by this register ' +
+      '(on a passing run each of those is accounted for by an ' +
+      'approved-deviation marker or a registered framework rule, because an ' +
+      'unaccounted difference fails the gate)');
     lines.push('    registered for this pass: ' + entry.registeredForThisPass +
       ', matched: ' + entry.matched);
 

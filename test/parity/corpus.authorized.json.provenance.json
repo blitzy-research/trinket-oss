@@ -5,24 +5,24 @@
   "generator": {
     "path": "test/parity/replay.js",
     "blob": "964fff6430465c567be7f2d2d07015b8a64d8a4b",
-    "commit": null,
-    "commitState": "uncommitted-source",
-    "verified": false,
-    "deliveredHead": "dd0d99879efe08da55a0ae7151b132115ed2c016",
-    "deliveredHeadShort": "dd0d998",
-    "matchesDeliveredHead": false
+    "commit": "6beca88ab30ac65e3a84c2364b48ad789094c566",
+    "commitState": "contains-this-exact-source",
+    "verified": true,
+    "deliveredHead": "6beca88ab30ac65e3a84c2364b48ad789094c566",
+    "deliveredHeadShort": "6beca88",
+    "matchesDeliveredHead": true
   },
   "analysedTree": {
-    "head": "dd0d99879efe08da55a0ae7151b132115ed2c016",
-    "headShort": "dd0d998",
-    "subject": "Close the security, accessibility and validation findings across the request path, admin pane, uploads and delivery records",
+    "head": "6beca88ab30ac65e3a84c2364b48ad789094c566",
+    "headShort": "6beca88",
+    "subject": "QA o002: resolve 155 findings - restore AAP-excluded scope, close parity gates",
     "isBaselineCommit": false,
     "worktreeState": "dirty"
   },
   "delivered": {
-    "head": "dd0d99879efe08da55a0ae7151b132115ed2c016",
-    "headShort": "dd0d998",
-    "subject": "Close the security, accessibility and validation findings across the request path, admin pane, uploads and delivery records",
+    "head": "6beca88ab30ac65e3a84c2364b48ad789094c566",
+    "headShort": "6beca88",
+    "subject": "QA o002: resolve 155 findings - restore AAP-excluded scope, close parity gates",
     "isBaselineCommit": false,
     "worktreeState": "dirty"
   },
@@ -33,7 +33,7 @@
   },
   "detail": {
     "registerSchema": 1,
-    "records": 240,
+    "records": 294,
     "authorities": 7,
     "corpusDigest": "bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798",
     "secureCorpusDigest": "13fa998efd74b3503b54dcb1d11f202049c18e52dc1b5becb4216908ee38d0b1"
@@ -41,12 +41,12 @@
   "payloadDigest": {
     "algorithm": "sha256",
     "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
-    "value": "b222fc0d8d2424f49e931fc67038a1037527937d1db6c68f6d3e6b26db7e3341"
+    "value": "bec201ca9ec096a8906e51a5271f49d67c749d6c9ca2ee07cf29205b7bd3b2bd"
   },
   "artifactDigest": {
     "algorithm": "sha256",
     "canonicalization": "the artifact bytes as written, verbatim",
-    "value": "d0a1cbf1f0f05485f54498e881df0e6a61d880592edbd6cb756e04e2ff9197f1"
+    "value": "3425db65d3f21aa4e2928738c22606ae422d570690f00a279c46837297e9a79a"
   },
   "note": "RUN OUTPUT - not a delivery artifact, and not to be committed. Every field above except artifactDigest is also embedded in corpus.authorized.json under its own `provenance` key, which is the committed record; this file adds only a digest of the exact bytes written, for a scratch run that compares two artifacts byte for byte and needs the provenance outside the compared region."
 }

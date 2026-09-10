@@ -5910,6 +5910,36 @@ async function teardown(ctx, clean) {
         return;
       }
 
+      // `closeAll()` resolving is not the same instant as every ioredis client
+      // reaching `end`, and the difference is observable. lib/util/queues.js
+      // returns `Promise.all` of each `queue.close()`, so the await above is
+      // correct and complete; what lags is INSIDE Bull. The blocking client
+      // sits in a `brpoplpush` for the duration of `drainDelay`, and Bull's
+      // close only asks it to disconnect - so on a Redis under load from
+      // anything else, `bclient.status` can still read `ready` for a few
+      // milliseconds after the promise settles. Measured here: five
+      // consecutive runs of this gate on one unchanged tree, four reporting
+      // every client `end` and one reporting `bclient` `ready`, on the shared
+      // Redis this host runs. The application was identical in all five.
+      //
+      // So the race is polled out rather than slept out, and the ASSERTION IS
+      // NOT RELAXED: the bound is the same CONNECT_TIMEOUT_MS the close itself
+      // is held to, a client that never closes still fails, and the failure is
+      // still the named per-client assertion below reporting the status it
+      // actually had. All this removes is a verdict that depended on how busy
+      // an unrelated process was.
+      try {
+        await pollFor(function() {
+          return ctx.queue.client.status === 'end' &&
+            ctx.queue.bclient.status === 'end' &&
+            ctx.queue.eclient.status === 'end';
+        }, CONNECT_TIMEOUT_MS, 'every queue client to reach `end`');
+      } catch (err) {
+        // Deliberately swallowed: the three assertions below say which client
+        // is still open and what state it is in, which is strictly more than
+        // this error carries.
+      }
+
       assert.strictEqual(ctx.queue.client.status, 'end',
         'the queue\'s command client must be closed; it is ' +
         ctx.queue.client.status);

@@ -5448,6 +5448,22 @@ function spawnChild(context, caseName, overrides) {
   };
 }
 
+/**
+ * How many siteverify calls a child made, read from the FIXTURE's own log.
+ *
+ * `child.result.interceptedCalls` is the child's self-report and is only
+ * available where the child survived to print a result line. The two reCAPTCHA
+ * fault outcomes take the process down by design, so their evidence has to come
+ * from the log the fixture appends to as it serves each call - which is written
+ * before the application's callback runs, and therefore survives the throw.
+ *
+ * @param {Object} child From spawnChild.
+ * @returns {number}
+ */
+function interceptedCallsOf(child) {
+  return child.calls.length;
+}
+
 async function childCases(report, context) {
   await runCase(report, 'recaptcha', 'outcome 1: the isTest short-circuit answers with NO HTTP at all', async function() {
     var child = spawnChild(context, 'recaptcha:short-circuit-istest', {
@@ -5487,25 +5503,29 @@ async function childCases(report, context) {
     return { calls: 0, value: child.result.value };
   });
 
-  // Outcomes 5 and 6 are RE-POINTED at the delivered behaviour, and both are
-  // still driven in a child rather than in-process.
+  // Outcomes 5 and 6 are BACK ON THE BASELINE OUTCOMES, and both are driven in
+  // a child because the outcome IS the child's death.
   //
-  // The assertion they used to make - exit 1, `cb` never invoked, TypeError or
-  // SyntaxError on stderr - was baseline's, and lib/util/recaptcha.js now
-  // guards both reads under the approved deviation at
-  // docs/preserved-quirks.md 10.7: a fault the PROVIDER controls, reachable
-  // from one unauthenticated POST /users, was ending the process and ending it
-  // again on every restart while the condition lasted. Measured against a
-  // running server, both faults now answer POST /users with 302 and leave the
-  // process alive.
+  // An earlier build guarded both reads in lib/util/recaptcha.js so the
+  // callback fired with the fail-closed `{status: false}` shape and the
+  // process survived, and these two cases asserted that. THE GUARD HAS BEEN
+  // WITHDRAWN: lib/util/recaptcha.js:101-115 carries the base commit's
+  // callback body verbatim in its reads as well as its values, because AAP
+  // 0.4.2 and 0.6.6 name these two faults as preserved and prohibit exactly
+  // that guard. Measured on the reconciled tree: `response` is undefined on a
+  // transport failure, so `response.statusCode` raises `TypeError: Cannot read
+  // properties of undefined (reading 'statusCode')` at recaptcha.js:109, and a
+  // 200 whose body is not JSON raises `SyntaxError: Unexpected token '<'` out
+  // of `JSON.parse` at recaptcha.js:110 - both from inside an `Immediate`
+  // callback with nothing above them, so the process exits 1 and `cb` is never
+  // invoked, on BOTH trees.
   //
-  // The child is retained because what has to be asserted is still a
-  // process-level claim, and it is now a stronger one than an exit code: the
-  // callback FIRES, the value it carries is the fail-closed shape, and the
-  // process reaches its own exit rather than being taken down by the
-  // dereference. None of those three can be observed from inside the process
-  // that would have died, and asserting only "exit 0" would pass on a child
-  // that never called verify() at all.
+  // So each case asserts the death itself: a non-zero exit, no callback
+  // marker, no result line, and the specific error class on stderr with the
+  // call site that raised it. None of that can be observed from inside the
+  // process it happens to, which is why the child is spawned; and the
+  // fixture's own evidence is still asserted, so a child that died before
+  // reaching `verify()` cannot pass either.
   await runCase(report, 'recaptcha', 'outcome 5: a transport failure fails closed and the process survives', async function() {
     var child = spawnChild(context, 'recaptcha:verify', {
       NODE_CONFIG         : SELFTEST_SECRET_OVERLAY,
@@ -5513,29 +5533,40 @@ async function childCases(report, context) {
     });
 
     expect(!child.spawnError, 'the child must start: ' + child.spawnError);
-    expectEqual(child.status, EXIT_OK,
-      'the guarded fault must let the process exit normally (stderr: ' + child.stderr.trim() + ')');
-    expect(child.calledBack,
-      'the callback MUST be invoked - that is what the guard changed, and the child printed: ' +
+    expectEqual(child.status, EXIT_ERROR,
+      'the unguarded dereference must take the process down (stderr: ' +
+      child.stderr.trim() + ')');
+    expect(!child.calledBack,
+      'the callback must NEVER be invoked: the throw happens on the line that ' +
+      'would have decided which value to pass, and the child printed: ' +
       child.stdout.trim());
-    expect(child.result, 'the child must report a result, and printed: ' + child.stdout.trim());
-    expectEqual(JSON.stringify(child.result.value), '{"status":false}',
-      'the value must be the fail-closed shape, which is the value outcome 4 already delivers');
-    expectEqual(child.result.value.success, undefined,
-      'and it must carry no `success`, so every caller reads it as a failed verification');
-    expectEqual(child.result.noCallback, undefined,
-      'the bounded-wait arm must not have fired: the callback is what settles this outcome now');
+    expect(!child.result,
+      'and no result line may be printed, because nothing after the throw ' +
+      'runs; the child printed: ' + child.stdout.trim());
+    expect(child.stderr.indexOf('TypeError') !== -1,
+      'the error class must be the TypeError the undefined `response` raises, ' +
+      'and stderr carries: ' + child.stderr.trim());
+    expect(child.stderr.indexOf('statusCode') !== -1,
+      'and it must name the `statusCode` read that raised it, at ' +
+      'lib/util/recaptcha.js, and stderr carries: ' + child.stderr.trim());
+    expect(child.stderr.indexOf('lib/util/recaptcha.js') !== -1,
+      'from lib/util/recaptcha.js and not from this fixture, and stderr ' +
+      'carries: ' + child.stderr.trim());
 
     // The fault really was the transport one, not a short-circuit: the child
     // had a secret configured and `isTest` false, and the fixture recorded the
-    // intercepted call.
-    expectEqual(child.result.interceptedCalls, 1, 'exactly one siteverify call must have been made');
+    // intercepted call before the callback ran.
+    expectEqual(interceptedCallsOf(child), 1,
+      'exactly one siteverify call must have been made, and the evidence ' +
+      'carries: ' + JSON.stringify(child.calls.map(function(entry) {
+        return entry.outcome;
+      })));
     expect(child.calls.some(function(entry) {
       return entry.outcome === 'recaptcha-transport-failure';
     }), 'and it must have been served the transport failure, and the evidence carries: ' +
       JSON.stringify(child.calls.map(function(entry) { return entry.outcome; })));
 
-    return { exit: child.status, value: child.result.value };
+    return { exit: child.status, calledBack: child.calledBack };
   });
 
   await runCase(report, 'recaptcha', 'outcome 6: a malformed body fails closed and the process survives', async function() {
@@ -5545,22 +5576,37 @@ async function childCases(report, context) {
     });
 
     expect(!child.spawnError, 'the child must start: ' + child.spawnError);
-    expectEqual(child.status, EXIT_OK,
-      'the guarded parse failure must let the process exit normally (stderr: ' +
+    expectEqual(child.status, EXIT_ERROR,
+      'the unguarded `JSON.parse` must take the process down (stderr: ' +
       child.stderr.trim() + ')');
-    expect(child.calledBack, 'the callback MUST be invoked, and the child printed: ' + child.stdout.trim());
-    expect(child.result, 'the child must report a result');
-    expectEqual(JSON.stringify(child.result.value), '{"status":false}',
-      'the value must be the same fail-closed shape the transport failure delivers: both faults ' +
-      'refuse the verification on the outcome a rejected challenge already produces');
-    expectEqual(child.result.noCallback, undefined, 'the bounded-wait arm must not have fired');
-    expectEqual(child.result.interceptedCalls, 1, 'exactly one siteverify call must have been made');
+    expect(!child.calledBack,
+      'the callback must NEVER be invoked: the throw happens inside the ' +
+      'argument expression, so `cb` is never entered, and the child printed: ' +
+      child.stdout.trim());
+    expect(!child.result,
+      'and no result line may be printed; the child printed: ' +
+      child.stdout.trim());
+    expect(child.stderr.indexOf('SyntaxError') !== -1,
+      'the error class must be the SyntaxError `JSON.parse` raises on the ' +
+      'provider\'s HTML error page, and stderr carries: ' +
+      child.stderr.trim());
+    expect(child.stderr.indexOf('JSON.parse') !== -1,
+      'and stderr must name the parse that raised it, and carries: ' +
+      child.stderr.trim());
+    expect(child.stderr.indexOf('lib/util/recaptcha.js') !== -1,
+      'from lib/util/recaptcha.js and not from this fixture, and stderr ' +
+      'carries: ' + child.stderr.trim());
+    expectEqual(interceptedCallsOf(child), 1,
+      'exactly one siteverify call must have been made, and the evidence ' +
+      'carries: ' + JSON.stringify(child.calls.map(function(entry) {
+        return entry.outcome;
+      })));
     expect(child.calls.some(function(entry) {
       return entry.outcome === 'recaptcha-200-malformed-json';
     }), 'and it must have been served the non-JSON body, and the evidence carries: ' +
       JSON.stringify(child.calls.map(function(entry) { return entry.outcome; })));
 
-    return { exit: child.status, value: child.result.value };
+    return { exit: child.status, calledBack: child.calledBack };
   });
 
   await runCase(report, 'install', 'a mechanism that cannot be intercepted terminates the process', async function() {
@@ -5703,11 +5749,12 @@ function runChildCase(name) {
   });
 
   // A bounded wait, so a child that is never called back exits rather than
-  // hanging the harness. It is retained now that every outcome calls back,
-  // because it is the arm that tells "verify() answered" apart from "verify()
-  // did not": outcomes 5 and 6 assert that `noCallback` is ABSENT from what
-  // this child reports, which they could not do if the child simply timed out
-  // silently.
+  // hanging the harness. It is the arm that tells "verify() answered" apart
+  // from "verify() did not" for every outcome that survives to reach it. The
+  // two fault outcomes never do: the throw is synchronous inside the
+  // `Immediate` callback and takes the process down long before this timer
+  // fires, which is why those two cases assert a non-zero exit with no result
+  // line at all rather than reading anything out of this arm.
   setTimeout(function() {
     if (!settled) {
       process.stdout.write(CHILD_RESULT_MARKER + JSON.stringify({

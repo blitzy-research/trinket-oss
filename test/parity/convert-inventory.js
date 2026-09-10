@@ -263,7 +263,26 @@ var REPLY_CHAIN_ROSTER = [
     carrier: 'download',
     links: ['type', 'bytes'],
     ordinal: 1,
-    targetShape: { root: 'h.response', links: ['type', 'bytes'] },
+    // THE DECLARED TARGET SHAPE, AS THE MANDATED TREE NOW WRITES IT.
+    //
+    // `['type', 'bytes']` was the shape when this roster was written, and it
+    // stopped being the tree's shape when QA finding W002-I4 mandated two
+    // response headers on this branch: the converted chain is
+    // `h.response(stream).type(...).bytes(...)
+    // .header('Content-Security-Policy', ...).header('X-Content-Type-Options',
+    // 'nosniff')` at lib/controllers/files.js:632-636. `sameLinks` is an exact
+    // sequence match, so the two-link declaration matched nothing and this row
+    // reported "the declared target `h.response(...).type().bytes()` was NOT
+    // found there" - a false negative about a conversion that had happened,
+    // and the only thing holding the row open once the corpus and the replay
+    // supplied both halves of its evidence.
+    //
+    // Widening the declaration does not weaken the check: the match is still
+    // an exact link sequence in the same carrier, and it is the sequence the
+    // mandate produced. What the deviation protects is unaffected and still
+    // stated in `targetText` below - the absence of Content-Disposition, which
+    // neither mandated header is.
+    targetShape: { root: 'h.response', links: ['type', 'bytes', 'header', 'header'] },
     scenario: 'quirk.reply-chain.never-settles.image-download',
     category: 'never-settles',
     current: 'reply(stream).type(...).bytes(...) with no `return` and no resolving ' +
@@ -978,7 +997,17 @@ var AUDIT_DEVIATION_QUIRK_SECTION = '11.2';
 var DEVIATION_REGISTER_QUIRK_SECTION = '11';
 // The register's own count and the section that owns it, kept as data so the
 // emitted prose cannot drift from the register the way the hardcoded "two" did.
-var DEVIATION_REGISTER_COUNT = 'fifteen';
+//
+// TWO figures, not one, because the register has both and conflating them is
+// how the earlier "two" and "fifteen" readings each became stale: EXTENT is how
+// many numbers the register has issued, and LIVE is how many of those describe
+// the delivered tree. Five numbered entries have been WITHDRAWN on measurement
+// - deviations 7, 8, 13 and 15 outright and 11's token half - and their numbers
+// are retired rather than reused, so the extent only ever grows while the live
+// count can move either way. docs/preserved-quirks.md 11.0 carries the
+// per-entry measurement and is the register of record for both figures.
+var DEVIATION_REGISTER_COUNT = 'eighteen';
+var DEVIATION_REGISTER_LIVE_COUNT = 'thirteen';
 var DEVIATION_REGISTER_INDEX_SECTION = '11.0';
 // The two later deviations that reach a route whose handler holds a row here.
 var ENTRY_DEVIATION_QUIRK_SECTIONS = ['11.10', '11.18'];
@@ -4920,7 +4949,29 @@ function loadEvidence(appRoot) {
       route: route,
       intent: scenario.intent || null,
       covers: Array.isArray(scenario.covers) ? scenario.covers.slice() : [],
-      hasBaseline: scenario.baseline !== null && scenario.baseline !== undefined,
+      // THE BASELINE HALF, READ FROM THE SCHEMA CAPTURE.JS ACTUALLY WRITES.
+      //
+      // A captured scenario keeps its recorded baseline response on each STEP,
+      // as `steps[].response` - which is where test/parity/replay.js reads it
+      // from too (`readStep`: `var recorded = step && step.response !== ...`,
+      // assigned to the plan's `baseline`). There is no `scenario.baseline`
+      // field in the corpus schema and there never was, so this predicate was
+      // false for EVERY scenario in a fully captured corpus: measured on the
+      // delivered `test/parity/corpus.json`, 392 scenarios of which 391 carry
+      // a recorded step response, and this read found 0. That is why every
+      // measurement-gated row reported "defined but not captured" and why no
+      // replay artifact could close one - `evidenceStateOf` returns PENDING
+      // before it ever looks at the replay verdict.
+      //
+      // A step whose response is `null` is not a recording: the one scenario
+      // in the corpus with no recorded response at all
+      // (`client-contract.folder-duplicate-name.post-api-folders`, which
+      // replay.js reports as `unreachable-by-design`) must stay PENDING, so
+      // presence is required per step rather than assumed from the array.
+      hasBaseline: (Array.isArray(scenario.steps) ? scenario.steps : []).some(
+        function (step) {
+          return Boolean(step) && step.response !== undefined && step.response !== null;
+        }),
       approvedDeviation: !!scenario.expectedDeviation,
       replayDisposition: scenario.expectedDeviation
         ? scenario.expectedDeviation.replayDisposition || null
@@ -7092,7 +7143,7 @@ function renderPreamble(model) {
   // The count comes from DEVIATION_REGISTER_COUNT rather than from a literal,
   // for the same reason the rest of this header's numbers do: a hardcoded
   // "two" is what went stale here while the register grew.
-  out.push('| Target disposition | The exact converted shape. Under R-d this is always the *preserved* behaviour, with one approved exception among these rows, labelled as such -- the migration approves ' + DEVIATION_REGISTER_COUNT + ' deviations in total and only one of them reaches a row here. |');
+  out.push('| Target disposition | The exact converted shape. Under R-d this is always the *preserved* behaviour, with one approved exception among these rows, labelled as such -- the register holds ' + DEVIATION_REGISTER_COUNT + ' numbered deviations, ' + DEVIATION_REGISTER_LIVE_COUNT + ' of them live in the delivered tree, and only one of them reaches a row here. |');
   out.push('');
   out.push('### What closes a row, by kind');
   out.push('');
@@ -7173,8 +7224,11 @@ function renderPreamble(model) {
   // register index rather than from a literal here.
   out.push('| `' + QUIRK_DOC + '` | The measured baseline **outcome** of a quirk, and the ' +
     'precedence argument in full for each of the migration\'s **' +
-    DEVIATION_REGISTER_COUNT + '** approved deviations (\u00a7' +
-    DEVIATION_REGISTER_QUIRK_SECTION + ', a register closed at that count and indexed at \u00a7' +
+    DEVIATION_REGISTER_COUNT + '** numbered approved deviations, **' +
+    DEVIATION_REGISTER_LIVE_COUNT + '** of which are live in the delivered tree and five of ' +
+    'which were withdrawn on measurement with their numbers retired rather than reused (\u00a7' +
+    DEVIATION_REGISTER_QUIRK_SECTION + ', a register closed to tools and to preference but not ' +
+    'to measurement, indexed with a per-entry state column at \u00a7' +
     DEVIATION_REGISTER_INDEX_SECTION + '). They differ in kind and this table does not ' +
     'collapse them: **deviation 1** (\u00a7' + DEVIATION_QUIRK_SECTION + '), the ' +
     'never-settling image-download branch that the target serves, is a **response** deviation ' +
@@ -7183,7 +7237,7 @@ function renderPreamble(model) {
     DEFERRED_DEPENDENCY_DOC + '` \u00a7' + AUDIT_DEVIATION_DEFERRED_SECTION + '), the ' +
     'retained `marked` fork and its one named high advisory, is an **audit** deviation that ' +
     'no conversion row touches, because retaining the fork is what keeps rendered output ' +
-    'identical. Of the six admitted later by measurement, two reach a route whose handler ' +
+    'identical. Of the nine admitted later by measurement, two reach a route whose handler ' +
     'holds a row here **without changing any row\'s return shape** -- \u00a7' +
     ENTRY_DEVIATION_QUIRK_SECTIONS[0] + ' answers where the baseline process died, and \u00a7' +
     ENTRY_DEVIATION_QUIRK_SECTIONS[1] + ' lets the four `output:\'file\'` upload routes parse ' +

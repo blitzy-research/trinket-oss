@@ -339,91 +339,78 @@ routes = [
     config : {
       auth: 'session',
       /*
-       * `output : 'file'` belongs on `multipart`, not on the payload as a whole.
-       *
-       * hapi defaults `payload.multipart` to FALSE
-       * [node_modules/@hapi/hapi/lib/config.js:144-149], and @hapi/subtext
-       * answers 415 Unsupported Media Type to a `multipart/form-data` body
-       * whenever it is [node_modules/@hapi/subtext/lib/index.js:92-96] -- from
-       * the payload parser, before the handler exists and before this route's
-       * own validation runs. Every shipped client posts multipart:
-       * public/js/courseEditor/controllers/materialControl.js:157 uploads with
-       * `fileFormDataName: 'upload'`, matching the `upload` key validated
-       * below. Without this declaration no upload can succeed on this route, so
-       * no File document and no stored object is creatable through the
-       * application, and test/lib/api/files.js:48,74 cannot pass.
-       *
-       * Declaring it here rather than at the payload level is what keeps a
-       * NON-multipart body out of the temp directory. `output : 'file'` on the
-       * payload spools every body class to a temp file and hands the handler
-       * `{path, bytes}` -- a shape nothing reads, since the handler consumes
-       * `request.payload.upload` -- while the hand-rolled validation in
-       * lib/util/routeParser.js echoes the rejected payload straight back
-       * through `request.fail(request.payload, ...)`, disclosing an absolute
-       * server filesystem path at status 200. On `multipart`, subtext takes the
-       * part output from `options.multipart.output` and ignores the top-level
-       * `output` for multipart bodies entirely
-       * [node_modules/@hapi/subtext/lib/index.js:290], so file parts are still
-       * written to disk exactly as before while a JSON or raw body is parsed as
-       * data and never spooled.
-       *
-       * `maxBytes` still applies to both classes; subtext checks it against the
-       * content length before any parsing [.../subtext/lib/index.js:41].
+       * `output : 'file'` is the pre-hapi-17 spelling of
+       * `payload.multipart.output`, and lib/util/routeParser.js's
+       * `migratePayloadOutput` restates it as such while parsing: hapi defaults
+       * `payload.multipart` to false [node_modules/@hapi/hapi/lib/config.js:144-149]
+       * and @hapi/subtext then answers 415 to a `multipart/form-data` body
+       * [node_modules/@hapi/subtext/lib/index.js:92-96], from the payload parser,
+       * before this route's validation runs. Every shipped client posts
+       * multipart -- public/js/courseEditor/controllers/materialControl.js:157
+       * uploads with `fileFormDataName: 'upload'`, matching the `upload` key
+       * validated below -- so without that translation no upload can succeed
+       * here, no File document and no stored object is creatable through the
+       * application, and test/lib/api/files.js:48,74 cannot pass. The
+       * declaration itself is the base commit's, unchanged, so the declared
+       * HTTP surface is the one AAP 0.9.1 holds identical to baseline; the
+       * translation is a framework-API difference and lives in the migration
+       * layer, where it covers all four upload routes at once.
        */
       payload : {
         maxBytes  : 1048576 * 10, // 10MB
-        multipart : { output : 'file' }
-      }
+        output : 'file'
+      },
       /*
-       * The declared validation moved into `files.upload`, and this route
-       * deliberately has no `validate` block.
+       * The declared contract for this payload, and the reason it is declared
+       * HERE rather than inside `files.upload`.
        *
-       * This route's payload can carry a SPOOLED FILE PART, and the route
-       * parser's validation-failure funnel answers
-       * `request.fail(request.payload, ...)`
-       * [lib/util/routeParser.js:867-884], which serves the rejected payload
-       * back to the client at status 200 -- so with `output : 'file'` above, a
-       * body that failed validation disclosed an absolute server filesystem
-       * path (`{path, bytes, filename, headers}`) to the caller (QA finding
-       * W001-F04). Declaring the schema here is what made that funnel
-       * reachable; the funnel itself is out of scope for this delivery.
+       * AAP 0.6.2 keeps the hand-rolled validation path and gates all 102
+       * declared validation targets; these two keys are two of them. Moving
+       * them into the handler drops the inventory to 100, which is what the
+       * joi parity matrix measures, so the schema stays on the route.
        *
-       * `files.upload` now enforces the same contract -- `upload` required and
-       * `type` one of ['embed', 'download'] -- and answers 400 with the Joi
-       * message text and no payload echo, discarding any spooled part before
-       * it returns. Where the paragraph above says "the `upload` key validated
-       * below" and "this route's own validation", it is that handler-side
-       * enforcement it now describes; nothing else in that paragraph changed,
-       * and the 415-from-the-payload-parser reasoning it records still holds
-       * because `multipart` is still declared.
+       * A consequence worth stating plainly, because it is a baseline
+       * behaviour rather than an oversight: the route parser's
+       * validation-failure funnel answers `request.fail(request.payload, ...)`,
+       * which serves the rejected payload back at status 200. Where the
+       * rejected body carried a multipart file part, that echo includes the
+       * part's `{path, bytes, filename, headers}` and therefore an absolute
+       * server filesystem path. That is how the base commit behaves, rule R-d
+       * preserves it, and the `multipart`-scoped output above already narrows
+       * it: a non-multipart body is now parsed as data and never spooled, so
+       * there is no path in the echo for the body classes that carry no file.
        */
+      validate : {
+        payload : {
+          type   : Joi.string().valid('embed', 'download').optional(),
+          upload : Joi.any().required()
+        }
+      }
     }
   },
   {
     route : 'POST /file/avatar files.uploadAvatar',
     config : {
       auth: 'session',
-      // Same declaration, and for the same two reasons as `POST /file` above:
-      // without `payload.multipart` the avatar Dropzone at
+      // The base commit's declaration, unchanged, and translated to
+      // `payload.multipart.output` by lib/util/routeParser.js for the same two
+      // reasons as `POST /file` above: without it the avatar Dropzone at
       // lib/views/users/includes/profile.html:88-94 (paramName 'upload') is
-      // answered 415 by the payload parser, and with `output` at the payload
-      // level any non-multipart body is spooled to a temp file whose absolute
-      // path is then echoed back at status 200.
+      // answered 415 by the payload parser, and with `output` left applying to
+      // every body class a non-multipart body is spooled to a temp file whose
+      // absolute path the validation-failure funnel then echoes back at 200.
       payload : {
         maxBytes  : 1048576 * 5, // 5MB
-        multipart : { output : 'file' }
+        output: 'file'
+      },
+      // Declared here, not in `files.uploadAvatar`: this is one of the 102
+      // validation targets AAP 0.6.2 gates, and the funnel's payload echo on
+      // rejection is preserved baseline behaviour (see `POST /file` above).
+      validate : {
+        payload : {
+          upload : Joi.any().required()
+        }
       }
-      /*
-       * No `validate` block, for the same reason as `POST /file` above: this
-       * payload can carry a spooled file part, and the route parser's
-       * validation-failure funnel [lib/util/routeParser.js:867-884] echoes
-       * `request.payload` back at status 200, disclosing the absolute server
-       * path of that part (QA finding W001-F04).
-       *
-       * `files.uploadAvatar` enforces the same contract -- `upload` required --
-       * and answers 400 with the Joi message text and no payload echo,
-       * discarding any spooled part before it returns.
-       */
     },
     reply : {
       host : true,

@@ -1,25 +1,14 @@
-<!--
-  This route's own top-level heading. The subnav below opens at the breadcrumb,
-  so the view had no h1 and its outline started mid-level. The text matches the
-  visible `a.current` breadcrumb, and `show-for-sr` is Foundation's clip-based
-  screen-reader-only utility (already in public/css/base.css), so this renders
-  no pixels - the same treatment as lib/views/embed/base.html. The heading
-  belongs here rather than in the lib/views/trinket/library.html shell, because
-  that shell's single `ui-view` hosts this route, the folder route and the
-  trinket-detail route, which need different headings.
--->
-<h1 class="show-for-sr">My Trinkets</h1>
 <div class="library-subnav clearfix row gutterless" data-magellan-expedition="fixed">
   <section class="left">
     <nav class="title breadcrumbs">
-      <a href="/home" aria-label="Go Home"><i class="fa fa-home"></i></a>
+      <a href="/home"><i class="fa fa-home"></i></a>
       <a class="current">My Trinkets</a>
     </nav>
     <section id="listview-options">
       <trinket-search on-select="gotoSelectedTrinket" placeholder-text="search by name or instructions" search-input-open="searchInputOpen"></trinket-search>
       <section id="listview-menus" ng-show="!searchInputOpen" class="fade-in-out">
         <label>Sort:</label>
-        <button class="button small" data-dropdown="library-sort-options" aria-label="Sort Trinkets">
+        <button class="button small" data-dropdown="library-sort-options">
           <i class="{{ sortOptions[sortBy].class }}"></i> <span class="show-for-xlarge-up">{{ sortOptions[sortBy].label }}</span> <i class="fa fa-caret-down"></i>
         </button>
         <ul id="library-sort-options" class="tiny f-dropdown" data-dropdown-content>
@@ -28,7 +17,7 @@
           </li>
         </ul>
         <label>View:</label>
-        <button class="button small" data-dropdown="library-view-options" aria-label="Change List View">
+        <button class="button small" data-dropdown="library-view-options">
           <i class="{{ viewOptions[viewType].class }}"></i> <span class="show-for-xlarge-up">{{ viewOptions[viewType].label }}</span> <i class="fa fa-caret-down"></i>
         </button>
         <ul id="library-view-options" class="tiny f-dropdown" data-dropdown-content>
@@ -43,17 +32,7 @@
     <new-trinket></new-trinket>
   </section>
   <section class="right" id="new-folder-section">
-    <!--
-      A native <button> rather than an href-less <a>, so the control enters
-      sequential focus navigation and is exposed as a button. Foundation's
-      reveal plugin binds by delegation on `[data-reveal-id]:not([disabled])`,
-      so it keeps opening #new-folder-modal unchanged, and `button` and
-      `.button` share one Foundation rule so the box is unchanged. `role`
-      is dropped because a native button carries that role intrinsically;
-      the aria-label stays, because below `xlarge-up` the visible
-      "new folder" text is replaced by a bare icon.
-    -->
-    <button type="button" class="small button" data-reveal-id="new-folder-modal" aria-label="New Folder"><span class="show-for-xlarge-up"><i class="fa fa-plus-circle"></i>&nbsp;new folder</span><i class="hide-for-xlarge-up fa fa-folder"></i></button>
+    <a class="small button" data-reveal-id="new-folder-modal"><span class="show-for-xlarge-up"><i class="fa fa-plus-circle"></i>&nbsp;new folder</span><i class="hide-for-xlarge-up fa fa-folder"></i></a>
   </section>
 </div>
 <div class="row" ng-show="!items || !folders"><h2><i class="fa fa-spinner fa-spin"></i>&nbsp;Loading...</h2></div>
@@ -92,15 +71,7 @@
     </li>
     <li ng-repeat="item in items" data-id="{{item.id}}" ng-click="gotoTrinket(item.shortCode)" title="{{item.name || 'Untitled'}}">
       <a class="snapshot" ng-class="{titled: item.name}" ui-sref="detail({shortCode: item.shortCode})">
-        <!--
-          The snapshot is decorative, so its alt is empty: interpolating the
-          snapshot's own src into it read a storage URL out on every card. The
-          <h3 class="title"> below sits inside this same link and already
-          supplies the link's accessible name, so an empty alt is correct here
-          rather than a duplicate of that name. lib/views/home.html carries
-          alt="" on this same image.
-        -->
-        <img ng-class="{'set-height': item.lang != 'glowscript' && item.lang != 'glowscript-blocks'}" ng-src="{{item.snapshot}}" alt="">
+        <img ng-class="{'set-height': item.lang != 'glowscript' && item.lang != 'glowscript-blocks'}" ng-src="{{item.snapshot}}" alt="{{item.snapshot}}">
         <h3 ng-class="{titled: item.name}" class="title trinket-list-with-lang {{viewType}}-view lang-{{item.lang}} trinketLabel">{{item.name || 'Untitled'}}</h3>
       </a>
       <div class="trinket-stats">
@@ -139,7 +110,7 @@
   <form id="new-folder-form" new-folder ng-submit="addNewFolder()">
     <div class="row">
       <div class="small-12 columns">
-        <input id="new-folder-name" type="text" name="name" ng-model="name" placeholder="Enter folder name" required aria-label="Enter folder name" autocomplete="off" />
+        <input id="new-folder-name" type="text" name="name" ng-model="name" placeholder="Enter folder name" required />
       <div>
     </div>
     <div class="row">
@@ -149,5 +120,5 @@
     </div>
   </form>
   </div>
-  <a class="close-reveal-modal" aria-label="Close" role="button">&#215;</a>
+  <a class="close-reveal-modal" aria-label="Close">&#215;</a>
 </div>

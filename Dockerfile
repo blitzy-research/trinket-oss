@@ -132,6 +132,37 @@ RUN apt-get update \
 # migration plan pins the 5.x line and defers anything below high severity.
 # When this gate fires, the fix is a new pin, never a weaker gate.
 #
+# The other residual this pin carries, measured rather than assumed, because a
+# reader choosing a new pin needs it: the pm2 PROCESS ITSELF -- PID 1 in the
+# container, never app.js -- emits two Node PENDING deprecations when the
+# container is run under `--pending-deprecation --trace-deprecation`. They are
+# invisible in a normal run, which is why a plain container log is clean.
+#
+#   DEP0169 `url.parse()`  pm2-axon/lib/sockets/sock.js:248, reached from
+#                          @pm2/agent/src/InteractorClient.js:69 through the
+#                          unconditional KMDaemon.ping at pm2/lib/API.js:134
+#   DEP0005 `new Buffer()` amp/lib/stream.js:25, reached when pm2's own RPC
+#                          pipe accepts its client connection
+#
+# Neither is reachable by an override like the js-yaml one above: pm2-axon
+# 4.0.1 and amp 0.3.1 are the NEWEST PUBLISHED versions of both packages, so
+# there is no later version to lift them to. Measured across majors, running
+# `pm2-docker start app.js` under those flags: 5.4.3 emits both; 6.0.14 emits
+# both from the same files (it still declares `pm2-axon ~4.0.1`); 7.0.4 clears
+# DEP0169 -- it vendors its own modules/pm2-axon -- but still emits DEP0005
+# from that same amp line, and is a semver major that also reframes the
+# container's stderr. Configuration does not avoid them either:
+# PM2_NO_INTERACTION, PM2_DISCRETE_MODE and KEYMETRICS_NODE were each measured
+# and all three still emit both, because API.js pings before any of them is
+# consulted (PM2_NO_INTERACTION is read only at pm2/lib/Client.js:284).
+#
+# So the residual is STATED, not suppressed: no `--no-deprecation` or
+# `--no-warnings` is added here or in the CMD, because the requirement is that
+# none is emitted and not that none is displayed. Closing it needs an upstream
+# `amp` release using Buffer.alloc (and a `pm2-axon` using the WHATWG URL API),
+# or an authorized change of this image's supervision away from pm2 -- which
+# the CMD at the end of this file, and the plan that pins it, currently fix.
+#
 # `--ignore-scripts` is the other half of the finding this addresses. This stage
 # necessarily runs as root -- it writes under /usr/local -- so an install script
 # from any package in that tree would execute as root at build time. The pinned

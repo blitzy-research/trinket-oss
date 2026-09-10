@@ -8,32 +8,6 @@
 		background: $primary-color;
 	}
 }
-
-// Touch-target sizing and separation inside the mobile menu's dropdowns
-// (a11y F127/F128). The top-level rows of the open menu already get 44px and
-// an 8px gap further down this file, but the rows nested inside the user menu
-// and the "New Trinket" submenu are Foundation's defaults - measured 36.8px to
-// 41.2px tall with 0-1px between consecutive rows at 375px. They are reachable
-// touch targets once the menu is open, so they get the same treatment.
-//
-// `min-height` only, and no flex: each row is an icon element followed by a
-// text node, and flex layout would collapse the whitespace between them and
-// visibly join glyph to label. Dividers are presentational (`li.divider` has
-// role="presentation") and are excluded so the menu does not grow by 44px per
-// separator.
-@media #{$small-only} {
-	.top-bar-section .dropdown li:not(.divider) {
-		margin-bottom: rem-calc(8);
-
-		&:last-child {
-			margin-bottom: 0;
-		}
-
-		> a {
-			min-height: 44px;
-		}
-	}
-}
 .nav-wrapper nav.top-bar {
 	li.name {
     padding: .25rem .75rem;
@@ -44,54 +18,6 @@
       top: .05rem;
     }
   }
-
-  // Mobile-only touch-target sizing (a11y F127). At <=640px the logo link and
-  // the menu toggle are the only two controls in the top bar that fall below
-  // the 44x44 minimum: measured 96x25 and 55x34 at 375px. Both are grown to
-  // 44px of height *inside* the existing $topbar-height (45px) bar, so the bar
-  // does not change size and the >=641px design is untouched. Scoped to
-  // $small-only for exactly that reason.
-  @media #{$small-only} {
-    li.name {
-      // The .25rem block padding above is what capped the link at the height of
-      // its logo image. Foundation fixes li.name at $topbar-height with
-      // border-box sizing, so dropping only the *vertical* padding frees the
-      // full 45px of content box for the link without moving the bar; the
-      // .75rem horizontal indent is deliberately preserved.
-      padding-top: 0;
-      padding-bottom: 0;
-      display: flex;
-      align-items: center;
-
-      a {
-        // inline-flex, not block: a block-level anchor would stretch to the
-        // full width of the title-area list item and swallow taps aimed at
-        // empty chrome. inline-flex keeps the link shrink-to-fit around the
-        // 6rem logo image while align-items centres that image in the taller
-        // box, so the logo does not appear to move.
-        display: inline-flex;
-        align-items: center;
-        min-height: 44px;
-      }
-    }
-
-    li.toggle-topbar.menu-icon {
-      // Foundation centres a 34px-tall anchor in the bar with
-      // `top: 50%; margin-top: -16px`. Growing that anchor to 44px without
-      // re-centring would put its bottom edge at 50.5px, outside the 45px bar,
-      // where `.top-bar { overflow: hidden }` clips it out of the hit area.
-      // -22px places the 44px box at 0.5px..44.5px: the whole target stays
-      // inside the bar. The hamburger glyph is `span::after`, positioned at
-      // `top: 50%` of this anchor, so it stays centred in the control.
-      margin-top: -22px;
-
-      a {
-        min-height: 44px;
-        display: flex;
-        align-items: center;
-      }
-    }
-  }
 }
 
 nav.top-bar {
@@ -99,87 +25,7 @@ nav.top-bar {
     width: 6rem;
   }
 
-  // Keyboard focus order for the CLOSED collapsed menu (a11y: WCAG 2.1
-  // SC 2.4.3 Focus Order, and SC 2.4.7 Focus Visible for the stops that took
-  // focus off-screen). Measured at 375x812 on /home: the collapsed bar offered
-  // 15 Tab stops and 11 of them were descendants of section.top-bar-section
-  // while that section was closed - nav.top-bar carried no `expanded` class,
-  // computed `height: 45px` with `overflow: hidden`, and the section's box
-  // began at y = 53, entirely below that 45px clip, yet still computed
-  // `visibility: visible`. (The QA finding reports 19 of 25 on an account that
-  // renders more language rows and an Admin row; the ratio differs, the defect
-  // is the same one.) `overflow: hidden` clips the painting and does nothing to
-  // sequential focus navigation, so every anchor in the closed menu stayed
-  // tabbable - two of them, the JS-generated `Back` row and the first
-  // #new_trinket_list language, sitting wholly outside the viewport at x = 375.
-  // Worse, focusing the first in-menu stop scrolled the overflow-hidden nav to
-  // scrollTop: 53, exposing `Home` in the bar and pushing the logo and the menu
-  // toggle out of sight: a keyboard user silently rearranged the global chrome.
-  //
-  // `visibility: hidden` is the mechanism because browsers exclude a
-  // visibility-hidden element and its descendants from sequential focus
-  // navigation - precisely the semantic this needs - while still generating
-  // layout boxes. `display: none` would remove those boxes and break the two
-  // places that measure them: foundation.topbar.js sizes the open bar from the
-  // section's own lists (`$this.siblings('ul').outerHeight(true) +
-  // topbar.data('height')` at
-  // public/components/foundation/js/foundation/foundation.topbar.js:242, and
-  // the same calculation for the `.back` path at :287), and its `assemble()`
-  // detaches and re-appends the section to prepend those `.back` rows. It is
-  // also why this stays in CSS: `tabindex`, `inert` and `aria-hidden` are all
-  // attributes on lib/views/base.html, whose markup surface the corpus gate
-  // compares element by element, while no gate compares computed CSS.
-  //
-  // `:not(.expanded)` is exactly "collapsed and closed". Foundation opens the
-  // menu by adding `.expanded` to `.top-bar` - its own
-  // `.top-bar.expanded { background: transparent; height: auto }` is the rule
-  // that releases the 45px clip - so the moment the toggle fires this selector
-  // stops matching and the menu behaves as a normal focusable menu again. The
-  // two controls that operate it are outside the section: lib/views/base.html
-  // renders `ul.title-area` (the logo link `li.name > a[href="/"]` and the
-  // hamburger `li.toggle-topbar.menu-icon > a`) as a sibling of
-  // `section.top-bar-section`, both direct children of nav.top-bar, so both
-  // keep their tab stops and the menu remains openable from the keyboard. That
-  // sibling structure is also what makes the child combinator the exact
-  // expression here.
-  //
-  // Scoped to $small-only (max-width: 40em, 640px) like the F127 rules above,
-  // which is the complement of Foundation's `$topbar-breakpoint` (641px): from
-  // 641px up the bar is a horizontal menu with `overflow: visible` whose stops
-  // are all genuinely visible, and that navigation must not be hidden - the
-  // media scope is the only thing standing between this rule and the desktop
-  // chrome. Below 641px with JavaScript off the collapsed menu has no fallback
-  // in either state, since Foundation's `.no-js .top-bar-section` rules live
-  // inside `@media #{$topbar-media-query}` and never apply there, so this
-  // removes an invisible focus trap rather than a usable affordance.
-  @media #{$small-only} {
-    &:not(.expanded) > section.top-bar-section {
-      visibility: hidden;
-    }
-  }
-
 	.top-bar-section {
-		// Adjacent-target separation for the expanded mobile menu (a11y F128).
-		// With the menu open every pair of stacked rows measured 0px apart, and
-		// the first row sat 4.5px under the menu toggle - which the 44px toggle
-		// in _nav.scss above closes to ~0.5px. Both gaps are opened here.
-		//
-		// The margin-top is invisible while the menu is closed: Foundation gives
-		// `.top-bar` `overflow: hidden` and a fixed `height: $topbar-height`, and
-		// only `.top-bar.expanded` relaxes that to `height: auto`, so the offset
-		// is clipped when collapsed and only produces a gap once the toggle has
-		// opened the menu.
-		@media #{$small-only} {
-			margin-top: 8px;
-
-			// Only the top-level rows of each list: the child combinators stop
-			// this reaching the nested #user_dropdown / #new_trinket_list items,
-			// whose own spacing and dividers are unchanged.
-			> ul > li {
-				margin-bottom: 8px;
-			}
-		}
-
 		#trinket-user-menu.hover{
 			a.dropdown-btn:hover{
 				span#userdata{

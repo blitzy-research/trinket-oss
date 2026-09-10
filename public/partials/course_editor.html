@@ -7,13 +7,13 @@
   <div class="course-subnav clearfix row gutterless">
     <section ng-cloak ng-show="course" class="left">
       <nav class="title breadcrumbs">
-        <a href="/home" aria-label="Go Home"><i class="fa fa-home"></i></a>
+        <a href="/home"><i class="fa fa-home"></i></a>
         <a class="current"><i ng-if="course.archived" class="fa fa-archive"></i> <strong>{{ course.name }}</strong> by {{ course._owner.name }}</a>
       </nav>
     </section>
     <div class="right">
-      <a class="button small" ng-if="canViewSubmissions" ng-click="viewDashboard()" aria-label="Dashboard"><i class="fa fa-dashboard"></i> <div class="show-for-large-up">Dashboard</div></a>
-      <a class="button small dropdown-blue" data-dropdown="course-actions" id="course-actions-button" aria-label="Course"><i class="fa fa-cog"></i> <div class="show-for-large-up">Course</div></a>
+      <a class="button small" ng-if="canViewSubmissions" ng-click="viewDashboard()"><i class="fa fa-dashboard"></i> <div class="show-for-large-up">Dashboard</div></a>
+      <a class="button small dropdown-blue" data-dropdown="course-actions" id="course-actions-button"><i class="fa fa-cog"></i> <div class="show-for-large-up">Course</div></a>
       <ul id="course-actions" ng-if="canCopyThisCourse || canUpdateCourse || canManageAccess" class="f-dropdown small" data-dropdown-content>
         <li><a ng-if="canUpdateCourse" ng-click="openSettingsModal()"><i class="fa fa-pencil fa-fw"></i> Edit Course Details</a></li>
         <li><a ng-if="canCopyThisCourse" ng-click="copyCourse()"><i class="fa fa-copy fa-fw"></i> Make a Copy of this Course</a></li>
@@ -21,36 +21,18 @@
         <li><a ng-if="canArchiveThisCourse && !course.archived" ng-click="openArchiveCourseModal()"><i class="fa fa-archive fa-fw"></i> Archive Course</a></li>
         <li><a ng-if="canArchiveThisCourse && course.archived" ng-click="archiveCourse()"><i class="fa fa-inbox fa-fw"></i> Restore Archived Course</a></li>
       </ul>
-      <a class="button small" ng-if="canManageAccess" ng-click="openUserModal()" aria-label="Users"><i class="fa fa-users"></i> <div class="show-for-large-up">Users</div></a>
-      <!--
-        Icon-only controls, so the accessible name comes from aria-label; the
-        glyph itself is decorative and hidden from assistive tech. At the first
-        and last page these controls cannot act, so they declare that state
-        instead of looking operable: aria-disabled announces it, the disabled
-        class shows it, tabindex takes them out of the tab order, and the guard
-        in the ng-click expression stops the handler being reached at all.
-      -->
-      <a href class="prev button small"
-         aria-label="Previous Page"
-         ng-click="havePreviousMaterial() && previousMaterial()"
-         ng-class="{disabled:!havePreviousMaterial()}"
-         ng-attr-aria-disabled="{{ !havePreviousMaterial() }}"
-         ng-attr-tabindex="{{ havePreviousMaterial() ? 0 : -1 }}">
-        <i class="fa fa-angle-left" aria-hidden="true"></i>
+      <a class="button small" ng-if="canManageAccess" ng-click="openUserModal()"><i class="fa fa-users"></i> <div class="show-for-large-up">Users</div></a>
+      <a href class="prev button small" ng-click="previousMaterial()">
+        <i class="fa fa-angle-left"></i>
       </a>
-      <a href class="next button small"
-         aria-label="Next Page"
-         ng-click="haveNextMaterial() && nextMaterial()"
-         ng-class="{disabled:!haveNextMaterial()}"
-         ng-attr-aria-disabled="{{ !haveNextMaterial() }}"
-         ng-attr-tabindex="{{ haveNextMaterial() ? 0 : -1 }}">
-        <i class="fa fa-angle-right" aria-hidden="true"></i>
+      <a href class="next button small" ng-click="nextMaterial()">
+        <i class="fa fa-angle-right"></i>
       </a>
     </div>
   </div>
 </header>
 <div id="course-content" ui-scrollfix="45" ng-class="{open:menuOpen}">
-  <a id="outline-expander" ng-click="menuOpen=!menuOpen" aria-label="Toggle Outline">
+  <a id="outline-expander" ng-click="menuOpen=!menuOpen">
     <i class="fa" ng-class="{'fa-bars':!menuOpen,'fa-times':menuOpen}"></i>
   </a>
   <aside id="outline" class="editable">
@@ -60,39 +42,14 @@
     <div ui-tree="outlineDragOptions" data-drag-delay="200">
       <ul ui-tree-nodes ng-model="course.lessons" data-type="lesson" class="outline-list lessons">
         <li class="outline-list-item lesson" ng-repeat="lesson in course.lessons" ui-tree-node data-type="lesson" ng-class="{isDraft:lesson.isDraft,past:lesson.isPast,current:lesson.isCurrent,future:lesson.isFuture}">
-          <!--
-            `ui-tree-handle` is what makes this row the node's drag handle.
-            Angular UI Tree's uiTreeHandle directive is attribute-only
-            (restrict: 'A') and it is the directive that adds the
-            angular-ui-tree-handle class, so the class alone is its effect
-            rather than its trigger: with the class present but the attribute
-            absent, the directive never linked, uiTreeNode's dragStart saw a
-            mousedown target that was neither a tree node nor a handle, and
-            returned without starting a drag. Declaring the attribute makes the
-            whole title row draggable. It also means dragStart now refuses a
-            mousedown on the <li> itself, because a node that contains a handle
-            drags only by that handle -- so the narrow strip of <li> padding
-            beside the row, which was the only surface that used to work, is
-            superseded by the row it sits next to.
-          -->
-          <div class="lesson-title angular-ui-tree-handle clearfix" ui-tree-handle>
+          <div class="lesson-title angular-ui-tree-handle clearfix">
             <i class="fa fa-bars"></i>
             <span class="lesson-name">{{ lesson.name }}</span>
             <div data-tooltip class="draft-circle in-aside right has-tip" title="Marked as draft" ng-if="lesson.isDraft">&nbsp;</div>
           </div>
           <ul ui-tree-nodes ng-model="lesson.materials" data-type="material" class="outline-list materials" ng-class="{isDraft:lesson.isDraft}">
             <li ng-repeat="material in lesson.materials" id="{{ lesson.slug }}-{{ material.slug }}" ui-tree-node data-type="material" class="outline-list-item material" ng-class="{past:material.isPast,current:material.isCurrent,future:material.isFuture}">
-              <!--
-                ngAria gives this div role="button" and tabindex="0" because it
-                carries ng-click, so assistive technology sees a button per outline
-                row. Which row is the one being viewed was signalled only by the
-                `current` class on the li above - a solid fill and white text - so
-                the selected state existed in CSS and nowhere in the accessibility
-                tree. ng-attr-aria-current supplies it: Angular removes the
-                attribute outright when the interpolation is undefined, so only the
-                current row carries aria-current="page" and the rest carry nothing.
-              -->
-              <div class="material-title angular-ui-tree-handle clearfix" ui-tree-handle ng-click="viewMaterial(material.slideIndex, true)" ng-attr-aria-current="{{ material.isCurrent ? 'page' : undefined }}">
+              <div class="material-title angular-ui-tree-handle clearfix" ng-click="viewMaterial(material.slideIndex, true)">
                 <!-- add title or tooltip with dates info? -->
                 <i ng-if="usingDates(material)" class="fa fa-fw fa-clock-o dates-active-icon"></i>
                 <!-- change icon depending on what kind of material this is -->
@@ -119,20 +76,8 @@
       <a id="new-topic-button" class="button small" ng-click="openNewTopicDialog()"><i class="fa fa-plus-circle"></i> topic</a>
     </div>
     <div class="small-6 columns">
-      <!--
-        Two distinct controls, so two distinct ids: sharing one made
-        getElementById return whichever happened to come first in the document
-        rather than the one the caller meant. They are ng-if rather than ng-show
-        so the inactive one leaves the DOM entirely -- kept in the DOM it was
-        both aria-hidden and still in the tab order, which is a control screen
-        readers are told to ignore that a keyboard user can nonetheless reach.
-      -->
-      <a ng-if="!editingOutline" id="edit-outline-button" class="button small" ng-click="editOutline()"><i class="fa fa-pencil" aria-hidden="true"></i> outline</a>
-      <a ng-if="editingOutline" id="done-outline-button" class="button small"
-         ng-click="haveContent && doneOutline()"
-         ng-class="{disabled:!haveContent}"
-         ng-attr-aria-disabled="{{ !haveContent }}"
-         ng-attr-tabindex="{{ haveContent ? 0 : -1 }}">done</a>
+      <a ng-show="!editingOutline" id="edit-outline-button" class="button small" ng-click="editOutline()"><i class="fa fa-pencil"></i> outline</a>
+      <a ng-show="editingOutline" id="edit-outline-button" class="button small" ng-click="haveContent && doneOutline()" ng-class="{disabled:!haveContent}">done</a>
     </div>
   </div>
 
@@ -143,7 +88,7 @@
 
     <div ng-switch="currentMaterial.type" ng-show="currentMaterial && !editingOutline" id="material">
       <div class="page-controls-container right" ng-show="canUpdateContent">
-        <a id="page-controls-button" data-dropdown="page-actions" class="button small dropdown-blue" aria-label="Edit"><i class="fa fa-pencil"></i> <div class="show-for-large-up">Edit</div></a>
+        <a id="page-controls-button" data-dropdown="page-actions" class="button small dropdown-blue"><i class="fa fa-pencil"></i> <div class="show-for-large-up">Edit</div></a>
         <ul id="page-actions" class="f-dropdown small" data-dropdown-content>
           <li>
             <a ng-click="editContent()"><i class="fa fa-pencil fa-fw"></i> Edit {{ currentMaterial.type === "assignment" ? "Assignment" : "Page" }}</a>
@@ -208,7 +153,7 @@
       </div>
       <ul ui-tree-nodes ng-model="course.lessons" data-type="edit-outline-lesson" class="outline-list edit-lessons">
         <li class="outline-list-item lesson" ng-repeat="lesson in course.lessons" ui-tree-node data-type="edit-outline-lesson" ng-class="{isDraft:lesson.isDraft}">
-          <div class="edit-lesson-title angular-ui-tree-handle clearfix" ui-tree-handle>
+          <div class="edit-lesson-title angular-ui-tree-handle clearfix">
             <i class="fa fa-bars"></i>
 
             <div data-tooltip class="draft-circle in-outline has-tip" title="Marked as draft" ng-if="lesson.isDraft">&nbsp;</div>
@@ -218,7 +163,7 @@
             </span>
             <span ng-show="!canUpdateContent">{{ lesson.name }}</span>
 
-            <a ng-show="canUpdateContent" class="right edit-lesson-actions-link" data-nodrag data-options='align:left' data-dropdown="lesson-actions-{{lesson.id}}" aria-label="Open Topic Actions Menu">
+            <a ng-show="canUpdateContent" class="right edit-lesson-actions-link" data-nodrag data-options='align:left' data-dropdown="lesson-actions-{{lesson.id}}">
               <i class="fa fa-ellipsis-v"></i>
             </a>
 
@@ -236,7 +181,7 @@
           </div>
           <ul ui-tree-nodes ng-model="lesson.materials" data-type="edit-outline-material" class="outline-list edit-materials" ng-class="{isDraft:lesson.isDraft}">
             <li ng-repeat="material in lesson.materials" ui-tree-node data-type="edit-outline-material" class="outline-list-item material">
-              <div ng-switch="material.type" class="edit-material-title angular-ui-tree-handle clearfix" ui-tree-handle>
+              <div ng-switch="material.type" class="edit-material-title angular-ui-tree-handle clearfix">
                 <i ng-switch-when="page" class="fa fa-file-text-o fa-fw"></i>
                 <!-- add title or tooltip with dates info? -->
                 <i ng-if="usingDates(material)" class="fa fa-fw fa-clock-o dates-active-icon"></i>
@@ -260,10 +205,10 @@
                       onbeforesave="editMaterial(material, $data)">{{ material.name }}</span>
                 <span ng-switch-when="assignment" ng-show="!canManageAssignments">{{ material.name }}</span>
 
-                <a ng-switch-when="page" ng-show="canUpdateContent" class="right edit-material-actions-link" data-nodrag data-options='align:left' data-dropdown="material-{{material.id}}" aria-label="Open Page Actions Menu">
+                <a ng-switch-when="page" ng-show="canUpdateContent" class="right edit-material-actions-link" data-nodrag data-options='align:left' data-dropdown="material-{{material.id}}">
                   <i class="fa fa-ellipsis-v"></i>
                 </a>
-                <a ng-switch-when="assignment" ng-show="canManageAssignments" class="right edit-material-actions-link" data-nodrag data-options='align:left' data-dropdown="material-{{material.id}}" aria-label="Open Assignment Actions Menu">
+                <a ng-switch-when="assignment" ng-show="canManageAssignments" class="right edit-material-actions-link" data-nodrag data-options='align:left' data-dropdown="material-{{material.id}}">
                   <i class="fa fa-ellipsis-v"></i>
                 </a>
 
@@ -287,7 +232,7 @@
           <form class='add-material' ng-submit="addMaterial($event, lesson)" data-nodrag>
             <div class="row collapse">
               <div class="small-12 new-page-wrap">
-                <input type="text" class="form-control material" ng-model="lesson.newPageTitle" placeholder="Enter new page title" aria-label="Enter new page title" required autocomplete="off">
+                <input type="text" class="form-control material" ng-model="lesson.newPageTitle" placeholder="Enter new page title" required>
               </div>
             </div>
           </form>
@@ -295,7 +240,7 @@
       </ul>
       <div data-nodrag>
         <form ng-submit="addLesson($event, course)">
-          <input type="text" class="form-control lesson" ng-model="course.newLessonName" placeholder="Enter new topic name" aria-label="Enter new topic name" required autocomplete="off">
+          <input type="text" class="form-control lesson" ng-model="course.newLessonName" placeholder="Enter new topic name" required>
         </form>
       </div>
     </div>
@@ -308,34 +253,34 @@
   <form name="course-settings-form" ng-submit="updateCourse($event)">
     <div class="row">
       <div class="large-12 columns">
-        <label for="course-settings-name">Course name</label>
-        <input type="text" id="course-settings-name" name="name" ng-model="courseForm.name" aria-label="Course name" autocomplete="off" />
+        <label>Course name</label>
+        <input type="text" name="name" ng-model="courseForm.name" />
       </div>
     </div>
     <div class="row">
       <div class="large-12 columns">
-        <label for="course-settings-description">Course description</label>
-        <textarea id="course-settings-description" name="description" rows="4" ng-model="courseForm.description" aria-label="Course description" autocomplete="off"></textarea>
+        <label>Course description</label>
+        <textarea name="description" rows="4" ng-model="courseForm.description"></textarea>
       </div>
     </div>
     <div class="row">
       <div class="large-12 columns">
-        <label for="course-settings-type">Course visibility</label>
-        <select id="course-settings-type" name="courseType" ng-model="courseForm.courseType" aria-label="Course visibility" ng-options="t.id as t.name for t in [{'id':'public','name':'Public'},{'id':'private','name':'Private'},{'id':'open','name':'Open'}]" autocomplete="off">
+        <label>Course visibility</label>
+        <select name="courseType" ng-model="courseForm.courseType" ng-options="t.id as t.name for t in [{'id':'public','name':'Public'},{'id':'private','name':'Private'},{'id':'open','name':'Open'}]">
         </select>
       </div>
     </div>
     <div class="row">
       <div class="large=12 columns">
-        <label for="course-settings-content-default">Default page and assignment visibility</label>
-        <select id="course-settings-content-default" name="contentDefault" ng-model="courseForm.contentDefault" aria-label="Default page and assignment visibility" ng-options="o.id as o.name for o in [{'id':'publish','name':'Published'},{'id':'draft','name':'Marked as Draft'}]" autocomplete="off">
+        <label>Default page and assignment visibility</label>
+        <select name="contentDefault" ng-model="courseForm.contentDefault" ng-options="o.id as o.name for o in [{'id':'publish','name':'Published'},{'id':'draft','name':'Marked as Draft'}]">
         </select>
       </div>
     </div>
     <div class="row">
       <div class="large-12 columns">
         <button type="submit" class="primary small"><i class="fa" ng-class="{'fa-save':!savingCourse, 'fa-circle-o-notch fa-spin':savingCourse}"></i> Update</button>
-        <a ng-show="canDeleteCourse" class="button caution small right" title="Delete Course" aria-label="Delete Course" role="button" data-reveal-id="deleteCourseDialog" data-reveal><i class="fa fa-trash-o"></i></a>
+        <a ng-show="canDeleteCourse" class="button caution small right" title="Delete Course" data-reveal-id="deleteCourseDialog" data-reveal><i class="fa fa-trash-o"></i></a>
       </div>
     </div>
   </form>
@@ -378,7 +323,7 @@
               </div>
               <div class="row" data-equalizer data-equalizer-mq="large-up">
                 <div class="medium-12 large-6 columns" data-equalizer-watch>
-                  <textarea rows="4" ng-model="inviteForm.emailList" aria-label="Email addresses, one per line" autocomplete="off"></textarea>
+                  <textarea rows="4" ng-model="inviteForm.emailList"></textarea>
                 </div>
                 <div class="medium-12 large-6 columns" data-equalizer-watch>
                   <button type="submit" class="button small secondary bottom" ng-class="{'disabled':sendingInvitations}">
@@ -451,7 +396,7 @@
             </div>
             <div class="row collapse">
               <div class="small-6 columns">
-                <input class="collapse" type="text" ng-model="user.lookup" name="user-lookup" placeholder="enter username or email address" aria-label="enter username or email address" required autocomplete="off" />
+                <input class="collapse" type="text" ng-model="user.lookup" name="user-lookup" placeholder="enter username or email address" required />
               </div>
               <div class="small-1 columns end">
                 <button type="submit" class="button secondary collapse postfix"><i ng-class="addingUser ? 'fa fa-circle-o-notch fa-spin' : 'fa fa-user-plus'"></i> Add</button>
@@ -479,12 +424,12 @@
           <li class="course-user" ng-repeat="(email, invitation) in invitations | orderBy:'email'">
             <div class="row">
               <div class="small-6 columns invitation-info">
-                <a ng-click="toggleShowInvitation(invitation)" aria-label="Toggle Invitation Details"><i ng-class="showInvitation[user.userId] ? 'fa fa-minus-square-o' : 'fa fa-plus-square-o'"></i></a>
+                <a ng-click="toggleShowInvitation(invitation)"><i ng-class="showInvitation[user.userId] ? 'fa fa-minus-square-o' : 'fa fa-plus-square-o'"></i></a>
                 <i ng-show="invitation.status == 'invalid'" title="Invalid email address" class="fa fa-exclamation-circle alert"></i>
                 <span id="invalid-{{ invitation.id }}" class="course-user-display-name" editable-text="invitation.email" blur="submit" onbeforesave="updateInvitationEmail(invitation, $data)">{{ invitation.email }}</span>
               </div>
               <div class="small-6 columns invitation-actions text-right">
-                <a ng-hide="working[invitation.email] || resent[invitation.email]" class="course-user-actions-link" data-options="align:left" data-dropdown="invitation-{{ invitation.id }}" aria-label="Open Invitation Actions Menu"><i class="fa fa-ellipsis-v"></i></a>
+                <a ng-hide="working[invitation.email] || resent[invitation.email]" class="course-user-actions-link" data-options="align:left" data-dropdown="invitation-{{ invitation.id }}"><i class="fa fa-ellipsis-v"></i></a>
                 <span ng-show="working[invitation.email]" class="course-user-actions-link"><i class="fa fa-circle-o-notch fa-spin"></i></span>
                 <span ng-show="resent[invitation.email]" class="course-user-actions-link"><i class="fa fa-check-circle success"></i></span>
 
@@ -558,8 +503,8 @@
 
           <div class="row">
             <div class="small-6 columns user-info">
-              <a ng-click="toggleShowUser(user)" aria-label="Toggle User Details"><i ng-class="showUser[user.userId] ? 'fa fa-minus-square-o' : 'fa fa-plus-square-o'"></i></a>
-              <img class="avatar" ng-src="{{ user.avatar }}" alt="" />
+              <a ng-click="toggleShowUser(user)"><i ng-class="showUser[user.userId] ? 'fa fa-minus-square-o' : 'fa fa-plus-square-o'"></i></a>
+              <img class="avatar" ng-src="{{ user.avatar }}" />
               <span class="course-user-display-name">{{ user.displayName }}</span>
               <span ng-if="user.deleted" class="secondary-label label round" title="This user deleted their account.">deleted</span>
             </div>
@@ -586,8 +531,8 @@
                 </li>
               </ul>
 
-              <a ng-hide="undo[user.userId] || working[user.userId]" class="course-user-actions-link" data-dropdown="user-{{ user.userId }}" aria-label="Open User Actions Menu"><i class='fa fa-ellipsis-v'></i></a>
-              <a ng-show="undo[user.userId] && !working[user.userId]" ng-click="undoUserRemove(user)" class="course-user-actions-link" title="Undo" aria-label="Undo" role="button"><i class="fa fa-undo"></i></a>
+              <a ng-hide="undo[user.userId] || working[user.userId]" class="course-user-actions-link" data-dropdown="user-{{ user.userId }}"><i class='fa fa-ellipsis-v'></i></a>
+              <a ng-show="undo[user.userId] && !working[user.userId]" ng-click="undoUserRemove(user)" class="course-user-actions-link" title="Undo"><i class="fa fa-undo"></i></a>
               <span ng-show="working[user.userId]" class="course-user-actions-link"><i class="fa fa-circle-o-notch fa-spin"></i></span>
 
               <i ng-if="!user.onDashboard" class="fa fa-dashboard alert hidden-from-dashboard" title="User hidden from dashboard"></i>
@@ -618,22 +563,8 @@
   <h3>New Topic</h3>
   <form name="new-topic-form" ng-submit="addLesson($event, course)">
     <div class="row">
-      <label for="new-topic-name">Topic name</label>
-      <input type="text" id="new-topic-name" name="topic-name" ng-model="course.newLessonName" focus-me="$root.focusMe" aria-label="Topic name" autocomplete="off" />
-    </div>
-    <!--
-      A visible commit control, so the Enter key is no longer the only way out
-      of this modal. It is a plain submit button inside the same form, which
-      means it runs the same ng-submit expression Enter already ran -- one
-      commit path with two ways to reach it, rather than a second path with its
-      own behaviour. Deliberately no `required` and no disabled state: adding
-      either would change what Enter does today, and addLesson already returns
-      without posting when the name is empty.
-    -->
-    <div class="row">
-      <div class="large-12 columns">
-        <button type="submit" class="primary small"><i class="fa fa-plus-circle" aria-hidden="true"></i> Add Topic</button>
-      </div>
+      <label>Topic name</label>
+      <input type="text" name="topic-name" ng-model="course.newLessonName" focus-me="$root.focusMe" />
     </div>
   </form>
   <a class="close-reveal-modal" aria-label="Close">&#215;</a>
@@ -644,14 +575,8 @@
   <form name="new-page-form" ng-submit="addMaterial($event, thisLesson)">
     <div class="row">
       <div class="large-12 columns">
-        <label for="new-page-title">Page title</label>
-        <input type="text" id="new-page-title" name="page-title" ng-model="thisLesson.newPageTitle" focus-me="$root.focusMe" aria-label="Page title" autocomplete="off" />
-      </div>
-    </div>
-    <!-- Same contract as #newTopicDialog's control: one commit path, two ways in. -->
-    <div class="row">
-      <div class="large-12 columns">
-        <button type="submit" class="primary small"><i class="fa fa-plus-circle" aria-hidden="true"></i> Add Page</button>
+        <label>Page title</label>
+        <input type="text" name="page-title" ng-model="thisLesson.newPageTitle" focus-me="$root.focusMe" />
       </div>
     </div>
   </form>
@@ -661,20 +586,16 @@
 <div id="removePageDialog" class="reveal-modal" data-reveal role="dialog">
   <h3><i class="fa fa-warning alert"></i> Remove {{ _removePageLabel }} &mdash; {{ thisPage.name }}</h3>
   <h4 class="subheader">Are you sure you want to remove this {{ _removePageLabel.toLowerCase() }}?</h4>
-  <label for="confirm-page-name">Please enter the name of this {{ _removePageLabel.toLowerCase() }} below to confirm.</label>
+  <label>Please enter the name of this {{ _removePageLabel.toLowerCase() }} below to confirm.</label>
   <form name="remove-page-form" ng-submit="removeMaterial($event, thisPage)">
     <div class="row">
       <div class="large-12 columns">
-        <input type="text" id="confirm-page-name" name="page-name" value="" ng-model="confirmPageName" ng-change="comparePageNames()" autocomplete="off" />
+        <input type="text" id="confirm-page-name" name="page-name" value="" ng-model="confirmPageName" ng-change="comparePageNames()" />
       </div>
     </div>
     <div class="row">
       <div class="large-12 columns">
-        <a class="button danger small"
-           ng-click="pageNamesMatchForDelete && removeMaterial($event, thisPage)"
-           ng-class="{'disabled':!pageNamesMatchForDelete}"
-           ng-attr-aria-disabled="{{ !pageNamesMatchForDelete }}"
-           ng-attr-tabindex="{{ pageNamesMatchForDelete ? 0 : -1 }}">Remove {{ _removePageLabel }}</a>
+        <a class="button danger small" ng-click="removeMaterial($event, thisPage)" ng-class="{'disabled':!pageNamesMatchForDelete}">Remove {{ _removePageLabel }}</a>
         <a class="button caution small" ng-click="cancelPageRemove()">Do not remove {{ _removePageLabel.toLowerCase() }}</a>
       </div>
     </div>
@@ -685,20 +606,16 @@
 <div id="removeLessonDialog" class="reveal-modal" data-reveal role="dialog">
   <h3><i class="fa fa-warning alert"></i> Remove Topic and Pages &mdash; {{ thisLesson.name }}</h3>
   <h4 class="subheader">Are you sure you want to remove this topic and any pages associated with it?</h4>
-  <label for="confirm-lesson-name">Please enter the name of this topic below to confirm.</label>
+  <label>Please enter the name of this topic below to confirm.</label>
   <form name="remove-lesson-form" ng-submit="removeLesson($event, thisLesson)">
     <div class="row">
       <div class="large-12 columns">
-        <input type="text" id="confirm-lesson-name" name="lesson-name" value="" ng-model="confirmLessonName" ng-change="compareLessonNames()" autocomplete="off" />
+        <input type="text" id="confirm-lesson-name" name="lesson-name" value="" ng-model="confirmLessonName" ng-change="compareLessonNames()" />
       </div>
     </div>
     <div class="row">
       <div class="large-12 columns">
-        <a class="button danger small"
-           ng-click="lessonNamesMatchForDelete && removeLesson($event, thisLesson)"
-           ng-class="{'disabled':!lessonNamesMatchForDelete}"
-           ng-attr-aria-disabled="{{ !lessonNamesMatchForDelete }}"
-           ng-attr-tabindex="{{ lessonNamesMatchForDelete ? 0 : -1 }}">Remove Topic and Pages</a>
+        <a class="button danger small" ng-click="removeLesson($event, thisLesson)" ng-class="{'disabled':!lessonNamesMatchForDelete}">Remove Topic and Pages</a>
         <a class="button caution small" ng-click="cancelLessonRemove()">Do not remove topic</a>
       </div>
     </div>
@@ -709,20 +626,16 @@
 <div id="deleteCourseDialog" class="reveal-modal" data-reveal role="dialog">
   <h3><i class="fa fa-warning alert"></i> Delete Course &mdash; {{ course.name }}</h3>
   <h4 class="subheader">Are you sure you want to delete this course?</h4>
-  <label for="confirm-course-name">Please enter the name of this course below to confirm.</label>
+  <label>Please enter the name of this course below to confirm.</label>
   <form name="delete-course-form" ng-submit="deleteCourse($event)">
     <div class="row">
       <div class="large-12 columns">
-        <input type="text" id="confirm-course-name" name="course-name" value="" ng-model="confirmCourseName" ng-change="compareCourseNames()" autocomplete="off" />
+        <input type="text" id="confirm-course-name" name="course-name" value="" ng-model="confirmCourseName" ng-change="compareCourseNames()" />
       </div>
     </div>
     <div class="row">
       <div class="large-12 columns">
-        <a class="button danger small"
-           ng-click="courseNamesMatchForDelete && deleteCourse($event)"
-           ng-class="{'disabled':!courseNamesMatchForDelete}"
-           ng-attr-aria-disabled="{{ !courseNamesMatchForDelete }}"
-           ng-attr-tabindex="{{ courseNamesMatchForDelete ? 0 : -1 }}">Delete Course</a>
+        <a class="button danger small" ng-click="deleteCourse($event)" ng-class="{'disabled':!courseNamesMatchForDelete}">Delete Course</a>
         <a class="button caution small" ng-click="cancelCourseDelete()">Do not delete course</a>
       </div>
     </div>
@@ -732,94 +645,16 @@
 <div id="archiveCourseModal" class="reveal-modal" data-reveal role="dialog">
   <h3><i class="fa fa-archive"></i> Archive Course &mdash; {{ course.name }}</h3>
   <h4 class="subheader">Are you sure you want to archive this course?</h4>
-  <!--
-    This copy describes what archiving measurably does, which is narrower than
-    the "will no longer be available for anyone to view" it replaced and wider
-    than the "a direct link will still work" that first replaced that.
-
-    Archiving sets `archived: true`. Two things follow, both measured against a
-    running server. The course leaves your active course list and your public
-    course list at /u/{username}/classes. And its public course page stops
-    showing it to EVERYONE, the owner included: viewClass in
-    lib/controllers/classes.js gates on `!course.archived` before any permission
-    is consulted, so /u/{username}/classes/{slug} renders the "Course is
-    unavailable or does not exist" placeholder from lib/views/classes/view.html
-    even for the author.
-
-    What does NOT change is the author's own access. The editor route
-    /{username}/courses/{slug} carries no archived check, so the course stays
-    fully readable and editable by anyone who can manage it, and the API keeps
-    serving it. That is why this says the course is hidden from viewers rather
-    than deleted, and why the restore sentence is the second half of the promise
-    rather than a footnote.
-  -->
-  <p>Once archived, this course is removed from your course list and from your public course list, and its course page stops showing it to viewers &mdash; including anyone holding an old direct link.<br />You will still be able to open and edit it, you will see it in an archived list on your home page, and you can restore it at any time.</p>
-  <!--
-    A failed archive is reported here rather than through notify.js. The
-    rejection handler leaves this dialog open so the action stays retryable,
-    and notify.js anchors its notification to #course-notifications out in the
-    page body - which this dialog covers: the notification was measured
-    rendering entirely inside the dialog's own rectangle, behind it, because the
-    reveal carries z-index 1005. It was in the DOM, styled and correct, and
-    invisible. A message about this dialog belongs inside it.
-
-    role="alert" is what announces it, following the same pattern as
-    lib/views/embed/base.html's status alert; the alert-box classes are
-    Foundation's own, as used by lib/views/users/includes/password.html. The
-    restore action has no dialog, so its failures still go to notify.js - see
-    archiveCourse in public/js/courseEditor/controllers/root.js.
-  -->
-  <div ng-if="archiveError" class="alert-box alert" role="alert">{{ archiveError }}</div>
+  <p>Once archived, this course will no longer be available for anyone to view.<br />You will see this course in an archived list on your home page and can restore it at any time.</p>
   <div class="row">
     <div class="large-12 columns">
       <a class="button primary small" ng-click="archiveCourse()">Archive Course</a>
-      <!--
-        cancelCourseArchive, not cancelCourseDelete. This dialog's dismiss was
-        bound to the DELETE dialog's canceller, and Foundation's close sets
-        aria-hidden on the element it is called with: dismissing here therefore
-        flagged #deleteCourseDialog, which was never open, and left this dialog
-        hidden but still aria-hidden="false" - present in the accessibility tree
-        with nothing on screen. The visible dismissal always worked, because
-        Foundation's close also hides whatever modal is open, which is why this
-        read as harmless until the state was measured.
-
-        It matters more now: a failed archive keeps this dialog open so the
-        error can be read, so this button is the last step of that flow. It also
-        stops dismissing the archive confirmation from clearing the name typed
-        into the delete confirmation, which is what cancelCourseDelete does. The
-        delete dialog keeps its own canceller.
-      -->
-      <a class="button small" ng-click="cancelCourseArchive()">Do not archive course</a>
+      <a class="button small" ng-click="cancelCourseDelete()">Do not archive course</a>
     </div>
   </div>
 </div>
 
 <div id="downloadCourseModal" class="reveal-modal small" data-reveal role="dialog">
-  <!--
-    The dismiss control this modal was missing. Six of the nine modals in this
-    template already carry exactly this element; without it, a download that
-    fails left the user looking at two spinning buttons with no way out of the
-    dialog except the Escape key, which is not discoverable and is unavailable to
-    anyone driving the page by pointer alone.
-
-    An anchor with no href is what Foundation's own close control is and what the
-    other dialogs here use, so the appearance is shared - but such an anchor is
-    not focusable and does not answer Enter or Space, which left this control
-    reachable by pointer only. role="button" and tabindex="0" put it in the tab
-    order with button semantics, and ng-keydown supplies the activation the
-    element does not perform for itself; see closeDownloadModalOnKey in
-    public/js/courseEditor/controllers/root.js.
-
-    ng-mousedown handles the focus side of a pointer dismissal, and mousedown is
-    where it belongs because it precedes the click Foundation closes on. Being
-    tabbable also made this control mouse-focusable, and Foundation hides the
-    dialog and marks it aria-hidden without blurring - so a pointer click left
-    the focused element inside an aria-hidden subtree, which Chrome refuses with
-    a console warning. It also clears focus left on another control in the
-    dialog, since pressing "Source Files" focuses it and dismissing afterwards
-    hid the dialog around a focused button. See closeDownloadModalOnPointer.
-  -->
-  <a class="close-reveal-modal" role="button" tabindex="0" aria-label="Close" ng-keydown="closeDownloadModalOnKey($event)" ng-mousedown="closeDownloadModalOnPointer($event)">&#215;</a>
   <h2><i class="fa fa-download"></i> {{ course.name }}</h2>
   <div class="row">
     <div class="small-12 columns">
@@ -850,8 +685,8 @@
   <form name="course-copy-name" ng-submit="copyCourse()">
     <div class="row">
       <div class="small-12 columns">
-        <label for="copy-course-name">Course name</label>
-        <input type="text" id="copy-course-name" name="course-name" ng-model="courseCopyName" focus-me="$root.focusMe" aria-label="Course name" autocomplete="off" />
+        <label>Course name</label>
+        <input type="text" name="course-name" ng-model="courseCopyName" focus-me="$root.focusMe" />
       </div>
     </div>
   </form>

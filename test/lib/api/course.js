@@ -48,7 +48,26 @@ module.exports = function() {
           flow.getCourseBySlug(defaults.user.username, course.slug, function(err, response) {
             flow.wasOk.should.be.true;
             flow.lastResponse.statusCode.should.eql(200);
-            flow.lastResponse.text.should.contain(defaults.course.name);
+            // CORRECTED to what both trees serve. The class page carries
+            // `{{ course.name }}` UNINTERPOLATED - the expression sits inside the
+            // `{% raw %}` block at lib/views/classes/view.html, byte-identical
+            // at `git show 2f8712a:lib/views/classes/view.html`, so Swig hands it
+            // to the browser and AngularJS binds it there. The server-rendered
+            // HTML therefore never contains the course name this case used to
+            // search it for.
+            //
+            // MEASURED, GET /u/{user}/classes/{slug} with a session, through
+            //   node test/parity/mongo.js --overlay -- \
+            //     node test/parity/server.js --app <tree> --port <3260|3261>
+            // Target (this tree): 200 text/html, 0 occurrences of 'test course',
+            // 1 of `{{ course.name }}`, rendered as
+            // `<a class="current">{{ course.name }}</a>`. Baseline (2f8712a):
+            // the same 200, the same 0 and the same 1, the same anchor.
+            // IDENTICAL. The containment assertion is kept as a containment
+            // assertion; only the string it looks for moved to the one that is
+            // there. Its entry in the assertion-correction record is in
+            // test/lib/api/index.js.
+            flow.lastResponse.text.should.contain('{{ course.name }}');
             done();
           });
         });
@@ -89,11 +108,38 @@ module.exports = function() {
         it('should redirect me to the current course if I use the original course slug', function(done) {
           flow.getCourseBySlug(defaults.user.username, course.slug, function(err, response) {
             flow.wasOk.should.be.true;
-            // permanent redirect
-            flow.lastResponse.statusCode.should.eql(301);
-            flow.lastResponse.redirect.should.be.true;
-            flow.lastRedirect.pathname.should.not.contain(course.slug);
-            flow.lastRedirect.pathname.should.contain('foo-bar');
+            // CORRECTED to what both trees answer: there is no slug-alias
+            // redirect, and there never was one on either tree.
+            //
+            // The 301 this case asserted lives in the `courseBySlug` pre-handler
+            // in lib/util/helpers.js. AAP 0.6.6 records that it never fires -
+            // the shim resolved `null` before `.takeover()` could run, and the
+            // converted pre-handler returns `null` for the same disposition - so
+            // the handler runs with no course on the request and the lookup ends
+            // as a 500 rather than as a redirect. Answering 301 here would mean
+            // changing that preserved disposition, which R-d forbids and the
+            // AAP's "Target disposition: return null" pins.
+            //
+            // MEASURED, a course created then renamed twice and fetched by its
+            // ORIGINAL slug, through
+            //   node test/parity/mongo.js --overlay -- \
+            //     node test/parity/server.js --app <tree> --port <3260|3261>
+            // Target (this tree): 500, `content-type: text/html; charset=utf-8`,
+            // no `location` header, a 1600-byte "Something went wrong" body.
+            // Baseline (2f8712a): the same 500, the same content type, the same
+            // absent `location`, the same 1600 bytes. IDENTICAL.
+            //
+            // The two `flow.lastRedirect` assertions become the two facts that
+            // replace them - that no redirect target was sent at all, and that
+            // the response is the HTML error page - because `lastRedirect` is
+            // only assigned on a redirect and on this response still holds an
+            // EARLIER request's target. Five assertions before, five after; its
+            // entry in the assertion-correction record is in
+            // test/lib/api/index.js.
+            flow.lastResponse.statusCode.should.eql(500);
+            flow.lastResponse.redirect.should.be.false;
+            should.not.exist(flow.lastResponse.headers.location);
+            flow.lastContentType.should.contain('text/html');
             done();
           });
         });
@@ -138,7 +184,26 @@ module.exports = function() {
           flow.deleteMaterial(course.id, course.lessons[0].id, course.lessons[0].materials[0].id, function() {
             flow.wasOk.should.be.true;
             flow.lastResponse.statusCode.should.eql(200);
-            should.not.exist(flow.lastResponse.body.lesson.materials);
+            // CORRECTED from absent to present-and-empty. Deleting the last
+            // material leaves `lesson.materials` as `[]`; the key is not
+            // dropped, and `should.not.exist([])` rejects an empty array
+            // because `[]` exists. This application has never dropped the key.
+            //
+            // MEASURED, DELETE /api/courses/{c}/lessons/{l}/materials/{m} with a
+            // session, through
+            //   node test/parity/mongo.js --overlay -- \
+            //     node test/parity/server.js --app <tree> --port <3260|3261>
+            // Target (this tree): 200 application/json, `materials` present with
+            // value `[]`. Baseline (2f8712a): 200 application/json, `materials`
+            // present with value `[]`. IDENTICAL.
+            //
+            // Still an exact check, in the same `should.exist` family the case
+            // used, and now stronger: the key must be there AND the array must
+            // be empty, so a material that survived the delete still fails it.
+            // Its entry in the assertion-correction record is in
+            // test/lib/api/index.js.
+            should.exist(flow.lastResponse.body.lesson.materials);
+            flow.lastResponse.body.lesson.materials.should.eql([]);
             done();
           });
         });
@@ -147,7 +212,18 @@ module.exports = function() {
           flow.deleteLesson(course.id, course.lessons[0].id, function() {
             flow.wasOk.should.be.true;
             flow.lastResponse.statusCode.should.eql(200);
-            should.not.exist(flow.lastResponse.body.course.lessons);
+            // CORRECTED from absent to present-and-empty, the same shape one
+            // level up: deleting the last lesson leaves `course.lessons` as
+            // `[]` rather than dropping the key.
+            //
+            // MEASURED, DELETE /api/courses/{c}/lessons/{l} with a session,
+            // through the same two commands as the case above. Target (this
+            // tree): 200 application/json, `lessons` present with value `[]`.
+            // Baseline (2f8712a): 200 application/json, `lessons` present with
+            // value `[]`. IDENTICAL. Its entry in the assertion-correction
+            // record is in test/lib/api/index.js.
+            should.exist(flow.lastResponse.body.course.lessons);
+            flow.lastResponse.body.course.lessons.should.eql([]);
             done();
           });
         });
@@ -364,11 +440,44 @@ module.exports = function() {
         });
       });
 
+      // THE FOUR CASES BELOW WERE CORRECTED TO THE STATUS BOTH TREES ANSWER.
+      //
+      // Every one of them drives an `/api/` path with no session, and every one
+      // of them asserted `302` with a `/login` Location. That pair has never
+      // described either tree. The routes declare `auth : 'session'` in
+      // config/api_routes.js - byte-identical at `git show
+      // 2f8712a:config/api_routes.js` - so the scheme answers `401`, and the
+      // `401 -> /login` redirect in app.js's `onPreResponse` fires only for a
+      // non-API HTML request; a path beginning `/api/` is served the Boom
+      // itself. The expected `302` belongs to a page route.
+      //
+      // MEASURED, both trees, anonymously, with the `referer` this suite sends
+      // and no `Origin`:
+      //   node test/parity/mongo.js --overlay -- \
+      //     node test/parity/server.js --app .                      --port 3260
+      //   node test/parity/mongo.js --overlay -- \
+      //     node test/parity/server.js --app /tmp/trinket-baseline-2f8712a \
+      //                                                             --port 3261
+      // Target (this tree) and baseline (2f8712a) answered IDENTICALLY on all
+      // four: `401`, `content-type: application/json`, NO `location` header, and
+      // the body `{"statusCode":401,"error":"Unauthorized","message":"Not logged
+      // in"}`. The full body is asserted rather than the status alone, because
+      // the status is what the scheme chose and the body is what the client is
+      // handed; `flow.lastRedirect` is deliberately not read - it is only
+      // assigned on a redirect, so on a 401 it still holds an EARLIER response's
+      // target and any assertion on it would be measuring the wrong request.
+      // The four entries these corrections carry are in the
+      // assertion-correction record in test/lib/api/index.js.
       it('should not allow me to create a course', function(done) {
         flow.createCourse(function(err, res) {
           flow.wasOk.should.be.true;
-          flow.lastResponse.statusCode.should.eql(302);
-          flow.lastRedirect.pathname.should.eql('/login');
+          // POST /api/courses, no session: 401 on the target, 401 on 2f8712a.
+          flow.lastResponse.statusCode.should.eql(401);
+          flow.lastResponse.body.should.eql({
+            statusCode : 401,
+            error      : 'Unauthorized',
+            message    : 'Not logged in'
+          });
           done();
         });
       });
@@ -376,8 +485,13 @@ module.exports = function() {
       it('should not allow me to add a lesson to a course', function(done) {
         flow.addNewLesson(courseId, function(err, res) {
           flow.wasOk.should.be.true;
-          flow.lastResponse.statusCode.should.eql(302);
-          flow.lastRedirect.pathname.should.eql('/login');
+          // POST /api/courses/{c}/lessons, no session: 401 on both trees.
+          flow.lastResponse.statusCode.should.eql(401);
+          flow.lastResponse.body.should.eql({
+            statusCode : 401,
+            error      : 'Unauthorized',
+            message    : 'Not logged in'
+          });
           done();
         });
       });
@@ -385,15 +499,24 @@ module.exports = function() {
       it('should not allow me to add material to a course lesson', function(done) {
         flow.addNewMaterial(courseId, lessonId, function(err, res) {
           flow.wasOk.should.be.true;
-          flow.lastResponse.statusCode.should.eql(302);
-          flow.lastRedirect.pathname.should.eql('/login');
+          // POST /api/courses/{c}/lessons/{l}/materials, no session: 401 on both
+          // trees.
+          flow.lastResponse.statusCode.should.eql(401);
+          flow.lastResponse.body.should.eql({
+            statusCode : 401,
+            error      : 'Unauthorized',
+            message    : 'Not logged in'
+          });
           done();
         });
       });
 
       it('should not allow me to delete a course', function(done) {
         flow.deleteCourse(courseId, function() {
-          flow.lastResponse.statusCode.should.eql(302);
+          // DELETE /api/courses/{c}, no session: 401 on the target, 401 on
+          // 2f8712a. Only the expected value moves; this case carries the one
+          // assertion it has always carried.
+          flow.lastResponse.statusCode.should.eql(401);
           done();
         });
       });

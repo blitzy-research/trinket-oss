@@ -20,7 +20,7 @@
 {% if outputOnly %}
   {% include "embed/default-toolbar.html" %}
 {% else %}
-<a class="edit-it menu-button item allow-original {{'' if toggleCode else 'show-for-small-only'}}" data-action="code.edit" title="Edit the code." aria-label="Code" role="button">
+<a class="edit-it menu-button item allow-original {{'' if toggleCode else 'show-for-small-only'}}" data-action="code.edit" title="Edit the code.">
   <i class="fa fa-pencil"></i>
   <label class="show-for-large-up">Code</label>
 </a>
@@ -30,10 +30,10 @@
    role="button" aria-label="Run Button" tabindex="0">
   <i class="fa {{'fa-play' if not runOption or runOption == 'run' else 'fa-terminal'}}"></i>
   <label class="show-for-large-up">{{'Run' if not runOption or runOption == 'run' else 'Console'}}</label>
-  <span class="highlight-on-focus" data-dropdown="run-options" data-options="align:bottom" role="button" tabindex="0" aria-label="More run options" aria-controls="run-options"></span>
+  <span data-dropdown="run-options" data-options="align:bottom" role="menu"></span>
 </a>
 <a class="check-it menu-button item allow-original {{'' if (draft and draft.settings.testsEnabled) or (not draft and trinket.settings.testsEnabled) else 'hide'}}"
-   data-action="code.check" title="Check your code." aria-label="Check" role="button" tabindex=0>
+   data-action="code.check" title="Check your code." tabindex=0>
   <i class="fa fa-check-circle"></i>
   <label class="show-for-large-up">Check</label>
 </a>
@@ -42,9 +42,9 @@
 
 {% block run_options %}
 {% if not outputOnly %}
-<ul id="run-options" class="f-dropdown" data-dropdown-content role="menu">
-  <li role="presentation"><a class="menu-button" data-action="code.run" data-button="run" aria-label="Run" role="menuitem"><i class="fa fa-play"></i>Run</a></li>
-  <li role="presentation"><a class="menu-button" data-action="code.console" data-button="console" aria-label="Console" role="menuitem"><i class="fa fa-terminal"></i>Console</a></li>
+<ul id="run-options" class="f-dropdown" data-dropdown-content>
+  <li><a class="menu-button" data-action="code.run" data-button="run"><i class="fa fa-play"></i>Run</a></li>
+  <li><a class="menu-button" data-action="code.console" data-button="console"><i class="fa fa-terminal"></i>Console</a></li>
 </ul>
 {% endif %}
 {% endblock %}
@@ -54,10 +54,7 @@
 {% endblock %}
 
 {% block embed_content %}
-  {# Spam honeypot: it must stay in the DOM for bots to find, but it is not a
-     field a person is asked to fill in, so it is hidden from assistive
-     technology instead of being reported as an unlabelled input. #}
-  <input id="honeypot" type='text' tabindex="-1" aria-hidden="true" autocomplete="off"/>
+  <input id="honeypot" type='text' tabindex="-1"/>
   <input id="start-value" type='hidden' value='{{start if start else "code"}}'/>
   <input id="runOption-value" type='hidden' value='{{runOption if runOption else "run"}}'/>
   <input id="runMode-value" type='hidden' value='{{"console" if runMode}}'/>
@@ -84,8 +81,7 @@
 
     <div id="outputTabs" class="{% if hideInstructions or (not isOwner and not trinket.description) %}hideInstructions{% endif %}">
       <div class="{% if not showInstructions %}active {% endif %}menu-button" id="codeOutputTab" data-action="output.view">Result</div>
-      {# A bare div is announced as static text and cannot be focused, so the tab carries a button role, a tab stop and a name; public/js/embed/embed.js forwards ENTER and SPACE to the same click handler. #}
-      <div class="{% if showInstructions %}active {% endif %}menu-button highlight-on-focus" id="instructionsTab" data-action="instructions.view" role="button" tabindex="0" aria-label="View instructions"><i class="fa fa-list"></i> Instructions</div>
+      <div class="{% if showInstructions %}active {% endif %}menu-button" id="instructionsTab" data-action="instructions.view"><i class="fa fa-list"></i> Instructions</div>
     </div>
 
     <div id="outputContainer" class="{% if hideInstructions or (not isOwner and not trinket.description) %}withoutTabs{% else %}withTabs{% endif %}">
@@ -97,7 +93,7 @@
 
       <div id="console-wrap" class="hide">
         <div id="console-output" aria-live="assertive" aria-label="Code Output"></div>
-        <a id="reset-output" title="clear output" aria-label="Clear Output" role="button"><i class="fa fa-ban"></i></a>
+        <a id="reset-output" title="clear output"><i class="fa fa-ban"></i></a>
       </div>
 
       {% include 'includes/unittest-wrap.html' %}

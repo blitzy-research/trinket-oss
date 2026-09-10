@@ -18,20 +18,20 @@
       </div>
       <div class="menu-right right">
         {% if prevPageHref %}
-        <a href="{{ prevPageHref }}" class="prev button small" aria-label="Previous Page">
+        <a href="{{ prevPageHref }}" class="prev button small">
           <i class="fa fa-angle-left"></i>
         </a>
         {% else %}
-        <a class="prev button small disabled" aria-label="Previous Page">
+        <a class="prev button small disabled">
           <i class="fa fa-angle-left"></i>
         </a>
         {% endif %}
         {% if nextPageHref %}
-        <a href="{{ nextPageHref }}" class="next button small" aria-label="Next Page">
+        <a href="{{ nextPageHref }}" class="next button small">
           <i class="fa fa-angle-right"></i>
         </a>
         {% else %}
-        <a class="next button small disabled" aria-label="Next Page">
+        <a class="next button small disabled">
           <i class="fa fa-angle-right"></i>
         </a>
         {% endif %}
@@ -53,17 +53,9 @@
               <ul class="outline-list materials">
                 {% for material in lesson.materials %}
                 {% set mIndex = loop.index0 %}
-                {% set isCurrent = lIndex == lessonIndex and mIndex == materialIndex %}
-                <li class="outline-list-item material {% if isCurrent %}current{% endif %}">
+                <li class="outline-list-item material {% if lIndex == lessonIndex and mIndex == materialIndex %}current{% endif %}">
                   <div class="material-title clearfix">
-                    {#
-                      The `current` class above styles this row with a solid fill
-                      and white text, which is the only cue to which page of the
-                      exported course you are reading. aria-current="page" puts
-                      the same fact in the accessibility tree, so the selected row
-                      is not conveyed by colour alone.
-                    #}
-                    <a href="{{ lesson.slug }}/{{ material.slug }}" class="material-name"{% if isCurrent %} aria-current="page"{% endif %}>{{ material.name }}</a>
+                    <a href="{{ lesson.slug }}/{{ material.slug }}" class="material-name">{{ material.name }}</a>
                   </div>
                 </li>
                 {% endfor %}

@@ -64,15 +64,6 @@ function initializePlugin(editor) {
     , previousToken   = {}
     , menuHandlers, latestCode, changeTimeout;
 
-  // The editor host re-registers its plugins whenever it builds an editor, so
-  // the same Ace instance can be handed here more than once. Each call binds
-  // its own change/mousemove/changeCursor listeners over a closure of its own,
-  // and every one of them publishes on the module-level event bus below — so a
-  // repeat call turns one caret movement into several identical token
-  // notifications, and the documentation fetches they trigger are duplicated.
-  // Bind once per editor.
-  if (editor.__trinketHintsInitialized) return;
-  editor.__trinketHintsInitialized = true;
 
   oneTimeTipInitialization();
 

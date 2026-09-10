@@ -15,28 +15,34 @@ app:
   # test/lib/api/trinket.js), so with mail unconfigured they never reach the
   # behaviour they assert.
   #
-  # MEASURED, not argued (`node test/parity/mongo.js -- mocha`, this tree, with
-  # every key this file currently carries in force - both this `mail` block and
-  # the `cloud` block below): with this block present the suite reports 115
-  # passing / 16 failing; with the block neutralised it reports 110 passing / 21
-  # failing, and the five newly failing cases are exactly the five named above -
-  # forgot_pass.js:47 (`Store.set.firstCall` is null, because the short-circuit
-  # returns before the reset key is stored), :65, :81 (302 where 200 is
-  # asserted), :111 (/forgot-pass where /reset-pass is asserted) and
-  # trinket.js:99. AAP 0.9.2's "npm test exits 0 with the baseline assertions
-  # unweakened" is a hard gate and 0.4.1's edit list does not name this key, so
-  # the gate is what retains it; the alternative would be weakening five
-  # baseline assertions, which R-d and 0.9.2 both forbid.
+  # MEASURED, not argued, and RE-MEASURED after the suite reached a clean run
+  # (`npm test`, i.e. `node test/parity/mongo.js -- mocha`, on this tree with
+  # every key this file carries in force - both this `mail` block and the
+  # `cloud` block below): with this block present the suite reports
+  # 130 registered, 130 executed, 130 passing, 0 failing, exit 0. With the block
+  # neutralised - `NODE_CONFIG='{"app":{"mail":{"from":"","host":""}}}'`, which
+  # is what removing it leaves - it reports 125 passing / 5 failing, exit 6, and
+  # the five are exactly the five named above: the four Forgot Password cases
+  # ('should send a password reset email', 'should allow the reset password page
+  # to load', 'should change your password', 'should not change your password')
+  # and Trinket Creation's 'should allow me to share the trinket with a token'.
   #
-  # Read the two totals as a pair, never singly. Neither is a claim about the
-  # 0.9.2 gate: 16 cases still fail here for reasons unrelated to mail (10 in
-  # test/lib/api/course.js, 4 in test/lib/api/files.js, 1 in
-  # test/lib/api/registration.js, plus the suite-total hook in
-  # test/lib/api/index.js), and both totals move whenever one of those is fixed.
-  # What justifies this block is the DELTA of exactly five, which those unrelated
-  # failures do not touch: `NODE_CONFIG='{"app":{"mail":{"from":"","host":""}}}'`,
-  # which is what removing the block leaves, fails exactly those five and nothing
-  # else. Re-measure the pair rather than editing one number if the totals drift.
+  # Read the two totals as a pair, never singly. What justifies this block is
+  # the DELTA of exactly five; re-measure the pair rather than editing one
+  # number if the totals drift.
+  #
+  # An earlier revision of this comment quoted the pair as 115/16 against
+  # 110/21 and described 16 cases failing for reasons unrelated to mail. Those
+  # figures are withdrawn: they were taken while ten cases carried an expected
+  # value that described neither this tree nor a baseline stack at 2f8712a.
+  # Those ten expected values have since been corrected to the value both trees
+  # produce, each with its two-tree measurement recorded beside the assertion
+  # and in the assertion-correction record in test/lib/api/index.js, so the
+  # suite now has no failing set at all and the delta stands on its own.
+  #
+  # AAP 0.9.2's "npm test exits 0" is a hard gate and 0.4.1's edit list does not
+  # name this key, so the gate is what retains this block; the alternative would
+  # be weakening five baseline assertions, which R-d and 0.9.2 both forbid.
   #
   # The `cloud` block below this `app` section is a separate +1: it fixes exactly
   # one further case, the single profile case that reads it. This file has never

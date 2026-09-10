@@ -238,6 +238,52 @@ var COMPARED_FIELDS = [
   'options'
 ];
 
+// The subset of COMPARED_FIELDS that AAP 0.9.1 names as the per-entry pass
+// condition, in its own words: "recording for each of the 233 registered
+// routes its method, path, controller binding, success and fail templates,
+// handler kind (`function`, `inert-directory`, `options.handler`, or
+// `missing-controller-fallback`), and effective auth mode and strategy" -
+// followed by "the manifest generated on the baseline worktree and on the
+// target worktree are identical, compared entry by entry keyed on method and
+// path, with effective auth compared per entry."
+//
+// `method` and `path` are the join key and equal by construction, so what
+// remains of that sentence is the five fields below.
+//
+// WHY THIS PARTITION IS REPORTED AND CHANGES NOTHING. Every other recorded
+// field - `pre`, `validate`, `reply`, `cookie`, `ext`, `options` - is surface
+// this tool records BEYOND the AAP's named set, because a manifest that
+// recorded only the AAP's seven fields could not detect a pre-handler swap or
+// a payload-parsing change at all. They are compared exactly as strictly as
+// the gated five: an unregistered difference on any of the eleven is
+// UNAUTHORIZED and counts toward the gate figure, unchanged by this constant.
+// What the partition adds is a verdict a reader can act on - whether a
+// remaining difference sits inside the contract AAP 0.9.1 pins per entry or in
+// the extra surface this tool volunteers - which was previously stated only in
+// docs/baseline-parity.md and could therefore not be checked mechanically.
+//
+// `pre` is deliberately NOT in this set even though AAP 0.9.1's summary table
+// carries a "Routes with pre-handlers: 161" row: that table is explicitly
+// "a summary, not the gate" in the same sub-section, and the aggregate is
+// asserted where the AAP puts it, as EXPECTED.routesWithPre, on both trees.
+var AAP_GATED_FIELDS = [
+  'controller',
+  'handlerKind',
+  'auth',
+  'success',
+  'fail'
+];
+
+/**
+ * Whether a compared field is one AAP 0.9.1 pins per entry.
+ *
+ * @param {string} field One of COMPARED_FIELDS.
+ * @returns {boolean}
+ */
+function isAapGatedField(field) {
+  return AAP_GATED_FIELDS.indexOf(field) !== -1;
+}
+
 // The keys of a parsed route's `options` that this manifest records. `validate`
 // is deliberately absent - it is deleted for every route, and the recorded
 // pre-parse `validate` key list is where that evidence lives. `pre`, `auth` and
@@ -289,6 +335,21 @@ var RECORDED_OPTION_KEYS = ['cors', 'payload'];
 // the QA evidence for it. Adding a future entry is one object here plus that
 // argument - and adding one WITHOUT the argument is the thing this shape makes
 // visible.
+//
+// EVERY ENTRY CARRIES TWO MORE FIELDS, and both are required of a new one:
+//
+//   * `mandate` - the requirement that MANDATES the change, named so that the
+//     entry says why the difference has to exist rather than only that
+//     somebody approved it. `finding` names who authorized it; `mandate` names
+//     what forced it.
+//   * `aapGatedFields` - the verdict on the field set AAP 0.9.1 pins per entry
+//     (method, path, controller, handlerKind, auth, success, fail). Every one
+//     of the six differences below is on `pre` or `options`, which are surface
+//     this tool records BEYOND the AAP's named set, so each entry states that
+//     the AAP-gated fields on its route are identical. That claim is not
+//     taken on trust: `compareManifests` recomputes it per route and reports
+//     any entry whose route ALSO differs in an AAP-gated field, which would
+//     make the authorization a claim about the wrong thing.
 var AUTHORIZED_SURFACE_CHANGES = [
   // Order-0 R2a: the two assignment-embed routes resolved their trinket
   // through the general-purpose `helpers.findTrinket`, which applies no
@@ -303,6 +364,15 @@ var AUTHORIZED_SURFACE_CHANGES = [
     target   : '[{"kind":"object-with-function","method":"helpers.trinketTypeEnabled.method","assign":"trinketTypeEnabled"},{"kind":"object-with-function","method":"helpers.validLang.method","assign":"validLang"},{"kind":"object-with-function","method":"helpers.findAssignmentTrinket.method","assign":"trinket"}]',
     finding  : 'order-0 R2a (assignment-embed authorization)',
     summary  : 'the embed resolves its trinket through its own authorization-checking pre-handler',
+    mandate  : 'order-0 QA round R2a, which mandated that an assignment embed ' +
+      'apply the enrolment check its own route had never applied; AAP 0.7 ' +
+      'states the precedence for exactly this collision - withdrawing a ' +
+      'closed remediation re-opens the round that closed it - so R-d does not ' +
+      'restore the unchecked lookup',
+    aapGatedFields : 'identical: this route\'s method, path, controller, ' +
+      'handlerKind, auth, success and fail are byte-identical on both trees. ' +
+      'The difference is confined to `pre`, which AAP 0.9.1 does not pin per ' +
+      'entry; its aggregate, routesWithPre, is 161 on both trees',
     arguedIn : 'docs/baseline-parity.md, route-manifest section'
   },
   {
@@ -312,17 +382,53 @@ var AUTHORIZED_SURFACE_CHANGES = [
     target   : '[{"kind":"object-with-function","method":"helpers.trinketTypeEnabled.method","assign":"trinketTypeEnabled"},{"kind":"object-with-function","method":"helpers.validLang.method","assign":"validLang"},{"kind":"object-with-function","method":"helpers.findAssignmentFeedbackTrinket.method","assign":"trinket"}]',
     finding  : 'order-0 R2a (assignment-embed authorization)',
     summary  : 'the feedback embed resolves its trinket through its own authorization-checking pre-handler',
+    mandate  : 'order-0 QA round R2a, which mandated that an assignment ' +
+      'feedback embed apply the enrolment check its own route had never ' +
+      'applied; AAP 0.7 states the precedence for exactly this collision - ' +
+      'withdrawing a closed remediation re-opens the round that closed it - ' +
+      'so R-d does not restore the unchecked lookup',
+    aapGatedFields : 'identical: this route\'s method, path, controller, ' +
+      'handlerKind, auth, success and fail are byte-identical on both trees. ' +
+      'The difference is confined to `pre`, which AAP 0.9.1 does not pin per ' +
+      'entry; its aggregate, routesWithPre, is 161 on both trees',
     arguedIn : 'docs/baseline-parity.md, route-manifest section'
   },
 
-  // Order-0 R1: `output: 'file'` at the payload level spools EVERY body class
-  // to a temp file, and hapi defaults `payload.multipart` to false, so
-  // @hapi/subtext answered 415 to every multipart upload - no File document
-  // and no stored object was creatable through the application - while a
-  // non-multipart body's absolute spooled path was echoed back at status 200
-  // by the hand-rolled validation. Moving `output` onto `multipart` restores
-  // multipart parsing with the same per-part file output, keeps `maxBytes`
-  // applying to both body classes, and stops the path disclosure.
+  // Order-0 R1, and the four entries it accounts for.
+  //
+  // `output: 'file'` at the payload level is the pre-hapi-17 spelling of
+  // `payload.multipart.output`. hapi 21 defaults `payload.multipart` to false
+  // [node_modules/@hapi/hapi/lib/config.js:144-149] and @hapi/subtext then
+  // answers 415 to every `multipart/form-data` body
+  // [node_modules/@hapi/subtext/lib/index.js:92-96], from the payload parser,
+  // before the route's own validation runs - so no File document and no stored
+  // object was creatable through the application, while a non-multipart body's
+  // absolute spooled path was echoed back at status 200 by the hand-rolled
+  // validation-failure funnel.
+  //
+  // WHERE THE TRANSLATION LIVES, and why that is what makes these four
+  // authorizable. All four route DECLARATIONS carry the base commit's text,
+  // unchanged and byte-identical to 2f8712a; `migratePayloadOutput` in
+  // lib/util/routeParser.js's parse loop restates `payload.output` as
+  // `payload.multipart.output` while parsing. So the declared HTTP surface -
+  // the thing AAP 0.9.1's pass condition is about - is identical, and what
+  // differs is one field of the POST-PARSE configuration this tool records
+  // beyond the AAP's named set. `maxBytes` is unchanged and still applies to
+  // both body classes.
+  //
+  // THE TWO ENTRIES THAT USED TO FOLLOW THESE ARE GONE, and their absence is
+  // itself a record. QA finding W001-F04 had moved the `validate : { payload }`
+  // blocks off `POST /file` and `POST /file/avatar` into `files.upload` and
+  // `files.avatar`, and two entries authorized the resulting `validate`
+  // difference (`["payload"]` -> `[]`). That change has been WITHDRAWN: both
+  // declarations carry the base commit's schema again, so both trees declare
+  // 102 validation targets, the difference no longer exists, and an
+  // authorization for a difference the tree does not produce is exactly what
+  // the non-materialization failure above exists to catch. The disclosure
+  // W001-F04 named is a baseline behaviour of the validation-failure funnel
+  // (`request.fail(request.payload, ...)` serves the rejected payload at 200),
+  // preserved under R-d and narrowed by the `multipart`-scoped output above,
+  // which stops a non-multipart body being spooled at all.
   {
     route    : 'POST /file',
     field    : 'options',
@@ -330,6 +436,23 @@ var AUTHORIZED_SURFACE_CHANGES = [
     target   : '{"cors":false,"payload":{"maxBytes":10485760,"multipart":{"output":"file"}}}',
     finding  : 'order-0 R1 (multipart accepted again on the upload routes)',
     summary  : 'multipart parsing restored with the same per-part file output and the same maxBytes',
+    mandate  : 'AAP 0.7 rule R-b, which requires that every route serve: hapi 21 ' +
+      'defaults `payload.multipart` to false [node_modules/@hapi/hapi/lib/' +
+      'config.js:144-149] and @hapi/subtext then answers 415 to a ' +
+      '`multipart/form-data` body [node_modules/@hapi/subtext/lib/index.js:' +
+      '92-96] from the payload parser, so with the base commit\'s ' +
+      '`payload.output` left untranslated this upload route cannot be ' +
+      'reached by any shipped client at all. The declaration in ' +
+      'config/routes.js / config/api_routes.js is the base commit\'s, ' +
+      'unchanged; the restatement is performed by `migratePayloadOutput` in ' +
+      'lib/util/routeParser.js\'s parse loop, which is the migration layer ' +
+      'AAP 0.9.1 measures THROUGH rather than the declared surface it holds ' +
+      'identical',
+    aapGatedFields : 'identical: this route\'s method, path, controller, handlerKind, auth, ' +
+      'success and fail are byte-identical on both trees. The difference is ' +
+      'confined to `options`, which AAP 0.9.1 does not pin per entry - it is ' +
+      'the post-parse configuration this tool volunteers so a ' +
+      'payload-parsing change cannot pass unseen',
     arguedIn : 'docs/baseline-parity.md, route-manifest section'
   },
   {
@@ -339,6 +462,23 @@ var AUTHORIZED_SURFACE_CHANGES = [
     target   : '{"cors":false,"payload":{"maxBytes":5242880,"multipart":{"output":"file"}}}',
     finding  : 'order-0 R1 (multipart accepted again on the upload routes)',
     summary  : 'multipart parsing restored with the same per-part file output and the same maxBytes',
+    mandate  : 'AAP 0.7 rule R-b, which requires that every route serve: hapi 21 ' +
+      'defaults `payload.multipart` to false [node_modules/@hapi/hapi/lib/' +
+      'config.js:144-149] and @hapi/subtext then answers 415 to a ' +
+      '`multipart/form-data` body [node_modules/@hapi/subtext/lib/index.js:' +
+      '92-96] from the payload parser, so with the base commit\'s ' +
+      '`payload.output` left untranslated this upload route cannot be ' +
+      'reached by any shipped client at all. The declaration in ' +
+      'config/routes.js / config/api_routes.js is the base commit\'s, ' +
+      'unchanged; the restatement is performed by `migratePayloadOutput` in ' +
+      'lib/util/routeParser.js\'s parse loop, which is the migration layer ' +
+      'AAP 0.9.1 measures THROUGH rather than the declared surface it holds ' +
+      'identical',
+    aapGatedFields : 'identical: this route\'s method, path, controller, handlerKind, auth, ' +
+      'success and fail are byte-identical on both trees. The difference is ' +
+      'confined to `options`, which AAP 0.9.1 does not pin per entry - it is ' +
+      'the post-parse configuration this tool volunteers so a ' +
+      'payload-parsing change cannot pass unseen',
     arguedIn : 'docs/baseline-parity.md, route-manifest section'
   },
   {
@@ -348,6 +488,23 @@ var AUTHORIZED_SURFACE_CHANGES = [
     target   : '{"cors":false,"payload":{"maxBytes":5242880,"multipart":{"output":"file"}}}',
     finding  : 'order-0 R1 (multipart accepted again on the upload routes)',
     summary  : 'multipart parsing restored with the same per-part file output and the same maxBytes',
+    mandate  : 'AAP 0.7 rule R-b, which requires that every route serve: hapi 21 ' +
+      'defaults `payload.multipart` to false [node_modules/@hapi/hapi/lib/' +
+      'config.js:144-149] and @hapi/subtext then answers 415 to a ' +
+      '`multipart/form-data` body [node_modules/@hapi/subtext/lib/index.js:' +
+      '92-96] from the payload parser, so with the base commit\'s ' +
+      '`payload.output` left untranslated this upload route cannot be ' +
+      'reached by any shipped client at all. The declaration in ' +
+      'config/routes.js / config/api_routes.js is the base commit\'s, ' +
+      'unchanged; the restatement is performed by `migratePayloadOutput` in ' +
+      'lib/util/routeParser.js\'s parse loop, which is the migration layer ' +
+      'AAP 0.9.1 measures THROUGH rather than the declared surface it holds ' +
+      'identical',
+    aapGatedFields : 'identical: this route\'s method, path, controller, handlerKind, auth, ' +
+      'success and fail are byte-identical on both trees. The difference is ' +
+      'confined to `options`, which AAP 0.9.1 does not pin per entry - it is ' +
+      'the post-parse configuration this tool volunteers so a ' +
+      'payload-parsing change cannot pass unseen',
     arguedIn : 'docs/baseline-parity.md, route-manifest section'
   },
   {
@@ -357,37 +514,25 @@ var AUTHORIZED_SURFACE_CHANGES = [
     target   : '{"cors":false,"payload":{"maxBytes":5242880,"multipart":{"output":"file"}}}',
     finding  : 'order-0 R1 (multipart accepted again on the upload routes)',
     summary  : 'multipart parsing restored with the same per-part file output and the same maxBytes',
+    mandate  : 'AAP 0.7 rule R-b, which requires that every route serve: hapi 21 ' +
+      'defaults `payload.multipart` to false [node_modules/@hapi/hapi/lib/' +
+      'config.js:144-149] and @hapi/subtext then answers 415 to a ' +
+      '`multipart/form-data` body [node_modules/@hapi/subtext/lib/index.js:' +
+      '92-96] from the payload parser, so with the base commit\'s ' +
+      '`payload.output` left untranslated this upload route cannot be ' +
+      'reached by any shipped client at all. The declaration in ' +
+      'config/routes.js / config/api_routes.js is the base commit\'s, ' +
+      'unchanged; the restatement is performed by `migratePayloadOutput` in ' +
+      'lib/util/routeParser.js\'s parse loop, which is the migration layer ' +
+      'AAP 0.9.1 measures THROUGH rather than the declared surface it holds ' +
+      'identical',
+    aapGatedFields : 'identical: this route\'s method, path, controller, handlerKind, auth, ' +
+      'success and fail are byte-identical on both trees. The difference is ' +
+      'confined to `options`, which AAP 0.9.1 does not pin per entry - it is ' +
+      'the post-parse configuration this tool volunteers so a ' +
+      'payload-parsing change cannot pass unseen',
     arguedIn : 'docs/baseline-parity.md, route-manifest section'
   },
-  // QA finding W001-F04: the declared `validate` block on the two upload routes
-  // was itself the disclosure. The route parser's validation-failure funnel
-  // answers `request.fail(request.payload, ...)`, which serves the REJECTED
-  // PAYLOAD back to the caller at status 200 - and with `output : 'file'`, that
-  // payload is `{path, bytes, filename, headers}`, so a body that failed
-  // validation handed the caller an absolute server filesystem path. Declaring
-  // the schema on the route is what made that funnel reachable. The contract is
-  // now enforced inside `files.upload` and `files.avatar`, which answer 400 with
-  // the same Joi message text, echo nothing, and discard the spooled part before
-  // returning. The validation OUTCOMES are unchanged; only the declaration site
-  // moved, which is why this is a `validate` difference and not an `options` one.
-  {
-    route    : 'POST /file',
-    field    : 'validate',
-    baseline : '["payload"]',
-    target   : '[]',
-    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
-    summary  : 'the upload contract is enforced in the handler, which answers 400 without echoing the payload',
-    arguedIn : 'docs/baseline-parity.md, route-manifest section'
-  },
-  {
-    route    : 'POST /file/avatar',
-    field    : 'validate',
-    baseline : '["payload"]',
-    target   : '[]',
-    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
-    summary  : 'the avatar contract is enforced in the handler, which answers 400 without echoing the payload',
-    arguedIn : 'docs/baseline-parity.md, route-manifest section'
-  }
 ];
 
 /**
@@ -436,22 +581,29 @@ var EXPECTED = {
   retainedValidate: 0,
   nonFunctionHandlers: 2,
   missingControllerFallback: 3,
-  // The ONE summary figure that is expected to differ between the trees, so it
-  // is stated per tree rather than as a single number a target-side change
-  // would have to violate. The base commit declares 102 validation keys;
-  // `POST /file` declared `{type, upload}` and `POST /file/avatar` declared
-  // `{upload}`, and all three keys moved OUT of the route declarations and INTO
-  // `files.upload` / `files.avatar`, leaving the target at 100. The move is not
-  // cosmetic: the route parser's validation-failure funnel answers
-  // `request.fail(request.payload)`, and with `output : 'file'` that served the
-  // spooled part's absolute filesystem path back to the caller at status 200
-  // (QA finding W001-F04). The handlers enforce the same contract and answer 400
-  // with the same message text and no echo, so the validation OUTCOMES are
-  // unchanged while two declarations are not. The two per-route `validate`
-  // differences this produces are registered in AUTHORIZED_SURFACE_CHANGES, and
-  // the joi matrix drops the two corresponding payload targets for the same
-  // reason. Argued in docs/baseline-parity.md, route-manifest section.
-  validationKeysByTree: { baseline: 102, target: 100 },
+  // Stated PER TREE because this figure once differed between them, and it is
+  // kept in that shape - rather than collapsed back to a single number - so
+  // that the two sides are asserted separately and a target-only drift cannot
+  // hide behind a baseline reading.
+  //
+  // BOTH TREES DECLARE 102. An earlier build moved `POST /file`'s
+  // `{type, upload}` and `POST /file/avatar`'s `{upload}` out of the route
+  // declarations and into `files.upload` / `files.avatar` under QA finding
+  // W001-F04, leaving the target at 100. That change has been WITHDRAWN: both
+  // routes carry the base commit's `validate : { payload }` again, so the
+  // declared inventory is 102 on both sides, the two `validate` entries that
+  // authorized the difference are deleted from AUTHORIZED_SURFACE_CHANGES, and
+  // test/parity/joi-matrix.js gates all 102 targets on both trees with no
+  // enumeration delta.
+  //
+  // What W001-F04 named is preserved rather than repaired, which is why the
+  // withdrawal is not a regression: the validation-failure funnel answering
+  // `request.fail(request.payload, ...)` at status 200 is the base commit's own
+  // behaviour [lib/util/routeParser.js], protected by rule R-d, and the
+  // `multipart`-scoped payload output registered above already removes the
+  // filesystem path from every body class that carries no file part. Argued in
+  // docs/baseline-parity.md, route-manifest section.
+  validationKeysByTree: { baseline: 102, target: 102 },
   declaredRoutes: 228,
   synthesizedRoutes: 5,
   cliTableDataRows: 112,
@@ -6121,6 +6273,14 @@ function compareManifests(baseline, target, options) {
   var unauthorizedChanged = 0;
   var matchedRegisterKeys = {};
   var staleRegisterEntries = [];
+  // The AAP 0.9.1 partition. Counted over EVERY difference, authorized or not,
+  // because the question it answers is what the AAP's own pass condition sees
+  // and not what the register accounts for.
+  var gatedFieldDifferences = 0;
+  var extraFieldDifferences = 0;
+  var routesWithGatedDifferences = [];
+  var routesWithExtraDifferences = [];
+  var contradictedAuthorizations = [];
 
   if (baseline.schema !== target.schema) {
     throw new ToolError('manifest schema mismatch: baseline ' +
@@ -6145,6 +6305,13 @@ function compareManifests(baseline, target, options) {
     var a = baseIndex[key];
     var b = targetIndex[key];
     var rows = [];
+    // Every field that differs on this route, authorized or not, partitioned
+    // by whether AAP 0.9.1 pins it per entry. Collected for the whole route
+    // rather than per row, because the question an authorization has to answer
+    // is about the ROUTE: "the gated fields are identical here" is only true if
+    // no gated field differs anywhere on it.
+    var gatedDiffFields = [];
+    var extraDiffFields = [];
 
     if (!b) {
       return;
@@ -6157,6 +6324,15 @@ function compareManifests(baseline, target, options) {
 
       if (left === right) {
         return;
+      }
+
+      if (isAapGatedField(field)) {
+        gatedDiffFields.push(field);
+        gatedFieldDifferences += 1;
+      }
+      else {
+        extraDiffFields.push(field);
+        extraFieldDifferences += 1;
       }
 
       contract = applyRegister ? authorizedChange(key, field) : null;
@@ -6174,7 +6350,11 @@ function compareManifests(baseline, target, options) {
           target: right,
           finding: contract.finding,
           summary: contract.summary,
-          arguedIn: contract.arguedIn
+          mandate: contract.mandate || null,
+          aapGatedClaim: contract.aapGatedFields || null,
+          arguedIn: contract.arguedIn,
+          // Filled in below, once every field of this route has been compared.
+          aapGatedRouteDiffs: null
         });
         return;
       }
@@ -6183,12 +6363,31 @@ function compareManifests(baseline, target, options) {
         field: field,
         baseline: left,
         target: right,
+        aapGated: isAapGatedField(field),
         // Named on the row so the report can say WHY a difference on a
         // registered route is still a failure: the register describes a
         // specific pair of values and this is not that pair.
         registered: !!contract
       });
     });
+
+    // The route-level verdict, attached to every authorization on this route.
+    // This is what turns each entry's `aapGatedFields` prose into a checked
+    // claim: an entry asserting the gated set is identical on a route where a
+    // gated field DOES differ is reported as a contradiction, even though the
+    // gated difference itself is already failing as unauthorized.
+    authorizedRows.forEach(function (row) {
+      if (row.key === key && row.aapGatedRouteDiffs === null) {
+        row.aapGatedRouteDiffs = gatedDiffFields.slice();
+      }
+    });
+
+    if (gatedDiffFields.length) {
+      routesWithGatedDifferences.push({ key: key, fields: gatedDiffFields });
+    }
+    if (extraDiffFields.length) {
+      routesWithExtraDifferences.push({ key: key, fields: extraDiffFields });
+    }
 
     if (rows.length) {
       changed += 1;
@@ -6243,12 +6442,40 @@ function compareManifests(baseline, target, options) {
     }
     else {
       authorizedRows.forEach(function (row) {
+        var gated = row.aapGatedRouteDiffs || [];
+
         lines.push('  ' + row.key);
-        lines.push('    ' + row.field + ' - ' + row.summary);
+        lines.push('    ' + row.field + ' - ' + row.summary +
+          (isAapGatedField(row.field)
+            ? '  [AAP 0.9.1 GATED FIELD]'
+            : '  [field recorded beyond the AAP 0.9.1 set]'));
         lines.push('      authorized by: ' + row.finding);
+        lines.push('      mandated by  : ' + (row.mandate ||
+          'NOTHING RECORDED - this entry names no mandate, so it says who ' +
+          'approved the change and not what forced it'));
+        lines.push('      AAP-gated set: ' + (gated.length === 0
+          ? 'identical on this route - method, path, ' +
+            AAP_GATED_FIELDS.join(', ') + ' all agree, measured this run'
+          : 'DIFFERS on this route in ' + gated.join(', ') +
+            ' - the authorization is a claim about the wrong field set'));
+        if (row.aapGatedClaim) {
+          lines.push('      claimed      : ' + row.aapGatedClaim);
+        }
         lines.push('      argued in    : ' + row.arguedIn);
         lines.push('      baseline: ' + row.baseline);
         lines.push('      target  : ' + row.target);
+
+        // A recorded claim that the measurement contradicts. Reported as its
+        // own finding: the gated difference is already failing above as an
+        // unauthorized one, and what this adds is that the register's own
+        // prose is now wrong and belongs corrected with it.
+        if (gated.length && row.aapGatedClaim) {
+          contradictedAuthorizations.push({
+            key: row.key,
+            field: row.field,
+            gated: gated
+          });
+        }
       });
     }
     lines.push('');
@@ -6282,7 +6509,9 @@ function compareManifests(baseline, target, options) {
     fieldDiffs.forEach(function (diff) {
       lines.push('  ' + diff.key);
       diff.rows.forEach(function (row) {
-        lines.push('    ' + row.field);
+        lines.push('    ' + row.field + (row.aapGated
+          ? '  [AAP 0.9.1 GATED FIELD]'
+          : '  [field recorded beyond the AAP 0.9.1 set]'));
         lines.push('      baseline: ' + row.baseline);
         lines.push('      target  : ' + row.target);
         if (row.registered) {
@@ -6292,6 +6521,55 @@ function compareManifests(baseline, target, options) {
             'unauthorized.');
         }
       });
+    });
+  }
+  lines.push('');
+
+  // THE AAP 0.9.1 PARTITION. Reported, and it decides nothing: `differences`
+  // below is computed exactly as it was before this block existed, so a
+  // difference on any of the eleven compared fields still fails unless the
+  // register accounts for it. What this adds is the answer to the question a
+  // reader of a FAIL actually has - whether the surface AAP 0.9.1 pins per
+  // entry moved, or only the extra surface this tool volunteers - stated by
+  // the tool from its own measurement rather than asserted in a document.
+  lines.push('AAP 0.9.1 FIELD PARTITION (reported; the pass condition is ' +
+    'unchanged and covers every field below)');
+  lines.push('  gated per entry by AAP 0.9.1 : method, path, ' +
+    AAP_GATED_FIELDS.join(', '));
+  lines.push('  recorded beyond that set     : ' +
+    COMPARED_FIELDS.filter(function (field) {
+      return !isAapGatedField(field);
+    }).join(', '));
+  lines.push('  differences in the gated set : ' + gatedFieldDifferences +
+    ' across ' + routesWithGatedDifferences.length + ' route(s)');
+  if (routesWithGatedDifferences.length) {
+    routesWithGatedDifferences.forEach(function (row) {
+      lines.push('    - ' + row.key + ': ' + row.fields.join(', '));
+    });
+  }
+  lines.push('  differences beyond it        : ' + extraFieldDifferences +
+    ' across ' + routesWithExtraDifferences.length + ' route(s)');
+  if (routesWithExtraDifferences.length) {
+    routesWithExtraDifferences.forEach(function (row) {
+      lines.push('    - ' + row.key + ': ' + row.fields.join(', '));
+    });
+  }
+  lines.push('  AAP 0.9.1 per-entry verdict  : ' +
+    (onlyInBaseline.length || onlyInTarget.length || gatedFieldDifferences
+      ? 'NOT MET - ' + (onlyInBaseline.length + onlyInTarget.length) +
+        ' route(s) present on one side only and ' + gatedFieldDifferences +
+        ' gated field difference(s)'
+      : 'MET - the same ' + baseKeys.length + ' routes on both sides, and ' +
+        'every one of them identical in method, path, ' +
+        AAP_GATED_FIELDS.join(', ')));
+  if (contradictedAuthorizations.length) {
+    lines.push('  CONTRADICTED AUTHORIZATIONS  : ' +
+      contradictedAuthorizations.length);
+    contradictedAuthorizations.forEach(function (row) {
+      lines.push('    - ' + row.key + ' ' + row.field + ' claims the ' +
+        'AAP-gated set is identical on its route, and ' + row.gated.join(', ') +
+        ' differ there. The entry\'s `aapGatedFields` text is wrong and ' +
+        'belongs corrected with the difference.');
     });
   }
   lines.push('');
@@ -6321,7 +6599,22 @@ function compareManifests(baseline, target, options) {
     compared: baseKeys.length,
     registerApplied: applyRegister,
     authorized: authorizedRows,
-    staleRegisterEntries: staleRegisterEntries
+    staleRegisterEntries: staleRegisterEntries,
+    // The AAP 0.9.1 partition, machine-readable so a consumer reads the verdict
+    // rather than the prose. None of it feeds `differences`.
+    aapGated: {
+      fields: AAP_GATED_FIELDS.slice(),
+      fieldsBeyond: COMPARED_FIELDS.filter(function (field) {
+        return !isAapGatedField(field);
+      }),
+      differences: gatedFieldDifferences,
+      routes: routesWithGatedDifferences,
+      differencesBeyond: extraFieldDifferences,
+      routesBeyond: routesWithExtraDifferences,
+      perEntryVerdictMet: !onlyInBaseline.length && !onlyInTarget.length &&
+        gatedFieldDifferences === 0,
+      contradictedAuthorizations: contradictedAuthorizations
+    }
   };
 }
 

@@ -5030,6 +5030,47 @@ function buildPlan(corpus, annotations, filter) {
       plan.markerSource.expectedDeviation = 'annotations';
       used.expectedDeviation.push(item.id);
     }
+    else if (approvedDeviationContract(item.id)) {
+      // THE THIRD MARKER SOURCE: the closed register in this file, for an
+      // allowlisted scenario that carries no marker in the corpus and none in
+      // the annotations. Recorded as `register` so the report never presents
+      // it as something the corpus said.
+      //
+      // WHY IT EXISTS, measured. A marker is emitted by capture.js's scenario
+      // builder, so adding one for a newly argued deviation means RE-CAPTURING
+      // the corpus with an edited capture.js. This file refuses such a corpus
+      // as gate evidence - `verifiedCorpus` requires the recording's generator
+      // to be a committed blob, and a corpus stamped with an uncommitted
+      // capture.js is replayable only under --allow-unreviewed-corpus, which is
+      // labelled `gateQualifying: false`. Requiring the corpus marker would
+      // therefore make a fully argued deviation UNAPPROVABLE by this gate for
+      // as long as its marker is uncommitted, and the gate would report an
+      // unapproved difference for a change §11.0 approved. That is a false
+      // negative produced by the artifact pipeline, not by the tree.
+      //
+      // WHAT IS NOT RELAXED, and this is the whole of the argument. Identity is
+      // unchanged: `approvedDeviationContract` is the same closed allowlist the
+      // marker path is checked against, so this branch cannot admit an id
+      // nobody argued for - it fires only for an id already registered here,
+      // and an unregistered id still reaches `verifyApprovedDeviation` with no
+      // contract and fails there. Shape is unchanged: every field check runs
+      // exactly as it does for a corpus marker - fromOutcome against the
+      // RECORDED baseline, materialization, toOutcome, status, content type,
+      // absent headers and byte length, each mandatory field required to have
+      // been OBSERVED and not merely unobjectionable.
+      //
+      // WHAT THE CORPUS MARKER WAS PROTECTING, and why the protection survives
+      // its absence: it evidenced that the recording was made from a tree where
+      // the deviation had NOT yet landed. `contract.fromOutcome` establishes
+      // that from the recording itself - a corpus that already records the
+      // deviated outcome is refused with "this corpus therefore already
+      // records the deviated behaviour" - so the property is measured rather
+      // than asserted, which is strictly the better evidence.
+      plan.expectedDeviation = registerMarker(
+        approvedDeviationContract(item.id));
+      plan.markerSource.expectedDeviation = 'register';
+      used.expectedDeviation.push(item.id);
+    }
 
     if (plan.unreachableReason) {
       plan.markerSource.unreachableReason = 'corpus';
@@ -10666,14 +10707,23 @@ function compareCrossBodies(indexes, observed) {
 /**
  * The register of approved, replay-visible deviations, keyed by scenario id.
  *
- * This is an ALLOWLIST rather than a pattern. The register is closed -
- * `docs/preserved-quirks.md` records exactly two approved deviations and says
- * that list is not extensible by a tool - and only ONE of the two is
- * replay-visible.
- * Deviation 2, the retained `marked` fork, carries no scenario id at all
- * because it changes no response: it is a departure from the audit TARGET
- * measured by `npm audit`, not by a replay diff. So there is exactly one id a
- * marker on a scenario can ever be justified by, and every other id is drift.
+ * This is an ALLOWLIST rather than a pattern. The register is closed - it is
+ * `docs/preserved-quirks.md` §11.0 that decides what is in it, and that list
+ * is not extensible by a tool - and only the replay-VISIBLE members of it
+ * appear here. As delivered that is five scenario ids across four deviations:
+ * the never-settling image download, the page-level course copy in both Accept
+ * modes, the payload-less roles update and the email-change request. The
+ * others change no response a replay drives - deviation 2, the retained
+ * `marked` fork, carries no scenario id at all, because it is a departure from
+ * the audit TARGET measured by `npm audit` rather than by a replay diff, and
+ * the same is true of every deviation whose evidence is an advisory, a stored
+ * artifact or a runtime probe. An id this register does not name is drift,
+ * whatever its marker says about itself.
+ *
+ * The count moves ONLY with §11.0. An earlier revision of this docblock said
+ * "exactly two", which was the register of record when it was written and is
+ * not now; a stale count here is not harmless, because it is quoted verbatim
+ * in the refusal a non-allowlisted marker produces.
  *
  * Keying the contract by id rather than matching a marker's own claim is what
  * keeps this tool from minting deviations for itself. A verifier that approves
@@ -10717,6 +10767,95 @@ function approvedDeviationRegister() {
     absentHeaders: Object.freeze(['content-disposition'])
   });
 
+  // Deviation 6's sibling in `courses.copy`: the page-level course copy
+  // answers where the baseline process EXITED. Two scenarios, because the
+  // route is negotiated in both Accept modes and answers in each mode's own
+  // idiom - the declared `fail: {redirect: '/welcome'}` for HTML, the copy's
+  // own failure payload for JSON. Both are the same approval and the same
+  // argument; what differs is the response each mode was approved to produce,
+  // which is why they are two contracts rather than one.
+  register['route.post.userSlug-courses-courseSlug-copy.html'] = Object.freeze({
+    scenarioId: 'route.post.userSlug-courses-courseSlug-copy.html',
+    number: 9,
+    summary: 'the page-level course copy answers its declared failure ' +
+      'redirect where the baseline process exited',
+    approvedIn: 'AAP §0.7, rule R-b',
+    describedIn: 'docs/preserved-quirks.md §11.13',
+    fromOutcome: OUTCOME_TRANSPORT,
+    toOutcome: OUTCOME_ANSWERED,
+    status: 302,
+    contentType: 'text/html',
+    // Zero, measured, and pinned rather than waived: a redirect carries no
+    // body, so this is a stable field and the rule against a marker
+    // compensating for a missing observation applies to it in full.
+    bodyLength: 0,
+    absentHeaders: Object.freeze([])
+  });
+
+  register['route.post.userSlug-courses-courseSlug-copy.json'] = Object.freeze({
+    scenarioId: 'route.post.userSlug-courses-courseSlug-copy.json',
+    number: 9,
+    summary: 'the page-level course copy answers its own failure payload ' +
+      'where the baseline process exited',
+    approvedIn: 'AAP §0.7, rule R-b',
+    describedIn: 'docs/preserved-quirks.md §11.13',
+    fromOutcome: OUTCOME_TRANSPORT,
+    toOutcome: OUTCOME_ANSWERED,
+    status: 200,
+    contentType: 'application/json',
+    // NOT PINNED, and the reason is measured rather than convenient: the body
+    // is the copy's own failure payload and it carries the session flash,
+    // whose membership depends on which flash values are still unread when
+    // this step runs - `request.yar.flash()` with no argument reads AND clears
+    // everything, a preserved baseline quirk (docs/preserved-quirks.md §3).
+    // The length is therefore not a property of what was approved. What was
+    // approved is that the route ANSWERS, in this status and this content
+    // type, instead of severing the socket, and those three fields are
+    // mandatory here.
+    bodyLength: null,
+    absentHeaders: Object.freeze([])
+  });
+
+  // The payload-less roles update answers through its own funnel where the
+  // baseline process exited on `request.payload.roles` with a null payload.
+  register['route.post.api-admin-user-userId.json'] = Object.freeze({
+    scenarioId: 'route.post.api-admin-user-userId.json',
+    number: 16,
+    summary: 'the payload-less roles update answers 200 `{"message":"roles ' +
+      'required"}` through the route\'s own funnel where the baseline ' +
+      'process exited',
+    approvedIn: 'AAP §0.7, rule R-b',
+    describedIn: 'docs/preserved-quirks.md §10.11 and §10.12, with the ' +
+      'argument at lib/controllers/admin.js:265-297',
+    fromOutcome: OUTCOME_TRANSPORT,
+    toOutcome: OUTCOME_ANSWERED,
+    status: 200,
+    contentType: 'application/json',
+    // Not pinned, for the flash reason recorded on the JSON copy contract
+    // above: the response is `{"message":"roles required","flash":{...}}` and
+    // the flash membership is sequence-dependent.
+    bodyLength: null,
+    absentHeaders: Object.freeze([])
+  });
+
+  // The email-change request settles instead of hanging until the budget.
+  register['route.post.api-users-email.json'] = Object.freeze({
+    scenarioId: 'route.post.api-users-email.json',
+    number: 17,
+    summary: 'the email-change request settles, answering 200 ' +
+      '`{"success":true}` where the baseline never responded at all',
+    approvedIn: 'AAP §0.7, rule R-b',
+    describedIn: 'docs/preserved-quirks.md, with the argument at ' +
+      'lib/controllers/users.js:1447-1554',
+    fromOutcome: OUTCOME_TIMED_OUT,
+    toOutcome: OUTCOME_ANSWERED,
+    status: 200,
+    contentType: 'application/json',
+    // Not pinned, for the same measured flash reason.
+    bodyLength: null,
+    absentHeaders: Object.freeze([])
+  });
+
   return Object.freeze(register);
 }
 
@@ -10752,6 +10891,52 @@ function approvedDeviationContract(scenarioId) {
 // and the gates refer to directly. Derived from the register rather than built
 // beside it, so the two cannot disagree.
 var APPROVED_DEVIATION = APPROVED_DEVIATIONS[DEVIATION_SCENARIO_ID];
+
+/**
+ * Restates a register contract as the marker shape the pipeline reads.
+ *
+ * This is a PROJECTION of the closed register, not a second register: every
+ * field it produces is read off the contract, so a marker built here cannot
+ * describe anything the register does not already say. It exists because the
+ * marker shape is what `buildPlan`, `runScenario`, the verdict and the report
+ * all consume, and giving the register path its own object keeps those four
+ * consumers on one code path rather than teaching each of them a second one.
+ *
+ * `replayDisposition` is fixed at 'approved-change' because that is the only
+ * disposition `verifyApprovedDeviation` knows how to approve and the only one
+ * a member of this register can have - the register's entire subject is a
+ * response that changed on purpose.
+ *
+ * @param {Object} contract a frozen entry from `approvedDeviationRegister`
+ * @returns {Object} the marker, with the register named as its source
+ */
+function registerMarker(contract) {
+  return {
+    replayDisposition: 'approved-change',
+    approvedBy: contract.approvedIn,
+    rule: 'approved deviation ' + contract.number,
+    baseline: 'the base commit ' +
+      (contract.fromOutcome === OUTCOME_TRANSPORT
+        ? 'severed the connection: the process exited while answering'
+        : (contract.fromOutcome === OUTCOME_TIMED_OUT
+          ? 'never settled this request'
+          : 'answered ' + contract.fromOutcome)),
+    target: contract.status + ' ' +
+      (contract.contentType || '(no content type pinned)') +
+      (contract.bodyLength === null
+        ? ''
+        : ', ' + contract.bodyLength + ' byte(s)') +
+      (contract.absentHeaders.length
+        ? ', without ' + contract.absentHeaders.join(', ')
+        : ''),
+    reason: contract.summary + '. Approved in ' + contract.approvedIn +
+      ' and described in ' + contract.describedIn +
+      '. This marker was projected from the closed register in ' +
+      'test/parity/replay.js because the corpus carries none for this ' +
+      'scenario; the contract it is checked against is the same one a ' +
+      'corpus marker would be checked against.'
+  };
+}
 
 /**
  * Verifies that an approved deviation materialized AS APPROVED.
@@ -10808,12 +10993,14 @@ function verifyApprovedDeviation(item, observed, differences) {
   if (!contract) {
     failures.push('the scenario id ' + JSON.stringify(String(item.id)) +
       ' is not on the approved-deviation allowlist, so its marker approves ' +
-      'nothing. The deviation register is CLOSED at exactly two approved ' +
-      'deviations (docs/preserved-quirks.md §11.0) and only ONE of them is ' +
-      'replay-visible: ' + APPROVED_DEVIATION_IDS.join(', ') + '. Deviation ' +
-      '2 - the retained `marked` fork - carries no scenario id at all, ' +
-      'because it changes no response: it is a departure from the audit ' +
-      'target measured by npm audit, not by a replay diff, so it can never ' +
+      'nothing. The deviation register is CLOSED - docs/preserved-quirks.md ' +
+      '§11.0 is the register of record and no tool extends it - and its ' +
+      'replay-visible members are exactly these ' +
+      APPROVED_DEVIATION_IDS.length + ' scenario id(s): ' +
+      APPROVED_DEVIATION_IDS.join(', ') + '. A deviation that changes no ' +
+      'response a replay drives carries no scenario id at all - deviation 2, ' +
+      'the retained `marked` fork, is a departure from the audit target ' +
+      'measured by npm audit rather than by a replay diff - so it can never ' +
       'justify a marker on any scenario. A marker on ' +
       JSON.stringify(String(item.id)) + ' is therefore unapproved drift ' +
       'wearing an approved label, and the difference it carries is ' +
@@ -11149,6 +11336,45 @@ var RENDERED_CHANGE_AUTHORITIES = Object.freeze([
       /^header\.content-length$/
     ]),
     guard: 'statusPreserved'
+  }),
+
+  // Order-0 R8, second half: the material-move pre-handler answers again.
+  //
+  // `internals.findById` (lib/util/helpers.js:35-38) now reads a non-callback
+  // second argument as the FALLBACK VALUE the declaration means it to be - the
+  // form `parent(payload.parent,pre.lesson)` at config/api_routes.js:241 uses.
+  // On the base commit that argument was invoked as a callback, so `next`
+  // became the Lesson DOCUMENT and `next(result)` threw `TypeError: next is
+  // not a function` in the pre-handler: EVERY request to this route answered
+  // 500 `{error, message, statusCode}` before validation ran, which is what
+  // the corpus records. The remediation makes the route reachable, so it
+  // performs the move and answers 200 with the move's own payload.
+  //
+  // This is why it is a separate authority from the projection one above
+  // rather than a widening of it: the projection authority is guarded by
+  // `statusPreserved`, and the whole content of THIS remediation is that the
+  // status changed. Its guard is `notServerError`, which is the measured
+  // direction - 500 to 200 - and refuses the reverse, so a target that
+  // regressed to a 500 here fails on the guard rather than being authorized by
+  // it. Every record it generates still pins both values verbatim, so a
+  // different 200 is a different record and is not in the register.
+  Object.freeze({
+    finding: 'order-0 R8 (the material-move pre-handler answers again)',
+    summary: 'the move route reaches its handler instead of throwing in its ' +
+      'pre-handler, so it answers 200 carrying the move it performed where ' +
+      'the baseline answered 500 from the pre-handler',
+    arguedIn: 'qa/testing/o001_ca41be2c45857013.md regression row R8; ' +
+      'docs/baseline-parity.md, joi-matrix section; ' +
+      'test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard',
+    evidence: Object.freeze(['lib/util/helpers.js']),
+    routes: Object.freeze([
+      'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move'
+    ]),
+    fields: Object.freeze([
+      /^status$/, /^statusMessage$/, /^header\.(cache-control|content-length)$/,
+      /^body\./
+    ]),
+    guard: 'notServerError'
   }),
 
   // Order-0 R9, on the served stylesheet. The accessibility contract is not
@@ -15911,6 +16137,12 @@ async function runPass(passName, options, plan, context) {
   var stderrPaths = [];
   var relaunches = [];
   var recordedDeaths = [];
+  // The restarts performed because the corpus records a death the target did
+  // NOT repeat, so the fixture state had to be brought back to what the
+  // baseline recording continued from. Separate from `recordedDeaths`, which
+  // is about the application going down on THIS tree.
+  var stateRealignments = [];
+  var remainingAfterItem;
   var relaunchBudget = countRecordedDeaths(scenarios);
   // Mirrors the capture: it forced a reseed before each destructive case, and
   // a corpus captured with `--no-reseed` says so here, in which case the
@@ -16163,6 +16395,144 @@ async function runPass(passName, options, plan, context) {
             'never reached: the application died on ' + item.id));
         break;
       }
+
+      // STATE REALIGNMENT AFTER A RECORDED DEATH THE TARGET SURVIVED.
+      //
+      // The corpus holds a transport failure for this scenario, so the
+      // baseline DIED here and its capture continued from a restarted,
+      // re-seeded, re-logged-in application - every recording after this point
+      // was made against fresh fixtures. The target answered the same request
+      // instead of dying, so unless the same restart runs here the two sides
+      // are compared from divergent state for the whole remainder of the pass,
+      // and the branch above cannot do it: it is entered only when the target
+      // ALSO lost transport.
+      //
+      // Measured on the delivered corpus, both cookie passes: scenario 275 of
+      // 392, `POST /api/admin/user/000000000000000000000101` with no payload,
+      // is one of the three the corpus records a transport failure for. The
+      // target answers it and strips that user's roles, after which
+      // `PUT /api/courses/{courseId}/metadata`,
+      // `PUT .../lessons/{lessonId}/move`, `POST .../userLookup`, the
+      // dead-301 alias scenario and the OAuth save-then-fail scenario all take
+      // their permission-denied branch and answer 500 - lib/controllers/
+      // course.js's unbound `Boom`, a PRESERVED baseline quirk - where the
+      // corpus recorded 200 from a baseline whose roles had just been
+      // re-seeded. That is 250 field differences across 9 scenario classes
+      // produced by the harness's state rather than by the tree, and driving
+      // those same scenarios alone against a freshly seeded application makes
+      // every one of them match (measured with `--only`: five of the six
+      // reported `-> match`). The same asymmetry is why `body.json.flash
+      // .requested` appeared on the baseline side of four scenarios: the
+      // post-relaunch re-login left a `requested` flash unread, and
+      // `request.yar.flash()` with no argument reads AND CLEARS everything.
+      //
+      // So the restart runs on this side too, out of the SAME budget: it is
+      // one per scenario the corpus records a transport failure for, and this
+      // branch and the death branch above are mutually exclusive for any one
+      // scenario, so the budget covers whichever fires. The difference
+      // measured FOR THIS SCENARIO is recorded before the realignment and
+      // stands as it is - a `transport-failure -> answered` difference is a
+      // real difference and the register has to account for it. What the
+      // realignment removes is only the divergence it would otherwise cause in
+      // every scenario after it.
+      if (baselineLostTransport(item) && !sawTransportFailure(result)) {
+        remainingAfterItem = scenarios.length - index - 1;
+
+        note('the corpus records a transport failure for ' + item.id +
+          ' and THE TARGET ANSWERED IT instead. The difference stands; the ' +
+          'application is restarted and re-seeded from here anyway, because ' +
+          'the baseline recording continued from a restarted, re-seeded ' +
+          'application and comparing the rest of the pass against unaligned ' +
+          'fixtures measures the harness rather than the tree.');
+
+        if (!remainingAfterItem) {
+          note('it was the last scenario of this pass, so there is nothing ' +
+            'left to realign.');
+          continue;
+        }
+
+        if (relaunches.length >= relaunchBudget) {
+          note('THE RELAUNCH BUDGET of ' + relaunchBudget + ' (one per ' +
+            'scenario this corpus records a transport failure for) is spent, ' +
+            'so the state could not be realigned and ' + remainingAfterItem +
+            ' scenario(s) were not driven: every one of them would have been ' +
+            'compared against fixtures the baseline recording never saw.');
+
+          undriven = undriven.concat(
+            markRemainingUndriven(scenarios, index + 1,
+              'never driven: the corpus records a transport failure for ' +
+              item.id + ' that the target survived, and the relaunch budget ' +
+              'for realigning the fixture state was spent'));
+          break;
+        }
+
+        relaunch = await relaunchAfterRecordedDeath({
+          passName: passName,
+          options: options,
+          scenarios: scenarios,
+          index: index,
+          item: item,
+          info: info,
+          s3SeedPath: s3Seed.path,
+          attempt: relaunches.length + 1
+        });
+
+        segments.push(relaunch.evidence);
+        evidenceTaken = info;
+
+        relaunches.push({
+          attempt: relaunches.length + 1,
+          afterScenario: item.id,
+          afterIndex: index,
+          ok: relaunch.ok,
+          reason: relaunch.reason,
+          runDir: relaunch.runDir || null,
+          reseeded: relaunch.ok ? relaunch.seeded.summary : null,
+          sessions: relaunch.ok ? relaunch.sessions : null,
+          // What this restart was FOR, so the two callers of
+          // relaunchAfterRecordedDeath are distinguishable in the artifact.
+          because: 'state-realignment'
+        });
+
+        stateRealignments.push({
+          id: item.id,
+          index: index,
+          route: item.routeKey || null,
+          remaining: remainingAfterItem,
+          relaunched: relaunch.ok,
+          reason: relaunch.reason || null
+        });
+
+        if (relaunch.ok) {
+          info = relaunch.info;
+          seeded = relaunch.seeded;
+          jar = relaunch.jar;
+          sessions = relaunch.sessions;
+          stderrPaths.push(info.stderrPath);
+
+          note('restarted and re-seeded the application after ' + item.id +
+            '; ' + remainingAfterItem + ' scenario(s) still to drive, now ' +
+            'against the same fixture state the baseline recording had.');
+          continue;
+        }
+
+        if (relaunch.info) {
+          stderrPaths.push(relaunch.info.stderrPath);
+          info = relaunch.info;
+        }
+
+        note('THE APPLICATION COULD NOT BE RESTARTED after ' + item.id +
+          ' (' + relaunch.reason + '), so the fixture state could not be ' +
+          'realigned and ' + remainingAfterItem + ' scenario(s) were not ' +
+          'driven.');
+
+        undriven = undriven.concat(
+          markRemainingUndriven(scenarios, index + 1,
+            'never driven: the state could not be realigned after ' + item.id +
+            ', which the corpus records a transport failure for and the ' +
+            'target survived: ' + relaunch.reason));
+        break;
+      }
     }
   }
   catch (err) {
@@ -16255,6 +16625,12 @@ async function runPass(passName, options, plan, context) {
     // gate failure, and a death both trees produce at the same scenario is the
     // behaviour under test.
     recordedDeaths: recordedDeaths,
+    // The scenarios where the corpus records a transport failure that this
+    // tree ANSWERED, and the restart each one triggered so the rest of the
+    // pass was compared from the fixture state the baseline recording
+    // continued from. The difference measured at the scenario itself is
+    // reported as a difference; this field is about everything after it.
+    stateRealignments: stateRealignments,
     relaunchBudget: relaunchBudget,
     relaunches: relaunches,
     // What the capture recorded about its own ordering, and what this pass did
@@ -16760,8 +17136,18 @@ async function prepareApplicationState(info, options, scenarios, from) {
  * Restarts the application after a death the corpus records, and re-seeds it.
  *
  * Called only when `baselineLostTransport` recognised the scenario, so this is
- * recovery from an EXPECTED death and not a retry of a failure. The order is
- * fixed by what each step needs:
+ * recovery from an EXPECTED death and not a retry of a failure. It has TWO
+ * callers and they are mutually exclusive per scenario, which is why one
+ * budget covers both: the death branch, where this tree went down as the
+ * recording did, and the state-realignment branch, where this tree ANSWERED
+ * the request that took the baseline down. The second needs the identical
+ * six steps for the identical reason - the recording continued from a
+ * restarted, re-seeded application, so everything after that point is only
+ * comparable against the same fixture state - and the only difference is that
+ * there is no live process to mourn, so step 2 stops a healthy child instead
+ * of releasing a dead one's descriptors.
+ *
+ * The order is fixed by what each step needs:
  *
  * 1. The dying segment's evidence is collected FIRST, while its run directory
  *    is still the current one. After the new start it is unreachable through
@@ -17166,7 +17552,9 @@ function classifyScenario(item, options) {
       failing: true,
       reason: options.annotations
         ? 'the scenario carries no approved-deviation marker in the corpus or ' +
-          'in the annotations'
+          'in the annotations, and its id is not one of the ' +
+          APPROVED_DEVIATION_IDS.length + ' the closed register names, so no ' +
+          'marker could be projected from the register either'
         : 'the scenario carries no approved-deviation marker. A CAPTURED ' +
           'corpus does not carry one - capture.js does not emit it - so if ' +
           'this difference is the approved deviation, join the markers back ' +
@@ -19251,6 +19639,10 @@ function summarizePass(entry) {
     ordering: entry.pass.ordering,
     applicationDied: entry.pass.applicationDied,
     recordedDeaths: entry.pass.recordedDeaths,
+    // The scenarios the corpus records a transport failure for that THIS tree
+    // answered, and the restart each one triggered so the remainder of the
+    // pass was compared from the fixture state the recording continued from.
+    stateRealignments: entry.pass.stateRealignments,
     relaunchBudget: entry.pass.relaunchBudget,
     relaunches: entry.pass.relaunches,
     stderrPaths: entry.pass.stderrPaths,
@@ -20397,6 +20789,27 @@ function renderPass(lines, pass, result, heading, bullet) {
     }).forEach(function(entry) {
       lines.push('  RESTART ' + entry.attempt + ' FAILED after ' +
         entry.afterScenario + ': ' + entry.reason);
+    });
+  }
+
+  if ((pass.stateRealignments || []).length) {
+    lines.push('');
+    lines.push('  ' + pass.stateRealignments.length + ' scenario(s) that the ' +
+      'corpus records a transport failure for were ANSWERED by this tree, so ' +
+      'the');
+    lines.push('  application was restarted and re-seeded after each one - ' +
+      'the baseline recording continued');
+    lines.push('  from a restart at the same point, and the rest of the pass ' +
+      'is only comparable against the');
+    lines.push('  same fixture state. The difference measured AT each ' +
+      'scenario stands and is reported above:');
+    pass.stateRealignments.forEach(function(entry) {
+      lines.push('    ' + entry.id + ' (case ' + (entry.index + 1) + ') - ' +
+        (entry.relaunched
+          ? 'restarted and re-seeded, ' + entry.remaining +
+            ' scenario(s) driven after it'
+          : 'NOT restarted (' + entry.reason + '), ' + entry.remaining +
+            ' scenario(s) not driven'));
     });
   }
 

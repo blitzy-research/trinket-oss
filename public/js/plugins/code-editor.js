@@ -31,228 +31,6 @@
   var template = TrinketIO.import('utils.template');
   var INFO_CACHE        = {};
 
-  /**
-   * Keyboard activation for the editor's icon controls.
-   *
-   * The tab bar is built from anchors and spans that carry no `href`, so a
-   * browser will not synthesise a click for them when ENTER or SPACE is
-   * pressed. Every control we expose to the keyboard therefore opts in to this
-   * helper, which forwards those two keys to the control's existing click
-   * handler. Doing it in one place keeps the mouse path (the click handlers
-   * registered in `_create`) as the single implementation of each action.
-   *
-   * @param {jQuery} $scope element to delegate from
-   * @param {String} selector controls within $scope that should be activatable
-   */
-  function enableKeyActivation($scope, selector) {
-    $scope.on('keydown.trinket-code-editor.activate', selector, function(event) {
-      // 13 = ENTER, 32 = SPACE
-      if (event.which !== 13 && event.which !== 32) {
-        return;
-      }
-
-      // Let the browser handle keys aimed at a real text field.
-      if ($(event.target).is('input, textarea, select')) {
-        return;
-      }
-
-      event.preventDefault();
-
-      // Click handlers run synchronously inside trigger(), so an action can
-      // ask whether it was reached from the keyboard and place focus
-      // accordingly. try/finally keeps the depth honest if a handler throws.
-      keyboardActivationDepth++;
-      try {
-        $(this).trigger('click');
-      }
-      finally {
-        keyboardActivationDepth--;
-      }
-    });
-  }
-
-  /**
-   * Non-zero while a control is being activated by ENTER or SPACE through
-   * `enableKeyActivation`, so an action reached that way can move focus onto
-   * what it revealed. A pointer user's focus is left where they put it.
-   */
-  var keyboardActivationDepth = 0;
-
-  function activatedByKeyboard() {
-    return keyboardActivationDepth > 0;
-  }
-
-  /**
-   * Move focus onto the control an action has just revealed.
-   *
-   * Every control in the comment widget's action set lives either inside a
-   * container its own handler then hides, or inside a dropdown the framework
-   * closes and marks `aria-hidden`. Leaving focus there sends the document's
-   * focus to <body>, so a keyboard user loses their place and starts again at
-   * the top of the tab order; the browser also refuses to apply `aria-hidden`
-   * while a descendant holds focus, and reports that refusal. Handing focus to
-   * the control the action reveals resolves both, and lands the user on
-   * whatever a pointer user would look at next.
-   *
-   * @param {jQuery|String} target the control to focus, or a selector for it
-   */
-  function focusRevealedControl(target) {
-    var $target = $(target).filter(':visible').first();
-
-    if ($target.length && typeof $target[0].focus === 'function') {
-      $target[0].focus();
-    }
-  }
-
-  /**
-   * Escape a value for interpolation into markup.
-   *
-   * `utils.template` compiles a template by concatenating raw strings, so
-   * every value it interpolates reaches the document as markup rather than as
-   * text. That utility is shared by templates all over the application and
-   * cannot be made escaping without changing unrelated rendering, so the
-   * escaping is applied here, to the values this widget supplies.
-   *
-   * `&` is replaced first: doing it later would re-escape the ampersands
-   * introduced by the replacements before it and produce `&amp;lt;`.
-   *
-   * @param {*} value the value to escape; null and undefined become ""
-   * @return {String} the value, safe to interpolate into element content, a
-   *         double- or single-quoted attribute, or a <textarea> body
-   */
-  function escapeHtml(value) {
-    if (value === null || value === undefined) {
-      return "";
-    }
-
-    return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  /**
-   * Render a comment's text as the markup a comment card displays.
-   *
-   * Comment bodies keep their line breaks when displayed, which is why the
-   * text is turned into markup at all. Escaping has to happen first and the
-   * line breaks second: escaping afterwards would turn the `<br />` this
-   * function just inserted into visible text, and inserting the breaks first
-   * would leave any markup in the comment body live.
-   *
-   * @param {String} text the comment body as the author typed it
-   * @return {String} escaped markup with newlines rendered as line breaks
-   */
-  function commentTextToHtml(text) {
-    return escapeHtml(text).replace(/(?:\r\n|\r|\n)/g, '<br />');
-  }
-
-  /**
-   * Declare a rendered comment card's options trigger as a popup control.
-   *
-   * The trigger opens the `f-dropdown` list named by its `data-dropdown`
-   * attribute. The template gives it a role, a name and `aria-controls`, but
-   * nothing says the control opens a popup and nothing states whether that
-   * popup is open, so its accessible node is identical whether the list is
-   * showing or not. `aria-haspopup` is fixed for the control's lifetime;
-   * `aria-expanded` starts at "false" — the list is closed when the card is
-   * rendered — and is kept in step by the framework on open and close and by
-   * `closeCommentDropdown` on the paths the framework does not see.
-   *
-   * @param {Element|jQuery} root the rendered comment card
-   */
-  function initCommentDropdownTrigger(root) {
-    $(root).find('a.comment-actions[data-dropdown]').attr({
-        'aria-haspopup' : 'true'
-      , 'aria-expanded' : 'false'
-    });
-  }
-
-  /**
-   * Close a comment card's options dropdown and restate its trigger.
-   *
-   * Two of the dropdown's own items — Edit comment and Remove comment — reveal
-   * a panel and hide the trigger, without closing the list: the framework's
-   * click-out handler returns early for a click inside the dropdown content,
-   * so the list stays open and its trigger stays marked expanded while it is
-   * not even displayed. When the trigger comes back it is still marked
-   * expanded over a list that is no longer showing. Every close and commit
-   * path therefore comes through here.
-   *
-   * The framework is only asked to close a list that is actually open: calling
-   * into it otherwise would initialise the dropdown library as a side effect
-   * of a state fix. `aria-expanded` is written directly as well, so the state
-   * is correct even where that call is a no-op.
-   *
-   * @param {String} commentId the comment whose dropdown to close
-   */
-  function closeCommentDropdown(commentId) {
-    var $content = $('#comment-actions-' + commentId);
-
-    if ($content.length && ($content.hasClass('open') || $content.hasClass('f-open-dropdown'))) {
-      $(document).foundation('dropdown', 'close', $content);
-    }
-
-    $("a[data-dropdown='comment-actions-" + commentId + "']").attr('aria-expanded', 'false');
-  }
-
-  /**
-   * Keep a comment dropdown's trigger in step when the framework closes the
-   * list without us asking it to.
-   *
-   * Dismissing the list by clicking anywhere else on the page is the framework's
-   * own path, not one of ours, and on that path it cannot restate the right
-   * trigger: its document-click handler closes every dropdown on the page in a
-   * single multi-element call, while its `close()` resolves the trigger from
-   * `dropdown[0].id` — the first element of that set — for every element it
-   * iterates. The embed page carries four dropdowns, so the brand menu's
-   * trigger is marked collapsed four times and a comment's trigger is never
-   * touched. It is then left announcing an expanded popup over a list that has
-   * been moved off screen and marked hidden.
-   *
-   * The same loop does announce each element it actually closes, so listening
-   * for that gives us the element the framework got wrong and we restate its
-   * trigger from the element's own id. This is bound once, at load, delegated
-   * from the document: the triggers come and go with their comment cards, and
-   * the shared framework file stays untouched.
-   *
-   * The namespace is ours rather than the framework's, and that is the whole
-   * reason this works. The dropdown library begins its own setup with
-   * `off('.dropdown')` on the document, and jQuery reads `closed.fndtn.dropdown`
-   * as carrying a `dropdown` namespace token — so a listener registered under
-   * the framework's own event name is torn off again a few milliseconds after
-   * load, before it can ever run, and the setup repeats that several times
-   * during initialisation. Its `close()` fires a bare `closed` on the element
-   * immediately before the namespaced one, so binding to `closed` under a
-   * private namespace catches the same moment and survives the teardown.
-   * `closed` is also fired by the modal library, which is why this stays
-   * delegated behind a selector no modal can match.
-   */
-  $(document).on('closed.trinket-comment-aria', "[id^='comment-actions-']", function() {
-    if (this.id) {
-      $("a[data-dropdown='" + this.id + "']").attr('aria-expanded', 'false');
-    }
-  });
-
-  /**
-   * Cache key for a fetched documentation fragment.
-   *
-   * Info URLs are built through `trinketConfig.prefix()`, which stamps
-   * `Date.now()` into the path whenever no static asset prefix is configured.
-   * Keying the cache on the raw URL therefore never hits, so moving the caret
-   * back onto the same keyword re-fetches an identical document every time and
-   * leaves a dead cache entry behind. Stripping the generated prefix segment
-   * gives one stable key per document.
-   *
-   * @param {String} url the request URL
-   * @return {String} a key that is stable across cache-busting prefixes
-   */
-  function infoCacheKey(url) {
-    return String(url).replace(/^.*?\/(?=partials\/)/, '');
-  }
-
   // by id
   var WIDGET_CACHE      = {};
   var COMMENT_COLLAPSED = {};
@@ -262,21 +40,6 @@
 
   // default tabSize
   var DEFAULT_TAB_SIZE  = 2;
-
-  /**
-   * Monotonic source of ids for Ace's hidden input, one per editor built in
-   * this document. It never decreases and is never derived from a file's
-   * position, so an id is not reissued to a second live editor after a file
-   * is deleted and another added in its place.
-   */
-  var ACE_INPUT_SEQUENCE = 0;
-
-  /**
-   * Monotonic source of ids for the keyword-documentation region, so the
-   * expander's `aria-controls` can point at it. Counted for the same reason
-   * as above: more than one editor can live in one document.
-   */
-  var INFO_REGION_SEQUENCE = 0;
 
   /*
    * Helper function to make sure the line numbers are always
@@ -592,168 +355,6 @@
     e._fileName = opts.name;
     e._addErrorBorder = false;
 
-    // View-only surfaces (the assignment "view only" variant) must not accept
-    // edits. The flag is latched rather than applied once, because the
-    // selection handler below toggles read-only for comment protection and
-    // would otherwise clear it on the first selection change.
-    var viewOnlyLocked = !!(opts.editorOpts && opts.editorOpts.assignmentViewOnly);
-
-    if (viewOnlyLocked) {
-      e.setReadOnly(true);
-    }
-
-    /**
-     * Name the editor for assistive technology and advertise the way out.
-     *
-     * Ace routes every keystroke through a 1px, transparent textarea. Left as
-     * the library creates it, that textarea has no id, no name and no
-     * accessible name, so it is announced as an anonymous edit field. TAB is
-     * bound to Ace's `indent` command, so the escape route has to be stated in
-     * the name itself for the editor not to read as a keyboard trap.
-     */
-    (function nameEditorForAssistiveTech() {
-      var input = e.textInput && e.textInput.getElement ? e.textInput.getElement() : null
-        , label = 'Code editor' + (opts.name ? ', ' + opts.name : '')
-        // Both exit keys are named, and so is the direction each one takes,
-        // because they are not interchangeable: Escape goes back to the file
-        // tab and F6 goes on to the next control after the editor. A user who
-        // only knew about Escape could never move forwards past the editor.
-        , description = viewOnlyLocked
-            ? label + ' (read only). Press Escape to go back to the file tab, or F6 to move on past the editor.'
-            : label + '. Press Escape to go back to the file tab, or F6 to move on past the editor. Tab inserts indentation.';
-
-      if (input) {
-        // A unique id/name per editor keeps the field addressable when
-        // several files are open at once. It is counted rather than derived
-        // from the file's position in the array: positions are reused after a
-        // deletion, so an index-derived id collides with a live editor as
-        // soon as one file is removed and another added — two fields sharing
-        // an id, with getElementById resolving to the hidden one.
-        if (!input.id) {
-          input.id = 'ace-editor-input-' + (++ACE_INPUT_SEQUENCE);
-        }
-        if (!input.name) {
-          input.name = input.id;
-        }
-        input.setAttribute('aria-label', description);
-        if (viewOnlyLocked) {
-          input.setAttribute('aria-readonly', 'true');
-        }
-      }
-
-      // `role=group` names the visible editor region without claiming to be
-      // the input itself, which remains the textarea above.
-      el.setAttribute('role', 'group');
-      el.setAttribute('aria-label', label);
-    })();
-
-    /**
-     * Escape hatch out of the editor.
-     *
-     * Ace 1.4.14 ships no blur/exit command and does not support the later
-     * `enableKeyboardAccessibility` option, so TAB, Shift+TAB, ESCAPE and F6
-     * all leave focus inside the editor: TAB and Shift+TAB silently indent and
-     * outdent the buffer instead of moving on. Binding ESCAPE and F6 to move
-     * focus out of the editor restores a way out by keyboard and leaves the
-     * buffer untouched. TAB keeps indenting, which is what a code editor is
-     * expected to do and what the accessible name now announces.
-     *
-     * The two keys leave in opposite directions, and the difference matters.
-     * ESCAPE goes back to the file tab, which is the control the user most
-     * likely came from. F6 goes forward to the first control after the editor,
-     * because the editor sits in the middle of the document: an exit that only
-     * ever went backwards would leave everything below it — the instructions
-     * tab, the output pane's controls, the page footer — reachable only by
-     * tabbing backwards through the whole document and wrapping around.
-     *
-     * @param {Boolean} forward true to leave forwards, false to go back
-     */
-    function exitEditor(editor, forward) {
-      var $container = $(el).closest('.code-editor')
-        , $target    = forward
-            ? firstFocusableAfter($container.get(0))
-            : $container.find('.tab.active .file-tab-link').first();
-
-      editor.blur();
-
-      if ($target && $target.length && typeof $target[0].focus === 'function') {
-        $target[0].focus();
-        return;
-      }
-
-      if (typeof el.focus === 'function') {
-        // Nothing to hand focus to in that direction — no tab bar on this
-        // surface, or the editor is the last control on the page. Fall back to
-        // the editor region itself, which is focusable only for this purpose,
-        // so focus never lands on the document body.
-        el.setAttribute('tabindex', '-1');
-        el.focus();
-      }
-    }
-
-    /**
-     * The first control a forward TAB would reach if the editor were not
-     * swallowing TAB.
-     *
-     * Walks the document's focusable elements in order and returns the first
-     * one that lies after the given container and can actually take focus.
-     * Visibility is decided by measurement rather than by the `tabindex`
-     * attribute, because several controls on these surfaces are href-less
-     * anchors that are off-canvas or hidden until their panel opens.
-     *
-     * @param {Element} container the region to step past
-     * @return {jQuery|null} the control, or null if the container is last
-     */
-    function firstFocusableAfter(container) {
-      var candidates, i, node;
-
-      if (!container || !document.compareDocumentPosition) {
-        return null;
-      }
-
-      candidates = document.querySelectorAll('a, button, input, select, textarea, [tabindex]');
-
-      for (i = 0; i < candidates.length; i++) {
-        node = candidates[i];
-
-        // DOCUMENT_POSITION_FOLLOWING (4) with CONTAINED_BY (16) unset: the
-        // node comes after the container and is not inside it.
-        if (!(container.compareDocumentPosition(node) & 4)) {
-          continue;
-        }
-        if (container.contains(node)) {
-          continue;
-        }
-        if (node.disabled || node.getAttribute('tabindex') === '-1') {
-          continue;
-        }
-        if (!node.offsetWidth && !node.offsetHeight) {
-          continue;
-        }
-        if ($(node).closest('[aria-hidden="true"]').length) {
-          continue;
-        }
-
-        return $(node);
-      }
-
-      return null;
-    }
-
-    e.commands.addCommand({
-        name    : 'exitEditor'
-      , bindKey : { win : 'Esc', mac : 'Esc' }
-      , exec    : function(editor) { exitEditor(editor, false); }
-      , readOnly: true
-    });
-
-    e.commands.addCommand({
-        name    : 'exitEditorRegion'
-      , bindKey : { win : 'F6', mac : 'F6' }
-      , exec    : function(editor) { exitEditor(editor, true); }
-      , readOnly: true
-    });
-
     var deleteCommand     = e.commands.byName.del;
     var backspaceCommand  = e.commands.byName.backspace;
     var removelineCommand = e.commands.byName.removeline;
@@ -843,13 +444,6 @@
 
     // check for comments when lines are selected
     e.getSession().selection.on("changeSelection", function(event) {
-      // On a view-only surface the editor is already read-only for every
-      // line, so the comment-protection toggle has nothing to add and must not
-      // run: its else-branch clears read-only unconditionally.
-      if (viewOnlyLocked) {
-        return;
-      }
-
       if (FILE_WIDGETS[opts.index] && !e.getSession().selection.isEmpty() && e.getSession().selection.isMultiLine()) {
         var range  = e.getSession().selection.getRange()
           , set_ro = false
@@ -920,10 +514,7 @@
 
       function renderComment(comment) {
         var commentText    = comment.text
-          // The comment body is authored by another user and is rendered
-          // through innerHTML below, so it is escaped before its line breaks
-          // are turned into markup.
-          , commentHtml    = commentTextToHtml(commentText)
+          , commentHtml    = commentText.replace(/(?:\r\n|\r|\n)/g, '<br />')
           , commentedOn    = moment(comment.commentedOn).fromNow()
           , row            = comment.row
           , commentId      = comment._id
@@ -948,30 +539,19 @@
           // TODO: figure out caching - this doesn't work
           userInfo[comment.userId] = _user;
 
-          // Everything interpolated here reaches the document as markup, so
-          // the values that come from a user — the author's name, the avatar
-          // URL that is interpolated into an attribute, and the body in both
-          // its rendered and its editable form — are escaped. `commentText`
-          // is escaped because it is interpolated inside a <textarea>, where
-          // a literal `</textarea>` would otherwise break out of the field;
-          // the browser decodes the entities again when the value is read.
           var commentTmpl = template('inlineCommentTemplate', {
               comment        : commentHtml
-            , avatar         : escapeHtml(_user.avatar)
+            , avatar         : _user.avatar
             , commentedOn    : commentedOn
-            , username       : escapeHtml(_user.username)
+            , username       : _user.username
             , commentId      : commentId
             , edited         : edited
-            , commentText    : escapeHtml(commentText)
+            , commentText    : commentText
             , commentActions : commentActions
           });
 
           var _el = dom.createElement("div");
           _el.innerHTML = commentTmpl;
-
-          // The card's options trigger opens a dropdown; say so, and start it
-          // in its closed state.
-          initCommentDropdownTrigger(_el);
 
           var w = {
               row        : row
@@ -1121,8 +701,7 @@
         return e.getSession();
       },
       setReadOnly: function(readOnly) {
-        // A view-only surface stays read-only whatever a caller asks for.
-        e.setReadOnly(viewOnlyLocked ? true : readOnly);
+        e.setReadOnly(readOnly);
       },
       scrollToLine : function(line, center, animate, callback) {
         e.scrollToLine(line, center, animate, callback);
@@ -1165,11 +744,9 @@
         e.scrollToLine(curPos.row, true, true);
 
         _el = dom.createElement("div");
-        // The avatar URL lands in an attribute and the name in element
-        // content, both through a template that concatenates raw strings.
         _el.innerHTML = template('addInlineCommentTemplate', {
-            avatar    : escapeHtml(avatarSrc)
-          , username  : escapeHtml(username)
+            avatar    : avatarSrc
+          , username  : username
           , commentId : index + "_" + curPos.row
           , index     : index
         });
@@ -1196,29 +773,14 @@
         $textarea = $(w.el).find('textarea.inline-comment-text');
         $textarea.focus();
 
-        // Destroying the widget removes the element that holds focus, which
-        // otherwise leaves the document focused on <body> and drops a keyboard
-        // user back to the start of the tab order. Hand focus back to the
-        // control that opened the widget instead.
-        function returnFocusToCommentTrigger() {
-          var $trigger = $(el).closest('.code-editor').find('.add-inline-comment').first();
-
-          if ($trigger.length && typeof $trigger[0].focus === 'function') {
-            $trigger[0].focus();
-          }
-        }
-
         $(w.el).find('.cancel-inline-comment').on('click', function(event) {
           // TODO: confirm if some text entered?
           w.destroy();
-          returnFocusToCommentTrigger();
         });
 
         $(w.el).find('.save-inline-comment').on('click', function(event) {
           var commentText  = $textarea.val();
-          // Escaped before the line breaks become markup: the text the author
-          // just typed is rendered through innerHTML below.
-          var commentHtml  = commentTextToHtml(commentText);
+          var commentHtml  = commentText.replace(/(?:\r\n|\r|\n)/g, '<br />');
           var commentedOn  = moment().subtract(2, 'seconds');
           var commentSeed  = e._fileName + w.row + commentedOn;
           var commentId    = CryptoJS.MD5(commentSeed).toString(CryptoJS.enc.Hex).substring(0, 16)
@@ -1228,25 +790,18 @@
             , index        : index
           });
 
-          // Same escaping as the render path above: the name and avatar URL
-          // are interpolated into markup, and `commentText` is interpolated
-          // inside a <textarea> whose value the browser decodes on read.
           var commentTmpl = template('inlineCommentTemplate', {
               comment        : commentHtml
-            , avatar         : escapeHtml(avatarSrc)
-            , username       : escapeHtml(username)
+            , avatar         : avatarSrc
+            , username       : username
             , commentedOn    : commentedOn.fromNow()
-            , commentText    : escapeHtml(commentText)
+            , commentText    : commentText
             , commentActions : commentActions
             , commentId      : commentId
           });
 
           var _el = dom.createElement("div");
           _el.innerHTML = commentTmpl;
-
-          // Same declaration as the render path above: the card that has just
-          // been saved carries the same options trigger.
-          initCommentDropdownTrigger(_el);
 
           $(document).foundation('dropdown', 'reflow');
 
@@ -1296,8 +851,6 @@
           $(el).find('.confirm-remove-comment').on('click', function(event) {
             cw.destroy();
           });
-
-          returnFocusToCommentTrigger();
         });
       }
     };
@@ -1391,72 +944,18 @@
     };
   }
 
-  var $PLUGIN_TEMPLATE         = $("<div class=\"code-editor\" data-interface=\"code-editor\"><div class=\"tab-nav\"><dl class=\"left-options\"><dd class=\"tab-button\"><a class=\"tab-scroll-link left-arrow highlight-on-focus\" data-direction=\"-1\" role=\"button\" tabindex=\"0\" aria-label=\"Scroll file tabs left\"><i class=\"fa fa-chevron-left\"></i></a></dd><dd class=\"tab-button\"><a class=\"tab-scroll-link right-arrow highlight-on-focus\" data-direction=\"1\" role=\"button\" tabindex=\"0\" aria-label=\"Scroll file tabs right\"><i class=\"fa fa-chevron-right\"></i></a></dd></dl><dl class=\"scrollable-content\" role=\"tablist\" aria-label=\"File tabs\"></dl><dl class=\"right-options\"></dl><div class=\"clearfix\"></div></div><div class=\"file-content-container\"></div><div class=\"info-area collapsed\"><div class=\"info-quick\"></div><div class=\"scroll-wrap\"><div class=\"info-full\"></div></div><a class=\"expander fa highlight-on-focus\" role=\"button\" tabindex=\"0\" aria-label=\"Show more information about the selected keyword\"></a></div></div>");
+  var $PLUGIN_TEMPLATE         = $("<div class=\"code-editor\" data-interface=\"code-editor\"><div class=\"tab-nav\"><dl class=\"left-options\"><dd class=\"tab-button\"><a class=\"tab-scroll-link left-arrow\" data-direction=\"-1\"><i class=\"fa fa-chevron-left\"></i></a></dd><dd class=\"tab-button\"><a class=\"tab-scroll-link right-arrow\" data-direction=\"1\"><i class=\"fa fa-chevron-right\"></i></a></dd></dl><dl class=\"scrollable-content\" role=\"tablist\" aria-label=\"File tabs\"></dl><dl class=\"right-options\"></dl><div class=\"clearfix\"></div></div><div class=\"file-content-container\"></div><div class=\"info-area collapsed\"><div class=\"info-quick\"></div><div class=\"scroll-wrap\"><div class=\"info-full\"></div></div><a class=\"expander fa\"></a></div></div>");
 
   var $CONTENT_TEMPLATE        = $("<div class=\"file-content\"></div>");
   var $BINARY_FILE_TEMPLATE    = $("<div class=\"binary-file\"><div><p>This is a binary file created by your program. It is not viewable and will not be saved with your trinket.</p></div></div>");
-  var $TAB_OPTIONS_TEMPLATE    = $("<div class=\"tab-options\" role=\"menu\" aria-label=\"File options\"><ul><li><a class=\"file-remove-link menu-button highlight-on-focus\" data-action=\"file.remove\" role=\"menuitem\" tabindex=\"0\" aria-label=\"Delete this file\" title=\"Delete this file\"><i class=\"fa fa-trash\"></i></a></li><li><a class=\"file-rename-link menu-button highlight-on-focus\" data-action=\"file.rename\" role=\"menuitem\" tabindex=\"0\" aria-label=\"Rename this file\" title=\"Rename this file\"><i class=\"fa fa-pencil\"></i></a></li></ul></div>");
+  var $TAB_OPTIONS_TEMPLATE    = $("<div class=\"tab-options\" role=\"button\"><ul><li><a class=\"file-remove-link menu-button\" data-action=\"file.remove\"><i class=\"fa fa-trash\"></i></a></li><li><a class=\"file-rename-link menu-button\" data-action=\"file.rename\"><i class=\"fa fa-pencil\"></i></a></li></ul></div>");
 
-  var TAB_TEMPLATE             = template.compile("<dd class=\"tab\"><a class=\"file-tab-link highlight-on-focus\" aria-label=\"{{name}} tab\" role=\"tab\" tabindex=\"0\" aria-selected=\"false\"><span class=\"file-name\">{{name}}</span><span class=\"tab-options-link menu-button highlight-on-focus\" data-action=\"file.options\" role=\"button\" tabindex=\"0\" aria-label=\"Options for {{name}}\"></span></a></dd>");
+  var TAB_TEMPLATE             = template.compile("<dd class=\"tab\"><a class=\"file-tab-link\" aria-label=\"{{name}} tab\" role=\"tab\"><span class=\"file-name\">{{name}}</span><span class=\"tab-options-link menu-button\" data-action=\"file.options\" role=\"button\" tabindex=\"0\"></span></a></dd>");
   var EDITABLE_TAB_TEMPLATE    = template.compile("<input type=\"text\" class=\"file-name-input\" value=\"{{name}}\" placeholder=\"file name\" aria-label=\"Edit {{name}} filename\">");
   var FILE_NAME_ERROR_TEMPLATE = template.compile("<div data-alert class=\"file-name-error alert-box alert\">{{message}}<a class=\"close\">&times;</a></div>");
-  // The alert announces itself, because it appears without the user moving
-  // focus and it withdraws itself again after fifteen seconds: a screen-reader
-  // user who is not told about it never learns that the deletion can be undone
-  // at all. Both anchors carry no href, so they need role and tabindex to be
-  // operable, and their names have to say which file they act on because the
-  // alert can be one of several on screen. `{{name}}` is a file name the user
-  // chose, and this template concatenates raw strings, so it is escaped.
-  var UNDO_REMOVE_TEMPLATE     = function(data) {
-    var name = escapeHtml(data && data.name);
-
-    return "<div data-alert class=\"file-remove-info alert-box info\" data-interface=\"code-editor\" role=\"alert\" aria-live=\"assertive\">"
-         + "The file \"" + name + "\" has been deleted. "
-         + "<a class=\"file-restore-link menu-button highlight-on-focus\" data-action=\"file.restore\" role=\"button\" tabindex=\"0\" aria-label=\"Undo deleting " + name + "\">Undo</a>"
-         + "<a class=\"close menu-button highlight-on-focus\" data-action=\"file-undo.close\" role=\"button\" tabindex=\"0\" aria-label=\"Dismiss the message about deleting " + name + "\">&times;</a>"
-         + "</div>";
-  };
+  var UNDO_REMOVE_TEMPLATE     = template.compile("<div data-alert class=\"file-remove-info alert-box info\" data-interface=\"code-editor\">The file \"{{name}}\" has been deleted. <a class=\"file-restore-link menu-button\" data-action=\"file.restore\">Undo</a><a class=\"close menu-button\" data-action=\"file-undo.close\">&times;</a></div>");
 
   var COMMENT_WARNING_TEMPLATE = template.compile("<div data-alert class=\"comment-warning alert-box info\">{{message}}<a class=\"close\"><i class=\"fa fa-times-circle\"></i></a></div>");
-
-  /**
-   * HTML-escape a value that is about to be interpolated into one of the
-   * compiled templates above.
-   *
-   * `utils.template` compiles a template into `new Function('o', 'return "..."')`
-   * and substitutes each `{{key}}` with a bare `o["key"]` string concatenation,
-   * so the engine never escapes the data it interpolates. That is safe for the
-   * templates whose values this file controls, but a file name is authored by
-   * whoever uploaded or renamed the file and is then persisted with the trinket
-   * and re-rendered for every later viewer - so an unescaped name was live HTML
-   * in a third party's browser as soon as the trinket (or its embed URL) was
-   * opened.
-   *
-   * The three file-name sinks call this: TAB_TEMPLATE (element body plus the
-   * `aria-label` attribute), EDITABLE_TAB_TEMPLATE (the `value` attribute of the
-   * rename input) and UNDO_REMOVE_TEMPLATE (element body of the undo notice).
-   * Two of the three are attribute values, which is why both quote characters
-   * are escaped as well as the three markup characters. `&` is replaced first so
-   * that the ampersands introduced by the later replacements are not re-escaped.
-   *
-   * Non-strings are returned untouched to preserve the engine's own output
-   * exactly: `utils.template` emits `''` for `undefined` and the string `"null"`
-   * for `null`, and neither can carry markup.
-   *
-   * @param   {*} value  the value to interpolate, usually a file name
-   * @returns {*}        the escaped string, or `value` unchanged if not a string
-   */
-  function escapeHtml(value) {
-    if (typeof value !== 'string') {
-      return value;
-    }
-
-    return value.replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-  }
 
   var TAB_CLICK_EVENT         = "click.trinket-code-editor.tab-select";
   var TAB_SCROLL_START_EVENT  = "mousedown.trinket-code-editor.scroll-tabs-start touchstart.trinket-code-editor.scroll-tabs-start";
@@ -1469,24 +968,19 @@
   var EDIT_FILE_NAME_EVENT    = "click.trinket-code-editor.edit-file-name";
   var REMOVE_FILE_EVENT       = "click.trinket-code-editor.remove-file";
   var HIDE_FILE_EVENT         = "click.trinket-code-editor.hide-file";
-  var INFO_EXPAND_EVENT       = "click.trinket-code-editor.info-expand";
-
-  // Every handler this widget binds carries this namespace, so `_destroy` can
-  // take them all off again in one call.
-  var WIDGET_EVENT_NAMESPACE  = ".trinket-code-editor";
 
   var CODE_ERROR_TAB_MARKER   = '.fa.fa-exclamation-circle.warning';
   var CODE_ERROR_TAB_CLASS    = 'fa fa-exclamation-circle warning';
 
   var add_file_title           = $('body').data('create-text-file-title') || 'Create text file';
-  var $ADD_FILE_TEMPLATE       = $("<dd class=\"tab-button\" title='" + add_file_title + "'><a class=\"add-file-link menu-button highlight-on-focus\" data-action=\"file.add\" aria-label=\"" + add_file_title + "\" role=\"button\" tabindex=\"0\"><i class=\"fa fa-plus\"></i></a></dd>");
+  var $ADD_FILE_TEMPLATE       = $("<dd class=\"tab-button\" title='" + add_file_title + "'><a class=\"add-file-link menu-button\" data-action=\"file.add\" aria-label=\"Add new file\" role=\"button\"><i class=\"fa fa-plus\"></i></a></dd>");
 
-  var $ADD_COMMENT_TEMPLATE    = $("<dd class=\"tab-button\" title='Add comment to current line'><a class=\"add-inline-comment menu-button highlight-on-focus\" data-action=\"inline-comment.add\" aria-label=\"Add comment to current line\" role=\"button\" tabindex=\"0\"><i class=\"fa fa-comment\"></i></a></dd>");
+  var $ADD_COMMENT_TEMPLATE    = $("<dd class=\"tab-button\" title='Add comment to current line'><a class=\"add-inline-comment menu-button\" data-action=\"inline-comment.add\"><i class=\"fa fa-comment\"></i></a></dd>");
   var ADD_INLINE_COMMENT_EVENT = "click.trinket-code-editor.add-inline-comment";
 
   var upload_file_title        = $('body').data('upload-text-file-title') || 'Upload text file';
-  var $UPLOAD_FILE_TEMPLATE    = $("<dd class=\"tab-button\" title='" + upload_file_title + "'><a class=\"upload-file-link menu-button highlight-on-focus\" data-action=\"file.upload\" aria-label=\"" + upload_file_title + "\" role=\"button\" tabindex=\"0\"><i class=\"fa fa-upload\"></i></a></dd>");
-  var $UPLOAD_FILE_INPUT       = $("<form id='file-upload-form' aria-label='Upload a text file into the editor'><input type='file' name='file-upload' id='file-upload' class='hidden' tabindex='-1' aria-label='Choose a text file to upload'></form>");
+  var $UPLOAD_FILE_TEMPLATE    = $("<dd class=\"tab-button\" title='" + upload_file_title + "'><a class=\"upload-file-link menu-button\" data-action=\"file.upload\" aria-label=\"Upload text file\" role=\"button\"><i class=\"fa fa-upload\"></i></a></dd>");
+  var $UPLOAD_FILE_INPUT       = $("<form id='file-upload-form'><input type='file' name='file-upload' id='file-upload' class='hidden' tabindex='-1'></form>");
 
   /**
    * Move comment to another line
@@ -1617,17 +1111,6 @@
       this.element.empty();
       this.element.append($PLUGIN_TEMPLATE.clone());
 
-      // A view-only surface exposes no editing affordances: the editor itself
-      // is read-only (see createDesktopAPI), so the controls that create,
-      // upload, rename, delete or annotate files are not rendered either.
-      // Suppressing them here rather than hiding them with CSS keeps them out
-      // of the tab order and out of the accessibility tree as well.
-      if (this.options.assignmentViewOnly) {
-        this.options.addFiles            = false;
-        this.options.canAddInlineComments = false;
-        this.options.canHideTabs         = false;
-      }
-
       // add add file option
       if (this.options.addFiles) {
         this.element.find('dl.right-options').append($ADD_FILE_TEMPLATE);
@@ -1691,25 +1174,10 @@
       this.$tabOptions = $TAB_OPTIONS_TEMPLATE.clone();
 
       if (this.options.canHideTabs) {
-        // Named and focusable on the same terms as its two siblings in this
-        // menu, which are already role=menuitem/tabindex=0: an icon-only
-        // control that is neither announced nor reachable is not operable.
-        // `aria-pressed` and the name are restated from the bound file every
-        // time the menu opens (see `_syncFileHideState`); the values here are
-        // the unpressed defaults that hold before the first open. The glyph is
-        // empty and purely decorative, so it is kept out of the name.
-        this.$tabOptions.find('ul').append("<li><a class=\"file-hide-link menu-button highlight-on-focus\" data-action=\"file.hide\" role=\"menuitem\" tabindex=\"0\" aria-pressed=\"false\" aria-label=\"Hide this file\" title=\"toggle tab visibility\"><i class=\"fa fa-eye\" aria-hidden=\"true\"></i></a></li>");
+        this.$tabOptions.find('ul').append("<li><a class=\"file-hide-link menu-button\" data-action=\"file.hide\" title=\"toggle tab visibility\"><i class=\"fa fa-eye\"></i></a></li>");
       }
 
-      // On a view-only surface the menu is kept detached rather than added to
-      // the document: nothing renders it, no tab carries the control that
-      // opens it, and the rename/delete actions it holds are therefore
-      // unreachable. The object itself is retained because the rest of the
-      // widget refers to it, and every operation it performs is safe on a
-      // detached node.
-      if (!this.options.assignmentViewOnly) {
-        $('body').append(this.$tabOptions);
-      }
+      $('body').append(this.$tabOptions);
 
       this.$tabBar = this.element.find(".scrollable-content");
       this.$tabBar.on(TAB_CLICK_EVENT, ".tab", function(e) {
@@ -1727,57 +1195,6 @@
         self._scrollTabBar($(this).data('direction'));
       });
 
-      // The tab scrollers auto-repeat while the pointer is held down and stop
-      // on mouseup. A keypress has no mouseup, so keyboard activation scrolls
-      // by exactly one tab per press instead of running to the end.
-      this.element.on('keydown.trinket-code-editor.scroll-tabs-key', '.tab-scroll-link', function(event) {
-        if (event.which !== 13 && event.which !== 32) {
-          return;
-        }
-        event.preventDefault();
-        self._scrollTabBar($(this).data('direction'), true);
-      });
-
-      // Every remaining icon control in the editor is an anchor or span with no
-      // href, driven by a click handler. Forward ENTER and SPACE to that
-      // handler so the mouse and keyboard paths stay identical. The
-      // comment-action selectors cover the controls the inline-comment
-      // templates insert into the editor at runtime — reordering, the options
-      // dropdown and its items — which are focusable and named but would
-      // otherwise do nothing when activated from the keyboard.
-      enableKeyActivation(this.element, [
-        // Tab bar.
-          '.file-tab-link'
-        , '.tab-options-link'
-        , '.add-file-link'
-        , '.upload-file-link'
-        , '.add-inline-comment'
-        , '.expander'
-        // The undo alert this widget inserts after a deletion. Both of its
-        // anchors are href-less, and the affordance is time-limited, so
-        // without this a keyboard user can focus them and lose the file
-        // anyway.
-        , '.file-remove-info .file-restore-link'
-        , '.file-remove-info .close'
-        // Controls the inline-comment templates insert at runtime: reordering,
-        // the options dropdown and its items, and the buttons in the compose,
-        // edit and remove-confirmation states. Each is an anchor styled as a
-        // button and driven by a click handler, so without this they focus and
-        // announce correctly but do nothing when activated from the keyboard.
-        , '.comment-actions'
-        , '.move-comment-up'
-        , '.move-comment-down'
-        , '.edit-inline-comment'
-        , '.confirm-remove-inline-comment'
-        , '.save-inline-comment'
-        , '.cancel-inline-comment'
-        , '.update-comment'
-        , '.cancel-update-comment'
-        , '.confirm-remove-comment'
-        , '.cancel-remove-comment'
-      ].join(', '));
-      enableKeyActivation(this.$tabOptions, '.file-rename-link, .file-remove-link, .file-hide-link');
-
       this.element.find('.add-file-link').parent().on(ADD_FILE_EVENT, function() {
         self.addFile("");
         self._selectTab(self.$tabBar.children().length - 1, true);
@@ -1793,40 +1210,12 @@
         self._addCommentWidget();
       });
 
-      // Expand and collapse the keyword-documentation pane.
-      //
-      // Bound once, here, and delegated from this widget's own element. It
-      // used to be bound inside `_addFile` with a document-wide selector, so
-      // the handler count grew with the file count: with two files open one
-      // activation toggled twice and netted nothing, which left the control
-      // doing visibly nothing at all, and deleting a file did not unbind.
-      // Delegation also means it keeps working for a pane rebuilt at runtime.
-      this.element.on(INFO_EXPAND_EVENT, '.info-area .expander', function() {
-        var $infoArea = self.element.find('.info-area');
-
-        if ($infoArea.hasClass('expanded')) {
-          $infoArea.removeClass('expanded').addClass('collapsed');
-        }
-        else {
-          $infoArea.removeClass('collapsed').addClass('expanded');
-        }
-
-        self._syncInfoExpanderState();
-      });
-
       this.element.on(TAB_OPTIONS_OPEN_EVENT, '.tab-options-link', function(e) {
         if (self.$tabOptions.hasClass('open')) {
           self._closeOptionsMenu();
         }
         else {
           var thisTab = $(this).closest('.tab');
-
-          // The menu is a single element shared by every tab, so which file
-          // its actions apply to has to be decided here, when it opens, and
-          // not when an action runs: resolving the target at action time is
-          // what allowed a menu opened on one file to delete another.
-          self.$tabOptionsTab     = thisTab;
-          self.$tabOptionsTrigger = $(this);
           if ($(thisTab).hasClass('main-editable')) {
             // main file isn't removeable
             self.$tabOptions.find('.file-remove-link').hide();
@@ -1848,24 +1237,10 @@
             }
           }
 
-          if (self.options.canHideTabs) {
-            // The hide control is one shared element serving every tab, so it
-            // holds no state of its own: it is restated here, for the file the
-            // menu has just been bound to.
-            self._syncFileHideState(thisTab);
-          }
-
           var pos = $(this).offset();
           self.$tabOptions.css('left', (pos.left - 10) + 'px');
           self.$tabOptions.css('top', (pos.top + $(this).height() + 10) + 'px');
           self.$tabOptions.addClass('open');
-
-          // Focus follows the menu. Its items are the only things that can be
-          // acted on while it is open, and they sit in a body-level element
-          // far from the trigger in the tab order, so leaving focus on the
-          // trigger means a keyboard user opens a menu they cannot reach.
-          focusRevealedControl(self.$tabOptions.find('[role="menuitem"]'));
-
           self.element.on(TAB_OPTIONS_CLOSE_EVENT, function(e) {
             if (!$(e.target).hasClass('tab-options-link')) {
               self._closeOptionsMenu();
@@ -1874,38 +1249,23 @@
         }
       });
 
-      // Each action reads its target from the menu's binding before the menu
-      // is closed (closing clears it), and does nothing if that binding no
-      // longer resolves to a file — the alternative is acting on whichever
-      // file happens to be selected, which is the wrong file by definition.
       this.$tabOptions.find('.file-rename-link').on(EDIT_FILE_NAME_EVENT, function() {
-        var $tab = self._optionsMenuTab();
-
         self._closeOptionsMenu();
 
-        if ($tab && !$('.file-name-input').length) {
-          self._editFileName($tab);
+        if (!$('.file-name-input').length) {
+          self._editFileName();
         }
       });
 
       this.$tabOptions.find('.file-remove-link').on(REMOVE_FILE_EVENT, function() {
-        var $tab = self._optionsMenuTab();
-
         self._closeOptionsMenu();
 
-        if ($tab) {
-          self._removeFile({ undo : true, $tab : $tab });
-        }
+        self._removeFile({ undo : true });
       });
 
       this.$tabOptions.find('.file-hide-link').on(HIDE_FILE_EVENT, function() {
-        var $tab = self._optionsMenuTab();
-
         self._closeOptionsMenu();
-
-        if ($tab) {
-          self._toggleFile($tab);
-        }
+        self._toggleFile();
       });
 
       if (this.options.assets) {
@@ -1955,10 +1315,6 @@
       if (this.options.showInfo) {
         self.element.addClass('with-info');
       }
-
-      // State the expander's collapsed condition and its controlled region
-      // from the outset, rather than only once the pane has been toggled.
-      this._syncInfoExpanderState();
 
       if (this.options.state) {
         this._loadState(this.options.state);
@@ -2050,33 +1406,19 @@
 
         $('textarea#edit-inline-comment-' + _commentId).val(commentText);
 
-        // This item lives inside the dropdown, so the framework's click-out
-        // handler never sees the click: without closing it here the list stays
-        // open behind the edit panel and its trigger stays marked expanded.
-        closeCommentDropdown(_commentId);
-
         // hide dropdown, show buttons
         $("a[data-dropdown='comment-actions-" + _commentId + "']").addClass("hide");
         $("#update-comment-container-" + _commentId).removeClass("hide");
-
-        // The text is what this action exists to change, so focus it.
-        focusRevealedControl('textarea#edit-inline-comment-' + _commentId);
       });
 
       $(document).on('click', '.cancel-update-comment', function(event) {
         var _commentId = $(this).data('comment-id');
-
-        // The trigger is about to be shown again, so its state has to describe
-        // the list as it now is: closed.
-        closeCommentDropdown(_commentId);
 
         $("a[data-dropdown='comment-actions-" + _commentId + "']").removeClass("hide");
         $("#update-comment-container-" + _commentId).addClass("hide");
 
         $('#comment-container-' + _commentId).removeClass('hide');
         $('#edit-comment-container-' + _commentId).addClass('hide');
-
-        focusRevealedControl("a[data-dropdown='comment-actions-" + _commentId + "']");
       });
 
       $(document).on('click', '.update-comment', function(event) {
@@ -2084,25 +1426,16 @@
           , _fileIndex = $(this).data('file-index');
 
         var updatedComment     = $('textarea#edit-inline-comment-' + _commentId).val();
-        // Escaped before the line breaks become markup: this string is
-        // written into the card with .html() immediately below.
-        var updatedCommentHtml = commentTextToHtml(updatedComment)
+        var updatedCommentHtml = updatedComment.replace(/(?:\r\n|\r|\n)/g, '<br />')
 
-        // The cached copy stays as the author typed it: it is written back
-        // into the edit field with .val(), which does not decode entities.
         WIDGET_CACHE[_commentId]._text = updatedComment;
         $('#comment-container-' + _commentId).html(updatedCommentHtml);
-
-        // Commit path: the trigger comes back, so restate it as closed.
-        closeCommentDropdown(_commentId);
 
         $("a[data-dropdown='comment-actions-" + _commentId + "']").removeClass("hide");
         $("#update-comment-container-" + _commentId).addClass("hide");
 
         $('#comment-container-' + _commentId).removeClass('hide');
         $('#edit-comment-container-' + _commentId).addClass('hide');
-
-        focusRevealedControl("a[data-dropdown='comment-actions-" + _commentId + "']");
 
         self._updateComment({
             _id    : _commentId
@@ -2117,27 +1450,15 @@
       $(document).on('click', '.confirm-remove-inline-comment', function(event) {
         var _commentId = $(this).data('comment-id');
 
-        // Also inside the dropdown, and so also invisible to the framework's
-        // click-out handler.
-        closeCommentDropdown(_commentId);
-
         $("a[data-dropdown='comment-actions-" + _commentId + "']").addClass("hide");
         $("#confirm-remove-comment-container-" + _commentId).removeClass("hide");
-
-        // This action asks a question, so focus its answer.
-        focusRevealedControl("#confirm-remove-comment-container-" + _commentId + " .confirm-remove-comment");
       });
 
       $(document).on('click', '.cancel-remove-comment', function(event) {
         var _commentId = $(this).data('comment-id');
 
-        // The trigger is about to be shown again; state it as closed.
-        closeCommentDropdown(_commentId);
-
         $("a[data-dropdown='comment-actions-" + _commentId + "']").removeClass("hide");
         $("#confirm-remove-comment-container-" + _commentId).addClass("hide");
-
-        focusRevealedControl("a[data-dropdown='comment-actions-" + _commentId + "']");
       });
 
       $(document).on('click', '.confirm-remove-comment', function(event) {
@@ -2162,10 +1483,6 @@
 
         updateCommentArrows(self._files[_fileIndex].editor.getSession(), _fileIndex);
 
-        // The comment and every control on it are gone, so the nearest thing
-        // the user can still act on is the control that adds a new one.
-        focusRevealedControl(self.element.find('.add-inline-comment'));
-
         self._removeComment({
             _id   : _commentId
           , index : _fileIndex
@@ -2187,12 +1504,6 @@
         // self._files[fileIndex].editor.getSession().selection.clearSelection();
 
         var session = self._files[fileIndex].editor.getSession();
-
-        // Collapsing detaches the card, and with it a trigger the framework
-        // can no longer find to restate; re-showing it must not bring back a
-        // control that claims an open list. Either way the list is closed
-        // once this click has been served, so say so before the card moves.
-        closeCommentDropdown(commentId);
 
         if (COMMENT_COLLAPSED[commentId]) {
           session.widgetManager.addLineWidget( WIDGET_CACHE[commentId] );
@@ -2279,106 +1590,9 @@
       });
     },
 
-    /**
-     * Keep the keyword-documentation expander in step with the pane.
-     *
-     * The control's visible text switches between "more" and "less" purely
-     * through the pane's collapsed/expanded class, so its accessible name and
-     * `aria-expanded` are restated from that same class rather than tracked
-     * separately — otherwise the name says "Show more information" while the
-     * control reads "less" and does the opposite. `aria-controls` needs a
-     * target with an id, which the pane's body does not have of its own.
-     */
-    _syncInfoExpanderState : function() {
-      var $infoArea = this.element.find('.info-area')
-        , $expander = $infoArea.find('.expander')
-        , $full     = $infoArea.find('.info-full')
-        , expanded  = $infoArea.hasClass('expanded');
-
-      if (!$expander.length) {
-        return;
-      }
-
-      if ($full.length) {
-        if (!$full.attr('id')) {
-          $full.attr('id', 'info-full-' + (++INFO_REGION_SEQUENCE));
-        }
-        $expander.attr('aria-controls', $full.attr('id'));
-      }
-
-      $expander.attr('aria-expanded', expanded ? 'true' : 'false');
-      $expander.attr('aria-label', expanded
-        ? 'Show less information about the selected keyword'
-        : 'Show more information about the selected keyword');
-    },
-
-    /**
-     * Release everything this widget bound outside its own element.
-     *
-     * jQuery UI removes handlers bound through its own `_on`, and handlers in
-     * the widget's `.codeEditor` namespace, but this widget binds in its own
-     * `.trinket-code-editor` namespace and appends the file-options menu to
-     * `body`, so both outlive a destroy unless they are taken off here.
-     */
-    _destroy : function() {
-      this.element.off(WIDGET_EVENT_NAMESPACE);
-
-      if (this.$tabBar) {
-        this.$tabBar.off(WIDGET_EVENT_NAMESPACE);
-      }
-
-      if (this.$tabOptions) {
-        this.$tabOptions.off(WIDGET_EVENT_NAMESPACE);
-        this.$tabOptions.remove();
-      }
-    },
-
     _closeOptionsMenu : function() {
-      var wasOpen, $trigger;
-
-      if (!this.$tabOptions) {
-        return;
-      }
-
-      wasOpen  = this.$tabOptions.hasClass('open');
-      $trigger = this.$tabOptionsTrigger;
-
       this.element.off(TAB_OPTIONS_CLOSE_EVENT);
       this.$tabOptions.removeClass('open');
-
-      // The binding is dropped with the menu, so a later action cannot fall
-      // back on a tab the user has since navigated away from.
-      this.$tabOptionsTab     = undefined;
-      this.$tabOptionsTrigger = undefined;
-
-      // Every close path lands here — commit, cancel, dismiss and tab change
-      // — so this is where focus goes back to the control that opened the
-      // menu. The menu items are gone, and a keyboard user left on a removed
-      // element is returned to <body> and to the top of the tab order.
-      // Actions that reveal something better to act on (the rename field, the
-      // undo link) move focus on from here themselves.
-      if (wasOpen && $trigger) {
-        focusRevealedControl($trigger);
-      }
-    },
-
-    /**
-     * The tab the currently open options menu was opened for.
-     *
-     * @return {jQuery|null} the owning tab, or null when the menu's binding
-     *         no longer resolves to a live, selected tab
-     */
-    _optionsMenuTab : function() {
-      var $tab = this.$tabOptionsTab;
-
-      // Still in the tab bar, and still the selected file: the menu is closed
-      // on every tab selection, so anything else means the tab bar changed
-      // under the open menu and there is no target the user can have meant.
-      if (!$tab || !$tab.length || !$.contains(this.$tabBar[0], $tab[0]) || !$tab.hasClass('active')) {
-        return null;
-      }
-
-      return $tab;
     },
 
     _loadState : function(state) {
@@ -2421,35 +1635,12 @@
     },
 
     _selectTab : function(tabIndex, noFocus) {
-      // Selecting a tab closes the options menu. The menu is one element
-      // shared by every tab and is bound to the tab it was opened for, so
-      // leaving it open across a tab change leaves a menu standing over a
-      // file it does not belong to — which is how Delete came to remove a
-      // file the user had navigated away from.
-      this._closeOptionsMenu();
-
       this.element.find('.tab.active, .file-content.active').removeClass('active');
-      // Keep the tablist's selected state in sync with the visual one so
-      // assistive technology reports the same active file the user sees.
-      this.element.find('.tab .file-tab-link').attr('aria-selected', 'false');
-      // The stylesheet renders this control's gear only on the selected tab,
-      // so on any other tab it is an invisible zero-width focus stop that
-      // opens a menu positioned off the tab it belongs to. Take it out of the
-      // tab order and out of the accessibility tree until its tab is the one
-      // being acted on.
-      this.element.find('.tab .tab-options-link').attr({
-          'tabindex'    : '-1'
-        , 'aria-hidden' : 'true'
-      });
       if (this._editor) {
         this._editor.blur();
       }
       if (tabIndex !== undefined && this._files[tabIndex]) {
         this.$tabBar.children().eq(tabIndex).addClass('active');
-        this.$tabBar.children().eq(tabIndex).find('.file-tab-link').attr('aria-selected', 'true');
-        this.$tabBar.children().eq(tabIndex).find('.tab-options-link')
-          .attr('tabindex', '0')
-          .removeAttr('aria-hidden');
         this.$contentWrapper.children().eq(tabIndex).addClass('active');
         this._editor = this._files[tabIndex].editor;
         if (!noFocus) {
@@ -2471,68 +1662,14 @@
       }
     },
 
-    /**
-     * Re-state a file's accessible names after it is named or renamed.
-     *
-     * The tab, its options control and the editor region are each named from
-     * the file name at the moment they are built — which, for a file added at
-     * runtime, is before it has one. Without this the visible label updates on
-     * rename while assistive technology keeps announcing the name the file was
-     * created with, so a screen-reader user hears "Unnamed file" for the rest
-     * of the session no matter what the file is actually called.
-     *
-     * @param {jQuery} $tab the tab whose file was named
-     * @param {String} name the file's new name
-     */
-    _refreshFileAccessibleNames : function($tab, name) {
-      var $editor = this.element.find('.ace_editor.active')
-        , label   = 'Code editor' + (name ? ', ' + name : '')
-        , $input;
-
-      $tab.find('.file-tab-link').attr('aria-label', name ? name + ' tab' : 'Unnamed file tab');
-      $tab.find('.tab-options-link').attr('aria-label', name ? 'Options for ' + name : 'Options for this unnamed file');
-
-      if (!$editor.length) {
-        return;
-      }
-
-      $editor.attr('aria-label', label);
-      $input = $editor.find('textarea.ace_text-input');
-
-      if ($input.length) {
-        // Re-state only the file name. The escape-route half of the
-        // description is what a keyboard user depends on, so it is rebuilt
-        // verbatim, in the read-only or editable form the field already has.
-        $input.attr('aria-label', $input.attr('aria-readonly') === 'true'
-          ? label + ' (read only). Press Escape to go back to the file tab, or F6 to move on past the editor.'
-          : label + '. Press Escape to go back to the file tab, or F6 to move on past the editor. Tab inserts indentation.');
-      }
-    },
-
-    /**
-     * Put a tab's file name into an editable field.
-     *
-     * @param {jQuery} [$targetTab] the tab to rename; defaults to the
-     *        selected tab, which is what the "+" flow means
-     */
-    _editFileName : function($targetTab) {
+    _editFileName : function() {
       var self      = this
-          // A caller that knows which file it means says so: the shared
-          // options menu resolves its target when it opens, not now.
-          , $tab    = $targetTab && $targetTab.length ? $targetTab : self.$tabBar.find('.tab.active')
+          , $tab    = self.$tabBar.find('.tab.active')
           , $name   = $tab.find('.file-name')
           , name    = $name.text()
           , nameLen = name.length
-          , $input  = $(EDITABLE_TAB_TEMPLATE({ name : escapeHtml(name) }))
-          , width   = $name.outerWidth()
-          // Set when the field is dismissed with ENTER or ESCAPE. A blur
-          // caused by the user clicking somewhere else must leave focus where
-          // they clicked, so only a keyboard dismissal hands focus back.
-          , dismissedByKeyboard = false;
-
-      // Interpolating an empty name leaves "Edit  filename" with a doubled
-      // space; name the field for what it does instead.
-      $input.attr('aria-label', name ? 'Edit ' + name + ' filename' : 'File name');
+          , $input  = $(EDITABLE_TAB_TEMPLATE({ name : name }))
+          , width   = $name.outerWidth();
 
       if ($tab.hasClass('main-editable')) {
         if (!self.options.mainEditable) {
@@ -2555,9 +1692,7 @@
 
         $('.file-name-error').remove();
         if (!newName.length) {
-          // The file being named is the one to discard, named explicitly so
-          // this cannot fall through to whichever tab is selected.
-          self._removeFile({ undo : false, $tab : $tab });
+          self._removeFile({ undo : false });
           return;
         }
         else if (newName.length > 50) {
@@ -2591,7 +1726,6 @@
           $name.text(newName);
           $name.show();
           $(this).remove();
-          self._refreshFileAccessibleNames($tab, newName);
           self._files[$tab.index()].name = newName;
           if (self._onChange) {
             self._onChange();
@@ -2599,55 +1733,28 @@
           self._files[$tab.index()].editor.setModeFromName(newName);
           // emit file renamed event
           self.element.trigger({type: 'codeeditor.fileRenamed', oldFileName: name, newFileName: newName, newFile: self._files[$tab.index()]});
-
-          // The field the user was in has just been removed, so a keyboard
-          // dismissal would otherwise drop focus onto <body> and back to the
-          // top of the tab order. Return it to the control that opens this
-          // file's options — the control the rename was started from — or to
-          // the tab itself where that control does not exist.
-          if (dismissedByKeyboard) {
-            focusRevealedControl($tab.find('.tab-options-link').length
-              ? $tab.find('.tab-options-link')
-              : $tab.find('.file-tab-link'));
-          }
         }
       });
 
       $input.on('keydown', function(e) {
         // kill focus on ENTER/RETURN
         if(e.keyCode === 10 || e.keyCode === 13) {
-          dismissedByKeyboard = true;
           $(this).blur();
         }
         // restore original value on ESCAPE
         else if (e.keyCode === 27) {
-          dismissedByKeyboard = true;
           $input.val(name);
           $(this).blur();
         }
       });
     },
 
-    /**
-     * Remove a file, offering an undo when asked for one.
-     *
-     * @param {Object} options
-     * @param {Boolean} options.undo show the undo alert even for an empty file
-     * @param {jQuery} [options.$tab] the tab to remove; defaults to the
-     *        selected tab. The options menu passes the tab it was opened for,
-     *        which is the only way this cannot remove the wrong file.
-     */
     _removeFile : function(options) {
       var self                    = this
-          , $activeTab            = options && options.$tab && options.$tab.length
-                                      ? options.$tab.first()
-                                      : this.$tabBar.find('.tab.active').first()
-          , $activeContent        = this.$contentWrapper.children().eq($activeTab.index()).first()
+          , $activeTab            = this.$tabBar.find('.tab.active').first()
+          , $activeContent        = this.$contentWrapper.find('.file-content.active').first()
           , newIndex = origIndex  = $activeTab.index()
           , fileName              = $activeTab.find('.file-name').text()
-          // The raw name goes in: `UNDO_REMOVE_TEMPLATE` escapes its own input
-          // because it concatenates the name into markup three times, so
-          // escaping it here as well showed the user `&amp;` and `&lt;`.
           , $restore              = $(UNDO_REMOVE_TEMPLATE({name : fileName}))
           , fileToRestore         = this._files.splice(origIndex, 1)[0]
           , isLastTab             = origIndex === this._files.length
@@ -2663,8 +1770,7 @@
                 $restore.remove();
                 $restore = undefined;
               }
-            }
-          , byKeyboard;
+            };
 
       $activeTab.detach();
       $activeContent.detach();
@@ -2673,17 +1779,7 @@
         newIndex -= 1;
       }
 
-      // Whether this deletion was activated by ENTER or SPACE has to be read
-      // here, while the click handler that triggered it is still on the
-      // stack; the focus decisions below depend on it.
-      byKeyboard = activatedByKeyboard();
-
-      // On the keyboard path the editor is deliberately not focused. Ace's
-      // focus() also schedules a deferred re-focus of its hidden textarea, so
-      // focusing the editor here would silently take focus back off the undo
-      // link a tick after it was given (measured at 12-18ms). The undo
-      // affordance is focused below instead.
-      this._selectTab(newIndex, byKeyboard ? true : undefined);
+      this._selectTab(newIndex);
       if (this._onChange && !fileToRestore.binary) {
         this._onChange();
       }
@@ -2694,54 +1790,14 @@
 
         // destroy restore file editor when message is discarded
         $restore.find('.close').on('click', function() {
-          // Nothing to discard once the file has been put back: the capture
-          // is cleared on restore, and reading through it would throw.
-          if (!fileToRestore) {
-            return;
-          }
-
-          var dismissedByKey = activatedByKeyboard();
-
           fileToRestore.editor.destroy();
           // emit event when editor is finally destroyed
           self.element.trigger({type: 'codeeditor.fileRemoved', fileName: fileName});
-
-          // Destroying the editor empties its container, so this file cannot
-          // be restored any more — its content is gone. Foundation removes
-          // the alert a few hundred milliseconds after this handler (measured
-          // at ~335ms: it fades the box out and only then fires the `close`
-          // event this widget listens for), and the undo link stays live and
-          // clickable throughout. Retiring the capture here rather than
-          // waiting for that event is what stops a click in that window
-          // putting the tab back around an emptied editor — which would then
-          // be announced as a change and saved as an empty file.
-          clearTimeout(closeUndoAlertTimeout);
-          fileToRestore = undefined;
-
-          // Dismissing removes the element that holds focus, which returns a
-          // keyboard user to <body> and the top of the tab order. Put them on
-          // the file they are now looking at instead.
-          if (dismissedByKey) {
-            focusRevealedControl(self.$tabBar.find('.tab.active .file-tab-link'));
-          }
         });
 
-        // Restore the deleted file. Bound to this alert's own link: a
-        // document-wide selector binds a further handler on every deletion,
-        // so one activation restores several files, and an older alert's link
-        // acts on the newest deletion.
-        $restore.find('.file-restore-link').on('click', function() {
-          // `closeUndoMessage` clears the capture, so the restore holds its
-          // own reference. Reading `fileToRestore` after the close threw a
-          // TypeError, which left the tab back on screen with the change
-          // never announced and therefore never persisted.
-          var restoredFile = fileToRestore;
-
-          if (!restoredFile) {
-            return;
-          }
-
-          self._files.splice(origIndex, 0, restoredFile);
+        // restore the deleted file
+        $('.file-restore-link').on('click', function() {
+          self._files.splice(origIndex, 0, fileToRestore);
           if (isLastTab) {
             self.$tabBar.append($activeTab);
             self.$contentWrapper.children().eq(newIndex).after($activeContent);
@@ -2752,10 +1808,7 @@
           }
           self._selectTab(origIndex);
           closeUndoMessage();
-
-          // `_onChange` is the draft-save trigger, so the restored file is
-          // only on screen until the next reload without it.
-          if (self._onChange && !restoredFile.binary) {
+          if (self._onChange && !fileToRestore.binary) {
             self._onChange();
           }
         });
@@ -2767,36 +1820,12 @@
           $('.file-name-error').remove();
         }
         $(document).foundation('alert', 'reflow');
-
-        // A deletion reached from the keyboard leaves focus on a control that
-        // has just been detached with its tab. Without this the user lands in
-        // the editor, which sits past the alert in the tab order behind a TAB
-        // key that indents rather than moves, so they would have to know to
-        // go backwards to reach a message that withdraws itself after fifteen
-        // seconds. The pointer path is untouched: focus stays where it was
-        // clicked.
-        if (byKeyboard) {
-          focusRevealedControl($restore.find('.file-restore-link'));
-        }
-      }
-      else if (byKeyboard) {
-        // Nothing was offered to undo, so the tab bar is where the user was
-        // working and where the removed file's neighbour now is.
-        focusRevealedControl(this.$tabBar.find('.tab.active .file-tab-link'));
       }
     },
 
-    /**
-     * Toggle a file's hidden flag.
-     *
-     * @param {jQuery} [$targetTab] the tab whose file to toggle; defaults to
-     *        the selected tab
-     */
-    _toggleFile : function($targetTab) {
+    _toggleFile : function() {
       var self     = this
-          // Named by the caller where it matters: the options menu decides
-          // which file it is acting on when it opens, not when it commits.
-          , $tab   = $targetTab && $targetTab.length ? $targetTab : self.$tabBar.find('.tab.active');
+          , $tab   = self.$tabBar.find('.tab.active');
 
       if (typeof self._files[$tab.index()].hidden === 'undefined') {
         self._files[$tab.index()].hidden = true;
@@ -2813,54 +1842,12 @@
         $tab.find('.file-name').prev('i').remove();
       }
 
-      // The visible change is a colour and an eye-slash glyph, neither of
-      // which reaches assistive technology. Restate the control's own state so
-      // it is correct the moment the flag changes, not only at the next open.
-      self._syncFileHideState($tab);
-
       if (self._onChange) {
         self._onChange();
       }
     },
 
-    /**
-     * Restate the shared hide control's pressed state and accessible name from
-     * the file it is about.
-     *
-     * The control toggles a file between visible and hidden, but the only
-     * feedback baseline gives is a colour change on the tab and an empty
-     * eye-slash glyph, so its accessible node was byte-identical in both
-     * states. `aria-pressed` carries the state, and the name repeats it
-     * because `aria-pressed` is not reliably surfaced on a `menuitem`: without
-     * the name a screen-reader user hears the same thing whether the file is
-     * visible or hidden, which is the whole of the defect.
-     *
-     * @param {jQuery} $tab the tab whose file the control will act on
-     */
-    _syncFileHideState : function($tab) {
-      var $link = this.$tabOptions ? this.$tabOptions.find('.file-hide-link') : null
-        , file, name, hidden;
-
-      if (!$link || !$link.length || !$tab || !$tab.length) {
-        return;
-      }
-
-      file   = this._files[$tab.index()];
-      name   = $.trim($tab.find('.file-name').text());
-      hidden = !!(file && file.hidden);
-
-      $link.attr('aria-pressed', hidden ? 'true' : 'false');
-      $link.attr('aria-label', (hidden ? 'Show ' : 'Hide ') + (name || 'this file'));
-    },
-
-    /**
-     * Scroll the tab bar towards `direction`.
-     *
-     * @param {Number} direction -1 for left, 1 for right
-     * @param {Boolean} [singleStep] advance one tab and stop, for callers with
-     *        no pointer-release event to end the auto-repeat (keyboard)
-     */
-    _scrollTabBar : function(direction, singleStep) {
+    _scrollTabBar : function(direction) {
       var self             = this
           , scrollDelay    = 300
           , delayIncrement = 50
@@ -2873,12 +1860,10 @@
         $tabs = $($tabs.get().reverse());
       }
 
-      if (!singleStep) {
-        $(document).one(TAB_SCROLL_STOP_EVENT, function() {
-            stopScrolling = true;
-            clearTimeout(nextTabTimeout);
-        });
-      }
+      $(document).one(TAB_SCROLL_STOP_EVENT, function() {
+          stopScrolling = true;
+          clearTimeout(nextTabTimeout);
+      });
 
       scrollTabs = function() {
         var searching = true;
@@ -2911,12 +1896,6 @@
       };
 
       scrollTabs();
-
-      // Setting the flag after the first animation is queued lets that step
-      // finish and prevents the completion callback scheduling another.
-      if (singleStep) {
-        stopScrolling = true;
-      }
     },
 
     _addCommentWidget : function() {
@@ -3066,24 +2045,7 @@
       comments = file.comments || [];
       binary   = file.binary || false;
 
-      $tab     = $(TAB_TEMPLATE({name:escapeHtml(name)}));
-
-      // A file created through the "+" control has no name until the user
-      // commits one, which would otherwise render as the accessible names
-      // " tab" and "Options for ". Fall back to a description of the state.
-      if (!name) {
-        $tab.find('.file-tab-link').attr('aria-label', 'Unnamed file tab');
-        $tab.find('.tab-options-link').attr('aria-label', 'Options for this unnamed file');
-      }
-
-      // The per-tab options control opens the rename/delete menu, so a
-      // view-only surface does not get one. Stylesheets already hide it for a
-      // permanent tab, but hidden is not the same as absent: removing it means
-      // there is no editing affordance to reach, by pointer, keyboard,
-      // assistive technology or script.
-      if (this.options.assignmentViewOnly) {
-        $tab.find('.tab-options-link').remove();
-      }
+      $tab     = $(TAB_TEMPLATE({name:name}));
 
       self.$tabBar.find(".file-name").each(function(thisIndex) {
         if ($(this).text().toLowerCase() === name.toLowerCase()) {
@@ -3163,17 +2125,17 @@
         }
         else {
           $tab.addClass('permanent');
-          // A permanent file cannot be renamed, deleted or hidden, and the
-          // stylesheet hides this control on such a tab. Hidden is not the
-          // same as absent: left in the document it still opens the shared
-          // menu, whose actions would then apply to the one file that must
-          // not change. Removing it is what makes those actions unreachable
-          // for this file, by pointer, keyboard, assistive technology or
-          // script, and it changes no layout because the control is not
-          // rendered on a permanent tab in the first place.
-          $tab.find('.tab-options-link').remove();
         }
       }
+
+      $('.info-area .expander').click(function() {
+        if ($('.info-area').hasClass('expanded')) {
+          $('.info-area').removeClass('expanded').addClass('collapsed');
+        }
+        else {
+          $('.info-area').removeClass('collapsed').addClass('expanded');
+        }
+      });
 
       filedata = {
           name     : name
@@ -3333,123 +2295,50 @@
         this.loadFullInfo(this._currentInfo);
       }
       else {
-        // Nothing is selected, so nothing is wanted: drop the active key as
-        // well as the pane, or a request already in flight would render into
-        // a pane the user has moved away from.
-        this._activeInfoKey = null;
         $('.info-area').removeClass('expanded').addClass('collapsed empty');
-        this._syncInfoExpanderState();
       }
     },
 
-    /**
-     * Fetch and show the documentation for the keyword under the caret.
-     *
-     * Two things have to hold at once. Each document is fetched at most once
-     * per session, which is why `INFO_CACHE` holds either the in-flight
-     * request or the resolved body under one key per document. And the pane
-     * must always show the keyword the caret is actually on, which is why
-     * every render is gated on `_activeInfoKey`: the caret can move between
-     * a request being made and its response arriving, and with two requests
-     * outstanding the one that lands last would otherwise win regardless of
-     * where the caret is. Marking a request "cancelled" was not enough,
-     * because returning to a keyword whose request was still in flight
-     * un-cancelled it while the newer one stayed live.
-     *
-     * @param {Object} info the token descriptor from the hints plugin
-     * @param {String} info.url the document to fetch
-     */
     loadFullInfo : function(info) {
-      var self = this
-          , cached
-          // Cache on the document rather than on the request URL: the URL
-          // carries a generated cache-busting prefix that differs on every
-          // call, so keying on it re-fetches the same fragment each time the
-          // caret returns to a keyword and never serves a hit.
-          , cacheKey = info && info.url ? infoCacheKey(info.url) : null;
+      var cached;
 
       if (!info || !info.url) return;
 
-      // From here on, this is the only document whose arrival may render.
-      this._activeInfoKey = cacheKey;
+      cached = INFO_CACHE[info.url];
 
-      cached = INFO_CACHE[cacheKey];
+      if (cached !== undefined) {
+        if (typeof cached === "string") {
+          if (cached.length) {
+            $('.info-area .info-full').html(INFO_CACHE[info.url]);
+            $('.info-area .expander').show();
+          }
+        }
+        else {
+          cached._cancelled = false;
+        }
 
-      // Already fetched: render it straight away, including the empty case,
-      // which has to clear the previous keyword's body rather than leave it
-      // standing under the new keyword's summary.
-      if (typeof cached === "string") {
-        this._renderFullInfo(cacheKey, cached);
         return;
       }
 
-      // Already in flight for this same document. Its completion handler is
-      // gated on the active key set above, so it will render for this caret
-      // position; issuing a second request for the same URL would break the
-      // one-fetch-per-document guarantee.
-      if (cached) {
-        return;
+      if (this.lastInfoRequest) {
+        this.lastInfoRequest._cancelled = true;
       }
 
-      INFO_CACHE[cacheKey] = (function() {
+      this.lastInfoRequest = INFO_CACHE[info.url] = (function() {
         var req = $.get(info.url, '', 'html');
         req.done(function(data) {
-          INFO_CACHE[cacheKey] = data || "";
-          self._renderFullInfo(cacheKey, INFO_CACHE[cacheKey]);
-        });
-        req.fail(function() {
-          // Drop the placeholder so a later attempt can retry rather than
-          // being served a permanently pending request.
-          delete INFO_CACHE[cacheKey];
+          INFO_CACHE[info.url] = data || "";
+          if (data && !req._cancelled) {
+            $('.info-area .info-full').html(data);
+            $('.info-area .expander').show();
+          }
         });
         return req;
       })();
     },
 
-    /**
-     * Show a fetched document, if it is still the one that is wanted.
-     *
-     * @param {String} cacheKey the document this content belongs to
-     * @param {String} html the document body, possibly empty
-     */
-    _renderFullInfo : function(cacheKey, html) {
-      var $infoArea = this.element.find('.info-area');
-
-      // The caret has moved on since this was asked for: rendering now would
-      // put one keyword's documentation under another keyword's summary.
-      if (cacheKey !== this._activeInfoKey) {
-        return;
-      }
-
-      if (html && html.length) {
-        $infoArea.find('.info-full').html(html);
-        $infoArea.find('.expander').show();
-      }
-      else {
-        // This keyword has a summary but no document. Leaving the previous
-        // keyword's body in place would attribute it to this keyword, and
-        // `updateInfo` has already hidden the expander — so an expanded pane
-        // would be stuck open with content that belongs elsewhere and no
-        // control to close it. Clear it and collapse.
-        $infoArea.find('.info-full').empty();
-        $infoArea.find('.expander').hide();
-        $infoArea.removeClass('expanded').addClass('collapsed');
-      }
-
-      this._syncInfoExpanderState();
-    },
-
     registerPlugin : function(plugin) {
       var self = this;
-
-      // Plugins publish through a single shared event bus, so binding a
-      // second listener for a plugin that is already registered makes one
-      // token change fan out into as many identical documentation requests as
-      // there are listeners. Registration is therefore idempotent.
-      if ($.inArray(plugin, this._plugins) !== -1) {
-        return;
-      }
-
       if (plugin.on) {
         plugin.on('info.token', function(e, data) {
           self.updateInfo(data);

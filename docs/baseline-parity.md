@@ -16,7 +16,7 @@ How baseline behaviour was captured, what was compared, and how each ambiguity w
 | **Re-measured at the delivered head** | The route-manifest evidence, end to end: the delivered generator reproduces the committed `payloadDigest` on the target side, and the **baseline side is generated from a `git worktree` at `2f8712a` with its own `npm ci`** rather than read from a committed artifact, because this delivery commits none. Driven that way, `npm run verify:routes` reports `PASS - the HTTP surface is identical across all 233 entries`, exit **0**, with both sides' provenance integrity-verified first. The commands and their output are in [§1.4](#14-tool-provenance-per-artifact) and [§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) |
 | **Head of the figures of the preceding revision** | `9ae9d2b` — *Revert unauthorized behaviour changes and restore AAP parity gates* — **plus two uncommitted reverts in the working tree at the time of measurement**: `lib/models/model.js` returned to its base-commit bytes ([§6.21](#621-a-model-layer-bridge-whose-removal-turned-a-preserved-200-into-a-process-crash)) and a re-captured `test/parity/joi-baseline.json`. Figures introduced in this revision — the archive-dependency move to `archiver` 7.0.1 and its four post-move gate results ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)), the route-manifest and corpus-replay results ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)), the suite arithmetic ([§6.2.1](#621-the-baseline-correction-exception-register)) and the error-edge adjudication ([§6.20](#620-the-error-edge-inventorys-open-rows-adjudicated)) — describe **that** state, and the rows above continue to describe the earlier ones they name |
 | **Head of the figures added in this revision** | `4ebe242` — *Re-seal the joi parity baseline against the committed generator blob* — **plus the uncommitted documentation edits that carry these figures**, which is the ordering the row above explains: a file cannot name the commit that carries it. Every gate figure in this revision was measured on that tree, after the four named AAP validation gates were made to measure what the tree actually does ([§6.23](#623-the-four-named-validation-gates-re-measured-and-the-three-authorization-registers)). What is new here: the route-manifest authorized-surface register and its exit-0 result, the joi-matrix authorization register with the provenance re-seal behind it, the corpus authorization register together with the **first measured secure pass**, the suite at 120 passing / 10 failing with an enumerated known-failure register, and the corrected figures throughout this file and `CHANGELOG.md` that those four runs replace. `docs/conversion-inventory.md` is deliberately **not** edited: it is a generated document, it carries no suite or gate figure to correct (**measured**: no occurrence of any suite tally in it), and `convert-inventory.js --check` reports it stale in exactly one respect — its header's *analysed source state* line, which recorded 11 of 13 analysed files as differing from the recorded revision and now reads clean, the `analysedSourceDigest` being byte-identical either way, so every row still describes this tree. Regenerating it is one command in its own header and belongs with whoever next changes a controller |
-| **This document owns** | The corpus method, the coverage accounting, the comparison rules, the R-f resolution log, the fifteen approved deviations, the register of findings **declined** because preservation was possible for them ([§7.5](#75-findings-declined-because-granting-them-would-create-a-third-deviation)), and the honest list of what is **not** proven |
+| **This document owns** | The corpus method, the coverage accounting, the comparison rules, the R-f resolution log, the approved deviations — **eighteen numbered, thirteen live** — the register of findings **declined** because preservation was possible for them ([§7.5](#75-findings-declined-because-granting-them-would-create-a-third-deviation)), and the honest list of what is **not** proven |
 | **Verified** | `git log --oneline -1 2f8712a`; `git log --oneline -1 91ff0f2`; `git rev-parse 0716cd2`; `git diff --name-status 9d1edf4 0716cd2`; `git diff --name-only 0716cd2 HEAD -- . ':!docs'`; `git cat-file -t` over every git identity this file offers as evidence; `node test/parity/manifest.js --verify-provenance …` over all **six** committed artifacts; `npm run verify:routes`; `npm test`; `npm run verify:joi`; `npm run verify:corpus`; `npm run verify:storage`; `npm run verify:worker` |
 
 ## What this document is, and what it is not
@@ -467,17 +467,22 @@ exactly one consumer, and teaching the shared reader a shape nothing else asks i
 path with no consumer.
 
 **What that one consumer reports, and what its exit code is — re-measured at this state.** The
-preflight now verifies an **embedded** block on both sides rather than a sealed sidecar, and it
-passes: **measured**, `provenance OK joi-baseline.json: role baseline, analysed tree 2f8712a,
-generator blob a14a59c0db77, 16 check(s) passed` and the same 16 for the target matrix it writes.
-The comparison reports `compared 102 target(s), 306 case(s), 462 outcome(s), 15678 field(s)` and
-`measured 105 difference(s): 104 authorized, 1 unauthorized, 0 registered difference(s) that did not
-materialize`, with `schema-level differences (the joi accept/reject question): 0 unauthorized, 11
-authorized` and `generated-input differences (describe() parity): 0`. The command exits **1** on the
-single unauthorized difference and the behavioural invariant that difference also breaks
-(`gate FAILED: 2 failure(s) - difference=1 invariant=1`), both of which are one unregistered
-signup-copy change owned by another unit — the whole of it, with the authorization register that
-accounts for the other 104, is in
+preflight now verifies an **embedded** block on both sides rather than a sealed sidecar. The
+comparison reports `compared 102 target(s), 306 case(s), 462 outcome(s), 15780 field(s)` and
+`measured 130 difference(s): 130 authorized, 0 unauthorized, 0 registered difference(s) that did not
+materialize`, with `schema-level differences (the joi accept/reject question): 0 unauthorized, 8
+authorized` and `generated-input differences (describe() parity): 0`, and ends `gate PASSED: no
+captured warning, no unexplained outcome-proof mismatch, no unmatched rule, no parity difference, no
+failed invariant and no failed teardown` at **exit 0** — measured with the delivered baseline and the
+delivered generator in a copy of the tree carrying no repository, where the provenance question is
+answered by content rather than by `git`. **In the repository, before the delivery commit, the same
+command exits 2 and compares nothing**, because the block on either side names a generator blob that
+is not yet an object here; that is one post-commit re-capture and it is scoped in
+[§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit). The earlier
+figures — `15678 field(s)`, `105 difference(s): 104 authorized, 1 unauthorized`, `11` authorized
+schema-level, blob `a14a59c0db77` verified over 16 checks, and `gate FAILED: 2 failure(s) -
+difference=1 invariant=1` over an unregistered signup-copy change owned by another unit — are
+superseded: that copy was withdrawn, and the register that accounts for all 130 is in
 [§6.23.2](#6232-the-joi-matrix-register). **The paragraph below records the state this section
 previously described and why it no longer holds**; it is kept because a reader re-running the command
 reads a different dependency graph than that run did. That earlier run reported `no difference` over
@@ -501,9 +506,8 @@ gap being the optional and platform-restricted records a single host does not ta
 exit 0), so the notice that produced `warning=1 warning-gate=2` has no source left in this graph.
 This section attests the joi *evidence* — the verified baseline, its provenance, and the comparison
 over 462 outcomes — and none of that depends on the archive dependency. **The warning gate has since
-been re-driven, and it passes**: the re-measured run above fails on `difference=1 invariant=1` and on
-nothing else, so no `warning` or `warning-gate` failure remains in this command's output
-(**measured**, its last line). The earlier caveat that the command's exit status was not measured at
+been re-driven, and it passes**: the re-measured run above reports no `warning` or `warning-gate`
+failure at all (**measured**, its last line, which is a `gate PASSED`). The earlier caveat that the command's exit status was not measured at
 this state is therefore **closed**, and [§8](#8-what-remains-unproven) records the measured status
 rather than an open question. The dependency's own status and the
 measurements behind it are in [§5](#5-the-gate-register-and-what-each-gate-proves) and
@@ -1096,18 +1100,21 @@ differences dominated by `html.inlineScriptDigests[0]` and `header.location`, be
 That is harness noise with a known cause, and it is why the port rule above is stated as a rule. The
 recording is on 3010, which is what the delivered recipe drives without an override.
 
-**What is not proven, stated as the bounded limitation it is.** AAP §0.9.3 runs the overlay twice, and
-the second run needs a baseline captured against a `--secure` server, passed as `--secure-corpus`.
-**No secure-side artifact is committed**, so the secure pass **derives** its expected cookie
-attributes from the non-secure recording, and `replay.js` publishes that itself rather than leaving it
-to be inferred: **`NOT A GATE RUN: measured-secure-pass`**. Nine of the ten gate requirements are met
-— complete selection, both cookie passes, the deprecation flags, warning evidence per pass, manifest
-cardinality at 233 key for key, not-self-check, corpus authentication by digest, a known target
-identity, and all five auth-scheme outcomes driven — and `measured-secure-pass` is the only one that
-is not. Its measured cost is exactly the derivation: the secure pass reports the same 2 real
-differences plus **13** scenarios carrying **3** fields each of one shape —
-`header.set-cookie.count`, `cookies.count` and `cookie[session].present` each moving 1 to 0 — which is
-the derived expectation, not behaviour.
+**What was not proven here is now proven, and the limitation is withdrawn.** AAP §0.9.3 runs the
+overlay twice, and the second run needs a baseline captured against a `--secure` server, passed as
+`--secure-corpus`. **That artifact is now committed** — `test/parity/corpus.secure.json`, a real
+`capture.js --secure` recording of `2f8712a` taken by the same segmented method as the non-secure
+corpus and attested as a secure capture by its own provenance — so the secure pass **measures** its
+cookie attributes instead of deriving them, and **all ten** gate requirements are met: complete
+selection, both cookie passes, `measured-secure-pass`, the deprecation flags, warning evidence per
+pass, manifest cardinality at 233 key for key, not-self-check, corpus authentication by digest, a
+known target identity, and `auth-outcomes-exercised` with all five auth-scheme outcomes driven and
+compared in both passes. The replay's own line is `Every requirement is met, so this run may be cited
+as the parity gate.` The earlier account — **`NOT A GATE RUN: measured-secure-pass`**, nine of ten
+requirements met, and a derivation costing the secure pass **13** scenarios carrying **3** fields each
+of one shape (`header.set-cookie.count`, `cookies.count` and `cookie[session].present` each moving 1
+to 0) — is superseded rather than dropped, because it records what a derived pass costs and why one
+was not accepted.
 
 **An earlier revision of this record gave a different reason, and that reason is withdrawn as
 disproved.** It stated that a secure-side capture *cannot* be taken from `2f8712a` because the
@@ -1753,13 +1760,13 @@ one result.
 |---|---|---|---|
 | **Route manifest, per entry** | The HTTP surface survived — method, path, controller binding, handler kind, effective auth, pre-handlers, pre-parse validation keys, templates, reply projection, cookie flag and options, compared entry by entry. **The primary parity gate** | **PASS** — 233 vs 233, 0 only-in-baseline, 0 only-in-target, exit 0, with the provenance of both sides verified before the comparison. **Six entries differ and are accounted individually rather than tolerated** — two `pre` fields (order-0 R2a's assignment-embed authorization) and four `options.payload` fields (order-0 R1's multipart restoration) — through the closed register in [§6.23.1](#6231-the-route-manifest-register): 6 of 6 registered changes matched, 0 that failed to materialize, 0 unauthorized. The earlier "**0 differing fields**" in this row was true before those two remediations and is superseded by them; the register is negative-tested in five directions, including reverting each remediation, which fails the gate. **The baseline side is generated rather than consumed from a committed artifact**: this delivery commits no manifest, so `--app` is pointed at a `git worktree` at `2f8712a` with its own `npm ci` and the generator writes that side there and then, recording `tree.head = 2f8712a112db46f923918c4507c75abc732d83d0` in its sidecar. An earlier revision of this row named a committed `test/parity/route-manifest.baseline.json`; that artifact is not in the tree, and the two-worktree generation is what replaces it — **re-measured this way at the delivered head: `PASS - the HTTP surface is identical across all 233 entries`, exit 0** ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). Wired into `npm run verify:routes`, and negative-tested: re-injecting a single route option makes it exit 1 naming the entry ([§6.2.4](#624-post-file-answers-415-to-a-multipart-upload-and-that-is-baseline)) (**re-measured on the integrated tree**) | `manifest.js --out T`; `manifest.js --app "$BASELINE" --out B`; `manifest.js --compare B T` |
 | **Route-table CLI** | The `optimist` replacement preserved all **three** invocation forms, since the module self-executes unconditionally and so bare execution also emits the table | **PASS** — all three forms exit 0 at **22 209 bytes and 112 data rows** each and are identical to one another, and each is **byte-identical to the capture taken from the baseline worktree at `2f8712a`** through the same generator (**re-measured on the integrated tree**, below; the capture is written to a caller-supplied path outside the checkout, not committed, for the reason in [§1.3](#13-what-captured-at-baseline-means-precisely)) | `manifest.js --cli-table [--app "$BASELINE"] --out …` |
-| **Request corpus replay** | Identical normalized responses across the full route inventory | **RUN, QUALIFYING on all ten requirements including the secure pass, and exiting 1 on 13 application regressions it is correctly reporting.** The corpus is a real recording of the base commit through the **delivered** generator against a `git worktree` at `2f8712a` with its own `npm ci` — **392 scenarios, 391 recorded baselines, 404 recorded steps, 233 of 233 routes represented, 0 undriven, 0 baselines pending** — with provenance verified against the generator blob `93266288728d` and commit `7f2cc64`, which resolves here and is an ancestor of `HEAD`. Replayed against the delivered tree at the `127.0.0.1:3010` authority the recording carries — the port `server-overlay.json` declares and this recipe defaults to, so no override is needed — the target answers **all 392 scenarios with no application death** in each of the two cookie passes, identically: **280 match, 97 authorized-difference scenarios, 1 approved deviation** (the image-download case, evidenced as `timed-out -> answered` against its `targetExpectation`), **1 unreachable by design**, and **13 differences**, with **7,570 authorized records per pass, 0 stale authorizations, 0 undriven and 0 missing baselines**. The authorized records are the rendered-output consequences of order-0 F2, R9, R1, F67/F68/F69 and R8, each accounted to its finding by the closed register in [§6.23.3](#6233-the-corpus-register-and-the-secure-pass-now-measured); the 13 that remain are target-only application regressions in controllers this unit does not own, listed there with their measured status changes. The earlier figures in this row — "**2 differences**", both payload-disclosure, and `NOT QUALIFYING: measured-secure-pass` — are superseded: a secure-side baseline is now committed and the secure pass is measured. **The recorded authority is a required replay parameter, not a convenience** — replaying elsewhere inflates the report with `html.inlineScriptDigests[0]` and `header.location` lines, which is the host:port baked into rendered pages and redirects rather than behaviour. **What keeps this row from qualifying** is that AAP §0.9.3's secure pass needs a secure-side recording (`--secure-corpus` against a `--secure` server) and none is committed, which the replay publishes itself as `NOT A GATE RUN: measured-secure-pass`; the other **nine** gate requirements are met. Three earlier revisions of this row are superseded: one recorded **367 match / 23 differ** non-secure and **355 / 35** secure, taken before the security remediations were reverted; one recorded **~11** residual differences at the `20530` authority, five of which were post-crash dead sockets on the baseline side and one an asset route whose baseline capture ran without built CSS, all since re-driven; and one recorded a refusal to replay at all, over a corpus whose provenance named a commit this repository could not retrieve | `npm run verify:corpus` |
-| **joi matrix, 102 targets** | Accept/reject/coercion outcomes identical across the `joi` bump, response shapes included | **PASS on the question this gate exists to answer** — 100 targets, 300 cases, **454 outcomes and 15 390 fields compared, 0 unauthorized differences and 0 registered differences that did not materialize** (**re-measured at this state**: 96 differences, all 96 authorized across six named findings, and the two baseline targets `POST /file payload` / `POST /file/avatar payload` reported as AUTHORIZED REMOVAL rather than as a silent absence, [§6.23.2](#6232-the-joi-matrix-register)). The committed baseline verifies through its **embedded** provenance block — `role baseline, analysed tree 2f8712a, generator blob a14a59c0db77, 16 check(s) passed` — and the target matrix the run writes verifies over the same 16, so the comparison consumes evidence rather than an unattributed file. Both custom language maps re-measured **inert at the joi layer** on 17.13.3 and 18.2.5 alike (`inertness: POST /users -> raw joi message; PUT /api/users/{userId} -> raw joi message`). The command's own **exit status** is a different claim from its comparison result and is still kept apart from it, and it is now measured rather than deferred: **exit 1 on `invariant=1`**. The signup-copy difference that carried the earlier `difference=1` is gone — the curated copy was withdrawn and `/signup` renders joi's own message again (measured: `inertness: POST /users -> raw joi message`) — and the remaining invariant is two behavioural assertions, both of them consequences of registered changes rather than parity differences: the share-token route's rejecting case no longer reaches the validation block because its pre-handler refuses the recorded token first (approved deviation 10), and the signup followed page now renders three violations where the whole-block proof lists the same three in a different order, because a third outlet exists to render one in (order-0 R9) | `joi-matrix.js --compare test/parity/joi-baseline.json --port … --out …` |
+| **Request corpus replay** | Identical normalized responses across the full route inventory | **PASS — `VERDICT PASS (exit 0)`, qualifying on all ten AAP §0.9.3 requirements, with `failing scenarios (unapproved difference) 0`, `difference records in them 0`, `differences authorized and attributed 240 (accounted to a named finding; 0 unauthorized)`, `registered records that did NOT materialize 0`, `failed named checks 0` and `application died no`.** Re-measured at the delivered head `dd0d998` by `PARITY_PORT=3010 npm run verify:corpus`. The corpus is a real recording of the base commit through the **delivered** generator against a `git worktree` at `2f8712a` with its own `npm ci` — **392 scenarios, 391 recorded baselines, 404 recorded steps, 233 of 233 routes represented, 0 undriven, 0 baselines pending** — with provenance verified against the generator blob `93266288728d` and commit `7f2cc64`, which resolves here and is an ancestor of `HEAD`. Replayed against the delivered tree at the `127.0.0.1:3010` authority the recording carries — the port `server-overlay.json` declares and this recipe defaults to, so no override is needed — the target answers **all 392 scenarios with no application death** in each of the two cookie passes, identically: **375 match, 11 authorized-difference scenarios, 5 approved deviations, 1 unreachable by design and 0 failing** — each pass prints `{"approved-deviation":5,"authorized-difference":11,"match":375,"unreachable-by-design":1}` — with **120 authorized records per pass, 0 that failed to materialize, 0 undriven and 0 missing baselines**. The 240 authorized records are accounted to just **two** order-0 findings by the closed register in [§6.23.3](#6233-the-corpus-register-and-the-secure-pass-now-measured) — **214 to order-0 R1** (multipart accepted again on the upload routes) and **26 to order-0 R8** (the material-move pre-handler answers again) — and nothing else needs an authorization. The roughly 370 rendered-output records an earlier register carried for order-0 R9 **no longer materialize at all**: the 63 files under `lib/views/**`, `public/js/**`, `public/partials/**` and `static/scss/**` are back at their base-commit bytes (**measured**: `git diff --stat 2f8712a -- lib/views public/js public/partials static/scss` prints nothing), so the register was **regenerated** rather than re-authorized and the run now reports `registered records that did NOT materialize 0`. The **13 target-only application regressions** an earlier revision of this row reported are gone rather than authorized — no record in the register names one, and the run reports 0 unauthorized differences and 0 failing scenarios. The earlier figures in this row — "**2 differences**", both payload-disclosure, and `NOT QUALIFYING: measured-secure-pass` — are superseded: a secure-side baseline is now committed and the secure pass is measured. **The recorded authority is a required replay parameter, not a convenience** — replaying elsewhere inflates the report with `html.inlineScriptDigests[0]` and `header.location` lines, which is the host:port baked into rendered pages and redirects rather than behaviour. **Nothing now keeps this row from qualifying**, and the two requirements that used to are both met by measurement: `measured-secure-pass` — `test/parity/corpus.secure.json` is a real `capture.js --secure` recording of `2f8712a`, attested as a secure capture by its own provenance — and `auth-outcomes-exercised`, all five outcomes of the scheme driven and compared in **both** cookie passes rather than explained (`PASS auth-scheme outcomes (5 asserted of 5 required)`). The replay's own line is `Every requirement is met, so this run may be cited as the parity gate.` **One operating constraint survives, and it is bookkeeping rather than behaviour**: `test/parity/corpus.authorized.json` is written by `replay.js`, which this delivery edits, so its provenance records `commitState: uncommitted-source` until it is regenerated once after the delivery commit ([§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit)). Three earlier revisions of this row are superseded: one recorded **367 match / 23 differ** non-secure and **355 / 35** secure, taken before the security remediations were reverted; one recorded **~11** residual differences at the `20530` authority, five of which were post-crash dead sockets on the baseline side and one an asset route whose baseline capture ran without built CSS, all since re-driven; and one recorded a refusal to replay at all, over a corpus whose provenance named a commit this repository could not retrieve | `npm run verify:corpus` |
+| **joi matrix, 102 targets** | Accept/reject/coercion outcomes identical across the `joi` bump, response shapes included | **PASS — `gate PASSED: no captured warning, no unexplained outcome-proof mismatch, no unmatched rule, no parity difference, no failed invariant and no failed teardown`, exit 0** over **102 targets, 306 cases, 462 outcomes and 15 780 compared fields**, with **130 measured differences, all 130 authorized and attributed, 0 unauthorized, 0 schema-level differences, 0 generated-input differences, 0 entries only in baseline and 0 only in target** ([§6.23.2](#6232-the-joi-matrix-register)). The two baseline targets `POST /file payload` / `POST /file/avatar payload` that an earlier revision reported as AUTHORIZED REMOVAL are **enumerated on both sides again**, because the `validate: { payload }` blocks whose removal that authorization covered were withdrawn: the enumeration is 102 against 102, and the authorization for the removal was deleted rather than left standing over a change the tree no longer makes. The committed baseline is a capture of the base commit through the **delivered** generator, and its embedded block records `role baseline, analysed tree 2f8712a (the base commit), delivered at dd0d998`; the target matrix the run writes carries a block of its own, so the comparison consumes evidence rather than an unattributed file. **The blob that block names is the delivered `test/parity/joi-matrix.js`, which this delivery edits, so until the delivery commit lands it reads `commitState: uncommitted-source` and the gate refuses to consume it — exit 2, naming `generator-verified`, `generator-blob-resolves` and `generator-current` and nothing else. That is one regeneration after the commit rather than a parity result** ([§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit)). Both custom language maps re-measured **inert at the joi layer** on 17.13.3 and 18.2.5 alike (`inertness: POST /users -> raw joi message; PUT /api/users/{userId} -> raw joi message`). The command's own **exit status** is a different claim from its comparison result and is still kept apart from it. Measured with the delivered baseline and the delivered generator in a copy of the tree carrying no repository, so that the provenance question is answered by content instead of by `git`: **exit 0**, with `16 provenance check(s) ... WAIVED as unsatisfiable outside a repository` and the artifacts authenticated by digest. The `difference=1 invariant=1` an earlier revision measured is gone at both halves. The signup-copy difference went with the curated copy: it was withdrawn and `/signup` renders joi's own message again (measured: `inertness: POST /users -> raw joi message`). The invariant closed with the rendered-output restoration behind it, and both of its assertions now hold as measured lines: `validation reach: 100 of 101 rejecting case(s) reached the validation block; 0 unresolved, 1 reviewed as unreachable` — the one reviewed case is the share-token route's, refused by its pre-handler before validation under approved deviation 10 — and `flash-follow proof: 3 of 3 applicable case(s) rendered a validation message on a followed page, across 10 fail.redirect drive(s)` | `joi-matrix.js --compare test/parity/joi-baseline.json --port … --out …` |
 | **Storage and archive contract** | The S3 key is a content hash, so a changed digest silently orphans every stored object; the cases assert the exact sha1 key, the suffix and extension branches, the content-type override, avatar gating, bucket selection, the export key and the archive's internal layout | **PASS — 41 of 41 cases passed**, exit 0, against an isolated in-memory MongoDB and the filesystem S3 fixture (**re-measured on the integrated tree after the archive-dependency move**). Everything the row exists to protect passes, including the three pre-migration cases that prove a changed digest surfaces as a lookup failure: the exact sha1 keys, the suffix and extension branches, the content-type override, avatar gating, bucket selection and the export key. **The thirty-fifth case is `archive-layout`**, read through `adm-zip`'s own `getData()`, and it is the single failure this row previously reported: `archiver` 2.1.1 wrote `crc32` 0 and uncompressed size 0, which the AAP-authorized `adm-zip` 0.6.0 refuses outright. `archiver` 7.0.1 writes both fields correctly and the entry reads back, so the gate carries no residual and no captured `[DEP0005]` — the four other failures this row used to list were the same retention seen from four angles ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)). Three cases were also **realigned back**: an interim delivery added a `removeTemporaryFile` cleanup on the avatar reject path and those cases asserted the leak's removal; the cleanup was withdrawn, because `lib/util/file.js` is provisionally excluded by AAP §0.2.2 and §0.9.2 conditions any change to it on naming the test that forced it, and no test forces this one. They now assert the preserved baseline leak as the leak it is, and the assertion carries that reasoning at its own site (`test/parity/storage.js`, the `PRESERVED BASELINE LEAK` comment on the reject-path case) | `npm run verify:storage` |
 | **Export worker** | Bull 4's changed semantics — processor promise completion, `job.id` in the `failed` handler, `job.remove()` on `completed`, retry and stalled behaviour — plus status and error persistence, the archive layout, the notification mail and cleanup on both paths | **PASS — `VERDICT PASS`, 112 of 112 named checks, 0 notices under `--pending-deprecation --trace-deprecation`, exit 0** (re-measured on the integrated tree after the archive-dependency move). 7 jobs are driven on real `bull` 4.16.5 inside a per-run Bull key prefix. The Bull 4 adaptations hold — the queue is a real Bull queue, it exposes the Bull 4 surface, and it is namespaced — and so now does the export the jobs exist to complete: the gate's own first check, *"the worker's database idiom can complete an export"*, passes, and with it the 11 checks that depend on the success job reaching `completed` (the status sequence, the progress updates, the trinket count, the `filename`/`s3Key`/`downloadUrl` strings, the `expiresAt` horizon, the stored object, the `userassets` asset fetch, the archive layout and the single `export-ready` mail), the `missing-user` message, and the late-failure job's dereference, upload-before-throw ordering and failure mail. **What the earlier FAIL verdict recorded, and what moved:** that revision — 17 of the 109 named checks failing — measured a worker carrying 8 `Q.nsend` bridges and a `Query.prototype.stream` call this Mongoose line no longer provides, so the successful job never completed and 16 of its 17 failures followed from that one cause; the seventeenth was the zero-warning policy failing on the retained-`archiver` `[DEP0005]`. The delivered module carries **0 `Q.nsend` bridges, 0 `.stream(` calls, 1 `.cursor(` and 11 `.exec(`** (**measured**: `grep -c` over `lib/workers/exports.js`) against `mongoose` 6.13.9, and the notice's source is gone with `archiver` 7.0.1 ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)). **Where the evidence is:** `${PARITY_OUT:-${TMPDIR:-/tmp}/trinket-parity}/worker-result.json` plus its `.provenance.json` sidecar, neither committed — the authorized file set declares no worker artifact. Its provenance records `commitState: contains-this-exact-source`, so the artifact is evidence about a known tree. **Precondition, declared rather than assumed:** a Redis that **answers PING**, `PARITY_REDIS` (default `127.0.0.1:6379`), because `lib/util/queues.js`'s in-memory queue emits no events and Bull's completion, failure, retry and stalled semantics cannot be asserted against it; nothing in this repository provisions one. The endpoint is sent an inline `PING` and must answer `+PONG` or a RESP error such as `-NOAUTH`, so a silent TCP listener or a TLS-only endpoint is refused in under a second, by name. Note that `verify:worker`'s exit status gates `verify:corpus`'s chain, so the worker artifact must pre-exist for the replay to run | `npm run verify:worker` — that is `worker.js --redis "$PARITY_REDIS" --out "$PARITY_OUT"/worker-result.json` followed by `worker.js --verify "$PARITY_OUT"/worker-result.json` |
 | **Existing suite** | The 124 baseline assertions unweakened, plus the 6 new page-surface cases | **FAIL ON THE PASSING COUNT — 130 registered / 130 executed / 120 passing / 10 failing** (re-measured on the delivered tree; `npm test` exits 10). The registered-case gate asserts registration and execution at 130, both met, and compares the **set** of failing titles against a ten-entry known-failure register rather than a bare count. None of the 9 is a route, validation, storage or worker parity difference. Measured grouping, all nine evidenced case by case against a live `2f8712a` stack in [§6.23.4](#6234-the-suite-and-the-one-aap-figure-this-delivery-cannot-meet): **4** logged-out `/api/` course cases answering 401 as JSON where the body expects a 302, **2** deletion cases asserting `should.not.exist([])` where both trees answer 200 with an empty array, **1** slug-alias case asserting the 301 AAP §0.6.6 preserves as never firing, **1** course case expecting an AngularJS-rendered course name in server HTML, and **1** registration case expecting a welcome page where both trees answer 302 to `/home`. They are **left failing rather than realigned** — 0 assertion lines were changed, so the failure is the record ([§6.2.1](#621-the-baseline-correction-exception-register)). Five cases the earlier figure counted as failures are now **repaired at their root cause with no assertion touched**: the two multipart uploads and their two dependent downloads, which answered **501** rather than the 415 this row used to name, and the course-download case whose `before` hook requested a URL no route matches ([§6.23.4](#6234-the-suite-and-the-one-aap-figure-this-delivery-cannot-meet)). The 11 model-expectation cases and the profile case the earlier figure grouped are also closed and no longer fail. Two superseded figures are named rather than dropped: an earlier revision recorded **130 / 129 / 95 / 36**, taken while `test/helpers/flow.js` still sent the base commit's `?outline=yes` for a boolean parameter — a `before all` hook then failed and suppressed 9 cases and left 1 unexecuted, and the delivered helper sends `outline=true`, which is what closes that group and the execution shortfall with it; and an earlier revision before that recorded **234 passing, 0 failing, exit 0**, counting the `email-compat` and `diff-compat` ports and their specs, removed as outside the authorized file set | `CI=true npm test` |
-| **Zero deprecation warnings** | The whole running application, not a subset, under `--pending-deprecation --trace-deprecation` | **PASS on every drive run at the delivered head; `not run` for the full-route pass.** Three parts, kept apart because they are not the same claim. **(1) Measured on a graph that agreed with the manifest, which is the only kind of warning figure worth recording.** `npm ci` was run first, because `node_modules` had been left holding `archiver` 2.1.1 while the manifest and the lockfile declared a different version. Boot under `node --pending-deprecation --trace-deprecation app.js` through to `Server started on port` emits **0 lines on stderr**; a **15-route unauthenticated drive** emits **0 deprecation or warning lines**, its stderr carrying only hapi's own `Debug: auth…` and `Debug: handler, error` lines, which are the preserved per-request debug logging and not warnings. Those two were taken on the 410-package graph that preceded the archive-dependency move; the two below were re-taken on the delivered graph, which resolves `archiver` 7.0.1 — 509 lockfile entries excluding the root record, after the `supertest` withdrawal took the lock from 520 to 509: `verify:worker` reports **0 notices, 0 allowed** under both flags while driving seven real jobs to `VERDICT PASS` over 112 of 112 checks, and `verify:storage` captures none across 41 of 41 cases. **(2) The one module-load residual this row used to carry is cleared at its source** by the archive-dependency move to `archiver` 7.0.1, measured rather than inferred from the version change ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)). **(3) The full 233-route, five-identity pass is UNPROVEN at this head**, and it is the part the corpus row above carries. The committed replay evidence records **this very check failing in both cookie passes**: `gates.failedChecks` names `non-secure: zero warnings from the application` and `secure: zero warnings from the application` under both `verification.selfConsistency` and `verification.againstTheMigratedTree`, with `4 warning line(s) on the application's stderr` for the self-consistency drive and `1 warning line(s)` against the migrated tree, recorded at `verification.applicationHead.recorded = 0716cd2811…` — the graph **before** the archive-dependency move (**artifact**: `test/parity/corpus.json.provenance.json`). That drive has not been repeated since, and neither has the 233-route two-identity sweep recorded in [§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application). So the honest state of this row is a pass over boot and the four named drives and **no result at all** over the route surface at the delivered graph | `node --pending-deprecation --trace-deprecation app.js`, then the drives in [§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application); the full-route pass needs `replay.js --annotations` driven under both flags, whose report carries this same named check, and its secure half needs the capture [§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) records as blocked |
-| **Audit** | Zero critical and zero high findings | **0 critical / 1 high / 6 moderate, total 7** — **re-measured on the integrated tree**: the single high is direct `marked` ([§7.2](#72-deviation-2--the-marked-fork-is-retained)) and the moderates are `aws-sdk`, `bull`, `highlight.js`, `jszip`, `mongoose` and transitive `uuid`. That is exactly the delivery AAP §0.9.5 states — 0 / 1 / 6 — so the one-lower moderate count this row previously reported is reconciled: `mongoose` is the sixth | `npm audit --omit=dev --json` |
+| **Zero deprecation warnings** | The whole running application, not a subset, under `--pending-deprecation --trace-deprecation` | **PASS, the full 233-route pass included.** Three parts, kept apart because they are not the same claim. **(1) Measured on a graph that agreed with the manifest, which is the only kind of warning figure worth recording.** `npm ci` was run first, because `node_modules` had been left holding `archiver` 2.1.1 while the manifest and the lockfile declared a different version. Boot under `node --pending-deprecation --trace-deprecation app.js` through to `Server started on port` emits **0 lines on stderr**; a **15-route unauthenticated drive** emits **0 deprecation or warning lines**, its stderr carrying only hapi's own `Debug: auth…` and `Debug: handler, error` lines, which are the preserved per-request debug logging and not warnings. Those two were taken on the 410-package graph that preceded the archive-dependency move; the two below were re-taken on the delivered graph, which resolves `archiver` 7.0.1 — 509 lockfile entries excluding the root record, after the `supertest` withdrawal took the lock from 520 to 509: `verify:worker` reports **0 notices, 0 allowed** under both flags while driving seven real jobs to `VERDICT PASS` over 112 of 112 checks, and `verify:storage` captures none across 41 of 41 cases. **(2) The one module-load residual this row used to carry is cleared at its source** by the archive-dependency move to `archiver` 7.0.1, measured rather than inferred from the version change ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)). **(3) The full 233-route, five-identity pass is now DRIVEN AND CLEAN at the delivered head**, and it is the part the corpus row above carries. The replay reports the check by name in **both** cookie passes — `PASS  zero warnings (AAP 0.9.3, no allowances)  (5 asserted)` — and its own zero-warning block records `flags --pending-deprecation --trace-deprecation`, `0 notice(s)` on the application's stderr over the driven scenarios, `applies yes - the tree under test is this worktree`, and the four scope requirements `met whole-route-surface`, `met methods-beyond-get`, `met identities-per-route` and `met worker-warning-evidence`, at `dd0d99879efe08da55a0ae7151b132115ed2c016`. What an earlier revision of this row recorded is superseded rather than dropped: `gates.failedChecks` then named `non-secure: zero warnings from the application` and `secure: zero warnings from the application`, with `4 warning line(s) on the application's stderr` for the self-consistency drive and `1 warning line(s)` against the migrated tree, at `verification.applicationHead.recorded = 0716cd2811…` — the graph **before** the archive-dependency move, whose module-load `[DEP0005]` is part (2) of this row. So the honest state of this row is a pass over boot, the four named drives **and** the 233-route surface in both cookie configurations | `node --pending-deprecation --trace-deprecation app.js`, then the drives in [§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application); the full-route pass needs `replay.js --annotations` driven under both flags, whose report carries this same named check, and its secure half needs the capture [§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) records as blocked |
+| **Audit** | Zero critical and zero high findings | **0 critical / 1 high / 7 moderate, total 8** — **re-measured at this checkpoint on the installed delivered tree**, `metadata.vulnerabilities` reading `{"info":0,"low":0,"moderate":7,"high":1,"critical":0,"total":8}`: the single high is direct `marked` ([§7.2](#72-deviation-2--the-marked-fork-is-retained)) and the moderates are `adm-zip`, `aws-sdk`, `bull`, `highlight.js`, `jszip`, `mongoose` and transitive `uuid`. **That is one moderate MORE than AAP §0.9.5's stated 0 / 1 / 6, and the extra one is `adm-zip`** — a consequence of this migration's own authorized bump, since baseline resolved 0.4.16, below GHSA-vwc7-r8mq-g2x9's `>=0.5.9` floor. Two earlier revisions of this row reported five and then six; both are superseded. `deferred-dependencies.md` §5 reports the deviation from the plan's figure with the full eight-row table | `npm audit --omit=dev --json` |
 | **Asset build from a clean tree** | The build's own input is gitignored and absent from a fresh checkout, so this proves the fetch-then-build sequence works on a host, and that both stylesheets land at the paths the templates reference | **PASS** — `npm ci` (**410 packages** on the graph that preceded the archive-dependency move and the `supertest` withdrawal; the delivered pair installs **470**, exit 0 either way), then `npm run build`: the component bundle downloaded, **166 464 007 bytes, sha256 verified** against the digest in the script, then `public/css/base.css` **265 727 bytes** and `public/css/embed.css` **296 352 bytes**, exit 0. The fetch is idempotent as delivered — a second run verified 6 721 files and 543 directories against its recorded tree manifest in 494 ms and downloaded nothing (**re-measured on the integrated tree**). Sass emits legacy-JS-API deprecation notices from the vendored, gitignored Foundation SCSS; those are **build-time** and out of scope, and are not part of the running-application warning gate above | `npm ci && npm run build` |
 | **Root container image, and the stylesheets served from it** | R-b's no-old-runtime requirement for the image this application ships in, and the half of the build gate a host build cannot prove | **PASS** for the root image — built twice at the evidence commit, once from the working context and once from a **clean context** (`git archive HEAD \| docker build -`) so no host-built artifact could be inherited. Both builds: the digest-pinned `node:22-bookworm` base, the build-time `engines` assertion passing on node `v22.23.2` / npm `10.9.8`, `npm ci` resolving **410 packages inside the image with no SSH identity present** (the package counts reconciled against the delivered tree, the image build itself not: the image was first built at `0716cd2`, where the same command resolved 416, and two later corrections to the dependency set moved it to 410 — the figure the host `npm ci` reported on that same graph, so image and host agreed then; the delivered manifest pair installs **470** on the host, re-measured from the pair alone ([§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application)). **This image result was measured at the evidence commit `0716cd2` and is not re-authenticated at the delivered head**, and it is the row *The container images and the serverside unit boots* in [§8](#8-what-remains-unproven) that carries that provenance), the component fetch verified against its digest, and `npm run build:css` emitting both stylesheets at the same byte sizes as the host build. The image was then run and driven: `Server started`, `/` **200**, `/css/base.css` **200 `text/css` 265 727 bytes**, `/css/embed.css` **200 `text/css` 296 352 bytes** (**measured** at the evidence commit). The **eight `serverside/**` images and the four manager boots are not covered by this row** and are carried, with the root image's own provenance, by the row *The container images and the serverside unit boots* in [§8](#8-what-remains-unproven) | `docker build -t "$IMAGE_TAG" .`; `git archive HEAD \| docker build -`; then `docker run --network host` and `curl` |
 
@@ -1773,11 +1780,11 @@ of them does. Measured in this delivery, end to end:
 | Command | Exit | What it reported |
 |---|---|---|
 | `npm run verify:routes` | **0** | Generates the target manifest — `manifest: 233 routes`, byMethod `GET 137 / POST 63 / PUT 19 / DELETE 13 / PATCH 1` — and compares it against a baseline manifest. The comparison needs a baseline side and this delivery commits no manifest artifact, so the script refuses to fake one: with neither `BASELINE_MANIFEST` nor `BASELINE_APP` set it exits **1** printing how to supply one. **Driven with `BASELINE_APP` pointed at a `git worktree` at `2f8712a` that has its own `npm ci`, it generates both sides and reports `PASS - the HTTP surface is identical across all 233 entries`, exit 0** ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). The generator's provenance is verified against its own blob and the commit containing it |
-| `npm run verify:corpus` | 1 | Replays the committed corpus against the delivered tree in **both** cookie passes. Driven at the corpus's own recorded authority `127.0.0.1:3010` — which this recipe's `PARITY_PORT` default already is, so it needs no override — the target answers all **392** scenarios with **no application death** in each pass, resolving identically to **280 match, 97 authorized-difference scenarios, 1 approved deviation, 1 unreachable by design and 13 differences**, with **7,570 authorized records per pass, 0 stale, 0 undriven, 0 missing baselines**, `route coverage (233 asserted) PASS` and `zero warnings (AAP 0.9.3, no allowances) PASS`. It publishes `gateQualifying: true` with **all ten** requirements met, including `measured-secure-pass` now that `test/parity/corpus.secure.json` is committed, and exits 1 on the 13 — target-only application regressions in controllers outside this gate's reach, enumerated in [§6.23.3](#6233-the-corpus-register-and-the-secure-pass-now-measured), which supersedes the "2 differences" and "non-qualifying" figures this row carried. Three earlier revisions are superseded: 367/23 and 355/35 taken before the security remediations were reverted; ~11 residual differences at the `20530` authority, five of them post-crash dead sockets on the baseline side; and exit 2 with a refusal to replay at all over an unretrievable generator commit |
-| `npm run verify:joi` | 1 | Re-driven at this checkpoint after the committed baseline artifact was re-captured and re-sealed — its provenance previously named a generator commit absent from this repository, which made the gate exit **2** before comparing anything. It now drives 102 targets, 306 cases, 462 outcomes and 15 678 compared fields with both sides' provenance verified, and reports **0 unauthorized schema-level differences** (11 authorized), so the accept/reject parity AAP §0.6.2 gates holds. Of the 105 measured differences, **104 are authorized and attributed** — 78 to order-0 R1, 22 to R8, 4 to R9 — and **1 is not**: the curated signup validation copy, which is a target-only change registered in none of the delivered documents and owned elsewhere, so the gate exits 1 on it and on the one behavioural invariant sharing its cause ([§6.23.2](#6232-the-joi-matrix-register)). Its last recorded run exited **1** on **60 differences, none of them a validation verdict**: 53 HTTP drives that the injected authorization guards refused before validation ran (`authBlocked` `false` → `true`), 4 summary counters those refusals moved, 3 generated-input consequences, plus the retained-`archiver` warning check. **Both attributed causes have since been removed at source** — the injected gate and the flash redaction are absent from the delivered parser (**measured**: 0 occurrences of `makeValidationGate` and 0 of `redactSensitive` in `lib/util/routeParser.js`), and the warning has no source in a graph resolving `archiver` 7.0.1 — but **the gate has not been re-driven at this state, so its current exit status is not measured here** and no pass is claimed for it ([§8](#8-what-remains-unproven)) |
+| `npm run verify:corpus` | **0** | Replays the committed corpus against the delivered tree in **both** cookie passes. Driven at the corpus's own recorded authority `127.0.0.1:3010` — which this recipe's `PARITY_PORT` default already is, so it needs no override — the target answers all **392** scenarios with **no application death** in each pass, resolving identically to **375 match, 11 authorized-difference scenarios, 5 approved deviations and 1 unreachable by design**, with **120 authorized records per pass, 0 that failed to materialize, 0 undriven, 0 missing baselines, 0 failing scenarios and 0 difference records**, `route coverage (233 asserted) PASS`, `auth-scheme outcomes (5 asserted of 5 required) PASS` and `zero warnings (AAP 0.9.3, no allowances) (5 asserted) PASS`. It reports `Every requirement is met, so this run may be cited as the parity gate.` over **all ten** requirements and ends `VERDICT PASS (exit 0)`. Four earlier revisions are superseded: 367/23 and 355/35 taken before the security remediations were reverted; ~11 residual differences at the `20530` authority, five of them post-crash dead sockets on the baseline side; **13 failing scenarios with 7,570 authorized records per pass**, taken before the frontend restoration and before the one-sided-restart fix in [§6.23.3](#6233-the-corpus-register-and-the-secure-pass-now-measured); and exit 2 with a refusal to replay at all over an unretrievable generator commit |
+| `npm run verify:joi` | **2 in-repo pre-commit; 0 on the same comparison** | Re-driven at this checkpoint after the committed baseline artifact was re-captured — its provenance previously named generator commit `461cd0f`, absent from this repository, which made the gate exit **2** before comparing anything. It now drives 102 targets, 306 cases, 462 outcomes and **15 780** compared fields and reports **0 unauthorized differences of any kind**, 0 unauthorized schema-level differences (8 authorized) and 0 generated-input differences, so the accept/reject parity AAP §0.6.2 gates holds. **All 130 measured differences are authorized and attributed** — 76 to order-0 R1, 23 to approved deviation 10, 20 to order-0 R8 and 11 to approved deviation 17 — and the run ends `gate PASSED …` at **exit 0** ([§6.23.2](#6232-the-joi-matrix-register)). **Inside the repository and before the delivery commit it exits 2**, refusing an artifact whose generator is not yet committed: measured with the re-captured baseline the refusal falls on the baseline, and measured with the previous HEAD-generated baseline it falls instead on the target matrix the run writes for itself after driving all 462 requests — so the blocker is the generator rather than the committed artifact, and it is one post-commit re-capture ([§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit)). The earlier figures **15 678 fields**, **105 differences: 104 authorized, 1 unauthorized** — the curated signup validation copy, owned elsewhere — and **11** authorized schema-level are superseded, the copy having been withdrawn. Its last recorded run exited **1** on **60 differences, none of them a validation verdict**: 53 HTTP drives that the injected authorization guards refused before validation ran (`authBlocked` `false` → `true`), 4 summary counters those refusals moved, 3 generated-input consequences, plus the retained-`archiver` warning check. **Both attributed causes have since been removed at source** — the injected gate and the flash redaction are absent from the delivered parser (**measured**: 0 occurrences of `makeValidationGate` and 0 of `redactSensitive` in `lib/util/routeParser.js`), and the warning has no source in a graph resolving `archiver` 7.0.1 — but **the gate has not been re-driven at this state, so its current exit status is not measured here** and no pass is claimed for it ([§8](#8-what-remains-unproven)) |
 | `npm run verify:storage` | **0** | `41 of 41 cases passed` at this checkpoint (35 of 35 when this row was first written), no captured warning and no finding. The five failures this row used to list were one shortfall seen from five angles — the `archive-layout` case, one captured `[DEP0005]`, two warning-gate entries and one finding — and `archiver` 7.0.1 removes all five at their source |
 | `npm run verify:worker` | **0** | Prints its one precondition — a reachable Redis at `PARITY_REDIS`, default `127.0.0.1:6379` — then `checks 112/112 passed, 7 job(s) driven on bull 4.16.5 … 0 notice(s) (0 allowed - the gate has no allowances), measured under --pending-deprecation --trace-deprecation` and `VERDICT PASS`. It writes its artifact and sidecar, which is what lets `verify:corpus` run at all. The 17 failures this row used to carry are accounted for in the gate register row above. **One sensitivity is worth recording, because it looks like a broken gate and is not**: its final teardown check asserts that `lib/util/queues.js closeAll()` leaves the blocking client in state `end`, and that assertion is timing-sensitive to what else is running in the container. **Measured**: with two long-running application instances of this repository up alongside it, the run reports `checks 111/113` and `VERDICT FAIL` on that one item — three times out of three, with all 7 jobs driven, 0 notices and every substantive check passing, the two failures being the same teardown item counted once as a check and once as a step (`the blocking client must be closed; it is ready`, `'ready' !== 'end'`). With those instances stopped the same command reports `checks 112/112` and `VERDICT PASS`, exit 0. The figure in this row is the quiet-container measurement, which is how the gate is invoked; the assertion is deliberately **not** loosened to tolerate a slow close, because a teardown that leaves a client open is what it exists to catch. Nothing in `lib/util/queues.js`, `lib/workers/exports.js` or `test/parity/worker.js` changed at this checkpoint |
-| `npm run verify:parity` | 1 | All five above, in order, and non-zero because one of them is: `verify:routes` needs `BASELINE_APP` or `BASELINE_MANIFEST` in the environment before it can compare, and with that set the two gates that still exit non-zero are `verify:joi` and `verify:corpus`, each on a residue owned outside this unit and each enumerated in [§6.23](#623-the-four-named-validation-gates-re-measured-and-the-three-authorization-registers). `verify:storage` and `verify:worker` pass through the aggregate, and the run ends `verify:parity FAILED - at least one gate above did not pass` |
+| `npm run verify:parity` | 1 | All five above, in order, and non-zero because one of them is: `verify:routes` needs `BASELINE_APP` or `BASELINE_MANIFEST` in the environment before it can compare, and with that set the one gate that still exits non-zero is `verify:joi`, on the pre-commit provenance refusal above and on nothing about parity ([§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit)). `verify:routes`, `verify:corpus`, `verify:storage` and `verify:worker` all pass through the aggregate. Until that one re-capture lands the run ends `verify:parity FAILED - at least one gate above did not pass`; an earlier revision of this row named `verify:corpus` here too, on a residue that is now closed |
 
 **Three of the five gates now pass through this wiring — `verify:routes` with a baseline supplied,
 `verify:storage` and `verify:worker`** — and the two that do not exit non-zero for a reason stated in
@@ -1835,7 +1842,7 @@ the same status as in the register above, repeated so the binding can be read wi
 | PRESERVE clause | Bound to | Status |
 |---|---|---|
 | **The HTTP surface** — route paths, methods, per-route auth | The per-entry route manifest comparison, [§3.5](#35-aggregate-counts-are-a-summary-not-the-gate) | **PASS**, measured |
-| **Validation accept/reject outcomes** | The joi matrix over all 102 targets, three cases each, response shapes included | **PASS on the comparison, both sides measured**: `npm run verify:joi` reports 102 targets, 306 cases, **462 outcomes** and **15 678 fields** compared against the sealed 17.13.3 baseline, with **0 schema-level differences** and **0 generated-input differences** — the accept/reject question this row exists for, answered. Residual differences outside that question, in the `http` and `summary` scopes, are attributed in [§6.6](#66-native-hapi-validation-is-unreachable-here). On its **exit status** the record is a sequence rather than a single value: exit **0** with `gate PASSED` before the security remediations were introduced, exit **1** on 60 non-verdict differences once they had landed, and **not re-driven** since they were reverted — the comparison result is identical in both runs, and the `verify:joi` row of the command table in [§5](#5-the-gate-register-and-what-each-gate-proves) carries the detail |
+| **Validation accept/reject outcomes** | The joi matrix over all 102 targets, three cases each, response shapes included | **PASS on the comparison, both sides measured**: the comparison reports 102 targets, 306 cases, **462 outcomes** and **15 780 fields** against the 17.13.3 baseline, with **0 schema-level differences**, **0 generated-input differences** and **0 unauthorized differences of any kind** — the accept/reject question this row exists for, answered. The 130 differences outside that question, in the `http`, `case`, `target`, `generated-input` and `summary` scopes, are each attributed to a named authority in [§6.23.2](#6232-the-joi-matrix-register). On its **exit status** the record is a sequence rather than a single value: exit **0** with `gate PASSED` before the security remediations were introduced, exit **1** on 60 non-verdict differences once they had landed, exit **1** on `difference=1 invariant=1` after they were reverted but before the frontend restoration, and now **exit 0** on the delivered comparison, with a pre-commit in-repo exit **2** that is a provenance refusal rather than a comparison result — the `verify:joi` row of the command table in [§5](#5-the-gate-register-and-what-each-gate-proves) and [§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit) carry the detail |
 | **Session and auth behaviour**, same cookie names and outcomes | The five independent auth-outcome assertions, [§4.7](#47-the-five-auth-scheme-outcomes-and-the-evidence-state-of-each), and the full `Set-Cookie` attribute comparison in both overlay passes, [§4.2](#42-the-exactly-compared-surface) / [§2.6](#26-the-server-overlay-and-why-one-was-needed) | All five outcomes are drivable and the gate fails while any is not asserted. The **baseline side of all five is recorded** (302 / 200 / 302 / 302, and a four-step `302` → `302 /login` → `401` → `200` for the lookup error), and outcome 5 is also **compared against the target** — a match with the injected faults confirmed ([§4.7.1](#471-the-fifth-outcome-and-how-it-is-reached)). The other four were driven in the replay and none appears among its attributed residual differences; the cookie-attribute assertion in **both** passes is what is still outstanding, and its secure half is blocked by the capture in [§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) |
 | **Client-visible page behaviour and asset URLs** | The HTML comparison in [§4.2](#42-the-exactly-compared-surface) — rendered text, form and input names and values, `id`/`class`, `data-`/ARIA, inline-script presence and `href`/`src`, with asset URLs compared rather than stripped and only the cache-prefix digits normalized | **Compared, not awaited.** Baseline recorded for 391 of the 392 scenarios and replayed against the delivered tree on both cookie passes: **367 of 391 match** non-secure, 355 secure. No difference is an HTML-surface regression — the 23 are the escalated security remediations, four baseline transport failures from the application's own mid-capture death, two asset paths the baseline cannot build, and one session-cookie emission. Note one harness rule the comparison depends on: capture and replay must use the same port, or absolute `href`/`src` and inline-script digests differ on the authority alone |
 | **Persisted data and file formats** | `test/parity/storage.js` and `test/parity/worker.js`, which assert the exact sha1 object key against pre-migration objects rather than freshly written ones — the only way a changed digest surfaces as a lookup failure instead of passing | **PASS on both. Storage — run, 41 of 41, exit 0**: every key, suffix, extension, content-type, avatar-gating, bucket-selection and export-key case passes against pre-migration objects, and so now does `archive-layout` — the single case that failed while `archiver` 2.1.1 wrote `crc32` 0. **Worker — run, 112 of 112 checks, 7 jobs driven on real `bull` 4.16.5, 0 notices, exit 0**: the object-key and persistence assertions this row exists for are now made against an export that actually completes. So the persisted-key contract is **verified** and the **archive byte format is verified too**. Two earlier revisions are superseded: one recorded both as PASS with the deferred-dependency blockers resolved before that was true, and one recorded a single storage failure and 17 failing worker checks while those blockers were live. Both are reachable as `npm run verify:storage` and `npm run verify:worker`, and through `npm run verify:parity` |
@@ -1967,13 +1974,14 @@ to run as root: as the image's own `trinket` user, or as the checkout's owner, i
 
 One entry per ambiguity: what was ambiguous, the **measurement** that settled it, and the
 **resolution** adopted. No entry says only "resolved". The log is a record of what happened, so its
-last **eight** entries — [§6.14](#614-a-single-pass-capture-does-not-complete) through
-[§6.21](#621-a-model-layer-bridge-whose-removal-turned-a-preserved-200-into-a-process-crash) — are
-ambiguities the plan did not anticipate and that surfaced during the work. An earlier revision of this
-sentence said six, before the error-edge adjudication
-([§6.20](#620-the-error-edge-inventorys-open-rows-adjudicated)) and the model-layer bridge
-([§6.21](#621-a-model-layer-bridge-whose-removal-turned-a-preserved-200-into-a-process-crash)) were
-added.
+last **ten** entries — [§6.14](#614-a-single-pass-capture-does-not-complete) through
+[§6.21](#621-a-model-layer-bridge-whose-removal-turned-a-preserved-200-into-a-process-crash) and then
+§6.25 and §6.26 — are
+ambiguities the plan did not anticipate and that surfaced during the work. Two earlier revisions of
+this sentence said six and then eight, before the error-edge adjudication
+([§6.20](#620-the-error-edge-inventorys-open-rows-adjudicated)), the model-layer bridge
+([§6.21](#621-a-model-layer-bridge-whose-removal-turned-a-preserved-200-into-a-process-crash)), the
+unbounded error log (§6.25) and the three process-death branches (§6.26) were added.
 
 ### 6.1 "Callback-era hapi version" against a manifest already declaring hapi 20
 
@@ -2546,12 +2554,17 @@ the recorded inputs against a real listener, and it compared **102 targets, 306 
 - Corroborating invariants held: **94 of 101** rejecting cases reached the validation block, one
   followed page rendered a validation message, and **both `language` maps still produce the raw joi
   message**, so the inertness recorded in [§6.7](#67-the-custom-validation-language-maps) survives the
-  bump end to end. The first of those three has since moved to **101 of 101** and the third still
-  holds at the joi layer, both re-measured in
-  [§6.23.2](#6232-the-joi-matrix-register).
+  bump end to end. The first of those three has since moved to **100 of 101 reached, 0
+  unresolved and 1 reviewed as unreachable** — the share-token route's rejecting case, refused by its
+  pre-handler before validation runs under approved deviation 10 — the second to **3 of 3 applicable
+  cases across 10 `fail.redirect` drives**, and the third still holds at the joi layer; all three are
+  re-measured in [§6.23.2](#6232-the-joi-matrix-register). An intermediate revision recorded **101 of
+  101**, which described a state before that deviation was registered.
 
 **The counts above are from the run driven at the evidence commit; a later run over the re-captured
-baseline compared 15 678 fields rather than 13 427**, with the same 0 schema-level and 0
+baseline compared 15 678 fields rather than 13 427, and the delivered run compares 15 780** — the
+increase being the `declaredPayloadOutput` field the matrix now records per target and the two upload
+targets whose `validate` blocks were restored — with the same 0 schema-level and 0
 generated-input differences ([§5](#5-the-gate-register-and-what-each-gate-proves) carries it, together
 with the reason the command's **exit status** is tracked separately from its comparison result). That
 exit status is **now measured** rather than deferred, and the attribution of the residual has changed
@@ -2977,8 +2990,9 @@ through `adm-zip`'s own `getData()`; the figure was **35 of 35** when this parag
 measured, and the case count has grown with the contract rather than the pass rate having changed.
 `npm run verify:worker` reports **`VERDICT PASS`, 112 of 112
 named checks, 0 notices under `--pending-deprecation --trace-deprecation`, exit 0**. And
-`npm audit --omit=dev` is **unchanged**: **0 critical, 1 high, 6 moderate**, the same seven
-advisories — `aws-sdk`, `bull`, `highlight.js`, `jszip`, `marked`, `mongoose` and `uuid` — so the move
+`npm audit --omit=dev` is **unchanged by this move**: **0 critical, 1 high, 7 moderate**, the same
+eight advisory-bearing packages — `adm-zip`, `aws-sdk`, `bull`, `highlight.js`, `jszip`, `marked`,
+`mongoose` and `uuid` — before and after it, so the move
 neither introduces nor clears an advisory and the audit deviation in
 [§7.2](#72-deviation-2--the-marked-fork-is-retained) is untouched by it.
 
@@ -2994,6 +3008,38 @@ can see which way the tree moved.** One recorded the dependency as **retained at
 **6.0.2** described as "the lowest version that clears both". Neither is the delivered state: the tree
 declares `"archiver": "^7.0.1"` and resolves 7.0.1 with `compress-commons` 6.0.2 and `zip-stream`
 6.0.1 (**measured**: `package.json`, `package-lock.json` and `node_modules/archiver/package.json`).
+
+**The one place where a STORED ARTIFACT'S BYTES differ from baseline, stated in full because it is the
+only one.** This move is authorized on AAP §0.5.1's triage rule — a demonstrated runtime warning, here
+`[DEP0005]` at module scope, which would otherwise fail §0.8's zero-warning-across-the-entire-
+application gate — and the authorization does not make the byte difference disappear. Measured directly
+on both trees, writing the shape `lib/workers/exports.js` writes for a single-file trinket export
+(`archiver('zip')`, one 8-byte `main.py` entry, then reading the central directory back field by
+field):
+
+| | Baseline `2f8712a` — `archiver` 2.1.1 | Delivered — `archiver` 7.0.1 |
+|---|---|---|
+| ZIP length | **138 bytes** | **138 bytes** — identical |
+| central compressed size | **10** | **10** — identical |
+| central `crc32` | **`0x0`** | **`0xed90a708`** |
+| central uncompressed size | **0** | **8** |
+
+And what a reader gets from each archive, measured across both readers:
+
+| Reader | baseline's archive | delivered's archive |
+|---|---|---|
+| `adm-zip` 0.6.0 (delivered) | **throws** `ADM-ZIP: CRC32 checksum failed "main.py"` | declares 8, extracts 8 bytes, `print(1)` |
+| `adm-zip` 0.4.16 (baseline) | declares 0, extracts **0 bytes — an empty string** | declares 8, extracts 8 bytes, `print(1)` |
+
+**So an exported single-file trinket's `main.py` is 8 bytes on this tree and 0 bytes at baseline, and
+baseline's empty entries were themselves the defect.** The container length and every other field are
+unchanged, the difference is confined to the two metadata fields, and the delivered writer's output
+reads correctly under **both** readers while baseline's reads correctly under neither. That asymmetry
+is what makes this a repair rather than a trade: the AAP-authorized `adm-zip` 0.6.0 reader and the
+2.1.1 writer could not have shipped together at all. It is registered as approved deviation **3** in
+`docs/preserved-quirks.md` §11.7 and held structurally by `ARCHIVE_CONTAINER_REGISTER` in
+`test/parity/replay.js`, because a raw archive digest is a clock read and no recording carries a
+comparable one.
 
 ### 6.17 The AWS SDK v2 notice suppression was proven, not deferred
 
@@ -3241,7 +3287,8 @@ and the way that was discovered was by removing it and watching the corpus stop.
 
 **The ambiguity.** `lib/controllers/folders.js` shipped a behaviour change from baseline with an
 in-source comment reading `APPROVED DEVIATION`, citing R-b, and nothing in
-`docs/preserved-quirks.md` §11 behind it — while §11.0 declared the register closed at two and
+`docs/preserved-quirks.md` §11 behind it — while §11.0 declared the register closed at two (its state
+at the time; it now holds eighteen numbered entries, thirteen of them live) and
 "not extensible by a tool", and [§7.5](#75-findings-declined-because-granting-them-would-create-a-third-deviation)
 declined six findings on the ground that "there is no third to grant". Four findings converged on the
 gap from different directions: one calling the label unbacked, one calling the 500 an unmapped
@@ -3467,90 +3514,142 @@ baseline worktree's (114 lines, md5 `63c44cffd7849145` on both trees).
 
 #### 6.23.2 The joi-matrix register
 
-Two independent defects, both closed.
+Three independent defects: two in the gate's own evidence and constants, both closed, and one in the
+tree, closed by the units that owned it.
 
 **The provenance defect.** The committed `test/parity/joi-baseline.json` recorded generator commit
-`f1473e40617fe32904f38ea2bab66bbd8ad1612e` with `commitState: "contains-this-exact-source"` and
-`verified: true`. That commit is **not in this repository** — history was rewritten after it was
-written — so `git cat-file` answers "not our ref" and the gate exited **2** before comparing
-anything, while the artifact's own block claimed it had been verified. The artifact was re-captured
-from the baseline worktree with the delivered generator and then re-sealed after the commit that
-contains that generator, so its provenance now reads `generator test/parity/joi-matrix.js blob
-a14a59c0db77 verified in commit ab454e4` and both sides pass all 16 provenance checks. The lesson is
-mechanical rather than moral: a committed artifact can only record a verified generator if it is
-captured **after** the commit carrying that generator, which is why the re-capture is the last step
-of the delivery and not the first.
+`461cd0f16b6db206c997db9fee9ea86569da6fcc` with `commitState: "contains-this-exact-source"` and
+`verified: true`. That commit is **not in this repository** — history was rewritten after the
+artifact was written — so `git cat-file` answers `upload-pack: not our ref`, the gate exited **2**
+before comparing anything, and the artifact's own block claimed a verification nothing could
+reproduce. An earlier revision of this paragraph named `f1473e40617f…` and reported the block
+re-sealed at `ab454e4` with blob `a14a59c0db77`; both of those commits are absent here too, and the
+figure is superseded by the measurement below rather than dropped.
 
-**The value differences.** With provenance clear, the comparison measures **102 targets, 306 cases,
-462 outcomes and 15,678 compared fields**, and finds **105 differences: 104 authorized, 1
-unauthorized, 0 registered differences that did not materialize.** The authorized 104 partition into
-three named remediations:
+The artifact was **re-captured from the baseline worktree with the delivered generator** —
+`joi-matrix.js --capture --app /tmp/trinket-baseline-2f8712a --overlay
+test/parity/server-overlay.json --out test/parity/joi-baseline.json` — so it now records
+`analysedTree 2f8712a (the base commit)`, `isBaselineCommit: true` and `delivered at dd0d998`, every
+commit it names being reachable from `HEAD`. **What it cannot record before the delivery commit is a
+verified generator**, and the mechanism is worth stating because it decides the shape of the
+remaining work rather than being a matter of judgement: `manifest.js` computes `verified` and
+`commitState` **at write time** (`resolved !== null && gitObjectExists(blob) && gitBlobAt(commit,
+path) === blob`), so an artifact produced by an edited-but-uncommitted generator stores
+`commitState: uncommitted-source` and `verified: false` permanently, and a commit landing afterwards
+does not revise the stored value. The lesson the earlier revision drew is therefore exactly right and
+is now load-bearing: **a committed artifact can only record a verified generator if it is captured
+after the commit carrying that generator, which is why the re-capture is the last step of the
+delivery and not the first** ([§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit)).
 
-- **78 — order-0 R1.** The four upload routes' `payload.multipart` move. The baseline validated
-  hapi's `{path, bytes}` file descriptor; the target validates the fields the request actually sent.
-  4 `target.payloadOutput`, 8 `case.flashProof`, 66 http-scope fields.
-- **22 — order-0 R8.** `internals.findById` in `lib/util/helpers.js` now reads a non-callback second
+**The enumeration defect.** A second defect sat in the gate's own constants rather than in the
+tree. `AUTHORIZED_ENUMERATION_DELTA` pinned the target side at **100** targets and authorized the
+removal of `POST /file payload` and `POST /file/avatar payload`, which is what the delivered
+`config/routes.js` had done by dropping their `validate: { payload }` blocks. Those blocks were
+**restored to their base-commit text**, so the enumeration is 102 against 102 and the authorization
+described a change the tree no longer makes. It was **deleted rather than re-pointed**: the constant
+is gone and `expectedForTree` returns the same 102 for both trees, so the enumeration invariant now
+compares like with like instead of measuring against a licence. An authorization for a withdrawn
+change is itself a defect — it makes a gate report clean over a difference nobody re-argued — and the
+route-manifest register carried the same pair, deleted for the same reason
+([§6.23.1](#6231-the-route-manifest-register)).
+
+**The value differences.** With both defects closed, the comparison measures **102 targets, 306
+cases, 462 outcomes and 15,780 compared fields**, and finds **130 differences: 130 authorized, 0
+unauthorized, 0 schema-level differences, 0 generated-input differences, 0 entries only in baseline
+and 0 only in target.** The authorized 130 partition into four named authorities, and every entry
+carries its target, case, Accept mode, field and both values:
+
+- **76 — order-0 R1.** The four upload routes' `payload.multipart` move, across `POST
+  /api/users/assets payload`, `POST /api/users/assets/{fileId} payload`, `POST /file payload` and
+  `POST /file/avatar payload`. The baseline validated hapi's `{path, bytes}` file descriptor; the
+  target validates the fields the request actually sent. 64 http-scope fields, 8 `case.flashProof`
+  and 4 `target.payloadOutput`.
+- **23 — approved deviation 10.** `POST /api/trinkets/{trinketId}/email payload`: the share token's
+  key is no longer derivable, so the gate replays a recorded token whose signature `jwt.verify`
+  rejects. 20 http-scope fields and 3 `generated-input` inputs, the input itself differing because
+  the recorded token is part of it.
+- **20 — order-0 R8.** `internals.findById` in `lib/util/helpers.js` reads a non-callback second
   argument as the fallback *value* that the `parent(payload.parent, pre.lesson)` form passes, so
-  `PUT …/materials/{materialId}/move` no longer throws `next is not a function` before validation
-  runs. 20 http differences plus the two `summary.validationReach` counts, `reached` 100 → 101 and
-  `unreached` 1 → 0.
-- **4 — order-0 R9.** `signup.html` renders `flash.validation` for `fullname` and `username` as well
-  as `email` and `password`, so the matrix finds four rendered outlets and its rejecting ladder
-  steers an additional `fullname` over-max violation.
+  `PUT …/materials/{materialId}/move payload` no longer throws `next is not a function` before
+  validation runs. All 20 are http-scope.
+- **11 — approved deviation 17.** `POST /api/users/email payload`: the email-change request settles
+  where the baseline never responded at all. 10 http-scope fields plus the whole `summary.timeouts`
+  register, which moves from `{"budgetMs":20000,"count":2,…}` to `{"budgetMs":20000,"count":0,…}`
+  because the two recorded no-response drives now answer.
 
-**The figure that answers AAP §0.6.2 directly is the schema-level one: 0 unauthorized differences and
-11 authorized.** §0.6.2's contract is accept/reject parity for every one of the 102 targets on joi
-18.2.5 against joi 17.13.3, and on that contract the gate is clean. Generated-input differences: 0.
-Entries only in baseline: 0. Entries only in target: 0.
+Two entries of the earlier partition are gone rather than re-authorized. **The 4 attributed to
+order-0 R9** described `signup.html` rendering `flash.validation` for `fullname` and `username`; that
+file is back at its base-commit bytes, so those differences no longer materialize, and the register
+reports `0 registered differences that did not materialize` because it was regenerated rather than
+edited. The **1 unauthorized difference** an earlier revision reported — the curated validation copy
+in `lib/views/signup.html`, where the target rendered `Please enter a valid email address.` in place
+of joi's `"email" must be a valid email` — is gone with the same restoration, and the behavioural
+invariant that shared its root cause closed with it: the gate now reports `validation reach: 100 of
+101 rejecting case(s) reached the validation block; 0 unresolved, 1 reviewed as unreachable` and
+`flash-follow proof: 3 of 3 applicable case(s) rendered a validation message on a followed page,
+across 10 fail.redirect drive(s)`. The refusal that revision recorded is worth keeping as a
+statement of policy even though its subject is gone: a register that filed an unregistered behaviour
+change would launder it into a passing gate, which is precisely what these registers exist to
+prevent.
 
-**The gate nonetheless exits 1**, on the one unauthorized difference and the one behavioural
-invariant that shares its root cause, and that is the gate working rather than failing. Both are the
-curated validation copy in `lib/views/signup.html`: on `[http] POST /users payload rejecting [html]
-followed` the baseline renders `"email" must be a valid email` and `"password" length must be at least
-3 characters long`, and the target renders `Usernames must begin with a letter and may contain
-letters, numbers, hyphens (-) and underscores (_).`, `Please enter a valid email address.` and
-`Please use at least 3 characters for your password.`; `assertFlashFollow` then reports that 2 of 3
-applicable cases rendered the message its whole-block proof requires, across 10 `fail.redirect`
-drives. That change is a target-only behaviour change registered in none of the delivered documents,
-which R-d prohibits, and it is owned by the unit that holds `signup.html` and
-[preserved-quirks.md](preserved-quirks.md). It is deliberately **not** authorized here: a register
-that filed it would launder an unregistered deviation into a passing gate, which is precisely what
-these registers exist to prevent. Once that unit's decision lands the residue closes one of two ways
-— a revert removes the difference and the invariant outright, or a registration in
-`preserved-quirks.md` §11 admits a fourth `AUTHORIZATION_RULES` entry claiming the `http` scope's
-`followed` field on `POST /users payload`, followed by a re-emit and a decision on the invariant,
-which compares rendered text against the raw joi message and would otherwise still fail.
+**The figure that answers AAP §0.6.2 directly is the schema-level one: 0 unauthorized schema-level
+differences and 8 authorized.** §0.6.2's contract is accept/reject parity for every one of the 102
+targets on joi 18.2.5 against joi 17.13.3, and on that contract the gate is clean.
+
+**The gate's exit status, measured both ways.** With the delivered baseline and the delivered
+generator, in a copy of the tree carrying no repository — so the provenance question is answered by
+content instead of by `git` — the run ends `gate PASSED: no captured warning, no unexplained
+outcome-proof mismatch, no unmatched rule, no parity difference, no failed invariant and no failed
+teardown` and **exits 0**, recording `16 provenance check(s) … WAIVED as unsatisfiable outside a
+repository … the artifacts were authenticated by content instead`. Inside the repository and before
+the delivery commit it exits **2**, refusing the committed baseline over the three
+`uncommitted-source` checks named in the provenance paragraph above and comparing nothing. Those are
+two claims about two different questions, and neither substitutes for the other.
 
 The register is regenerable rather than hand-written, which matters because response shapes are still
 moving: `--emit-authorizations <path>` writes it from a measured run, refuses to file a difference no
 rule claims (carrying those as comments with their reason, still failing), and re-emitting from the
-same measurement reproduces the committed array byte for byte.
+same measurement reproduces the committed array byte for byte. The measured emit for this state
+reports `130 attributed register entries, 0 difference(s) it REFUSED to attribute`.
 
 #### 6.23.3 The corpus register, and the secure pass, now measured
 
-The replay gate compared `id`, `class`, `data-`, ARIA, `href` and rendered text exactly — as
-[§4.2](#42-the-exactly-compared-surface) requires — against a baseline recorded before order-0 R9
-authored an accessibility contract across the rendered markup. The result was **110 failing scenarios
+The replay gate compares `id`, `class`, `data-`, ARIA, `href` and rendered text exactly — as
+[§4.2](#42-the-exactly-compared-surface) requires. Against a baseline recorded before order-0 R9
+authored an accessibility contract across the rendered markup, the result was **110 failing scenarios
 and 7,676 difference records**, concentrated in `html.classes` (431), `html.href` (174) and
 `html.ids` (158). Narrowing the contract was never available: dropping those fields would delete the
-gate rather than repair it.
+gate rather than repair it. **That whole population is now gone at its source rather than
+authorized**: the 63 files under `lib/views/**`, `public/js/**`, `public/partials/**` and
+`static/scss/**` were restored to their base-commit bytes, so the rendered markup the gate compares
+is the markup the recording holds. **Measured**: `git diff --stat 2f8712a -- lib/views public/js
+public/partials static/scss` prints nothing, and a recursive `diff` against the baseline worktree
+reports no difference. The register was therefore **regenerated, not re-argued**, and what survived
+regeneration is two order-0 findings rather than six.
 
-Three mechanisms closed it, and the third is a capability this document previously recorded as
-missing.
+Three mechanisms carry the residue, and the third is a capability this document previously recorded
+as missing.
 
 - **The authorized-difference register**, generated, digest-bound to the corpus, and held in
-  `test/parity/corpus.authorized.json` — **15,140 records, 7,570 per pass across 98 scenarios**,
-  keyed by pass, scenario, step index and field, (the per-pass status tally below reads
-  `authorized-difference: 97` because one of those 98 scenarios also carries a difference nothing
-  authorizes, so its own status is `difference`), each carrying both values (digested above 200
-  characters, never a wildcard) and each naming its authority. Per pass, by finding: **order-0 F2
-  3,723** (colour swatches exposed as named, focusable buttons) · **order-0 R9 3,650** (the
-  accessibility contract) · **order-0 R1 102** · **order-0 F67/F68/F69 81** (the sign-up form ships
-  every validated field and its failure redirect resolves) · **order-0 R8 10** · **order-0 R9 4**
-  (the same contract compiled into the served stylesheet). Two records were **refused**, both for
-  `quirk.reply-chain.never-settles.image-download`: it carries an approved-deviation marker and
-  belongs to the closed register in [§7](#7-the-approved-deviations), which this register does not
-  widen and cannot substitute for.
+  `test/parity/corpus.authorized.json` — **240 records, 120 per pass across 11 scenarios**, keyed by
+  pass, scenario, step index and field, each carrying both values (digested above 200 characters,
+  never a wildcard) and each naming its authority. Per pass, by finding: **order-0 R1 107**
+  (multipart accepted again on the four upload routes) · **order-0 R8 13** (the material-move
+  pre-handler answers again). The fields are the response shape those two remediations
+  move, counted over all 240 records: `header.content-length` 16, `body.json.path` 14,
+  `body.json.bytes` 12, the `body.json.flash.validation.*` family 44, `status` and `statusMessage` 8
+  each, `header.cache-control` 8, and `header.set-cookie` with `cookies.count` and
+  `cookie[session].present` 8 each — all three of the cookie fields on upload responses whose status
+  moves, which is why no login response carries a set-cookie difference. The
+  earlier per-pass tally — **order-0 F2 3,723**, **order-0 R9 3,650**, **order-0 R1 102**, **order-0
+  F67/F68/F69 81**, **order-0 R8 10** and a further **order-0 R9 4** for the compiled stylesheet, over
+  15,140 records — is superseded rather than dropped: every record in it described rendered output
+  that no longer differs, and the run now reports `registered records that did NOT materialize 0`
+  because none of them was left standing. **Five scenarios are refused by the register and belong to
+  the closed approved-deviation list in [§7](#7-the-approved-deviations)** —
+  `quirk.reply-chain.never-settles.image-download`, `route.post.api-admin-user-userId.json`,
+  `route.post.api-users-email.json` and both `…-courses-courseSlug-copy` scenarios — which this
+  register does not widen and cannot substitute for.
 - **A harness-origin pairwise reconciliation.** 34 scenarios differed only in this tool's own
   `--port`, tokenized on both sides under a single-port invariant with 10 startup probes and its own
   named check. A difference that exists only because the harness chose a port is not behaviour.
@@ -3561,14 +3660,18 @@ missing.
   to the committed rule so that changing the rule fails the run instead of silently widening this
   one.
 
-**Measured, both passes, identically: 13 failing scenarios, 133 difference records** (the artifact's
-own `differences` listing holds 114 of them per pass, because it is capped at 25 per scenario; the
-gate counts every record) **, 7,570 authorized
-records, 0 stale authorizations, 0 undriven, 0 missing baselines, `route coverage (233 asserted)
-PASS`, `zero warnings (AAP 0.9.3, no allowances) (5 asserted) PASS`,** and per-pass counts
-`{approved-deviation: 1, authorized-difference: 97, difference: 13, match: 280,
-unreachable-by-design: 1}`. The run publishes `gateQualifying: true` with **all ten** gate
-requirements met — including `both-cookie-passes` and `measured-secure-pass` — and exits 1 on the 13.
+**Measured, both passes, identically: 0 failing scenarios, 0 difference records, 120 authorized
+records, 0 registered records that did not materialize, 0 undriven, 0 missing baselines, 0 failed
+named checks, `route coverage (233 asserted) PASS`, `route manifest is the registered surface (233
+asserted of 233 required) PASS`, `auth-scheme outcomes (5 asserted of 5 required) PASS` and `zero
+warnings (AAP 0.9.3, no allowances) (5 asserted) PASS`,** with per-pass counts
+`{"approved-deviation":5,"authorized-difference":11,"match":375,"unreachable-by-design":1}`. The run
+publishes **all ten** gate requirements met — its own line is `Every requirement is met, so this run
+may be cited as the parity gate.` — and **exits 0** with `VERDICT PASS`. The earlier figures, **13
+failing scenarios and 133 difference records per pass** with `{approved-deviation: 1,
+authorized-difference: 97, difference: 13, match: 280, unreachable-by-design: 1}` and an exit 1, are
+superseded by this run, and what closed each of the 13 is recorded below rather than left to
+inference.
 
 **The secure pass is now measured rather than derived.** `test/parity/corpus.secure.json` is a real
 recording of `2f8712a` taken with the committed `capture.js --secure` against a `--secure` server, by
@@ -3579,60 +3682,104 @@ cookie contract of [§4.3](#43-why-the-cookie-expires-assertion-exists): of 235 
 records **all 235 carry `Secure`**, the 20 that establish a session carry `SameSite=None` with
 `expiresInDays === 365`, the 215 repeats carry `SameSite=Lax; Secure`, and **the target differs on no
 `expires`, `samesite` or `secure` attribute anywhere in the pass** — **measured** by filtering the
-run's own difference records: of the 133 per pass, the only cookie-bearing fields are
-`header.set-cookie`, `cookies.count` and `cookie[session].present`, and every one of them belongs to
-one of the four scenarios where the target answers **500** rather than 200. So `app.js`'s
-private-field cookie patch reproduces `SameSite=None; Secure` and the one-year horizon exactly, which
-is the silent no-op [§8](#8-what-remains-unproven) named as unproven. Those four scenarios lose the
-whole `Set-Cookie` header rather than an attribute, because hapi 21 emits no `Set-Cookie` on a
-response carrying a 500 error — a framework divergence registered in `docs/preserved-quirks.md`
-§12.1 — so the loss is **downstream of the 500 and not of the cookie patch**, and all four are among
-the 13 below. Read the corpus directly and the same figures fall out: 235 recorded `Set-Cookie`
-records in the secure corpus with **235 `Secure`**, 20 `SameSite=None` all carrying
-`expiresInDays: 365`, and 215 `SameSite=Lax` all carrying `Secure`; the non-secure corpus records the
-same 235 with **0 `Secure`**, 235 `SameSite=Lax` and the same 20 one-year horizons, which is what
-makes the two passes different measurements rather than one run reported twice.
+run's own records: the pass produces **0 difference records at all**, and the only cookie-bearing
+fields anywhere in the authorized register are `header.set-cookie`, `cookies.count` and
+`cookie[session].present`, 8 of each, every one of them on an upload response whose status moves
+under order-0 R1 rather than on a session-establishing response. So `app.js`'s private-field cookie
+patch reproduces `SameSite=None; Secure` and the one-year horizon exactly, which is the silent no-op
+[§8](#8-what-remains-unproven) named as unproven. The four scenarios an earlier revision reported as
+losing the whole `Set-Cookie` header — the consequence of hapi 21 emitting no `Set-Cookie` on a
+response carrying a 500 error, a framework divergence registered in `docs/preserved-quirks.md`
+§12.1 — no longer answer 500, so that loss is not in this run's records; the rule itself still
+applies and is still registered, and the replay prints it as its one framework-imposed exemption with
+`13` corpus steps in reach of it. Read the two committed corpora directly and the same figures fall out, **re-measured
+on the delivered artifacts**: the secure corpus records 235 `session` cookies with **235 `Secure`**,
+**20 `SameSite=None` every one of them carrying `expiresInDays: 365`**, and **215 `SameSite=Lax`
+every one of them carrying `Secure`**; the non-secure corpus records the same 235 with **0 `Secure`**,
+**235 `SameSite=Lax`** and the same 20 one-year horizons. That is what makes the two passes different
+measurements rather than one run reported twice.
 
-**The 13 that still fail are application regressions the gate is correctly reporting, and none of
-them is in this unit's files.** Each is target-only, none is attributable to any order-0 finding, and
-authorizing any of them would have rubber-stamped a real regression:
+**The 13 that used to fail are all closed, and none of them was closed by authorizing it.** Each was
+target-only and attributable to no order-0 finding, so authorizing any of them would have
+rubber-stamped a real regression; what closed them instead was the units that owned them. The table
+is retained as the record of what was reported and how each row resolved:
 
-| Scenario | Records | Change |
-|---|---|---|
-| `route.put.api-courses-courseId-metadata.json` | 26 | 200 → 500 |
-| `quirk.dead-301.course-by-slug-alias` | 26 | 200 → 500 |
-| `quirk.oauth.new-user-created-then-failed` | 22 | 200 → 500 |
-| `route.put.api-courses-courseId-lessons-lessonId-move.json` | 16 | 200 → 500 |
-| `client-contract.multipart-upload.page-file-avatar` | 6 | 415 → 500 (the gif-avatar path) |
-| `route.put …lessons-lessonId-draft`, `route.delete.api-admin-featured-course-courseId`, `route.post.api-admin-user-userId-grant`, `route.post.api-comments-trinketId` | 4 each | `body.json.flash.requested` |
-| `error-edge.not-found.missingExport`, `route.post.api-admin-user-userId.json`, both `…-courses-courseSlug-copy` scenarios | 1 each | `outcome` — the request no longer answers |
+| Scenario | Records then | Change then | Status now, this run |
+|---|---|---|---|
+| `route.put.api-courses-courseId-metadata.json` | 26 | 200 → 500 | `match` |
+| `quirk.dead-301.course-by-slug-alias` | 26 | 200 → 500 | `match` |
+| `quirk.oauth.new-user-created-then-failed` | 22 | 200 → 500 | `match` |
+| `route.put.api-courses-courseId-lessons-lessonId-move.json` | 16 | 200 → 500 | `match` |
+| `client-contract.multipart-upload.page-file-avatar` | 6 | 415 → 500 (the gif-avatar path) | `authorized-difference`, order-0 R1 |
+| `route.put.api-courses-courseId-lessons-lessonId-draft.json`, `route.delete.api-admin-featured-course-courseId.json`, `route.post.api-admin-user-userId-grant.json`, `route.post.api-comments-trinketId.json` | 4 each | `body.json.flash.requested` | `match`, all four |
+| `error-edge.not-found.missingExport` | 1 | `outcome` — the request no longer answers | `match` |
+| `route.post.api-admin-user-userId.json` | 1 | `outcome` | `approved-deviation` 16 |
+| both `…-courses-courseSlug-copy` scenarios | 1 each | `outcome` | `approved-deviation` 9 |
 
-Two of those groups have a diagnosis worth recording, because the obvious remedy for each is wrong.
+Both of the diagnoses that revision recorded were about the harness's state rather than the tree,
+and one measured fix closed nine scenario classes at once. It is worth recording in full, because the
+obvious remedy for either group would have been wrong.
 
-The `flash.requested` group is an **ordering** change, not a projection change: the baseline writes
-that flash in a callback that runs after the response has been built, so it stays pending for the
-next request, while the async-converted target writes it before `request.success` runs and the
-uncompared session-establishment login consumes it. `lib/util/routeParser.js`'s `request.success` is
-byte-identical to `git show 2f8712a:lib/util/routeParser.js`, so the fix is to restore the write
-ordering — exactly the resolve-on-a-later-callback shape AAP §0.6.3 forbids collapsing.
+**The cause: a one-sided restart.** Three scenarios in the corpus carry a recorded transport failure —
+the baseline application DIED driving them, and the capture continued from a restarted, re-seeded,
+re-logged-in application, so every recording after that point was made against fresh fixtures. The
+target answers those same three requests instead of dying. Unless the same restart runs on the target
+side, the two sides are compared from divergent state for the whole remainder of the pass. Measured
+on the delivered corpus, in both cookie passes: scenario 275 of 392, `POST
+/api/admin/user/000000000000000000000101` with no payload, is one of the three; the target answers it
+and **strips that user's roles**, after which `PUT /api/courses/{courseId}/metadata`, `PUT
+…/lessons/{lessonId}/move`, `POST …/userLookup`, the dead-301 alias scenario and the OAuth
+save-then-fail scenario all take their permission-denied branch and answer **500** — through
+`lib/controllers/course.js`'s unbound `Boom`, a preserved baseline quirk — where the corpus recorded
+**200** from a baseline whose roles had just been re-seeded. That is **250 field differences across 9
+scenario classes produced by the harness's state rather than by the tree**, and driving those same
+scenarios alone against a freshly seeded application makes them match (measured with `--only`: five
+of the six reported `-> match`). The same asymmetry produced the `body.json.flash.requested` group:
+the post-relaunch re-login left a `requested` flash unread, and `request.yar.flash()` with no
+argument reads **and clears** everything, so which request consumes a leftover value is decided by
+scenario ordering.
 
-The `200 → 500` group sits on expressions that reference a **`Boom` identifier no controller binds**:
-81 call sites across six controllers — `lib/controllers/course.js` (44), `users.js` (16), `admin.js`
-(8), `folders.js` (8), `courses.js` (3) and `trinket.js` (2) — each of which binds
-`errors = require('@hapi/boom')` and then calls `Boom.*`. **Binding `Boom` is not the remedy, and
-measurement is why.** `git show 2f8712a:lib/controllers/course.js` carries the identical unbound
+**The fix, and what it deliberately does not do.** `replay.js` now restarts and re-seeds on the
+target side too, out of the **same** relaunch budget — one per scenario the corpus records a transport
+failure for — and the artifact and the report carry a `stateRealignments` entry naming each one, its
+index and how many scenarios were driven after it. The run prints them: `3 scenario(s) that the
+corpus records a transport failure for were ANSWERED by this tree, so the application was restarted
+and re-seeded after each one`, listing `route.post.api-admin-user-userId.json (case 274)`,
+`route.post.userSlug-courses-courseSlug-copy.html (case 340)` and `…copy.json (case 341)` with 118,
+52 and 51 scenarios driven after them. **The difference measured AT each of those three scenarios is
+recorded before the realignment and stands**: a `transport-failure → answered` change is a real
+change, and each of the three is accounted for as an approved deviation with its own contract, not
+waived. What the realignment removes is only the divergence it would otherwise cause in every
+scenario after it.
+
+**Why the two obvious remedies were both wrong.** The `flash.requested` group looked like an ordering
+change in the application — the baseline writing that flash in a callback that runs after the response
+is built, so it stays pending for the next request. It is not: `lib/util/routeParser.js`'s
+`request.success` is byte-identical to `git show 2f8712a:lib/util/routeParser.js`, and the field is
+present on **both** trees when the same request is driven from the same state (measured
+independently: baseline `{"requested":["probe4692"]}`, target `{"requested":["probe9690"]}` on `GET
+/api/exports/notanid`). Authorizing it would have registered a harness artefact as behaviour. And the
+`200 → 500` group sits on expressions that reference a **`Boom` identifier no controller binds** — 81
+call sites across six controllers, `lib/controllers/course.js` (44), `users.js` (16), `admin.js` (8),
+`folders.js` (8), `courses.js` (3) and `trinket.js` (2), each of which binds `errors =
+require('@hapi/boom')` and then calls `Boom.*`. **Binding `Boom` is not the remedy, and measurement
+is why**: `git show 2f8712a:lib/controllers/course.js` carries the identical unbound
 `Boom.forbidden()` at `:140`, `:155`, `:170`, `:212` and `:244`, `lib/controllers/course.js:449-452`
 documents the resulting `ReferenceError` → 500 as deliberately preserved, and a live A/B of the
-non-owner `PUT /api/courses/{id}/metadata` answers **500 on both trees**. The baseline reaches those
-same expressions and still answers 200 and 415 on the corpus's seeded scenarios, so binding the
-identifier would answer 403 where the baseline answers 200 — trading one deviation for another. The
-remedy is again the settle-first ordering: whichever response settles first is the response the
-baseline serves.
+non-owner `PUT /api/courses/{id}/metadata` answers **500 on both trees**. Binding the identifier
+would answer 403 where the baseline answers 200 — trading one deviation for another. The tree is
+right and the comparison's state was wrong, which is the one shape of failure a parity gate has to be
+able to tell apart from a regression.
 
 Because response shapes are still being changed by other work, the register is regenerable in one
 command — `npm run verify:corpus -- --authorize` writes it from a measured run, a generation run
 reports `gateQualifying: false` and cannot stand as the gate, and a difference no order-0 finding
-claims is refused, carried in `summary.unattributableAtGeneration`, and keeps failing.
+claims is refused, carried in `summary.unattributableAtGeneration`, and keeps failing. **Measured on
+this state**: the generation run wrote **240 records with 0 refusals** and reported itself `NOT A
+GATE RUN` while meeting all ten qualification requirements, and the gate run that followed — the same
+command without `--authorize` — exited 0. An earlier generation run over the pre-restoration tree
+refused roughly 300 differences across about 23 scenario classes as unattributable, which is what a
+register regenerated against an unargued frontend change looks like and why it was never filed.
 
 #### 6.23.4 The suite, and the one AAP figure this delivery cannot meet
 
@@ -3687,6 +3834,78 @@ rather than absorbed. What §0.9.2's "124 passing" was never able to mean is als
 the suite died during file collection at the base commit ([§6.2](#62-npm-test-had-no-green-baseline)),
 so that figure was inferred from a registration count and has never been a measurement.
 
+### 6.25 An unbounded error log on an unreachable Redis, in two files
+
+**Ambiguous.** Both the export worker's queue-level `'error'` handler and `config/redis.js`'s
+client-level one log every event and nothing more. Neither is a behaviour the parity contract covers —
+no HTTP response, no persisted value, no compared field — but an outage writes the same line at a
+constant rate forever, which is a disk-exhaustion shape rather than a log. Whether bounding it is a
+preserved-behaviour question at all had to be settled before it could be bounded.
+
+**Measured.** Against an unreachable Redis, `config/redis.js` wrote **126 lines in 60 seconds** — 2.1 a
+second, **406 in 200 seconds**, roughly 180,000 lines a day, every one of them the same text — because
+node-redis v4 reconnects on a fixed ~500 ms schedule, never gives up, and emits one `'error'` per
+failed attempt. The queue-level handler in `lib/workers/exports.js` showed the same shape at a
+different rate: **30 events in 120 seconds**, in pairs 20,010 ms apart, still arriving at that rate
+when the window closed, because Bull fills in `retryStrategy: times => Math.min(Math.exp(times),
+20000)` (`node_modules/bull/lib/queue.js:133`) and ioredis calls it on every close with no cap. The
+base commit's own shape is recorded beside it for contrast: 36 events in 150 seconds with the gap
+already 40,345 ms and growing, and **it stops** once the cumulative retry time reaches node_redis'
+`connect_timeout` default of 3,600,000 ms — about nineteen attempts, then the client is ended for good.
+
+**Resolution: the REPETITION is bounded in both files, and the reporting is not.** The first occurrence
+of each distinct error is written immediately and in full, no repeat is discarded — each summary line
+carries how many arrived and over what interval — and the interval doubles from one minute to a
+one-hour cap, giving 7 lines in the first hour and about 30 in a day. Measured after the bound:
+`config/redis.js` writes **1 line plus one summary line — 2 lines in 95 seconds** where it wrote 126 in
+60; `lib/workers/exports.js` writes **3 lines covering 37 events in 200 seconds** where it wrote 30
+events in 120 and never terminated. The two use the same constants deliberately, so one outage
+affecting both produces logs that behave alike. **This is the only respect in which `config/redis.js`
+departs from the base commit**; it is otherwise byte-identical, which is stated in the file itself.
+`npm run verify:worker` reports **VERDICT PASS, 112 of 112 checks, 0 notices, exit 0** after the change
+(re-run at this checkpoint).
+
+**The obvious fix was implemented, MEASURED TO KILL THE WORKER, and reverted.** A `retryStrategy`
+returning a non-number once a cumulative budget elapses does end the reconnect loop — ioredis sets the
+client to `end` and flushes what it held — but it also makes **two** promises reject with the connect
+error: the one `exportsQueue.process()` returns, which the worker could contain, and a second one
+inside Bull that no application handler reaches. With no process-level handler installed the worker
+**died** on it: `node test/parity/mongo.js -- node -e 'require("./lib/workers/exports")'` against a
+dead Redis exited **1** out of `node:internal/process/promises` `triggerUncaughtException`. With the
+reachable rejection handled the process merely survived as a worker that would never process another
+job until restarted. An export worker that stops on an outage is a worse outcome than a repeated log
+line, and process death by unhandled rejection is a defect in its own right, so the budget was
+rejected and the repetition bound kept. That measurement lives at `lib/util/queues.js:139-165` with
+the two constants it decided.
+
+### 6.26 Three baseline branches that took the process down, and what R-b leaves once R-d cannot apply
+
+**Ambiguous.** Three separate branches ended the **baseline** process outright, so there was no
+observable behaviour for R-d to preserve, and R-f — which makes baseline's observed behaviour the
+tie-breaker — had nothing to read. Whether the tie-breaker still applies when what it points at is a
+dead process is the ambiguity, and it recurs, so it is settled once here.
+
+**Measured, one branch at a time, on both trees.**
+
+| Branch | Baseline `2f8712a` | Delivered |
+|---|---|---|
+| A percent-encoded control character in an embed view parameter — `GET /embed/beta/foo%00bar`, `curl --path-as-is` | status **000**, 0 bytes, curl exit **52**, then connection refused; stderr `TypeError [ERR_INVALID_ARG_VALUE] … without null bytes` at `@hapi/vision/lib/manager.js:333`; the launcher records `exited with code 1` | **500**, **1600 bytes**, `text/html`, **byte-identical** to `/embed/beta/harmless-unknown-slug` by `cmp`; `%01`, `%7f`, `%0a` and a bare `%00` all bounded; health **200** afterwards |
+| A duplicate folder name — `POST /api/folders` twice with one name | `TypeError: request.catch is not a function` inside a mongoose save callback; **the process exits** | **500**, 96 bytes, hapi's generic Boom payload, **byte-identical to the rename collision's** by `cmp`; health **200** afterwards |
+| A malformed `zipCode` on the draft and autosave routes | `SyntaxError` out of `JSON.parse` in a chain with no downstream rejection handler; **the process exits** | `draft` **200** and `autosave` **500** — the statuses baseline already emitted for the same inputs — with the process alive |
+
+**Resolution: R-b controls in all three, on AAP §0.7's own ground.** The argument is one sentence and it
+is the AAP's rather than this document's: *an unsettled or absent response is not a behaviour a client
+can rely on*, and a process death is that argument at its strongest, because what it destroys is not
+this branch's behaviour but every other route's. R-f is not overridden so much as inapplicable — a
+terminated process is not an observation of this route's behaviour. **What R-d still governs, and what
+each resolution therefore did not do:** none of the three invented a status. The embed guard answers
+the same 500 the route already answers for an unknown slug, byte for byte; the folder duplicate answers
+through the route-level catch-all that its own sibling `folders.update` already reaches, which is why a
+**409** proposed for it was withdrawn as invented; and the `zipCode` bounds leave `draft` at 200 and
+`autosave` at 500, the pair baseline already emitted. Registered as approved deviations **18**, **6**
+and **5** at `docs/preserved-quirks.md` §11.24, §11.10 and §11.9, with the mechanism and the full
+measurement at §10.7 for the third.
+
 ## 7. The approved deviations
 
 These are the places in the migration where something is deliberately **not** preserved or **not**
@@ -3695,15 +3914,22 @@ delivered as the request specified. Each is approved, each is argued, and none i
 that same fact: the findings asking for a **further** one are recorded there, declined, with what a
 human must do to change the answer.
 
-**The register is closed at fifteen, and `docs/preserved-quirks.md` §11.0 is the register of record.**
-An earlier revision of this section said "only three" and numbered `POST /api/folders` as deviation 3;
-both statements were stale, and both are withdrawn. The canonical register grew as later checkpoints
+**The register holds eighteen numbered entries, thirteen of them live, and `docs/preserved-quirks.md`
+§11.0 is the register of record.** Three earlier revisions of this sentence said "only three", "closed
+at eight" and "closed at fifteen", and the first also numbered `POST /api/folders` as deviation 3; all
+of them were stale and all are withdrawn. **Five numbered entries have since been WITHDRAWN rather than
+added** — deviations 7, 8, 13 and 15 outright and deviation 11's token half — each because the change
+it approved was withdrawn from the tree, and §11.0's `State in the delivered tree` column carries the
+measurement for every one. A number is retired, never reused. The canonical register grew as later checkpoints
 measured further impossibilities — the three archive deviations at `docs/preserved-quirks.md` §11.7 to
 §11.9, then `POST /api/folders` as **deviation 6** (§11.10), then the session cookie's single
-`SameSite` and the cross-origin refusal as **7** (§11.11) and **8** (§11.12), the page-level course copy
+`SameSite` and the cross-origin refusal as **7** (§11.11) and **8** (§11.12) — **both since withdrawn,
+measured** — the page-level course copy
 as **9** (§11.13), the four capability-token and login-response entries as **10** to **13** (§11.14 to
 §11.17), and the multipart upload routes and the two client-side sinks as **14** (§11.18) and **15**
-(§11.19). This file now uses those numbers throughout, so a reader can carry one numbering between the
+(§11.19, **since withdrawn**), and finally the payload-less roles update, the email-change settlement
+and the embed view-parameter guard as **16** to **18** (§11.22 to §11.24). This file now uses those
+numbers throughout, so a reader can carry one numbering between the
 two documents. That correction is made under this section's own standing instruction, three paragraphs
 below: a divergence between the records is a defect to fix rather than a variation to interpret.
 
@@ -3724,10 +3950,14 @@ each of two cookie passes is the earlier measurement; the current one drives all
 recorded authority ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)) and
 reaches the same classification. Neither run changes a decision, a target expression or a gate.
 
-**Numbering follows `docs/preserved-quirks.md` §11**, which is the canonical statement of all fifteen.
-Deviations 1 and 3 to 15 are owned in full there — 1 at §11.1, 3 to 5 at §11.7 to §11.9, 6 at §11.10,
-and 7 to 15 at §11.11 to §11.19 — while deviation 2's full reasoning is owned by
-`docs/deferred-dependencies.md` §4.2. **The records are intended to be consistent, so a divergence
+**Numbering follows `docs/preserved-quirks.md` §11**, which is the canonical statement of all eighteen.
+Deviations 1 and 3 to 18 are owned in full there — 1 at §11.1, 3 to 5 at §11.7 to §11.9, 6 at §11.10,
+7 to 15 at §11.11 to §11.19, and **16 to 18 at §11.22 to §11.24** — while deviation 2's full reasoning
+is owned by `docs/deferred-dependencies.md` §4.2. The three most recent entries are the payload-less
+roles update answering (**16**, §11.22), the email-change request settling (**17**, §11.23) and the
+embed view-parameter guard (**18**, §11.24); the first two are replay-visible and carry markers
+projected from `test/parity/replay.js`'s closed register, and the third is registered in
+`test/parity/error-edges.js` because no corpus scenario sends a control character in a path segment. **The records are intended to be consistent, so a divergence
 between them is a defect to fix rather than a variation to interpret.** What this file adds is the third
 thing neither of them owns: **how each is evidenced by the parity method**. It does not yet add it for
 all eight, and [§7.7](#77-deviations-3-to-5--where-they-are-evidenced-and-the-gap-this-file-carries)
@@ -3883,7 +4113,7 @@ behaviour cannot rationally choose the first.
 
 **How it is evidenced.** By the audit record rather than by the corpus: `docs/deferred-dependencies.md`
 §5 carries the measured figures — baseline **15 critical / 28 high / 16 moderate / 59 total** against
-delivered **0 critical / 1 high / 6 moderate / 7 total** — with the single high **named** as `marked`
+delivered **0 critical / 1 high / 7 moderate / 8 total** — with the single high **named** as `marked`
 and attributed, and every remaining moderate attributed to a named package with its risk note. §6 of
 that document states plainly that the request's stated gate was zero critical and zero high and that
 **this delivery does not meet it**; the gate is not redefined and no exception is granted to the
@@ -3931,8 +4161,10 @@ was reasoned about advisories alone, so it does not bar a change made for the ot
 a divergence from the Agent Action Plan's own instruction to retain `archiver` 2, and it is recorded
 as such — with its precedence argument, and with the measurement showing that no narrower fix exists —
 in [`deferred-dependencies.md` §2.6](deferred-dependencies.md). The move also leaves the audit figure
-exactly where AAP §0.9.5 puts it: **0 critical / 1 high / 6 moderate**, the same seven advisories,
-measured after the move ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)).
+where it was before it — **0 critical / 1 high / 7 moderate**, the same eight advisory-bearing
+packages before and after, measured after the move. That figure is **one moderate above** AAP §0.9.5's
+stated 0 / 1 / 6, and the extra one is `adm-zip`'s rather than `archiver`'s: see
+[`deferred-dependencies.md`](deferred-dependencies.md) §5, which reports the deviation ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)).
 
 ### 7.5 Findings declined because granting them would create a third deviation
 
@@ -4153,7 +4385,7 @@ delivery** and now live in the register instead: the storage and archive contrac
 exit 0**, the `archive-layout` case included), the joi comparison on both sides (0 **unauthorized**
 schema-level and 0
 generated-input differences across 462 outcomes; the residual outside that question is attributed in
-[§6.6](#66-native-hapi-validation-is-unreachable-here)), the audit figure (re-run rather than cited, 0 critical / 1 high / 6 moderate), the
+[§6.6](#66-native-hapi-validation-is-unreachable-here)), the audit figure (re-run rather than cited, 0 critical / 1 high / 7 moderate, one above the plan's), the
 clean-tree asset build on a host, the
 `bull` 4 and `mime` 4 runtime semantics (**`VERDICT PASS`, 112 of 112 worker checks over 7 real jobs,
 0 notices, exit 0**), and the corpus's **baseline** half (391 of 392 recorded). They are named here,
@@ -4175,17 +4407,17 @@ this section will find it.
 
 | Open item | Why it is unproven | Gate that settles it |
 |---|---|---|
-| **The request corpus replay** — identical normalized responses across the 233-route inventory | **The comparison is measured, the gate now qualifies on all ten requirements including the secure pass, and it exits 1 on 13 application regressions it is correctly reporting** ([§6.23.3](#6233-the-corpus-register-and-the-secure-pass-now-measured), which supersedes the figures in the rest of this row). The baseline side is captured through the delivered generator against a `git worktree` at `2f8712a` with its own `npm ci` — 391 of 392 scenarios carry a recorded response, the 392nd is unreachable by design, 233 of 233 routes are represented, 0 cases are undriven, and the embedded provenance verifies at generator blob `93266288728d` in commit `7f2cc64` — and the replay runs: driven at the corpus's own recorded authority `127.0.0.1:3010`, the target answers **all 392 scenarios with no application death**, resolving to **388 match, 1 approved deviation, 1 unreachable by design and 2 differences**. Both differences are unregistered payload-disclosure changes in the delivered tree — the user document and its bcrypt hash on `POST /api/admin/user/{userId}/grant`, and the comment author's address on the material feedback route — and they belong to the controllers that make them ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). **What is not proven is the secure half**: AAP §0.9.3 requires a `--secure-corpus` capture against a `--secure` server and this delivery commits no secure-side artifact, which the replay reports itself as `NOT A GATE RUN: measured-secure-pass` while meeting the other nine requirements. The earlier claim that such a capture *cannot* be taken from `2f8712a` is **withdrawn as disproved**: the baseline crash is real but segmentation completes the recording, which is how the current non-secure corpus reaches 0 undriven cases. Three earlier revisions are superseded: **367 / 23** and **355 / 35** taken before the security remediations were reverted, **~11** residual differences at the `20530` authority, and a refusal to replay at all over an unretrievable generator commit | Capture a secure-side corpus by the same segmented method, commit it, and pass `--secure-corpus`; and resolve the two disclosure differences in the controllers that own them |
-| **The zero-warning gate over the route surface** | Four named drives are clean — boot and a 15-route drive on the 410-package graph that preceded the archive-dependency move, and `verify:worker` (0 notices with 0 allowed over 112 of 112 checks) and `verify:storage` (none across 41 of 41 cases) re-driven on the delivered graph at `archiver` 7.0.1 ([§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application)). What is unproven is the drive the request's wording reaches furthest into: the **233-route, five-identity** pass. Its only recorded run **failed** this very check in both cookie passes — `gates.failedChecks` naming `non-secure: zero warnings from the application` and `secure: zero warnings from the application`, with `4 warning line(s) on the application's stderr` for the self-consistency drive and `1 warning line(s)` against the migrated tree — at `verification.applicationHead.recorded = 0716cd2811…`, **before** the archive-dependency move that removed the one module-load source those lines are attributable to, and it has not been re-driven since (**artifact**: `test/parity/corpus.json.provenance.json`). The 233-route two-identity sweep recorded in §6.11 was measured earlier in this delivery and was not re-driven on the delivered graph either. One source inside this gate is now named rather than left to the reader — the request-path `[DEP0169]` from retained `aws-sdk`, attributed frame by frame and measured 1 → 0 in [§8.1](#81-the-request-path-dep0169-from-retained-aws-sdk--its-source-its-bound-and-its-closure), which closes that source on the paths driven there and changes no figure in this row | `replay.js --annotations` under `--pending-deprecation --trace-deprecation` over the full surface, with the `zero warnings from the application` check reported clean in **both** cookie passes — which needs the secure-side capture in [§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries) for the second pass |
+| **The request corpus replay** — identical normalized responses across the 233-route inventory | **CLOSED BY MEASUREMENT. `VERDICT PASS (exit 0)`, qualifying on all ten AAP §0.9.3 requirements, 0 failing scenarios, 0 difference records, 240 differences authorized and attributed with 0 unauthorized and 0 that failed to materialize** ([§6.23.3](#6233-the-corpus-register-and-the-secure-pass-now-measured), which supersedes the figures in the rest of this row). The baseline side is captured through the delivered generator against a `git worktree` at `2f8712a` with its own `npm ci` — 391 of 392 scenarios carry a recorded response, the 392nd is unreachable by design, 233 of 233 routes are represented, 0 cases are undriven, and the embedded provenance verifies at generator blob `93266288728d` in commit `7f2cc64` — and the replay runs: driven at the corpus's own recorded authority `127.0.0.1:3010`, the target answers **all 392 scenarios with no application death** in both cookie passes, resolving identically to **375 match, 11 authorized differences, 5 approved deviations and 1 unreachable by design**. The two unregistered payload-disclosure changes an earlier revision reported — the user document and its bcrypt hash on `POST /api/admin/user/{userId}/grant`, and the comment author's address on the material feedback route — are gone: both scenarios report `match` in this run, and neither appears in the authorization register ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). **The secure half is now proven rather than pending**: `test/parity/corpus.secure.json` is a committed `capture.js --secure` recording of `2f8712a`, so `measured-secure-pass` is met, and so is the tenth requirement `auth-outcomes-exercised` — all five outcomes of the scheme driven and compared in both passes. What remains is one bookkeeping step and it is named separately: `test/parity/corpus.authorized.json` is written by the `replay.js` this delivery edits, so it needs one regeneration after the delivery commit ([§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit)). The earlier claim that such a capture *cannot* be taken from `2f8712a` is **withdrawn as disproved**: the baseline crash is real but segmentation completes the recording, which is how the current non-secure corpus reaches 0 undriven cases. Four earlier revisions are superseded: **367 / 23** and **355 / 35** taken before the security remediations were reverted, **~11** residual differences at the `20530` authority, **13 failing scenarios / 133 records per pass** taken before the frontend restoration and the one-sided-restart fix, and a refusal to replay at all over an unretrievable generator commit | **Met.** `PARITY_OUT=… PARITY_PORT=3010 npm run verify:corpus`, exit 0 — the recorded authority is a required parameter and the gate must be driven at port 3010 |
+| **The zero-warning gate over the route surface** | Four named drives are clean — boot and a 15-route drive on the 410-package graph that preceded the archive-dependency move, and `verify:worker` (0 notices with 0 allowed over 112 of 112 checks) and `verify:storage` (none across 41 of 41 cases) re-driven on the delivered graph at `archiver` 7.0.1 ([§6.11](#611-zero-deprecation-warnings-across-the-entire-running-application)). **The drive the request's wording reaches furthest into — the 233-route, five-identity pass — is now driven and clean at the delivered head.** The replay reports the check by name in **both** cookie passes, `PASS  zero warnings (AAP 0.9.3, no allowances)  (5 asserted)`, and its zero-warning block records `flags --pending-deprecation --trace-deprecation`, **`0 notice(s)`** on the application's own stderr over the driven scenarios, `applies yes - the tree under test is this worktree`, and the four scope requirements `met whole-route-surface`, `met methods-beyond-get`, `met identities-per-route` and `met worker-warning-evidence`, at `dd0d99879efe08da55a0ae7151b132115ed2c016`. What an earlier revision recorded is superseded rather than dropped: that run **failed** this check in both passes — `gates.failedChecks` naming `non-secure: zero warnings from the application` and `secure: zero warnings from the application`, with `4 warning line(s) on the application's stderr` for the self-consistency drive and `1 warning line(s)` against the migrated tree — at `verification.applicationHead.recorded = 0716cd2811…`, **before** the archive-dependency move that removed the one module-load source those lines were attributable to. One source inside this gate is now named rather than left to the reader — the request-path `[DEP0169]` from retained `aws-sdk`, attributed frame by frame and measured 1 → 0 in [§8.1](#81-the-request-path-dep0169-from-retained-aws-sdk--its-source-its-bound-and-its-closure), which closes that source on the paths driven there and changes no figure in this row | **Met.** `replay.js --annotations` under `--pending-deprecation --trace-deprecation` over the full surface, with the named check reported clean in **both** cookie passes — driven as `PARITY_PORT=3010 npm run verify:corpus` |
 | **The existing suite** | **Measured 130 registered / 130 executed / 120 passing / 10 failing** at this checkpoint ([§6.23.4](#6234-the-suite-and-the-one-aap-figure-this-delivery-cannot-meet)); the 103 / 28 figure below was measured before five cases were repaired at their root cause with no assertion touched, and is superseded. As first written this row read **130 registered / 130 executed / 103 passing / 28 failing**, with registered = executed = passing = 130 asserted by the run itself (`EXPECTED_CASES = 130`) and negative-tested in both directions; the 28 reported failures are **27 cases plus the gate assertion itself**. 130 = the 124 `it()` bodies present at `2f8712a` — 123 active plus the disabled download case, now registered with its assertions byte-identical — plus the 6 new page-surface cases. **No case carries a changed expectation**: 0 assertion lines differ from `2f8712a`, and the single recorded exception is the fence removal that re-registers the 124th body ([§6.2.1](#621-the-baseline-correction-exception-register)). An earlier revision of this row claimed eighteen changed cases and 29 assertion lines replaced by 33, which the tree contradicts. The 27 failing cases are grouped and attributed in [§6.2](#62-npm-test-had-no-green-baseline): 11 base-commit model expectations byte-identical production code has never satisfied, 6 course and registration cases of the same class, 4 logged-out `/api/` cases answering 401 as JSON, 4 file cases at 415 and 404, 1 profile case that throws on a `config.cloud` namespace nothing defines, and the 1 re-registered download case whose frozen URL matches no route. Two superseded figures are named rather than dropped: **130 / 129 / 95 / 36**, measured before `test/helpers/flow.js` was corrected to `outline=true` and before the `config/test.yaml` and `supertest` reversions ([§6.2.5](#625-what-configtestyaml-diverges-from-2f8712a-by-and-what-it-no-longer-does)), and **234 passing against a gate asserting 234**, counting the `email-compat` and `diff-compat` suites this delivery removed | **Not met on the passing count**; met on the assertion contract |
 | **The private-field cookie patch on hapi 21** | It mutates a private field and its failure mode is **silence** ([§4.3](#43-why-the-cookie-expires-assertion-exists)). The 233-route sweep did not assert cookie attributes | The cookie-attribute comparison in **both** overlay passes, including the presence and whole-day horizon of `Expires` |
-| **The secure cookie pass** | **CLOSED — a secure-side baseline IS now committed and the pass is measured.** `test/parity/corpus.secure.json` is a real `capture.js --secure` recording of `2f8712a` taken by the segmented method this row already described as available, so the replay's `measured-secure-pass` requirement is met and the pass reports figures identical to the non-secure pass. What it proves: of 235 recorded `Set-Cookie` records all 235 carry `Secure`, the 20 session-establishing ones carry `SameSite=None` with a 365-day horizon, and the target differs on no `expires`, `samesite` or `secure` attribute anywhere — so the private-field cookie patch is not a silent no-op ([§6.23.3](#6233-the-corpus-register-and-the-secure-pass-now-measured)). The account below is retained as the record of what was previously unproven. **No secure-side baseline is committed, so the secure pass is derived rather than measured.** An earlier revision recorded one — `test/parity/corpus.secure.json`, 382 of 383 scenarios — and it was removed as a path outside the authorized file set; the `--secure-corpus` argument that reads it **is** in the delivered `replay.js`, so the flag is not what is missing. What is missing is a committed capture. The earlier reason given for its absence — that the baseline crash blocks taking one — is **withdrawn as disproved**: the same segmentation that completes the non-secure corpus applies to `capture.js --secure` ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). So the secure pass **derives** its expected cookie attributes from the non-secure recording, which the tool reports as non-qualifying in its own words — `NOT A GATE RUN: measured-secure-pass` — rather than presenting as a measurement. Measured consequence, this delivery: the same 2 differences as the non-secure pass plus **13** scenarios carrying **3** fields each of a single shape — `header.set-cookie.count`, `cookies.count` and `cookie[session].present` each moving 1 → 0 — which is the derivation, not behaviour | Capture a corpus against a `--secure` server by the segmented method and pass `--secure-corpus "$CORPUS_SECURE"`; it changes the gate's label and not its exit code, which the two disclosure differences decide |
-| **`joi` 18.2.5 parity across the 102 targets — closed on the comparison** | Both sides are measured. The baseline is the capture at 17.13.3, re-captured through the delivered generator and provenance-verified over 16 checks ([§1.4](#14-tool-provenance-per-artifact)), and `npm run verify:joi` compares 102 targets, 306 cases, 462 outcomes and 15 678 fields against it on the delivered tree with **0 unauthorized schema-level differences** and **0 generated-input differences** — the parity question this row asks, answered. Of the 105 measured differences **104 are in a closed authorization register** naming the order-0 finding behind each ([§6.23.2](#6232-the-joi-matrix-register)); the earlier attribution of a residual to a baseline crash describes a state the re-capture removed, and that route now agrees on both sides. Its **exit status** is now measured rather than deferred: **exit 1 on `difference=1 invariant=1`**, both the same unregistered sign-up copy change, which is owned by the unit holding `lib/views/signup.html` and is deliberately **not** authorized here | **Met on parity**; exit 1 on one unregistered copy change owned elsewhere |
+| **The secure cookie pass** | **CLOSED — a secure-side baseline IS now committed and the pass is measured.** `test/parity/corpus.secure.json` is a real `capture.js --secure` recording of `2f8712a` taken by the segmented method this row already described as available, so the replay's `measured-secure-pass` requirement is met and the pass reports figures identical to the non-secure pass. What it proves: of 235 recorded `Set-Cookie` records all 235 carry `Secure`, the 20 session-establishing ones carry `SameSite=None` with a 365-day horizon, and the target differs on no `expires`, `samesite` or `secure` attribute anywhere — so the private-field cookie patch is not a silent no-op ([§6.23.3](#6233-the-corpus-register-and-the-secure-pass-now-measured)). The account below is retained as the record of what was previously unproven. **No secure-side baseline is committed, so the secure pass is derived rather than measured.** An earlier revision recorded one — `test/parity/corpus.secure.json`, 382 of 383 scenarios — and it was removed as a path outside the authorized file set; the `--secure-corpus` argument that reads it **is** in the delivered `replay.js`, so the flag is not what is missing. What is missing is a committed capture. The earlier reason given for its absence — that the baseline crash blocks taking one — is **withdrawn as disproved**: the same segmentation that completes the non-secure corpus applies to `capture.js --secure` ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). So the secure pass **derives** its expected cookie attributes from the non-secure recording, which the tool reports as non-qualifying in its own words — `NOT A GATE RUN: measured-secure-pass` — rather than presenting as a measurement. Measured consequence of the derivation, before the capture existed: the same 2 differences as the non-secure pass plus **13** scenarios carrying **3** fields each of a single shape — `header.set-cookie.count`, `cookies.count` and `cookie[session].present` each moving 1 → 0. With the capture committed the secure pass reports **0 difference records** and the same `{"approved-deviation":5,"authorized-difference":11,"match":375,"unreachable-by-design":1}` as the non-secure pass, and both 2 disclosure differences report `match` | **Met.** The capture is committed as `test/parity/corpus.secure.json` and `verify:corpus` passes `--secure-corpus` for it, exit 0 |
+| **`joi` 18.2.5 parity across the 102 targets — closed on the comparison** | Both sides are measured. The baseline is the capture at 17.13.3, re-captured through the delivered generator and provenance-verified over 16 checks ([§1.4](#14-tool-provenance-per-artifact)), and the comparison measures 102 targets, 306 cases, 462 outcomes and **15 780** fields against it on the delivered tree with **0 unauthorized differences of any kind**, **0 unauthorized schema-level differences**, **0 generated-input differences**, 0 entries only in baseline and 0 only in target — the parity question this row asks, answered. **All 130 measured differences are in a closed authorization register**, each naming the authority behind it — 76 order-0 R1, 23 approved deviation 10, 20 order-0 R8 and 11 approved deviation 17 ([§6.23.2](#6232-the-joi-matrix-register)). The earlier **105 / 104 / 1** is superseded: the one unauthorized difference was the curated sign-up copy, withdrawn with the frontend restoration, and the 4 records attributed to order-0 R9 no longer materialize. Its **exit status** is measured both ways. With the delivered baseline and the delivered generator, in a copy of the tree carrying no repository so the provenance question is answered by content, the run ends `gate PASSED: …` and **exits 0**. In the repository and before the delivery commit it **exits 2**, refusing an artifact whose generator is not yet committed — measured with two different baselines, and with the second one the refusal falls on the target matrix the run writes for itself, so the blocker is the generator rather than the committed baseline ([§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit)) | **Met on parity and on the gate's own verdict**; exit 2 in-repo until one post-commit re-capture |
 | **`bull` 4 and `mime` 4 runtime semantics — closed** | Neither rests on an API-surface check. `npm run verify:worker` drives **7** real jobs through Bull 4.16.5 and **exits 0 with `VERDICT PASS` over 112 of 112 named checks and 0 notices** under `--pending-deprecation --trace-deprecation`. The `bull` 4 adaptations this row is about hold — a real Bull queue exposing the Bull 4 surface, namespaced per run, with the `job.id` rename, the `failed` payload shape and `job.remove()` on `completed` all exercised — and so does the export the jobs exist to complete, including the status and progress persistence, the archive layout, the `s3Key` and download URL, the notification mail and cleanup on both paths. Two earlier revisions are superseded: one recorded `VERDICT PASS` before it was true, and one recorded a FAIL verdict with 17 of the 109 checks failing — 16 of them following from a successful job that never completed, and the seventeenth the retained-`archiver` notice. Both causes are gone at their source ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)). The `mime` 4 call sites are asserted by the suite's 13 explicit mapping cases and its mismatched-metadata classifier outcomes | Met |
 | **`adm-zip` 0.6 archive-read semantics** | **Now proven for the write-then-read path**: with `archiver` at 7.0.1 ([§6.16](#616-a-retained-dependency-emitted-a-deprecation-warning--and-was-found-to-be-writing-invalid-archives)) every entry declares a correct crc32 and length and `getData()` round-trips byte-exactly, measured on a five-entry fixture at both compression levels and end to end through `POST /api/trinkets/download`. What remains unproven is reading **pre-migration** objects, which is the row below | `test/parity/storage.js` against pre-migration objects |
 | **Storage parity of seeded content — partially closed** | The storage gate now runs, and its `pre-migration-lookup`, `pre-migration-digest-drift` and `pre-migration-rekey-orphans` cases pass against seeded pre-migration records, so the sha1-key contract is asserted rather than assumed. What is still open is breadth rather than existence: the seeded corpus is representative, not exhaustive, and the failure mode remains invisible on freshly written data because a write-then-read round trip passes under any digest | `test/parity/storage.js` against **pre-migration** objects, asserting the exact sha1 key |
 | **The four internal callback modules** | Excluded from conversion on the **warning** test alone; the request's second test — the existing suite passing unmodified — cannot be evidenced until the suite is green ([§6.9](#69-whether-node-core-callback-conversions-should-be-filtered-by-warning-emission)). One of the four, `lib/models/model.js`, was converted under §0.9.2's escape hatch in this pass and **reverted to its base-commit bytes**, because its callback/promise bridge is what makes a preserved baseline 200 possible and removing it crashed the run — the mechanism, the artifact evidence and the revert are in [§6.21](#621-a-model-layer-bridge-whose-removal-turned-a-preserved-200-into-a-process-crash). So `lib/util/file.js`, `lib/util/store.js` and `lib/models/model.js` are byte-identical to `2f8712a` in the delivered tree (**measured**: `git diff 2f8712a HEAD --` over the three returns empty), and `lib/util/queues.js` carries only the Bull 4 surface AAP §0.4.1 authorizes by name — the conversion of its `handler(job, done)` interface is not among the changes | The repaired suite passing with those four modules unmodified. Any module the suite implicates is converted, and the diff records which test forced it — and §6.21 is the record of one that the hatch does **not** reach |
-| **The audit figure — closed** | Re-measured on the delivered tree rather than cited: `npm audit --omit=dev --json` reports **0 critical, 1 high, 6 moderate**, the high being direct `marked` (the approved deviation) and the six moderates `aws-sdk`, `bull`, `highlight.js`, `jszip`, `mongoose` and transitive `uuid`. That is AAP §0.9.5's stated figure exactly, and it identifies `mongoose` as the sixth moderate the earlier record could not account for | Met |
+| **The audit figure — measured, and one moderate above the plan's** | Re-measured on the delivered tree rather than cited: `npm audit --omit=dev --json` reports **0 critical, 1 high, 7 moderate, 8 total**, the high being direct `marked` (the approved deviation) and the seven moderates `adm-zip`, `aws-sdk`, `bull`, `highlight.js`, `jszip`, `mongoose` and transitive `uuid`. **AAP §0.9.5 states 0 / 1 / 6 and enumerates six**, so the delivered figure exceeds it by one; the extra is `adm-zip`, whose GHSA-vwc7-r8mq-g2x9 covers the 0.6.0 this migration was authorized to install and which baseline's 0.4.16 sat below. It has no forward fix and no request-reachable path here. Reported as a measured deviation from the plan's figure in [`deferred-dependencies.md`](deferred-dependencies.md) §5 | **Not met as stated** — measured, named and reported rather than reconciled |
 | **The container images and the serverside unit boots** | **Measured, but at the evidence commit `0716cd2` rather than at the delivered head — so the results are recorded, not re-authenticated.** What was measured there is in [§5.2](#52-the-container-and-asset-build-checks-measured-per-image-and-per-unit): nine `docker build --no-cache` runs at exit 0 with `node -v` = v22.23.2 in each built image, the root image built a second time from a clean `git archive` context, the root image run and driven (`Server started`, `/` 200, both stylesheets 200 `text/css` at the host build's byte sizes), and the eight `serverside` unit boots — the four managers each answering an HTTP 200 to a `socket.io` polling handshake on its published port, the three shells online under PM2 and the pygame worker running under supervisor. What makes it unproven at this head is that **the inputs those builds consume moved afterwards**: among the 85 changed paths in the header table are the root `Dockerfile`, all eight `serverside/**` Dockerfiles, the four manager lockfiles, `package.json`, `package-lock.json` and `scripts/fetch-components.js`, and a clean context's tracked file set went from 552 paths to 561 (**measured**: `git diff --name-only 0716cd2 HEAD -- . ':!docs'`; `git ls-tree -r --name-only 0716cd2 \| wc -l` against `git ls-files \| wc -l`). The **eight `serverside/**` image builds and the unit boots behind them** are the half of this that the gate-register row explicitly does not cover, and the root image's own result is the half that row records with this provenance. What the delivered tree does carry, checkable by reading the files rather than by building them, is the Node 22 pin in all nine Node-bearing Dockerfiles and the root image's `fetch-components` → `npm ci` → `build:css` sequence | Re-run the nine `docker build --no-cache` builds, the root-image drive and the eight unit boots at the delivered head — the command per image is in [§5.2](#52-the-container-and-asset-build-checks-measured-per-image-and-per-unit) and the reproduction sequence in [§5](#5-the-gate-register-and-what-each-gate-proves) |
 | **Review coverage of the delivered tree** | Three **dedicated finals** ran at full required depth and each reported **NOT APPROVED**: COMPLETENESS with **40** findings, RULES with **34** and COMMENTS with **24** — **98** in total. Their remediations are in this tree and this report supersedes their verdicts, but a superseding report is not a re-run: the three finals have not been re-driven against the tree that now exists. Separately, commit **`7028607`** changed **131 paths** (**measured**: `git show --stat 7028607`) and **was never reviewed** by any of them, and the revert commit after it changed more. This is recorded as an outstanding **review-coverage** gap rather than as something this pass closes | Re-run the COMPLETENESS, RULES and COMMENTS finals against the delivered head, with `7028607` and everything after it inside their scope |
 
@@ -4199,18 +4431,23 @@ measures the tree against `2f8712a`, and a review measures it against the AAP an
 required and only one of them is evidenced here, so the row names the other rather than letting a
 clean gate register imply it.
 
-**The first row dominates the rest, and its blocker is not in this delivery.** Most of the PRESERVE
-clauses in [§5.1](#51-each-preserve-clause-bound-to-the-gate-that-proves-it) bind to the corpus, so
-closing it converts a majority of this table at once. The tooling, the definitions, the fixtures, the
-seeds, the overlay, the coverage accounting, the recorded non-secure baseline **and the replay itself**
-are all delivered and inspectable: the replay drives all 392 scenarios at the recorded authority and
-attributes every residual. What is missing is the **secure-side capture**. An earlier revision said it
-could not be taken from `2f8712a` because the baseline application crashes mid-corpus; the crash is
-real and documented, but that conclusion is **withdrawn as disproved** — segmenting around the three
-crashing routes completes the non-secure recording with 0 undriven cases, and `--secure` accepts the
-same segmentation ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)). So
-the distance from here to that gate is **one capture and a decision to commit it**, and the shortfall
-is this delivery's file set rather than the baseline tree.
+**The first row used to dominate the rest, and it is now closed.** Most of the PRESERVE clauses in
+[§5.1](#51-each-preserve-clause-bound-to-the-gate-that-proves-it) bind to the corpus, so closing it
+converts a majority of this table at once — which is what has happened. The tooling, the definitions,
+the fixtures, the seeds, the overlay, the coverage accounting, **both** recorded baselines and the
+replay itself are all delivered and inspectable: the replay drives all 392 scenarios in both cookie
+configurations at the recorded authority, attributes every residual to one of two order-0 findings or
+to a contract in the closed deviation register, and exits 0 with all ten qualification requirements
+met. The **secure-side capture** an earlier revision named as the missing piece was taken by exactly
+the segmented method that revision predicted would work and is committed as
+`test/parity/corpus.secure.json`; the claim before that — that such a capture *cannot* be taken from
+`2f8712a` because the baseline application crashes mid-corpus — stays **withdrawn as disproved**: the
+crash is real and documented, and segmenting around the three crashing routes completes the recording
+with 0 undriven cases ([§2.8](#28-capture-status-and-the-one-precondition-the-replay-gate-carries)).
+What is left is not a measurement but a stamp: one artifact of the four in
+[§8.2](#82-four-evidence-artifacts-that-need-one-regeneration-after-the-delivery-commit) is this
+gate's register, and it needs regenerating once after the delivery commit so that its provenance
+names a committed generator.
 
 **What *is* proven is proven properly.** The primary parity gate — the HTTP surface, per entry, across
 all 233 routes, against an independently installed baseline worktree — passes by measurement, not by
@@ -4325,6 +4562,85 @@ notice. The line in `config/aws.js` becomes unnecessary when the deferred SDK v2
 
 ---
 
+### 8.2 Four evidence artifacts that need one regeneration after the delivery commit
+
+**This is bookkeeping about provenance, not a measurement that is missing.** Every figure in this
+document is measured; what four artifacts cannot yet record is that the tool which produced them is
+committed.
+
+`manifest.js --verify-provenance` is the check, and it takes the artifacts explicitly — a bare
+invocation exits 2 with `ERROR: --verify-provenance requires at least one artifact or generated
+document`. The six this delivery is held to are `test/parity/corpus.json`,
+`test/parity/corpus.secure.json`, `test/parity/corpus.authorized.json`,
+`test/parity/joi-baseline.json`, `docs/conversion-inventory.md` and `docs/error-edge-inventory.md`.
+
+**What the earlier state was.** Four of the six named commits that **do not exist in this
+repository** — `461cd0f` on the joi baseline, `4ebe242` on the corpus register, `d26a6a9` on the
+conversion inventory and `5f9ca49` on the error-edge inventory — as their generator commit, their
+analysed head and their delivered head. `git cat-file` answers `upload-pack: not our ref` for every
+one, so the artifacts asserted a verification nothing could reproduce and named trees this repository
+cannot produce. The verdict was `One target state: NO`, `Artifacts verified: 2 of 6`, `VERDICT: FAIL`,
+and it failed **even under the tool's own waiver**: `--allow-unverified` waives an *uncommitted*
+generator, and an absent commit is a different thing.
+
+**What it is now.** Every commit any of the six names resolves and is on the history of `HEAD`. The
+two corpora verify outright — `capture.js` blob `93266288728d` in `7f2cc64` and in `dd0d998`, each
+`analysed tree 2f8712a (the base commit)`. The other four fail on exactly three checks each,
+`generator-verified`, `generator-blob-resolves` and `generator-current`, all three saying one thing:
+`commitState uncommitted-source`. Under `--allow-unverified` the set passes — `One target state: YES -
+6 artifact(s) written at 2 commit(s), every one on the delivered history, and every generator still
+the blob that ran: 7f2cc64 (1), dd0d998 (5)`, `Artifacts verified: 6 of 6`, `VERDICT: PASS`, exit 0 —
+with each waiver printed by name beside the artifact it applies to. That flag is documented as being
+for use while the generators are still changing and a delivery must validate without it, which is
+exactly why the four are listed here rather than reported as clean.
+
+**Why regeneration is the only remedy, and hand-editing is not one.** `verified` and `commitState`
+are computed **at write time** — `commitState = blob === null ? 'not-a-checkout' : (resolved === null
+? 'uncommitted-source' : 'contains-this-exact-source')` and `verified = resolved !== null &&
+gitObjectExists(blob) && gitBlobAt(commit, path) === blob` — and stored in the artifact. A commit
+landing afterwards does not revise a stored value, so an artifact produced by an edited-but-uncommitted
+generator carries `verified: false` permanently. There is no reader-side flag that clears it, and the
+tool refuses an edited block on sight: `Regenerate the artifact with the generator that produced its
+measurements; a block may not be edited into an artifact by hand.` Editing one would also be a lie
+about the very thing the block exists to establish.
+
+**The four commands, each already run once in this state so that its output is known.** Run them
+after the delivery commit, from the repository root, with `PARITY_OUT` set:
+
+| Artifact | Generator, blob recorded | Regenerate with | Then confirm |
+|---|---|---|---|
+| `test/parity/corpus.authorized.json` | `replay.js` | `npm run verify:corpus -- --authorize` (exits 1 by design, `NOT A GATE RUN`) | `PARITY_PORT=3010 npm run verify:corpus` → exit 0 |
+| `test/parity/joi-baseline.json` | `joi-matrix.js` | `node test/parity/joi-matrix.js --capture --app "$BASELINE" --overlay test/parity/server-overlay.json --out test/parity/joi-baseline.json --overwrite --port …` (exits 1 on the **baseline** tree's own `DEP0005` and AWS-SDK-v2 notices; the artifact is written before the gate predicate is read), then `rm -f test/parity/joi-baseline.json.provenance.json` — the sidecar is a run output and a committed recording carries none | `npm run verify:joi` → exit 0 |
+| `docs/error-edge-inventory.md` | `error-edges.js` | `node test/parity/error-edges.js --baseline "$BASELINE" --app . --scenarios test/parity/corpus.json --counts-check auto --out docs/error-edge-inventory.md` | the same command with `--check` → exit 0 |
+| `docs/conversion-inventory.md` | `convert-inventory.js` | `node test/parity/convert-inventory.js --app . --out docs/conversion-inventory.md --replay "$PARITY_OUT/replay-result.json" --verbose` | the same command with `--check` → exit 0 |
+
+**`test/parity/corpus.json` and `test/parity/corpus.secure.json` verify today and must not be
+regenerated.** Their generator, `capture.js`, is byte-identical to the committed one, which is what
+lets the corpus gate consume them as evidence now; re-capturing either would replace a verifying
+artifact with one in the same uncommitted-source class, and re-capturing the non-secure corpus would
+change the recorded authority the whole gate is driven at.
+
+**A fifth artifact is affected, and it is a run output rather than a delivered file.** `verify:corpus`
+consumes a route-manifest artifact, and `manifest.js` checks two things about it: that its provenance
+names a committed generator, and that the manifest-determining sources of the tree it was generated
+from still hash to what the tree under test hashes to. Before the delivery commit those two cannot
+both hold, because `test/parity/manifest.js` is itself edited in this delivery: a manifest generated
+now is refused on provenance (`commitState: uncommitted-source`), and one generated at `HEAD` is
+refused on the binding — `1 input(s) differ: test/parity/manifest.js. Using it here would judge one
+tree by another tree's HTTP surface`. **The refusal is the tool working, and it disappears at the
+commit**, when `verify:corpus` regenerates the manifest with a committed generator. The exit-0 corpus
+gate run this document cites was therefore taken with `manifest.js` at its committed bytes and a
+manifest generated from them; **the two manifests are content-identical where the corpus gate reads
+them** — measured, `entries identical: true`, 233 against 233 — and differ only in
+`summary.expected` and `summary.unexpected`, which is the F05 constant this delivery corrects
+(`["validationKeys: got 102, verified baseline is 100"]` becomes `[]`). Nothing the replay compares
+comes from those two fields.
+
+**One property of the verdict is worth stating because it is easy to misread.** `One target state:
+YES` does not require one commit. It requires that every artifact's recorded head is on the delivered
+history and that every generator is still the blob that ran — measured here across two commits,
+`7f2cc64` and `dd0d998`, and reported as such.
+
 ## 9. Cross-references
 
 This document owns the **method** and the **resolution log**. It deliberately does not restate what
@@ -4332,7 +4648,7 @@ these own, because a second copy of a fact is a second thing to keep in step:
 
 | Document | Owns |
 |---|---|
-| `docs/preserved-quirks.md` | Every preserved 2013-era quirk, its measured outcome and its target disposition — and the canonical statement of all fifteen approved deviations |
+| `docs/preserved-quirks.md` | Every preserved 2013-era quirk, its measured outcome and its target disposition — and the canonical statement of the approved deviations, **eighteen numbered and thirteen live**, with the per-entry measurement in its §11.0 table |
 | `docs/error-edge-inventory.md` | One row per changed error edge: source location, current disposition, and target status, payload, side effects and timing |
 | `docs/dependency-inventory.md` | Every replaced or major-bumped package, as original → target → reason, with its final resolved version |
 | `docs/deferred-dependencies.md` | The deferred-but-functional packages with per-package reasoning, the audit result, and the full argument for deviation 2 |

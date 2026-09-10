@@ -25,9 +25,9 @@ FROM python:3.10-bookworm@sha256:94c362db08c5b38857943d31b10558ff1856e918605c474
 RUN apt clean && apt-get update -y
 RUN apt install -y software-properties-common fontconfig locales-all build-essential
 
-ENV LANG en_US.UTF-8
-ENV LANGUAGE en_US:en
-ENV LC_ALL en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
 
 RUN apt clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 COPY ./requirements.txt /tmp/
@@ -38,7 +38,7 @@ RUN bokeh sampledata
 
 #RUN adduser trinket
 WORKDIR /home/trinket
-ENV HOME /home/trinket
+ENV HOME=/home/trinket
 
 # Node 22 comes from the pinned image above rather than from an installer
 # script. It lands in /usr/local, which is already on this base's PATH
@@ -72,10 +72,10 @@ RUN apt --purge -y autoremove build-essential
 RUN chmod 744 /usr/bin/fallocate /usr/bin/git* /usr/local/bin/pip* /usr/bin/gcc* /usr/bin/curl
 
 #USER trinket
-ENV TERM xterm
-ENV PYTHONPATH /home/trinket/python3
-ENV MPLBACKEND module://trinket_backend
-ENV MPLCONFIGDIR /tmp
+ENV TERM=xterm
+ENV PYTHONPATH=/home/trinket/python3
+ENV MPLBACKEND=module://trinket_backend
+ENV MPLCONFIGDIR=/tmp
 RUN python3 /home/trinket/python3/init.py
 
 # empty subprocess module to replace system
@@ -88,10 +88,30 @@ RUN python3 /home/trinket/python3/init.py
 # it with SIGKILL (line 430). The parent therefore needs CAP_CHOWN, CAP_SETUID,
 # CAP_SETGID and CAP_KILL, and it must not share uid 1000 with the code it
 # supervises - otherwise untrusted code could signal or trace its own supervisor.
-# serverside/docker-compose.yml bounds this container to exactly those four
-# capabilities with cap_drop ALL and no-new-privileges. The commented-out
-# `#USER trinket` earlier in this file stays disabled for that reason; the
-# account itself is uid 1000, the uid the children run as.
+# The commented-out `#USER trinket` earlier in this file stays disabled for that
+# reason; the account itself is uid 1000, the uid the children run as. This is
+# the posture the base commit ships as well - `#USER trinket` is commented out
+# at 2f8712a's line 52 too - so the Node 22 move changes nothing about it.
+#
+# What that leaves open, stated plainly rather than implied: needing four
+# capabilities is not the same as being LIMITED to them, and nothing in this
+# repository performs that limiting. serverside/docker-compose.yml declares no
+# `cap_drop`, no `cap_add`, no `security_opt` and no `read_only` for this
+# service - measured, the whole file contains none of those keys, and its
+# "Production security options" block (mem_limit, cpus, pids_limit, read_only,
+# tmpfs) is commented out. So as committed, this container runs with Docker's
+# full default capability set as root. A hardened deployment must supply the
+# bound itself, and the exact shape it needs is:
+#
+#   cap_drop: [ALL]
+#   cap_add:  [CHOWN, SETUID, SETGID, KILL]
+#   security_opt: ["no-new-privileges:true"]
+#   read_only: true          # with tmpfs /tmp, which PM2_HOME below expects
+#
+# That is a deployment-topology change spanning the compose file, the manager
+# that fronts this shell and the operator's runtime flags, so it is not made
+# here; it is named so an operator can apply it and a reviewer can see that it
+# has not been applied.
 RUN adduser trinket
 
 # RUN chmod 700 /trinket

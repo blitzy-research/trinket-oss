@@ -6,19 +6,7 @@
     <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/foundation/5.5.3/css/foundation.css">
     <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/foundation/5.5.3/css/normalize.min.css">
     <style type="text/css">
-    {#
-      courses/download/course.css is a build artifact, not a template: it is
-      compiled from static/scss/download/course.scss and is gitignored alongside
-      public/css/base.css and public/css/embed.css, so it is absent from every
-      checkout that has not produced it. Without `ignore missing`, nunjucks
-      raises "template not found: courses/download/course.css" for every page of
-      every HTML course export, which the download chain maps to a 500 and the
-      author sees as a failed download. Tolerating the absence inlines nothing
-      and leaves this empty, which the exported page renders with; the directive
-      is inert whenever the artifact is present, so a build that emits it needs
-      no change here.
-    #}
-    {% include "courses/download/course.css" ignore missing %}
+    {% include "courses/download/course.css" %}
     </style>
   </head>
   <body id="{% block body_id %}{% endblock %}" class="{% block body_class %}{% endblock %}">

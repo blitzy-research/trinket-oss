@@ -1,15 +1,15 @@
 {% extends "embed/base.html" %}
 
 {% block toolbar_options %}
-<a class="menu-button item allow-original" data-action="code.play" aria-label="Play" role="button" data-tooltip aria-haspopup="true" title="Start the playback." data-options="disable_for_touch:true">
+<a class="menu-button item allow-original" data-action="code.play" data-tooltip aria-haspopup="true" title="Start the playback." data-options="disable_for_touch:true">
   <i class="fa fa-play"></i>
   <label class="show-for-large-up">Play</label>
 </a>
-<a class="menu-button item hide allow-original" data-action="code.pause" aria-label="Pause" role="button" data-tooltip aria-haspopup="true" title="Pause the playback." data-options="disable_for_touch:true">
+<a class="menu-button item hide allow-original" data-action="code.pause" data-tooltip aria-haspopup="true" title="Pause the playback." data-options="disable_for_touch:true">
   <i class="fa fa-pause"></i>
   <label class="show-for-large-up">Pause</label>
 </a>
-<a class="menu-button item allow-original" data-action="code.stop" aria-label="Stop" role="button" data-tooltip aria-haspopup="true" title="Stop the playback." data-options="disable_for_touch:true">
+<a class="menu-button item allow-original" data-action="code.stop" data-tooltip aria-haspopup="true" title="Stop the playback." data-options="disable_for_touch:true">
   <i class="fa fa-stop"></i>
   <label class="show-for-large-up">Stop</label>
 </a>
@@ -18,12 +18,12 @@
 {% block embed_content %}
   <div class="notation-widget">
     <div id="config" class="hide">
-      <textarea class="configuration" autocorrect="off" autocapitalize="off" aria-label="Music setup configuration"></textarea>
-      <a class="menu-button closer" data-action="code.config" aria-label="Close Setup" role="button"><i class="fa fa-times-circle-o"></i></a>
+      <textarea class="configuration" autocorrect="off" autocapitalize="off"></textarea>
+      <a class="menu-button closer" data-action="code.config"><i class="fa fa-times-circle-o"></i></a>
     </div>
     <div id="cheatsheet" class="hide">
       {% include "includes/embed-docs/music-cheatsheet.html" %}
-      <a class="menu-button closer" data-action="code.cheatsheet" aria-label="Close Cheatsheet" role="button"><i class="fa fa-times-circle-o"></i></a>
+      <a class="menu-button closer" data-action="code.cheatsheet"><i class="fa fa-times-circle-o"></i></a>
     </div>
     <div id="viewer">
       <div id="codeOutput" class="code-output">
@@ -35,8 +35,8 @@
         <dl class="tabs">
         </dl>
         <div class="voice-inputs">
-          <input class="notes"       type="text" placeholder="enter notes here"  autocomplete="off" autocapitalize="off" aria-label="Notes">
-          <input class="lyrics hide" type="text" placeholder="enter lyrics here" autocomplete="off" autocapitalize="off" aria-label="Lyrics">
+          <input class="notes"       type="text" placeholder="enter notes here"  autocomplete="off" autocapitalize="off">
+          <input class="lyrics hide" type="text" placeholder="enter lyrics here" autocomplete="off" autocapitalize="off">
         </div>
       </div>
       <div id="loading-message" class="hide">

@@ -53,120 +53,6 @@ body.course {
           }
         }
       }
-
-      // Below $large-up the subnav's two children stop fitting on one line.
-      // They are floats, so they stack -- and #course-nav is a fixed 80px box,
-      // absolutely positioned at z-index 10 with visible overflow, so the row
-      // that no longer fits does not make the header taller: it escapes it and
-      // paints over the page underneath. Measured on the course page, the
-      // subnav lays out 178px tall at 375px and 119px at 768px against that
-      // 80px header. Two things are underneath it and both were casualties:
-      // the material's heading and body text, whose leading characters the
-      // wrapped next-page control covered, and #outline-expander, which sat
-      // under the overflow and so recorded 0 of 25 hit points at 375px and 20
-      // of 25 at 768px -- painted, and inert, with no way to open the outline.
-      //
-      // Laying the children out in one flex row that cannot wrap makes the
-      // subnav's height max(title, controls) plus its padding for any course
-      // name, which stays inside 80px. That matters beyond the overflow: the
-      // 80px is also hardcoded into #course-content's padding-top, #outline's
-      // top offset and the .ui-scrollfix variants of both, so keeping the
-      // header's contents within it is what lets those four values stay true
-      // rather than needing a second set for small screens.
-      @media #{$course-compact} {
-        display: flex;
-        align-items: center;
-        flex-wrap: nowrap;
-
-        // .clearfix and .row each generate a display:table :before and :after
-        // to contain the floats being replaced here. In a flex container those
-        // pseudo-elements become flex items of their own.
-        &:before, &:after {
-          display: none;
-        }
-
-        // Foundation gives every .button a 1.25rem bottom margin. `a.button`
-        // above already drops it, which covers the course page's whole
-        // cluster, but the dashboard variants of this header put a
-        // <button class="button"> in .left -- and once the row is laid out
-        // rather than stacked, that 20px is 20px of the row's height. It was
-        // enough on its own to keep the dashboard header 12px past its 80px
-        // box after the wrap was fixed, so the reset is widened to the class.
-        .button {
-          margin-bottom: 0;
-        }
-
-        .left {
-          float: none;
-          flex: 1 1 auto;
-          // A flex item will not shrink below its content's intrinsic minimum
-          // width unless told to, and the title's intrinsic width is what was
-          // pushing the controls off the row to begin with.
-          min-width: 0;
-          display: flex;
-          align-items: center;
-
-          &:before, &:after {
-            display: none;
-          }
-        }
-
-        // The title is the one part with no natural width limit, so it is the
-        // part that gives: one line, ellipsised at whatever room the controls
-        // leave. Foundation's crumb mixin floats each crumb and text-overflow
-        // has no effect on a float, so the crumbs return to inline flow first;
-        // their generated "/" separators sit on those same elements and are
-        // unaffected. `overflow: hidden` already comes from the crumb
-        // container.
-        .title {
-          float: none;
-          flex: 1 1 auto;
-          min-width: 0;
-          white-space: nowrap;
-          text-overflow: ellipsis;
-
-          > * {
-            float: none;
-            display: inline;
-          }
-        }
-
-        // The dashboard variants put their view-options control in .left
-        // beside the title; it keeps its own width and the title ellipsises
-        // around it.
-        #dashboard-list-options {
-          float: none;
-          flex: 0 0 auto;
-        }
-
-        .right {
-          float: none;
-          flex: 0 0 auto;
-          white-space: nowrap;
-        }
-      }
-
-      @media #{$small-only} {
-        padding-left: rem-calc(12);
-        padding-right: rem-calc(12);
-
-        .right {
-          // Every label in these controls is .show-for-large-up, so at this
-          // width they are glyphs in a lot of horizontal padding and that
-          // padding is what gives. The vertical padding is deliberately left
-          // alone: it is what keeps them 48px tall, clear of the 44px pointer
-          // target a control on a touch screen needs.
-          a.button {
-            padding-left: rem-calc(12);
-            padding-right: rem-calc(12);
-          }
-
-          // The dropdown keeps the extra right inset its caret is drawn in.
-          a.button.dropdown-blue {
-            padding-right: rem-calc(30);
-          }
-        }
-      }
     }
   }
 
@@ -193,37 +79,6 @@ body.course {
       color: lighten(#4d4d4d, 20%);
       pointer-events: none;
     }
-  }
-
-  // Disabled-state contract for the anchor-based pseudo-buttons of the course
-  // editor: the destructive controls in the remove/delete dialogs, the outline
-  // "done" control, and the prev/next page controls.
-  //
-  // `.disabled` is only a class, so on an <a> the browser applies no disabled
-  // semantics of its own -- the control still hit-tests and still announces
-  // itself as available. Each of those controls therefore also carries
-  // `aria-disabled`, bound to the same expression as its `disabled` class, and
-  // this rule turns that one attribute into the visual and pointer half of the
-  // contract. Keying on the attribute rather than on `.disabled` keeps the
-  // rule to controls that have opted in, and follows the pointer-events
-  // precedent already set by `ul#page-actions li a.disabled` above.
-  //
-  // `.button.disabled` in _shared.scss tints the label with its own accent
-  // colour over a 40%-lightened wash of that same colour and then drops the
-  // whole control to `opacity: .7`, which leaves the text at roughly 1.6:1.
-  // Restoring full opacity and setting a dark neutral label puts it at 6.0:1
-  // over the blue tint (#cce8ff) and 7.1:1 over the danger tint (#fde7e3),
-  // both clear of the WCAG 2.1 AA 4.5:1 minimum, while the untouched tint and
-  // border keep the control looking as unavailable as it did before.
-  #course-nav a.button[aria-disabled='true'],
-  #new-topic-container a.button[aria-disabled='true'],
-  #removePageDialog a.button[aria-disabled='true'],
-  #removeLessonDialog a.button[aria-disabled='true'],
-  #deleteCourseDialog a.button[aria-disabled='true'] {
-    pointer-events: none;
-    cursor: not-allowed;
-    opacity: 1;
-    color: #4d4d4d;
   }
 
   .inline-header {
@@ -382,30 +237,7 @@ body.course {
       margin-left: 0;
     }
 
-    // This bar belongs to the outline drawer -- it carries the New Topic
-    // control and the outline/done toggle, and it slides with the drawer. At
-    // $small-only the drawer stops short of the right edge so its close
-    // control stays on screen (_course-view.scss), and the bar follows it, so
-    // the two controls line up with the panel above them instead of sitting
-    // 23px wider than it and hanging past its edge.
-    //
-    // Sliding with the drawer is also what makes the outline's exit reachable
-    // at all on a small screen: #done-outline-button is the only way out of
-    // outline editing, and while the drawer is closed it is off canvas at
-    // x=-175. It comes back on canvas the moment the drawer opens, which is
-    // what the expander fix above restored the ability to do.
-    @media #{$small-only} {
-      max-width: calc(100% - #{$outline-drawer-inset});
-      margin-left: calc(-100% + #{$outline-drawer-inset});
-
-      &.open {
-        margin-left: 0;
-      }
-    }
-
-    // #done-outline-button is the outline control's other state; it used to
-    // share #edit-outline-button's id and so was already covered here.
-    #new-topic-button, #edit-outline-button, #done-outline-button {
+    #new-topic-button, #edit-outline-button {
       margin-bottom: 0;
       width: 100%;
     }

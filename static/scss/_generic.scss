@@ -4,66 +4,6 @@ html, body {
 
 .site-message {
   margin-bottom: 0;
-
-  // Dismissal.
-  //
-  // Foundation's alert plugin closes an alert box by adding `.alert-close`
-  // - a 300ms opacity fade - and removing the element on the first
-  // `transitionend`. Only the opacity is animated, so the box holds its
-  // full height for the whole fade and then everything below it jumps up
-  // by that height in a single frame. Measured on the sign-up flash:
-  // `.nav-wrapper` from y=49.5 to y=0 and `body.scrollHeight` from 950 to
-  // 900, with no intermediate value.
-  //
-  // `js-flash-dismissing` is added by the flash's own click handler in
-  // lib/views/base.html, which also pins `max-height` to the measured
-  // height first - a transition out of an unset `max-height` does not
-  // animate, so it needs a definite start value.
-  //
-  // The duration is deliberately shorter than the 300ms fade: Foundation
-  // removes the element on the FIRST `transitionend` it sees, so finishing
-  // the collapse first guarantees the box has no height left to give up by
-  // the time it is removed, whichever property reports in first.
-  &.js-flash-dismissing {
-    overflow: hidden;
-    -webkit-transition: opacity 0.25s ease-out,
-                        max-height 0.25s ease-out,
-                        padding-top 0.25s ease-out,
-                        padding-bottom 0.25s ease-out,
-                        border-top-width 0.25s ease-out,
-                        border-bottom-width 0.25s ease-out;
-            transition: opacity 0.25s ease-out,
-                        max-height 0.25s ease-out,
-                        padding-top 0.25s ease-out,
-                        padding-bottom 0.25s ease-out,
-                        border-top-width 0.25s ease-out,
-                        border-bottom-width 0.25s ease-out;
-
-    // Measured end state: the box collapses across 16 frames, `.nav-wrapper`
-    // moving 49.5 -> 44.56 -> ... -> 2 before removal, against a single
-    // 49.5px frame before. The 2px that remains is the two 1px borders:
-    // Chrome floors any nonzero used border-width to 1px (0.0000001px still
-    // computes as 1px; only exactly 0px computes as 0px), so an animated
-    // border cannot pass through sub-pixel widths and both edges snap to
-    // zero only as the transition completes - 0.1ms after Foundation has
-    // already removed the element. Making the border collapse discrete
-    // instead would move the same 2px step to the start of the animation
-    // rather than remove it, so it is left animated and recorded here.
-    //
-    // `max-height` is deliberately absent here and is driven to zero by the
-    // handler instead. The handler has to pin the start value inline - a
-    // transition out of an unset `max-height` does not animate - and an
-    // inline style outranks every selector, so a `max-height: 0` in this
-    // block could never take effect. Measured before that was understood:
-    // padding and border collapsed the box from 49.5px to its 19.5px
-    // content height, which then disappeared in one frame on removal.
-    &.alert-close {
-      padding-top: 0;
-      padding-bottom: 0;
-      border-top-width: 0;
-      border-bottom-width: 0;
-    }
-  }
 }
 
 .main-content-wrapper {

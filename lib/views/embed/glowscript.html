@@ -12,16 +12,16 @@
 {% if outputOnly %}
   {% include "embed/default-toolbar.html" %}
 {% else %}
-<a class="edit-it menu-button item {{'' if toggleCode or runMode == "calculator" else 'show-for-small-only'}} allow-original" data-action="code.edit" data-tooltip aria-haspopup="true" data-options="disable_for_touch:true" title="Edit the code." aria-label="Code" role="button">
+<a class="edit-it menu-button item {{'' if toggleCode or runMode == "calculator" else 'show-for-small-only'}} allow-original" data-action="code.edit" data-tooltip aria-haspopup="true" data-options="disable_for_touch:true" title="Edit the code.">
   <i class="fa fa-pencil"></i>
   <label class="show-for-large-up">Code</label>
 </a>
-<a class="run-it menu-button item allow-original" data-action="code.run" data-tooltip aria-haspopup="true" title="View the result." data-options="disable_for_touch:true" aria-label="Run" role="button">
+<a class="run-it menu-button item allow-original" data-action="code.run" data-tooltip aria-haspopup="true" title="View the result." data-options="disable_for_touch:true">
   <i class="fa fa-play"></i>
   <label class="show-for-large-up">Run</label>
 </a>
 {% if runMode != 'calculator' %}
-<a class="menu-button item show-for-medium-up" data-action="code.help" data-data="open" data-tooltip aria-haspopup="true" title="Web VPython Help" aria-label="Web VPython Help" role="button" data-options="disable_for_touch:true">
+<a class="menu-button item show-for-medium-up" data-action="code.help" data-data="open" data-tooltip aria-haspopup="true" title="Web VPython Help" data-options="disable_for_touch:true">
   <i class="fa fa-question"></i>
   <label class="show-for-large-up">Help</label>
 </a>
@@ -34,7 +34,7 @@
 {% endblock %}
 
 {% block embed_content %}
-  <input id="honeypot" type='text' tabindex="-1" aria-hidden="true"/>
+  <input id="honeypot" type='text' tabindex="-1"/>
   <input id="start-value" type='hidden' value='{{start if start else "code"}}'/>
   <input id="runMode-value" type='hidden' value='{{runMode}}'/>
 
@@ -96,7 +96,7 @@ while True:
         </p>
       </div>
     </div>
-    <a class="menu-button closer" data-action="code.help" data-data="close" aria-label="Close Web VPython Help" role="button"><i class="fa fa-times-circle-o"></i></a>
+    <a class="menu-button closer" data-action="code.help" data-data="close"><i class="fa fa-times-circle-o"></i></a>
   </div>
   {% endif %}
 
@@ -118,8 +118,7 @@ while True:
 
     <div id="outputTabs" class="{% if hideInstructions or (not isOwner and not trinket.description) %}hideInstructions{% endif %}">
       <div class="{% if not showInstructions %}active {% endif %}menu-button" id="codeOutputTab" data-action="output.view">Result</div>
-      {# A bare div is announced as static text and cannot be focused, so the tab carries a button role, a tab stop and a name; public/js/embed/embed.js forwards ENTER and SPACE to the same click handler. #}
-      <div class="{% if showInstructions %}active {% endif %}menu-button highlight-on-focus" id="instructionsTab" data-action="instructions.view" role="button" tabindex="0" aria-label="View instructions"><i class="fa fa-list"></i> Instructions</div>
+      <div class="{% if showInstructions %}active {% endif %}menu-button" id="instructionsTab" data-action="instructions.view"><i class="fa fa-list"></i> Instructions</div>
     </div>
 
     <div id="outputContainer" class="{% if hideInstructions or (not isOwner and not trinket.description) %}withoutTabs{% else %}withTabs{% endif %}">

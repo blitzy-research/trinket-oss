@@ -236,7 +236,7 @@ and summarised, never reproduced:
 | [10.8](#108-the-search-response-seam-the-client-reads-a-key-the-server-does-not-send) | The search response omits a key the client reads | Client reads an absent key; server shape unchanged | Search corpus |
 | [10.9](#109-what-archiver-normalises-in-an-entry-name-and-what-it-passes-through) | What `archiver` normalises in an entry name, and what it passes through | Measured truth table the controller control matches, re-measured on the delivered 7.0.1 | Storage + worker gates |
 | [10.10](#1010-the-four-outputfile-upload-routes-415-at-baseline-200-in-the-delivered-tree) | The four `output:'file'` upload routes refused `multipart/form-data` at baseline. **NOT preserved** — the delivered tree declares `multipart` and answers 200; see deviation 7 | Baseline **415** on all four, on hapi 20.3.0 and 21.4.10 alike; delivered **200**, `302` to `/login` anonymously, `400` on a non-conforming part | Route-sweep scenarios + the two per-major listener probes + the delivered-tree probes in §10.10 |
-| [10.12](#1012-post-apiadminuseruserid-answers-nothing-at-all-when-the-payload-carries-no-roles) | `admin.updateUser`'s only conditional has no `else`, so a payload without `roles` is never answered | **No response at all**; a 10 s client timeout on both trees, and the process survives | `route.post.api-admin-user-userId.json`, whose step records no status |
+| [10.12](#1012-post-apiadminuseruserid-answers-nothing-at-all-when-the-payload-carries-no-roles) | `admin.updateUser`'s only conditional had no `else`, so a payload without `roles` was never answered — **the disposition is corrected in that section: the route now answers, as approved deviation 16 (§11.22)** | Baseline: **no response at all**, a 10 s client timeout on both trees with the process surviving, and a **process exit** for the payload-less shape (§10.11). Delivered: **200** `{"message":"roles required"}`, measured 68 bytes with no payload and 39 with `{}` | `route.post.api-admin-user-userId.json`, whose baseline step records a transport failure and whose marker is projected from the closed register |
 | [10.13](#1013-bulk-csv-import-saturates-the-bcrypt-threadpool-and-blocks-the-event-loop) | Bulk CSV import runs every row's cost-10 bcrypt hash concurrently through `Promise.allSettled` | At 200 rows the concurrent canary p95 is 3310 ms delivered / 3126 ms baseline — the server is unavailable for the duration, on both trees | `route.post.admin-upload.html` / `.json` + the interleaved A/B ladder |
 | [10.14](#1014-a-private-courses-archive-is-downloadable-by-any-authenticated-user) | `courses.download` and `course.copyCourse` gate on a permission every account holds | **200 with the archive** for any authenticated account, on any course including `private` | None — stated in §10.14; the difference ledger is what pins the response |
 | [10.15](#1015-concurrent-course-archive-downloads-corrupt-one-another-and-six-of-them-end-the-process) | `courses.download` builds its working tree at a path keyed on owner and slug only, then deletes it before the lazy archive stream is read, with no `error` listener | **Six simultaneous requests end the process** (unhandled ReadStream `ENOENT`); at lower concurrency, 200 with a truncated, unparseable archive. Baseline-identical at the three lines that cause it | None — the corpus drives one request at a time; the difference ledger is what pins it |
@@ -252,18 +252,22 @@ and summarised, never reproduced:
 | [10.25](#1025-the-course-sub-navigation-overlays-and-completely-hides-the-material-title-and-body-at-320-and-375) | The course sub-navigation overlays the material title and body at 320 and 375 | A 189px band inside an 80px reserve; the page's own title completely invisible | None — stated in §10.25 |
 | [10.26](#1026-the-outline-animation-drives-layout-rather-than-transform-reflowing-the-content-pane-every-frame) | The outline animation transitions `margin-left` rather than `transform` | 16 reflowing frames per toggle; input-free CLS **0.10781**, above the 0.1 threshold | None — stated in §10.26 |
 | [10.27](#1027-a-maximum-length-140-character-course-name-lays-out-as-a-single-unbreakable-line-box-and-escapes-the-viewport) | A maximum-length 140-character course name is one unbreakable 1658.125px line box | Escapes the viewport by up to 1362px; the nav band cannot cover the widened document | None — stated in §10.27 |
-| [11](#11-the-approved-deviations) | **Approved deviations** — not preserved, and the register is **closed at 15** | Stream response served; `marked` fork retained; both ZIP download routes emit different container bytes; the course archive is built per request; the bounded `zipCode` read; `POST /api/folders` answers where the baseline process died; the session cookie's `SameSite` emitted once; a credentialed cross-origin write answered 403; the page-level course copy answers; the email share token's key is not derivable; a course invitation token is minted from the CSPRNG; the login failure response is generic and delayed; a non-string `email` is rejected by validation; the four `output:'file'` upload routes accept multipart; two client-side markup sinks render user text inert | Deviation allowlist in replay; audit; the frozen archive-container register; the secure-pass cookie derivation; the cross-origin write matrix; the capability-token and login matrices; the upload probes and the sinks' escape audit |
+| [10.28](#1028-seven-findings-raised-against-the-delivered-tree-and-declined-on-measurement) | **Seven declines** — the `attempt` client-metric key, `GET /api/users/assets` without `type`, username truncation, the malformed invited address, the markup-carrying course name, `updateCourse`'s unknown-save branch, and the unbound-`Boom` family | Measured on both trees and identical: 200 with `"attempt" is not allowed`; 500; a 21-character username rejected at every route with nothing truncating anywhere; `status:"invalid"` upserted and listed; the raw markup stored and escaped by a byte-identical template; a branch that never settles on either tree and no route admits; 200 `{"error":"Boom is not defined"}` | Live drives on one booted instance over a seeded isolated database, plus an empty `git diff --stat 2f8712a` for each byte-identity claim |
+| [11](#11-the-approved-deviations) | **Approved deviations** — not preserved; the register holds **18 numbered entries, 13 of them live** (5 withdrawn, each measured in §11.0) | Stream response served; `marked` fork retained; both ZIP download routes emit different container bytes; the course archive is built per request; the bounded `zipCode` read; `POST /api/folders` answers where the baseline process died; the session cookie's `SameSite` emitted once; a credentialed cross-origin write answered 403; the page-level course copy answers; the email share token's key is not derivable; a course invitation token is minted from the CSPRNG; the login failure response is generic and delayed; a non-string `email` is rejected by validation; the four `output:'file'` upload routes accept multipart; two client-side markup sinks render user text inert | Deviation allowlist in replay; audit; the frozen archive-container register; the secure-pass cookie derivation; the cross-origin write matrix; the capability-token and login matrices; the upload probes and the sinks' escape audit |
 | [11.4](#114-an-unapproved-security-policy-that-was-added-and-has-now-been-withdrawn) | **Withdrawn** — ten unapproved policies removed from the two auth/user controllers, the nine exposures preservation leaves open, and the three divergences native `fetch` brings with it | Unfiltered `next`; unguarded asset fetch; no OAuth `state`; plaintext provider token | Route manifest; suite; scenarios handed to the corpus work |
 | [11.5](#115-a-second-unapproved-policy-in-the-route-parser-and-the-logger-and-now-withdrawn) | **Withdrawn** — six unapproved policies removed from `lib/util/routeParser.js` and `config/log.js`, with the measured effect on the route surface and the three exposures preservation leaves open | Unredacted failure flash and log line; off-origin `fail.redirect`, frozen for the process; prerequisites still ahead of validation | Route manifest (233/161/288); CLI digest; `quirk.fail-redirect-leak.post-users` |
 | [11.6](#116-a-third-unapproved-policy-in-the-admin-controller-and-now-withdrawn) | **Withdrawn** — nine unapproved policies removed from `lib/controllers/admin.js`, including the only one in the delivery that changed a status code, and the five exposures preservation leaves open | Guest `POST /api/ohnoes` answers **200** again, with baseline's body, `Cache-Control` and `Set-Cookie`; unbounded anonymous alert mail with a caller-composed body; un-handled `mailer.send` rejection; `grantRole` publishes the whole user document | Six-shape byte-identical mail body; seven-row live A/B; 12-of-12 mail attempts on both trees; `route.post.api-ohnoes.json` |
 | [11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes) | **Deviation 5** — the `zipCode` read is bounded and its chain terminated, so an authenticated request no longer ends the process | A malformed `zipCode` answered `draft` 200 / `autosave` 500 **and then killed the process** | §10.7's live probe and nineteen unit cases; no corpus scenario exists |
-| [11.10](#1110-deviation-6-post-apifolders-answers-where-the-baseline-process-died) | **Deviation 6** — `POST /api/folders` answers 409 on a duplicate name and 500 on an unknown write failure | Duplicate: **the process terminates**, no response. Unknown failure: request never settles | Runtime contract in §11.10; the `folder` fault entry in `test/parity/fixtures/model.js`; corpus handover stated |
-| [11.11](#1111-deviation-7-the-session-cookies-samesite-attribute-is-emitted-once-so-secure-mode-no-longer-serves-samesitenone) | **Deviation 7** — the session cookie's `SameSite` is emitted once, so secure mode serves `Lax` | Secure mode emitted `SameSite=Lax` **and then** `SameSite=None`; a browser applied the last one and carried the cookie on a cross-site write that answered 200 and persisted a record | `secureDifferential` in `test/parity/replay.js`; the `--secure` launcher pass; the login-header probe |
-| [11.12](#1112-deviation-8-a-credentialed-cross-origin-state-changing-request-is-rejected) | **Deviation 8** — a state-changing request carrying the session cookie from another origin is answered **403** | 200, and the write really performed, on both trees; no token, `Origin`, `Referer` or Fetch-Metadata check existed anywhere | The six-case cross-origin matrix on both cookie passes; suite, smoke, route digest and a browser drive as the no-regression side |
-| [11.11](#1113-deviation-9-the-page-level-course-copy-answers-where-the-baseline-process-died) | **Deviation 7** — `POST /{userSlug}/courses/{courseSlug}/copy` answers its duplicate-name branch through the route's own `fail.redirect` (302, or 200 with the message for a JSON `Accept`) and its unknown-write branch with a generic 500 | The owner copying their own course collides on the FIRST attempt: baseline **exits the process** (code 1, socket severed at 0.026 s); the delivered tree hung (000 at 20.002 s) | Runtime contract in §11.11; two committed scenarios with a recorded baseline half and no marker yet; corpus re-capture handed over |
-| [11.11](#1118-deviation-14-the-four-outputfile-upload-routes-accept-multipart-and-answer-200) | **Deviation 7** — the four `output:'file'` upload routes declare `payload.multipart` and answer 200 to the body every shipped uploader sends | Baseline **415** from the payload parser, so no upload could succeed and four handlers were unreachable | Delivered-tree probes in §10.10 and §11.11; the two `client-contract.multipart-upload.*` recordings, whose marker is handed to the corpus owner |
-| [11.12](#1119-deviation-15-two-client-side-markup-sinks-render-user-text-inert) | **Deviation 8** — the search typeahead and the code editor's file-name templates render user text inert | Baseline inserted both as live HTML: a stored name executed in every searching user's browser, a file name in every viewer's | Measured absence of any recorded body carrying either sink; the file's own escape audit; §11.12's field table |
-| [11.13](#1121-three-target-only-changes-that-are-not-deviations-two-withdrawn-one-corrected) | **NOT deviations** — the `shortCode` 12→10 truncation and the client-`shortCode` rejection **withdrawn**, `/signup`'s curated validation copy **withdrawn**, the embed screen-reader heading's double escape **corrected** | Generated `shortCode` is 12 characters again and a client-supplied one persists verbatim; `/signup` renders joi's own message again; the heading renders one level of escaping | HTTP re-drives recorded in §11.13; whole-suite delta 116/15 → 115/16 with the one changed case named |
+| [11.10](#1110-deviation-6-post-apifolders-answers-where-the-baseline-process-died) | **Deviation 6** — `POST /api/folders` answers **500** on a duplicate name, byte-identical to the rename collision's, and 500 on an unknown write failure (an earlier revision said 409; that status was withdrawn as invented) | Duplicate: **the process terminates**, no response. Unknown failure: request never settles | Runtime contract in §11.10; the `folder` fault entry in `test/parity/fixtures/model.js`; corpus handover stated |
+| [11.11](#1111-deviation-7-the-session-cookies-samesite-attribute-is-emitted-once-so-secure-mode-no-longer-serves-samesitenone) | **Deviation 7 — WITHDRAWN** (measured: `[T app.js:372]` appends `; SameSite=None; Secure` exactly as `[B app.js:229]`, and the corpus gate reports no `set-cookie` difference on any login response) | Secure mode emitted `SameSite=Lax` **and then** `SameSite=None`; a browser applied the last one and carried the cookie on a cross-site write that answered 200 and persisted a record | `secureDifferential` in `test/parity/replay.js`; the `--secure` launcher pass; the login-header probe |
+| [11.12](#1112-deviation-8-a-credentialed-cross-origin-state-changing-request-is-rejected) | **Deviation 8 — WITHDRAWN** (measured: no `trustedOrigins`, and no `Origin`, `Referer` or `Sec-Fetch-Site` read anywhere in the tree; the exposure is open and recorded) | 200, and the write really performed, on both trees; no token, `Origin`, `Referer` or Fetch-Metadata check existed anywhere | The six-case cross-origin matrix on both cookie passes; suite, smoke, route digest and a browser drive as the no-regression side |
+| [11.13](#1113-deviation-9-the-page-level-course-copy-answers-where-the-baseline-process-died) | **Deviation 9** — `POST /{userSlug}/courses/{courseSlug}/copy` answers its duplicate-name branch through the route's own `fail.redirect` (302, or 200 with the message for a JSON `Accept`) and its unknown-write branch with a generic 500 | The owner copying their own course collides on the FIRST attempt: baseline **exits the process** (code 1, socket severed at 0.026 s); the delivered tree hung (000 at 20.002 s) | Runtime contract in §11.11; two committed scenarios with a recorded baseline half and no marker yet; corpus re-capture handed over |
+| [11.18](#1118-deviation-14-the-four-outputfile-upload-routes-accept-multipart-and-answer-200) | **Deviation 14** — the four `output:'file'` upload routes declare `payload.multipart` and answer 200 to the body every shipped uploader sends | Baseline **415** from the payload parser, so no upload could succeed and four handlers were unreachable | Delivered-tree probes in §10.10 and §11.11; the two `client-contract.multipart-upload.*` recordings, whose marker is handed to the corpus owner |
+| [11.19](#1119-deviation-15-two-client-side-markup-sinks-render-user-text-inert) | **Deviation 15 — WITHDRAWN** (measured: `git diff --stat 2f8712a -- lib/views public/js public/partials static/scss` prints nothing, so both sinks are the base commit's; the exposure is open and recorded) | Baseline inserted both as live HTML: a stored name executed in every searching user's browser, a file name in every viewer's | Measured absence of any recorded body carrying either sink; the file's own escape audit; §11.12's field table |
+| [11.21](#1121-three-target-only-changes-that-are-not-deviations-two-withdrawn-one-corrected) | **NOT deviations** — the `shortCode` 12→10 truncation and the client-`shortCode` rejection **withdrawn**, `/signup`'s curated validation copy **withdrawn**, the embed screen-reader heading's double escape **corrected** | Generated `shortCode` is 12 characters again and a client-supplied one persists verbatim; `/signup` renders joi's own message again; the heading renders one level of escaping | HTTP re-drives recorded in §11.13; whole-suite delta 116/15 → 115/16 with the one changed case named |
+| [11.22](#1122-deviation-16-the-payload-less-roles-update-answers-where-the-baseline-process-exited) | **Deviation 16** — the payload-less roles update answers through the route's own funnel | Baseline: the process **exits** on one payload shape and never answers on the other. Delivered: **200** `application/json`, `{"message":"roles required"}` | `route.post.api-admin-user-userId.json`, marker projected from the closed register; `verify:corpus` exit 0 |
+| [11.23](#1123-deviation-17-the-email-change-request-settles-where-the-baseline-never-answered) | **Deviation 17** — the email-change request settles | Baseline: **no response ever** — `Store.set(key, val, cb)` hands a third argument to an arity-2 async `set`. Delivered: **200** `{"success":true}` in 13.547 ms, confirmation mail sent | `route.post.api-users-email.json`, marker projected from the closed register; the paired error-edge row in `test/parity/error-edges.js` |
+| [11.24](#1124-deviation-18-a-control-character-in-an-embed-view-parameter-is-refused-instead-of-ending-the-process) | **Deviation 18** — a control character in an embed view parameter is refused before it reaches `@hapi/vision` | Baseline: `TypeError [ERR_INVALID_ARG_VALUE]` from `@hapi/vision/lib/manager.js:333`, curl exit 52, **process gone**. Delivered: **500 / 1600 bytes**, byte-identical to an unknown slug, process alive | No corpus scenario sends one (measured across all 392); registered in `test/parity/error-edges.js` as `trinket.beta.response.1` |
 | [A](#appendix-a--the-quirk-allow-list-for-generated-target-actions) | **Allow-list** — the sites whose governing target action a generator must not override | n/a — a contract, not a quirk | `docs/conversion-inventory.md` regeneration |
 | [10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why) | `request.fail(err)` with an `Error` is refused by the toolkit and the process dies | Connection severed, no response, **no process** | `route.post.api-admin-user-userId.json`, which records the baseline's own socket hang up |
 
@@ -2891,24 +2895,29 @@ whose `mime` is inert being re-read as active content by a sniffing browser. Ele
 not a remedy and was not attempted: the drive above executed an `<img onerror>` payload containing no
 script element at all.
 
-**What remains open, and it is smaller than what was.** The `mime` field is now validated for SHAPE
-`[T lib/models/file.js:11-17]`, `[T lib/models/file.js:68-74]` — one well-formed media type, which keeps
-a CR/LF or other control character out of a value that becomes a response header — but it is
-deliberately NOT restricted to an allow-list of types, because a downloadable `text/html` file is a
-legitimate upload and the attachment branch already neutralises it. So legacy rows whose `type` and
-`mime` disagree still exist and are still served inline; they are now served inertly.
+**What remains open, and one sentence of it is withdrawn as measured false.** An earlier revision of
+this paragraph said the `mime` field "is now validated for SHAPE `[T lib/models/file.js:11-17]`,
+`[T lib/models/file.js:68-74]` — one well-formed media type". **There is no such validator, and there
+are no such lines.** Measured: `git diff --stat 2f8712a -- lib/models/file.js` prints nothing, so the
+file is byte-identical to the base commit; `mime` is declared `{ type: String }` at
+`[T lib/models/file.js:8]` with no validator, no `MEDIA_TYPE` pattern and no `isWellFormedMediaType`
+anywhere in the tree; and the file is shorter than the second range cited. The validator was withdrawn
+because it **rejected `"bogus"`** — an ordinary Content-Type the baseline accepted — which is a
+behaviour change R-d forbids. So `mime` is unvalidated on both trees, exactly as baseline, and legacy
+rows whose `type` and `mime` disagree still exist and are still served inline; **the CSP and `nosniff`
+headers are the whole of what makes them inert**, which is what the paragraphs above measure.
 
-**One consequence of that validation is worth stating rather than leaving to be discovered.** It runs
-on save, and `files.upload` logs a save failure and answers anyway — which is baseline's own
-log-and-continue mapping and is preserved deliberately (§10.10) — so a `mime` the shape test rejects
-now produces a 200 whose `File` document was not persisted, where before it persisted with the
-malformed value. That is a real difference and it was accepted rather than overlooked: turning the save
-failure into an error response would change the mapping for *every* save failure on that route, which
-R-e forbids. The reach is empty in practice — a multipart part's parsed content type is a media type or
-nothing, and the 12 measured cases accept every realistic value (`image/png`, `image/svg+xml`,
-`text/html; charset=utf-8`, a 71-character Office type, `application/x-zip-compressed`, empty and
-absent) while rejecting only shapes no parser produces (`bogus`, an embedded CR/LF, a bare `\n`, a NUL
-byte, a CR/LF inside a quoted parameter).
+**The consequence an earlier revision drew from that validation is withdrawn with it, and the reason
+it was withdrawn is the same reason the validator was.** That revision recorded a save-time shape test
+whose reach it called "empty in practice", on the ground that its twelve measured cases accepted every
+realistic value and rejected "only shapes no parser produces (`bogus`, an embedded CR/LF, a bare `\n`,
+a NUL byte, a CR/LF inside a quoted parameter)". **`bogus` is the counter-example, and it is not
+hypothetical**: a multipart part may declare any token as its content type, the base commit stores
+whatever arrives, and the validator turned that into a 200 whose `File` document was never persisted.
+Rejecting a Content-Type baseline accepted is a behaviour change R-d forbids, whatever its security
+merit, so the validator was withdrawn and `lib/models/file.js` restored to the base commit's bytes.
+`files.upload`'s log-and-continue mapping on a save failure is therefore reached only by the failures
+baseline reached it with, which is what §10.10 preserves.
 
 Two follow-ups are unchanged by this closure, and neither is inside this delivery:
 
@@ -3618,8 +3627,19 @@ unchanged in level and position (its credential values are now withheld — see
 **Gate.** Runtime, on a running server (probe, port 20140, admin session): `POST /admin/upload` with
 the malformed CSV of case A answered rather than severing the connection and the process stayed up;
 the case-B roster with no Email column answered 500 with `log.error` carrying the TypeError's stack;
-a payload-less `POST /api/admin/user/{userId}` answered **500** `{"statusCode":500,"error":"Internal
-Server Error","message":"An internal server error occurred"}` with the process alive.
+a payload-less `POST /api/admin/user/{userId}` answered with the process alive.
+**What it answers is not the 500 an earlier revision of this line recorded, and the difference is a
+second fix in a second file.** Re-measured on the delivered tree (`test/parity/capture.js --target
+--only route.post.api-admin-user-userId.json`): **200** `application/json`, **68 bytes**,
+`{"message":"roles required","flash":{"requested":["administrator"]}}`, in **12.335 ms**. The 500 was
+what `request.fail`'s new `Error` arm produced while the controller still read `.roles` off a null
+payload; `[T lib/controllers/admin.js:290]` now reads `var roles = request.payload &&
+request.payload.roles` **before** entering the `findById` callback and answers
+`request.fail({ message : 'roles required' })` when it is absent, which is the same funnel and the same
+argument shape its two neighbouring guards already used. That is approved deviation **16**
+([§11.22](#1122-deviation-16-the-payload-less-roles-update-answers-where-the-baseline-process-exited)),
+and the `Error` arm measured here is untouched by it: any of the other eight `request.fail(err)` sites
+still reaches the boomified 500.
 
 The redirect arm was then proved undisturbed at the *same* error edge rather than at a different
 route, which is the stronger form of the check. `POST /login` with a valid `email` and no `password`
@@ -3643,25 +3663,37 @@ explicitly on each — that document and this one agree, which resolves the cont
 deviation register are owned by other units of this checkpoint, so — following the same reasoning
 [§10.7](#107-the-zipcode-branch-that-took-the-process-down-and-the-bounds-that-now-hold-it) gives for
 not minting a row in this document alone — the count in [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)
-is **not** amended by this section acting alone. §11.0's table remains the register of record, and it
-now closes at fifteen; of the four artifacts that share that count, this document and
-[`baseline-parity.md`](baseline-parity.md) carry the figure, while
-[`deferred-dependencies.md`](deferred-dependencies.md) §4.2 and the allowlist rule
-`test/parity/replay.js` implements still state "exactly two" and are owed the same one-line
-correction, which §12's divergence-3 table tracks. What is needed is mechanical, and is specified here so that whoever
-owns those artifacts does not have to re-derive it:
+was **not** amended by this section acting alone. **It has since been amended by the unit that owns
+§11.0, and the bookkeeping below is therefore closed rather than owed.** §11.0's table remains the
+register of record; its extent is **eighteen** numbered entries of which **thirteen** are live, this
+repair is deviation **16**, and the "exactly two" figures this paragraph recorded as outstanding in
+[`deferred-dependencies.md`](deferred-dependencies.md) and in `test/parity/replay.js` have both been
+corrected — §12's divergence-3 table carries the per-file measurement and names `CHANGELOG.md` as the
+one file still holding a stale figure. What the entry needed is kept below, because the *shape* of the
+specification is what a future entry is written against, with each field corrected to what was
+measured rather than to what was predicted:
 
 - **Scenario**: `route.post.api-admin-user-userId.json` (`test/parity/corpus.json`, order 273,
   identity `admin`, `payloadEncoding: "none"`), whose baseline step records
   `ok: false, "transport failure: socket hang up (ECONNRESET)"`.
 - **Register entry** for `approvedDeviationRegister()` in `test/parity/replay.js`, in the shape
-  deviation 1 already uses: `fromOutcome: OUTCOME_TRANSPORT`, `toOutcome: OUTCOME_ANSWERED`,
-  `status: 500`, `contentType: 'application/json'`, `describedIn: 'docs/preserved-quirks.md §10.11'`,
-  `approvedIn`: this section's argument, `summary`: "an `Error` handed to `request.fail` is routed as
-  a Boom instead of terminating the process".
-- **Marker**: the scenario needs the approved-change marker §11.0 rule 2 requires, from the corpus or
-  from an `--annotations` file. Until both exist, `npm run verify:corpus` will report the affected
-  scenarios as unapproved differences.
+  deviation 1 already uses. **Delivered, and two fields differ from what this bullet predicted**:
+  `fromOutcome: OUTCOME_TRANSPORT`, `toOutcome: OUTCOME_ANSWERED`, **`status: 200`** — not the 500
+  predicted here, for the reason the Gate paragraph above measures — `contentType:
+  'application/json'`, **`bodyLength: null`**, deliberately not pinned because the body carries the
+  session flash and `request.yar.flash()` with no argument reads *and clears* everything, so the
+  length is sequence-dependent and is not a property of what was approved (§3), `number: 16`,
+  `describedIn: 'docs/preserved-quirks.md §10.11 and §10.12, with the argument at
+  lib/controllers/admin.js:265-297'`, `approvedIn: 'AAP §0.7, rule R-b'`, `summary`: "the payload-less
+  roles update answers 200 `{\"message\":\"roles required\"}` through the route's own funnel where the
+  baseline process exited".
+- **Marker**: the scenario needs the approved-change marker §11.0 rule 2 requires. **It has one, and
+  it comes from a third source this bullet did not anticipate**: `registerMarker(contract)` projects it
+  from the closed register itself. The corpus route was measured to be unusable here — the marker would
+  have to be written by an edited `test/parity/capture.js`, and `replay.js` refuses a corpus whose
+  generator is not the delivered blob, so the re-capture would disqualify the gate the marker exists to
+  satisfy. §11.0's marker-source table records the same measurement for deviations 9, 16 and 17.
+  `npm run verify:corpus` reports **exit 0** with this scenario among its approved deviations.
 - **The blast radius is four scenarios, not one**, and an earlier draft of this section said one. The
   corpus was re-read to settle it: exactly **seven** committed scenarios carry a
   `driven.transportFailure`, and they form **two** cascades, because a process death takes the
@@ -3747,9 +3779,11 @@ satisfy T-1**, and the earlier claim is withdrawn. What is true, and much narrow
 way and they are prohibitions rather than design rules: the non-answer is **measured identical on both
 trees**, so R-f makes it the baseline fact; answering here — with a `{success:false}`, a 400 or a Boom
 — is a behaviour improvement R-d prohibits and a new error-to-response mapping R-e prohibits; and
-the approved-deviation register is **closed at fifteen**, none of them this, with §11.0
+the approved-deviation register was **closed at fifteen**, none of them this, with §11.0
 recording that the list "is not extensible by a tool" — and each of the six admitted after AAP §0.7
-met rule T-6's impossibility test, which this route does not, because it answers. The AAP's own parity evidence points the same
+met rule T-6's impossibility test, which this route did not, because it answers.
+**Every clause of that reasoning has since been overtaken by measurement, and the correction is at the
+end of this section.** The AAP's own parity evidence points the same
 way: `test/parity/corpus.json`'s `route.post.api-admin-user-userId.json` records this route's status as
 `None`, so the migration's committed baseline evidence already treats the non-answer as this route's
 recorded state.
@@ -3807,6 +3841,65 @@ scenario waits longer than 15 s for a step and so no recorded outcome moves.
 step, which is the corpus's representation of a step that produced no response; the comparison is
 between the trees, so a build that answered would be reported as an unapproved difference — including
 one that "fixed" it.
+
+---
+
+**CORRECTION: the disposition above is withdrawn. This route answers on both payload shapes, and the
+change is approved deviation 16.** Everything measured above about the **baseline** stands and is
+unchanged; what is withdrawn is "preserve the non-settlement", the T-1 gap "recorded as owed", and the
+claim that the register could not carry this because the route "answers" rather than dying.
+
+**Measured on the delivered tree**, admin session, one booted instance, four payload shapes driven in
+one pass (`test/parity/server.js --port 3218` over a seeded isolated database):
+
+```text
+POST /api/admin/user/{userId}, admin identity
+  no payload at all              -> 200  application/json  68 bytes   9.088 ms
+                                    {"message":"roles required","flash":{"requested":["administrator"]}}
+  well-formed empty JSON {}      -> 200  application/json  39 bytes   6.416 ms
+                                    {"message":"roles required","flash":{}}
+  roles present, not an array    -> 500  application/json  96 bytes   7.354 ms
+                                    the generic Boom payload, through Layer 1
+  roles a valid array            -> 200  application/json  42 bytes  13.005 ms
+                                    {"success":true,"flash":{},"context":null}
+```
+
+**The mechanism is one line moved and one guard added, both in the controller.**
+`[T lib/controllers/admin.js:290]` reads `var roles = request.payload && request.payload.roles`
+**before** entering the `findById` callback — which is what stops the payload-less shape throwing off
+this handler's stack, §10.11's edge — and `if (!roles) return resolve(request.fail({ message : 'roles
+required' }))` is the missing `else` this section said should not be added. It answers **like its two
+neighbouring guards**, `{ message : 'user not found' }` and the `request.success({success:true})` below
+them, through the same Layer 2 funnel, rather than inventing a status this route has never served. The
+third shape — a `roles` value that is not an array — reaches `mergeRoles`' `roles.forEach`
+(`lib/models/plugins/roles.js:378`) and its throw is routed into the lifecycle promise by the
+try/catch, so it lands on the Layer 1 catch-all as a 500 instead of escaping to the process.
+
+**Why the precedence argument now runs the other way, on this section's own evidence.** The paragraph
+above conceded that a promise which never settles "is not a promise **of a response value**, so on the
+AAP's own wording this path does not satisfy T-1", and then preserved it anyway on R-d, R-f and a
+closed register. Two of those three do not survive measurement. **R-f** made the non-answer "the
+baseline fact" only for the well-formed-empty shape; the payload-less shape on the *same route* killed
+the process (§10.11), and the two shapes reach the same missing `else`, so preserving one meant keeping
+a route with two failure modes and no response in either. **The register was not closed against this**:
+§11.0's rule is that an entry is added when a requirement other than R-d makes preservation
+*impossible*, and R-b is unqualified — this route did not answer, in either shape, to any caller. The
+count is now eighteen numbered entries of which thirteen are live, and this is number **16**;
+[§11.22](#1122-deviation-16-the-payload-less-roles-update-answers-where-the-baseline-process-exited)
+carries the field-by-field contract. **What R-d still forbids, and what was therefore not done**: no
+validation was added to the route declaration, so the 102 declared validation targets the joi matrix
+gates are untouched; and no status was invented, which is why both answering shapes are 200 rather than
+the 400 an earlier "named follow-up" in this section proposed.
+
+**The `routes.timeout.server: 120000` bound measured above is unaffected and is not this deviation.**
+It bounds any request that still fails to settle; this route no longer produces one. Both records are
+kept because they answer different questions — what a hung request costs, and why this one no longer
+hangs.
+
+**Gate.** `route.post.api-admin-user-userId.json`, in both cookie passes, carrying the approved-change
+marker §11.0 rule 2 requires — projected from the closed register in `test/parity/replay.js`, for the
+measured reason §11.0's marker-source table gives. `npm run verify:corpus` reports **exit 0** with this
+scenario among its approved deviations in both passes.
 
 ### 10.13 Bulk CSV import saturates the bcrypt threadpool and blocks the event loop
 
@@ -5249,14 +5342,174 @@ were not separately measured.
 
 ---
 
+### 10.28 Seven findings raised against the delivered tree and DECLINED on measurement
+
+Each of these was raised as a defect at this checkpoint, measured on **both** trees, and declined
+because the delivered tree does what the base commit does. They are collected in one section because
+they share one disposition and one argument — R-d prohibits changing a behaviour that is preserved, and
+R-e prohibits giving an edge a new mapping — and because a decline that is not recorded is
+indistinguishable from an oversight. Every figure below is a measurement taken on one booted instance
+over a seeded isolated database (`test/parity/server.js`), or a byte comparison against the baseline
+worktree, and the command that produced it is named.
+
+**1. A client metric carrying `attempt` is refused, and admitting it would move a gated validation
+outcome** (raised as F81). Measured, user identity:
+
+```text
+POST /api/trinkets/clientmetric  {"lang":"python","event_type":"run","duration":12,"attempt":1}
+  -> 200  application/json  245 bytes  7.171 ms
+     {"lang":"python","event_type":"run","duration":12,"attempt":1,
+      "flash":{…,"validation":{"attempt":"\"attempt\" is not allowed"}}}
+POST /api/trinkets/clientmetric  {"lang":"python","event_type":"run","duration":12}
+  -> 200  application/json   27 bytes 10.102 ms   {"flash":{},"context":null}
+```
+
+The rejecting layer is `[T config/api_routes.js:1313-1326]`, whose payload schema declares `lang`,
+`event_type` and `duration` required and `trinketId`, `message` and `session` optional — and which is
+**byte-identical to baseline**, the whole code diff of that file against `2f8712a` being one
+shim-signature line. **Declined citing R-d and AAP §0.6.2**: `attempt` is not a key this application
+has ever accepted, and admitting it moves one of the **102** declared validation accept/reject outcomes
+that `test/parity/joi-matrix.js` gates, which is a change to the declared surface rather than to a
+response. **What it would take, so a human need not re-derive it — three coordinated edits:** a
+`attempt : Joi.number().integer().optional()` entry in that payload schema; the optional-parameter map
+at `lib/controllers/trinket.js:1281-1284`; and `values.attempt` in `lib/models/clientMetric.js`. All
+three, or the key is accepted by validation and then silently dropped.
+
+**2. `GET /api/users/assets` without `type` answers 500** (raised as F21). Measured, user identity:
+
+```text
+GET /api/users/assets              -> 500  96 bytes  3.677 ms  the generic Boom payload
+GET /api/users/assets?type=embed   -> 200  38 bytes  3.788 ms  {"files":[],"flash":{},"context":null}
+```
+
+`type` is optional in the route's query schema and the handler dereferences it, so the absent case
+reaches the Layer 1 catch-all. **Declined**: the same 500 is what baseline answers for the same
+request, and mapping it to a 400 or defaulting `type` would be a new error-to-response mapping (R-e) or
+an invented default (R-d). The error-edge row for the site carries the same disposition.
+
+**3. A 21-character username is rejected at every route, and nothing anywhere truncates one**
+(raised as F50). Measured:
+
+```text
+PUT /api/users/{userId}  {"username":"abcdefghijklmnopqrstu"}   (21 characters)
+  -> 200  143 bytes  6.022 ms
+     {"username":"abcdefghijklmnopqrstu",
+      "flash":{"validation":{"username":"\"username\" length must be less than or equal to 20 characters long"}}}
+POST /users  formName=signup … username=abcdefghijklmnopqrstu   -> 302, no account created
+POST /users  formName=signup … username=abcdefghijklmnopqrst    -> 302, account created
+                                                                   (68.8 ms against 4.9 ms — the bcrypt work)
+```
+
+The bound is `Joi.string().min(3).max(20)` in the route declarations, identical on both trees.
+**Declined**: there is **no truncation anywhere in either tree** — the finding assumed one and none
+exists — so there is nothing to change, and adding a truncation would silently rewrite a
+user-submitted value, which is exactly the improvement R-d forbids.
+
+**4. A malformed invited address is upserted with `status: "invalid"` and listed** (raised as F84).
+Measured, user identity, one course created for the probe:
+
+```text
+POST /api/courses/{courseId}/invitations  {"emailList":["not-an-email","real@example.com"]}
+  -> 200  249 bytes  15.814 ms
+     {"success":true,"invitations":[
+        {"id":"…","email":"not-an-email","token":"c02980dd","status":"invalid"},
+        {"id":"…","email":"real@example.com","token":"ba23b138","status":"sent"}],…}
+GET /api/courses/{courseId}/invitations
+  -> 200  227 bytes   both rows present, the malformed one still `status: "invalid"`
+```
+
+`addList` sets `update.status = "invalid"` at `[T lib/models/courseInvitation.js:53]` and the model is
+**byte-identical to baseline** (`git diff --stat 2f8712a -- lib/models/courseInvitation.js` prints
+nothing). **Declined**: the row is stored, flagged and never sent, which is the base commit's own
+handling, and refusing the whole request or dropping the row would change a persisted outcome. Note
+what the same measurement also shows — the tokens are the eight-hex `md5(email + course.id)`
+derivation, which is the evidence
+[§11.15](#1115-deviation-11-a-course-invitation-token-is-minted-from-the-csprng-and-accepting-one-requires-being-the-account-it-names)
+cites for its token half being withdrawn.
+
+**5. A course name carrying markup is stored verbatim and escaped by the template** (raised as F96 and
+F105). Measured, user identity:
+
+```text
+POST /api/courses  {"name":"<img src=x onerror=alert(1)>"}
+  -> 200  {"course":{…"name":"<img src=x onerror=alert(1)>",
+             "slug":"less-than-img-src-x-onerror-alert-1-greater-than"…}}
+```
+
+So the raw markup is what is persisted, and the slug is the sanitised derivation. **Declined**, and the
+decisive measurement is a byte comparison rather than a drive: the flash strings and
+`lib/views/base.html` — indeed every file under `lib/views`, `public/js`, `public/partials` and
+`static/scss` — are **byte-identical to baseline**, measured by an empty
+`git diff --stat 2f8712a -- lib/views public/js public/partials static/scss`. The authored HTML is
+therefore escaped by Nunjucks' default autoescaping on **both** trees, which is why nothing renders.
+**And `| safe` is the fix that must not be applied**: `course.name` is user-controlled, as the drive
+above shows, so marking the interpolation safe would turn a stored value into stored XSS. The finding
+asked for the opposite of what the code needs.
+
+**6. `course.updateCourse`'s unknown-save branch never settles on either tree, and is unreachable
+through its own route.** `lib/controllers/course.js`'s `updateCourse` has a save-failure branch whose
+baseline form is `reply(<plain object>)`: the shim's `reply(data)` for a plain object builds a
+chainable builder and settles the deferred only from `.redirect()`, `.code()`, `.header()` or
+`.view()`, none of which that branch calls, while the handler returns `undefined` — the same
+mechanism [§11.10](#1110-deviation-6-post-apifolders-answers-where-the-baseline-process-died)'s
+clause 2 measures. **So baseline never answered it either**, and the delivered tree's promise likewise
+never settles. **Declined and left alone** rather than registered as a deviation, on the one ground
+§11.0 requires and the folders case did not have: it is **unreachable through the route's own payload
+schema**, so no request a client can send arrives there, and R-b's "the application must genuinely
+run" is not engaged by a branch no route admits. It is recorded here so that a future change to that
+schema knows what it would expose.
+
+**7. The unbound-`Boom` family in `lib/controllers/users.js` answers 200 with the ReferenceError's
+text, on both trees** (raised as F17 and F18). Measured, user identity:
+
+```text
+GET /api/exports/000000000000000000000999           -> 200  65 bytes  5.885 ms
+   {"error":"Boom is not defined","flash":{"requested":["testing"]}}
+GET /api/exports/000000000000000000000999/download  -> 200  42 bytes  5.845 ms
+   {"error":"Boom is not defined","flash":{}}
+GET /api/exports/notanid                            -> 200 119 bytes  4.748 ms
+   {"error":"Cast to ObjectId failed for value \"notanid\" (type string) at path \"_id\" for model \"Export\"","flash":{}}
+```
+
+The delivered sites are `lib/controllers/users.js:685, 902, 1087, 1107, 1126, 1419, 1434, 1964-2047`
+against the baseline's `:213, 377, 545, 562, 579, 667, 680, 1027-1090` — the same population, moved by
+the line-count changes above them, with the expressions themselves byte-identical. **Declined**:
+binding `Boom` would give these edges the 404 and 403 their authors intended and neither tree has ever
+served, which R-e prohibits per edge.
+[§9.9](#99-two-routed-handlers-that-answer-200-carrying-the-name-of-a-missing-identifier) and
+[§10.20](#1020-the-rest-of-the-unbound-boom-family-in-libcontrollersusersjs) carry the static analysis;
+this entry adds the route-level drive the earlier sections could not take.
+
+**Three further declines are recorded elsewhere in this delivery and are named here so the set is
+countable.** The `chokidar` removal the AAP's own removals table names is declined on measurement in
+[`dependency-inventory.md`](dependency-inventory.md) §4.5 — hiding the package makes
+`config/app.config` fail to load under `test` and `development`, which would breach AAP §0.6.5. The
+`pm2` pending deprecations in the root image are a **named deviation** rather than a decline and are in
+[`deferred-dependencies.md`](deferred-dependencies.md). And the login-message half of deviation 12 is a
+**withdrawal**, recorded at [§11.16](#1116-deviation-12-the-login-failure-response-no-longer-distinguishes-account-existence-or-state-and-a-repeated-failure-is-delayed).
+
+---
+
+
 ## 11. The approved deviations
 
-These are the **only fifteen** places in the migration where something is deliberately **not** preserved.
+These are the **only eighteen** numbered places in the migration where something was deliberately **not**
+preserved, and **thirteen of the eighteen are what the delivered tree actually does**.
 Each is recorded as a deviation rather than as preservation, and each is stated once, canonically, here;
 the handler mapping and the corresponding gate carry the same decision, and a divergence between the
 eight would itself be a defect. **Three earlier revisions of this paragraph stated the count as two,
 three and four and were left stacked on top of one another**; they are replaced by this one, and the
 register table in §11.0 remains the canonical list.
+
+**A number in this register is retired, never reused, and a withdrawal is recorded rather than
+deleted.** Five of the eighteen no longer describe the delivered tree, because the change each
+approved was withdrawn after this register was written — deviations **7, 8, 11 (in part), 13 and 15**,
+each measured against the tree in §11.0's table and each carrying the measurement in its own section.
+A withdrawn entry keeps its number and its argument: renumbering would move every citation of it in
+this file and in four others, and deleting it would hide the fact that the change was once approved and
+is now gone, which is precisely the history a reader of a register needs. **The count of eighteen is
+the register's extent. The count of live deviations is thirteen, and the two figures are stated
+separately everywhere they appear.**
 
 The sections are ordered as they were written rather than by number: deviations 1 and 2 are
 [§11.1](#111-deviation-1-the-never-settling-file-response) and
@@ -5287,8 +5540,9 @@ withdrew two changes and corrected a third instead of adding three more rows.
 
 ### 11.0 The register, and why a tool cannot add to it
 
-**Exactly fifteen deviations are approved. This section is the whole list of approved deviations, and it
-is not extensible by a tool.** The reason this needs saying explicitly, rather than being left to a
+**Exactly eighteen deviations are numbered here, thirteen of them live in the delivered tree. This
+section is the whole list of approved deviations, and it is not extensible by a tool.** The reason this
+needs saying explicitly, rather than being left to a
 reader's count, is that two separate tools were found minting their own: a replay verifier that
 approved any scenario carrying an "approved-change" marker regardless of its identity, and a worker
 harness that described a residual
@@ -5307,8 +5561,9 @@ recorded here first, because this document is the **canonical** register: both
 state in their own deviation sections that their numbering follows this §11.
 
 **"Closed" has always meant closed to tools, to preference and to improvement — not closed to
-measurement.** The register moved from two entries to fifteen, one argued addition at a time and each for the reason
-T-6 names above, and the addition was argued in prose and bound to a field-by-field contract before any code
+measurement.** The register moved from two entries to eighteen, one argued addition at a time and each for the reason
+T-6 names above — and it moved the other way too, five entries being **withdrawn** on later measurement
+rather than left standing as approvals of changes the tree no longer makes, and the addition was argued in prose and bound to a field-by-field contract before any code
 relied on it. Entries 7 to 10 were added by a route the earlier six did not use, and it is named rather
 than blurred into the others: each is a behaviour this delivery's own runtime **security verification**
 raised as a defect and assigned for remediation, three of them marked blocking. That is a requirement
@@ -5332,117 +5587,112 @@ them: they were withdrawn or corrected, and
 which and why. That ratio — two argued in, three sent back — is the test being applied rather than
 recited.
 
-| # | Deviation | Kind | Replay-visible? | Canonical id | Owner of the full argument |
-|---|---|---|---|---|---|
-| 1 | The never-settling image-download response is **served** | Response behaviour | **Yes** — one scenario | `quirk.reply-chain.never-settles.image-download` | [§11.1](#111-deviation-1-the-never-settling-file-response) |
-| 2 | The `marked` fork is **retained**, leaving one named high advisory | Audit result | **No** — no scenario, no response difference | *none — see below* | [`deferred-dependencies.md`](deferred-dependencies.md) §4.2 |
-| 3 | The **ZIP container bytes** both archive download routes emit changed — `adm-zip` 0.4.16 → 0.6.0 on the course archive, `archiver` 2.1.1 → 7.0.1 on the short-code archive | Served file format | **No** — the raw digest of an archive is a clock read, so no recording carries a comparable one; the container is compared **structurally** instead | *none — see below* | [§11.7](#117-deviation-3--the-zip-container-bytes-both-archive-download-routes-emit) |
-| 4 | The course archive is built in a **per-request** directory, so a concurrent download is no longer served another request's course and a lost open no longer kills the process | Concurrency and availability | **No** — the difference needs two overlapping requests for one owner and course, which no committed scenario drives; on the ordinary path the response is identical, which the container pin asserts | *none — see below* | [§11.8](#118-deviation-4--the-course-archive-is-built-in-a-per-request-directory-so-a-concurrent-download-is-no-longer-served-another-requests-course) |
-| 5 | The `zipCode` read is **bounded** and its chain **terminated**, so a malformed or amplifying archive no longer ends the process | Availability behaviour | **No** — no scenario mentions `zipCode`, and the two responses are byte-identical to baseline's | *none — see [§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes)* | [§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes) |
-| 6 | `POST /api/folders` **answers** on both failure branches, where baseline terminated the process on one and never settled on the other | Response behaviour | **Not yet** — the scenario exists but its baseline side cannot be driven, so it carries **no marker** | `client-contract.folder-duplicate-name.post-api-folders` (definition only) | [§11.10](#1110-deviation-6-post-apifolders-answers-where-the-baseline-process-died) |
-| 7 | The session cookie's `SameSite` is emitted **once**, so secure mode serves `SameSite=Lax` instead of a duplicated attribute a browser resolves to `None` | Cookie attribute | **No** — visible only in the secure pass, where `secureDifferential` *is* the expectation, so no scenario differs and no marker exists | *none — see below* | [§11.11](#1111-deviation-7-the-session-cookies-samesite-attribute-is-emitted-once-so-secure-mode-no-longer-serves-samesitenone) |
-| 8 | A **credentialed cross-origin** state-changing request is answered **403** instead of being performed | Request admission | **No** — no committed scenario carries `Origin`, `Referer` or `Sec-Fetch-Site` (measured), so no scenario's response changes | *none — see below* | [§11.12](#1112-deviation-8-a-credentialed-cross-origin-state-changing-request-is-rejected) |
-| 9 | `POST /{userSlug}/courses/{courseSlug}/copy` **answers** its duplicate-name and unknown-write branches, where baseline terminated the process and the delivered tree hung | Response behaviour | **Not yet** — two scenarios exist and both already carry a recorded baseline half (a severed socket), but neither carries a marker until they are re-captured with their sidecar | `route.post.userSlug-courses-courseSlug-copy.html` and `.json` (recorded baseline, no marker) | [§11.11](#1113-deviation-9-the-page-level-course-copy-answers-where-the-baseline-process-died) |
-| 10 | The **email share token's HMAC key** is no longer derivable, and an unset `app.mail.secret` fails closed — so a token minted with the previously public key is refused where it was accepted | Capability check | **No** — the one committed scenario posts an empty token and records 400, which is unchanged | *none — see below* | [§11.11](#1114-deviation-10-the-email-share-tokens-key-is-no-longer-derivable-and-an-unset-appmailsecret-fails-closed) |
-| 11 | A **course invitation token** is minted from the CSPRNG, and accepting one requires being the account it names — so an outsider holding a real token is no longer enrolled and no longer consumes it | Capability check, and a persisted value's entropy | **Yes — one scenario**, and only because the recorded token was derivable; it is a **volatile-field** matter, not an allowlist one, and the contract is in §11.12 | *none — the field is per-run, so no marker can pin it* | [§11.12](#1115-deviation-11-a-course-invitation-token-is-minted-from-the-csprng-and-accepting-one-requires-being-the-account-it-names) |
-| 12 | The **login failure response** no longer distinguishes account existence or state across three of its four branches, and a repeated failure is delayed | Response body, and timing | **Yes — one scenario**, `route.post.login.json`. This is the **only** entry since deviation 1 that needs an allowlist id, and it does not have one yet | `route.post.login.json` (contract stated, implementation handed over) | [§11.13](#1116-deviation-12-the-login-failure-response-no-longer-distinguishes-account-existence-or-state-and-a-repeated-failure-is-delayed) |
-| 13 | A **non-string `email`** on the login routes is rejected by validation instead of reaching the catch-all as a 500 — the response its sibling field already produced | Response behaviour | **No** — no committed scenario posts a non-string field, measured across all 392 | *none — see below* | [§11.14](#1117-deviation-13-a-non-string-email-on-the-login-routes-is-rejected-by-validation-instead-of-reaching-the-catch-all-as-a-500) |
-| 14 | The four `output:'file'` upload routes declare `payload.multipart` and **answer 200** to the multipart body every shipped uploader sends, where baseline's parser refused it with 415 | Route behaviour | **Yes — eight scenarios**, two of which record the 415 as their expectation; they need the marker adding, which is stated in §11.11 and handed to the corpus owner | `client-contract.multipart-upload.api-user-assets`, `client-contract.multipart-upload.api-user-assets-replace` (recorded baseline, no marker yet) | [§11.11](#1118-deviation-14-the-four-outputfile-upload-routes-accept-multipart-and-answer-200) |
-| 15 | Two client-side markup sinks render user-authored text **inert**: the library search typeahead loses its `<strong>` match emphasis, and code-editor file names are escaped | Rendered output (client-side) | **No** — measured: no recorded response body carries either sink, since the typeahead partial is fetched at run time and the editor templates are string literals in an asset whose body the corpus does not record | *none — see [§11.12](#1119-deviation-15-two-client-side-markup-sinks-render-user-text-inert)* | [§11.12](#1119-deviation-15-two-client-side-markup-sinks-render-user-text-inert) |
+| # | State in the delivered tree | Deviation | Kind | Replay-visible? | Canonical id | Owner of the full argument |
+|---|---|---|---|---|---|---|
+| 1 | **LIVE** — served, and the one marker the corpus itself carries | The never-settling image-download response is **served** | Response behaviour | **Yes** — one scenario | `quirk.reply-chain.never-settles.image-download` | [§11.1](#111-deviation-1-the-never-settling-file-response) |
+| 2 | **LIVE** — `npm audit --omit=dev` still reports the one high on the retained fork | The `marked` fork is **retained**, leaving one named high advisory | Audit result | **No** — no scenario, no response difference | *none — see below* | [`deferred-dependencies.md`](deferred-dependencies.md) §4.2 |
+| 3 | **LIVE** — `adm-zip` 0.6.0 and `archiver` 7.0.1 both resolve in the delivered lockfile | The **ZIP container bytes** both archive download routes emit changed — `adm-zip` 0.4.16 → 0.6.0 on the course archive, `archiver` 2.1.1 → 7.0.1 on the short-code archive | Served file format | **No** — the raw digest of an archive is a clock read, so no recording carries a comparable one; the container is compared **structurally** instead | *none — see below* | [§11.7](#117-deviation-3--the-zip-container-bytes-both-archive-download-routes-emit) |
+| 4 | **LIVE** — measured at `[T lib/controllers/courses.js:347]`, `fs.promises.mkdtemp(path.join(os.tmpdir(), 'trinket-course-download-'))`, against `[B lib/controllers/courses.js:147]` `'/tmp/' + owner.username` | The course archive is built in a **per-request** directory, so a concurrent download is no longer served another request's course and a lost open no longer kills the process | Concurrency and availability | **No** — the difference needs two overlapping requests for one owner and course, which no committed scenario drives; on the ordinary path the response is identical, which the container pin asserts | *none — see below* | [§11.8](#118-deviation-4--the-course-archive-is-built-in-a-per-request-directory-so-a-concurrent-download-is-no-longer-served-another-requests-course) |
+| 5 | **LIVE** — the three bounds and the terminating handler are registered as approved rows in `test/parity/error-edges.js` | The `zipCode` read is **bounded** and its chain **terminated**, so a malformed or amplifying archive no longer ends the process | Availability behaviour | **No** — no scenario mentions `zipCode`, and the two responses are byte-identical to baseline's | *none — see [§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes)* | [§11.9](#119-deviation-5-the-bounded-zipcode-read-and-the-process-death-it-no-longer-causes) |
+| 6 | **LIVE, and the status in the row to its left was corrected**: both failure branches answer **500**, not the 409 an earlier revision of §11.10 described. See §11.10 | `POST /api/folders` **answers** on both failure branches, where baseline terminated the process on one and never settled on the other | Response behaviour | **Not yet** — the scenario exists but its baseline side cannot be driven, so it carries **no marker** | `client-contract.folder-duplicate-name.post-api-folders` (definition only) | [§11.10](#1110-deviation-6-post-apifolders-answers-where-the-baseline-process-died) |
+| 7 | **WITHDRAWN.** Measured: `[T app.js:372]` appends `"; SameSite=None; Secure"` exactly as `[B app.js:229]` does, and `[T app.js:328-337]` records that append as *part of the contract*. The delivered corpora carry `session=…; Secure; HttpOnly; SameSite=Lax; Path=/; Expires=…; SameSite=None; Secure` in the secure pass, and the corpus gate reports **no** `header.set-cookie` difference on any login response. See §11.11 | The session cookie's `SameSite` is emitted **once**, so secure mode serves `SameSite=Lax` instead of a duplicated attribute a browser resolves to `None` | Cookie attribute | **No** — visible only in the secure pass, where `secureDifferential` *is* the expectation, so no scenario differs and no marker exists | *none — see below* | [§11.11](#1111-deviation-7-the-session-cookies-samesite-attribute-is-emitted-once-so-secure-mode-no-longer-serves-samesitenone) |
+| 8 | **WITHDRAWN.** Measured: `grep -rn trustedOrigins` over `app.js`, `config/` and `lib/` finds nothing, and there is no `Origin`, `Referer` or `Sec-Fetch-Site` read anywhere in the tree. See §11.12 | A **credentialed cross-origin** state-changing request is answered **403** instead of being performed | Request admission | **No** — no committed scenario carries `Origin`, `Referer` or `Sec-Fetch-Site` (measured), so no scenario's response changes | *none — see below* | [§11.12](#1112-deviation-8-a-credentialed-cross-origin-state-changing-request-is-rejected) |
+| 9 | **LIVE** — both Accept modes, marker projected from the closed register in `test/parity/replay.js` | `POST /{userSlug}/courses/{courseSlug}/copy` **answers** its duplicate-name and unknown-write branches, where baseline terminated the process and the delivered tree hung | Response behaviour | **Not yet** — two scenarios exist and both already carry a recorded baseline half (a severed socket), but neither carries a marker until they are re-captured with their sidecar | `route.post.userSlug-courses-courseSlug-copy.html` and `.json` (recorded baseline, no marker) | [§11.11](#1113-deviation-9-the-page-level-course-copy-answers-where-the-baseline-process-died) |
+| 10 | **LIVE** — `[T lib/util/helpers.js:515-616]`, with `app.mail.secret` retained at `[T config/default.yaml:164]` | The **email share token's HMAC key** is no longer derivable, and an unset `app.mail.secret` fails closed — so a token minted with the previously public key is refused where it was accepted | Capability check | **No** — the one committed scenario posts an empty token and records 400, which is unchanged | *none — see below* | [§11.11](#1114-deviation-10-the-email-share-tokens-key-is-no-longer-derivable-and-an-unset-appmailsecret-fails-closed) |
+| 11 | **PART WITHDRAWN.** The **token is derivable again**: `lib/models/courseInvitation.js` is byte-identical to baseline and still mints `crypto.createHash("md5").update(email + course.id).digest("hex").substring(0, 8)` at `:37`. The **accept-side identity requirement is live**, at `[T lib/controllers/classes.js]`. See §11.15 | A **course invitation token** is minted from the CSPRNG, and accepting one requires being the account it names — so an outsider holding a real token is no longer enrolled and no longer consumes it | Capability check, and a persisted value's entropy | **Yes — one scenario**, and only because the recorded token was derivable; it is a **volatile-field** matter, not an allowlist one, and the contract is in §11.12 | *none — the field is per-run, so no marker can pin it* | [§11.12](#1115-deviation-11-a-course-invitation-token-is-minted-from-the-csprng-and-accepting-one-requires-being-the-account-it-names) |
+| 12 | **PART WITHDRAWN.** The **message half is withdrawn**: `[T lib/controllers/users.js:549, :561, :568, :587]` carry the base commit's four strings again. The **rate half is retained**: `[T lib/controllers/users.js:133-399]`, a bounded per-key delay capped at 4000 ms. See §11.16 | The **login failure response** no longer distinguishes account existence or state across three of its four branches, and a repeated failure is delayed | Response body, and timing | **Yes — one scenario**, `route.post.login.json`. This is the **only** entry since deviation 1 that needs an allowlist id, and it does not have one yet | `route.post.login.json` (contract stated, implementation handed over) | [§11.13](#1116-deviation-12-the-login-failure-response-no-longer-distinguishes-account-existence-or-state-and-a-repeated-failure-is-delayed) |
+| 13 | **WITHDRAWN.** Measured: `[T config/routes.js:59]` and `[T config/api_routes.js:1222]` both declare `email : Joi.string().required()`, byte-identical to `[B config/routes.js:58]`; the whole code diff of `config/api_routes.js` against baseline is one shim-signature line. See §11.17 | A **non-string `email`** on the login routes is rejected by validation instead of reaching the catch-all as a 500 — the response its sibling field already produced | Response behaviour | **No** — no committed scenario posts a non-string field, measured across all 392 | *none — see below* | [§11.14](#1117-deviation-13-a-non-string-email-on-the-login-routes-is-rejected-by-validation-instead-of-reaching-the-catch-all-as-a-500) |
+| 14 | **LIVE** — the translation is `migratePayloadOutput` in `[T lib/util/routeParser.js]`, and the eight upload scenarios are authorized under order-0 R1 | The four `output:'file'` upload routes declare `payload.multipart` and **answer 200** to the multipart body every shipped uploader sends, where baseline's parser refused it with 415 | Route behaviour | **Yes — eight scenarios**, two of which record the 415 as their expectation; they need the marker adding, which is stated in §11.11 and handed to the corpus owner | `client-contract.multipart-upload.api-user-assets`, `client-contract.multipart-upload.api-user-assets-replace` (recorded baseline, no marker yet) | [§11.11](#1118-deviation-14-the-four-outputfile-upload-routes-accept-multipart-and-answer-200) |
+| 15 | **WITHDRAWN.** Measured: `git diff --stat 2f8712a -- lib/views public/js public/partials static/scss` prints **nothing**, so both sinks are the base commit's bytes. See §11.19 | Two client-side markup sinks render user-authored text **inert**: the library search typeahead loses its `<strong>` match emphasis, and code-editor file names are escaped | Rendered output (client-side) | **No** — measured: no recorded response body carries either sink, since the typeahead partial is fetched at run time and the editor templates are string literals in an asset whose body the corpus does not record | *none — see [§11.12](#1119-deviation-15-two-client-side-markup-sinks-render-user-text-inert)* | [§11.12](#1119-deviation-15-two-client-side-markup-sinks-render-user-text-inert) |
+| 16 | **LIVE — new.** Measured: 200 `application/json`, 68 bytes, `{"message":"roles required","flash":{"requested":["administrator"]}}` in 12.335 ms | The **payload-less roles update answers** through the route's own funnel, where the baseline process exited on `request.payload.roles` | Response behaviour | **Yes — one scenario**, and its marker is projected from the closed register rather than recorded in the corpus, because the corpus is captured from `2f8712a`, which dies on this request | `route.post.api-admin-user-userId.json` | [§11.22](#1122-deviation-16-the-payload-less-roles-update-answers-where-the-baseline-process-exited) |
+| 17 | **LIVE — new.** Measured: 200 `application/json`, 65 bytes, `{"success":true,"flash":{"requested":["testing"]},"context":null}` in 13.547 ms, with the confirmation mail sent | The **email-change request settles**, where the baseline never answered at all | Response behaviour | **Yes — one scenario**, marker projected from the closed register for the same reason as 16 | `route.post.api-users-email.json` | [§11.23](#1123-deviation-17-the-email-change-request-settles-where-the-baseline-never-answered) |
+| 18 | **LIVE — new.** Measured on both trees: the target answers 500 / 1600 bytes, byte-identical to `/embed/beta/harmless-unknown-slug`, and stays up; the baseline process dies (curl exit 52, then connection refused) | A **control character in an embed view parameter** is refused before it reaches `@hapi/vision`, where it terminated the baseline process | Response behaviour | **No** — no committed scenario sends a percent-encoded control character in a path segment, measured across all 392 | *none — the row is registered in `test/parity/error-edges.js` as `trinket.beta.response.1`* | [§11.24](#1124-deviation-18-a-control-character-in-an-embed-view-parameter-is-refused-instead-of-ending-the-process) |
 
-**Deviations 2 to 6 have no scenario id, and in none of those cases is that an omission. Deviation 7
-does have two, and carries no marker either** — its scenarios are committed with a recorded baseline
-half, so the marker is a re-capture away rather than undefined, and until that re-capture happens they
-report a difference (§11.11 states the contract the re-capture must carry). Deviation 2
-changes no response: retaining the fork is precisely what keeps rendered output identical (§11.2). It
-is a departure from the audit *target*, measured by `npm audit`, not by a replay diff. Deviation 3 does
-change a response body, but not in a field any recording can hold to account: a ZIP embeds each entry's
-modification time, so the raw digest differs between two captures of one tree — measured, twice, in
-§11.7 — and the change is therefore registered against the **frozen container profile** in
-`ARCHIVE_CONTAINER_REGISTER` rather than against a scenario marker. Deviations 7 and 8 change no recorded scenario at all — 7 is
-asserted by the secure-pass derivation rather than by a recording, and 8 fires only on a header no
-committed scenario sends, both measured in their own sections. So a replay-visible deviation
-marker on any scenario cannot be justified by any deviation other than 1, 9, 12 and 14, and a tool that
-treats "there are fifteen approved deviations" as "fifteen markers are acceptable" has mis-read this table.
-`ARCHIVE_CONTAINER_REGISTER` rather than against a scenario marker. Deviation 15 changes rendered output
-but in a client-side template no recorded response body carries, which §11.19 measures rather than
-assumes. So a replay-visible deviation marker on any scenario cannot be justified by any deviation
-other than 1, 9, 12 and 14, and a tool that treats "there are fifteen approved deviations" as "fifteen
-markers are acceptable" has mis-read this table. **Deviation 14 is the one addition that does carry scenario ids** —
-two of them, named in its row above — and even there the marker is not yet attached: the ids are stated
-so the corpus owner can attach it, and a tool may not attach one to any *other* scenario on the strength
-of this row.
+**Which numbers have a scenario id, measured rather than recited.** Five scenario ids across four
+deviations are replay-visible, and the rest have none. That is a measurement over the delivered corpus
+and the delivered register, and three earlier revisions of this paragraph — which said "the allowlist
+is exactly one scenario id", counted eleven of fifteen as invisible, and reasoned about deviations 7
+and 8 as though they were live — are replaced by it rather than left stacked beside it.
+
+| Deviation | Scenario id(s) | Where its marker comes from |
+|---|---|---|
+| 1 | `quirk.reply-chain.never-settles.image-download` | the corpus, which records the marker itself |
+| 9 | `route.post.userSlug-courses-courseSlug-copy.html` and `.json` | the closed register in `test/parity/replay.js`, projected |
+| 16 | `route.post.api-admin-user-userId.json` | the closed register, projected |
+| 17 | `route.post.api-users-email.json` | the closed register, projected |
+
+**Why four of the five markers are projected from the register rather than recorded in the corpus, and
+why that is not a widening.** A corpus marker is written by `test/parity/capture.js`. Every one of these
+four scenarios records a **baseline** half in which the process died or never answered, so the marker
+could only be added by re-capturing with an edited `capture.js` — and `test/parity/replay.js` refuses a
+corpus whose generator is not the delivered blob, so the re-capture would disqualify the very gate the
+marker exists to satisfy. `registerMarker(contract)` in `replay.js` therefore projects the marker from
+the frozen contract instead. **Identity is unchanged** — the same closed allowlist of ids decides what
+may carry a marker at all — **and every field check runs identically**. The one property a corpus
+marker evidenced, that the recording predates the deviation, is *measured* by the contract's
+`fromOutcome` rather than asserted: a corpus that already recorded the deviated behaviour is refused.
+
+**The deviations with no scenario id, and why none of those is an omission.** Deviation 2 changes no
+response at all — retaining the fork is precisely what keeps rendered output identical (§11.2) — and is
+a departure from the audit *target* measured by `npm audit`. Deviation 3 changes a response body in a
+field no recording can hold to account, because a ZIP embeds each entry's modification time, so it is
+registered against the frozen container profile in `ARCHIVE_CONTAINER_REGISTER` instead (§11.7, where
+the digest was measured to differ between two captures of one tree). Deviation 4 needs two overlapping
+requests for one owner and course, which no committed scenario drives. Deviation 5 removes a process
+death and leaves the statuses baseline already emitted, and no committed scenario mentions `zipCode`;
+its four rows are registered in `test/parity/error-edges.js` instead. Deviation 6's scenario is defined
+but recorded `unreachableByDesign`, because driving it on the baseline side is what kills the baseline
+process. Deviation 10's one committed scenario posts an empty token and records the unchanged 400.
+Deviation 14 is visible on eight scenarios but as an ordinary authorized difference under order-0 R1,
+not as a marker. Deviation 18's guard fires only on a percent-encoded control character in a path
+segment, which no committed scenario sends — measured across all 392 — so it too is registered in
+`error-edges.js` rather than as a marker.
+
+**And the five withdrawn or part-withdrawn numbers have no id because they change nothing to mark.**
+Deviations 7, 8, 13 and 15 are withdrawn outright and deviation 11's token half with them, so there is
+no difference for a marker to approve; a marker on any of their scenarios would be caught by rule 2
+below as drift. Deviation 12's surviving half is a **timing** change, which no recorded field carries.
+
 **One thing this register is *not* the list of, and the distinction is the reason the count holds.**
 A behaviour the **framework** removes in a path no application file can reach is not a deviation this
 register can carry: there is no application decision to approve. Exactly one such divergence exists —
 hapi 21 emitting only cookie CLEARS on a response carrying a 500 error — and it is registered
 separately in [§12](#12-the-register-of-framework-imposed-divergences--one-entry), which holds one
 entry and is likewise not extensible by a tool. It is **not** one of the deviations above, this table
-is still the whole of the approved-deviation list, and the count of fifteen is unchanged by it.
+is still the whole of the approved-deviation list, and neither the extent of eighteen nor the live
+count of thirteen is changed by it.
 
-**Why the deviations' own sections are numbered §11.7 to §11.19 rather than §11.3 onward.** §11.3 through §11.5 were
-already occupied when it was registered — by the classification of what is *not* a deviation and by
-two withdrawn policies — and renumbering them would have moved every citation of them in this file and
-in three others for no gain. **This table is the canonical ordering**; the section numbers are
-addresses, not the register.
-
-**Deviations 10 to 13 change that arithmetic in exactly one place, and the place is named.** Ten and
-thirteen are not replay-visible at all — the one committed share-token scenario posts an empty token and
-records the unchanged 400, and no scenario in the corpus posts a non-string field, both measured.
-Eleven *is* visible in one scenario, but through a field that has become **per-run**: a CSPRNG token
-cannot be pinned field by field, so it belongs to the volatile set rather than to this allowlist, and
-§11.15 states the expression to add and why the recorded value was ever stable. **Twelve is the only
-entry since deviation 1 that needs an id**, because its change is a changed *constant* and a
-re-capture cannot absorb it: the corpus is captured from `2f8712a`, which still emits the old string.
-Its contract is stated field by field in §11.16 and nowhere else, and its implementation lives in files
-another unit owns at this checkpoint — so **the allowlist still holds one id today**, and the scenario
-reports a difference until that entry lands, which is the honest result §11.3 requires while a target
-is unmet. It is a handover, not an approval-by-implication: nothing below is widened by having stated
-the contract.
-
-**Eleven of the fifteen carry no scenario id, and that is not an omission.** Deviation 2 changes no
-response at all: retaining the fork is precisely what keeps rendered output identical (§11.2), and it
-is a departure from the audit *target* measured by `npm audit` rather than by a replay diff. Deviation
-5 changes no response either — it removes a process death that occurred *after* the response had been
-sent, and the two statuses it leaves behind are the ones baseline already emitted for the same inputs
-(§11.9) — and no committed scenario drives that branch, measured. Deviation 15's two sinks are
-client-side, and §11.19 measures that no recorded body carries either. So:
-
-**The replay allowlist is exactly one scenario id — deviation 1's — and registering the eleven
-deviations that are not replay-visible does not widen it.** A tool that reads "there are fifteen approved
-deviations" as "fifteen markers are acceptable" has mis-read this table. **Deviations 9, 12 and 14 are
-the entries that will widen it**, each on the contract its own section states and not before; until
-those entries are implemented the allowlist is one id and
-its scenario legitimately reports a difference. `test/parity/replay.js` implements the allowlist keyed by
-scenario id, which is why it stays correct as this table grows: a deviation that is not
-replay-visible has no id for a marker to claim.
-**Deviation 14 is one of those that will eventually widen it, and it has not yet**: its two ids are
-recorded in its row and in §11.18 so the corpus owner can annotate those exact scenarios, and until that
-annotation lands the allowlist stays at one and the replay is right to report them as differences.
+**Why the deviations' own sections are numbered §11.7 to §11.24 rather than §11.3 onward.** §11.3
+through §11.5 were already occupied when the register was first written — by the classification of what
+is *not* a deviation and by two withdrawn policies — and renumbering them would have moved every
+citation of them in this file and in four others for no gain. **This table is the canonical ordering**;
+the section numbers are addresses, not the register.
 
 **The consequence for the deviation-approval contract, stated as the rule a verifier implements:**
 
-1. **The allowlist is exactly one scenario id** — deviation 1's, above. It is an allowlist, not a
-   pattern. **Neither deviation 6 nor deviation 9 extends it, and neither may be added to it until its
-   scenarios are re-captured with the markers §11.10 and §11.13 specify** — for deviation 9 the two
-   ids are named in the table above, and adding them by hand to the corpus would break its digest
-   binding and stop the gate running at all. **Deviation 6 must not be added to it until its scenario
-   can be driven.** Its scenario is defined but recorded `unreachableByDesign`, because driving it on the
-   *baseline* side is what terminates the baseline process (§11.10); a scenario with no recorded
-   baseline response produces no difference for a marker to approve, so a marker on it today would
-   approve nothing and would be caught by rule 2 as drift. When `test/parity/capture.js` makes it
-   drivable, the field contract to add is stated field by field in §11.10 and nowhere else.
-   **Deviation 12 does not extend it either, yet**, and for the opposite reason: its scenario
-   `route.post.login.json` *is* drivable and *has* a recorded baseline response, so the entry is
-   implementable today — it simply lives in `test/parity/replay.js` and `test/parity/corpus.json`,
-   which another unit owns at this checkpoint. Its field contract is in §11.16 and nowhere else, and a
-   marker added without it is drift under rule 3 exactly as one added without §11.10's would be.
-   **Deviation 14 does extend it, and has not yet.** Its two scenarios *do* carry recorded baseline
-   responses — `415` on both — so unlike deviation 6 they produce a real difference for a marker to
-   approve, and the two ids plus the field contract are stated in §11.18. Until that annotation is added
-   to `test/parity/corpus.json`, by the unit that owns it, the allowlist stays at one id and the two
-   scenarios are correctly reported as differences. Adding the marker to any scenario other than those
-   two ids is rule 2's drift, whatever §11.18 says about the routes.
+1. **The allowlist is exactly five scenario ids, across four deviations** — 1, 9 (two ids), 16 and 17,
+   named in the table above. It is an allowlist, not a pattern, and `test/parity/replay.js` implements
+   it keyed by scenario id, which is why it stays correct as this register grows: a deviation that is
+   not replay-visible has no id for a marker to claim. An earlier revision of this rule said "exactly
+   one", which was the register of record when it was written and is not now.
+   **A marker may be projected from the closed register as well as recorded in the corpus**, and the
+   two are equivalent in authority and identical in what they are checked against — the paragraph
+   above the table states the measurement that decided it. **What may not happen is a marker on an id
+   this register does not name**, whatever its source, which is rule 2.
+   **Deviation 6 must not be added to it until its scenario can be driven.** Its scenario is defined
+   but recorded `unreachableByDesign`, because driving it on the *baseline* side is what terminates the
+   baseline process (§11.10); a scenario with no recorded baseline response produces no difference for
+   a marker to approve, so a marker on it today would approve nothing and would be caught by rule 2 as
+   drift. When `test/parity/capture.js` makes it drivable, the field contract to add is stated field by
+   field in §11.10 and nowhere else.
+   **Deviation 14 does not extend it, and the reason is that it does not need to.** Its eight upload
+   scenarios are compared as ordinary differences and are authorized under order-0 R1 in
+   `test/parity/corpus.authorized.json`, with the surface change itself authorized in
+   `test/parity/manifest.js`. An authorized difference and a deviation marker are two different
+   mechanisms, and using the marker here would claim an approval the R1 mandate already covers.
+   **Deviations 7, 8, 11's token half, 13 and 15 are withdrawn, so nothing may be marked for them at
+   all** — see their rows above for the measurement, and rule 4, which is the rule a marker on an
+   unchanged scenario breaks.
 2. **An unknown id carrying an approved-change marker is a failure, never an approval.** Not
    "approved but unverified": a marker on a scenario this register does not name is unapproved drift,
    and the only correct verdict is that the difference is unapproved. This matters because markers can
@@ -5470,7 +5720,7 @@ annotation lands the allowlist stays at one and the replay is right to report th
    (`hapi21-500-clear-only-states`) is exactly that: a fail-closed rule with measured conditions,
    authorized by [§12](#12-the-register-of-framework-imposed-divergences--one-entry) and by nothing
    else, and it names that section in its own `register` field. It does **not** consume a slot in the
-   allowlist above, which stays exactly one scenario id, and the two mechanisms are not
+   allowlist above, which stays at the five scenario ids rule 1 names, and the two mechanisms are not
    interchangeable — a marker approves one scenario's difference, a rule demotes a field on any
    response meeting a framework predicate. **Neither can be minted by a tool**: a rule a tool
    declared for itself is the same drift-with-a-label this section exists to stop, and a rule whose
@@ -5661,8 +5911,11 @@ unmet target inverts the argument it rests on.
 
 "Closed" in this heading means what [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) says it
 means — the register does not grow by a tool's hand, and an entry is added only by an argued
-precedence case — **not** that its count is frozen. The count is fifteen, and §11.7 to §11.19 are the
-thirteen that were added by that route.
+precedence case — **not** that its count is frozen. The register's extent is eighteen and thirteen of
+those are live, and §11.7 to §11.24 are the sixteen that were added by that route. **Nor does "closed"
+mean an entry can never be withdrawn**: five have been, each because the change it approved was later
+withdrawn from the tree, and §11.0's table carries the measurement for each. Withdrawing an entry is
+the same deliberate, argued act as adding one — it just runs in the direction R-d prefers.
 **"Closed" survives the register having grown, and this section is why the two are not in tension.**
 §11.10 was admitted because R-b made preservation *impossible* — the baseline process exits — which is
 one route in. **There is a second, and naming it is what keeps the classification honest**: a
@@ -6684,8 +6937,10 @@ name takes the whole server down.
 **The conflict.** **R-d requires the outcome be preserved. R-b requires that the application genuinely
 run, with no route or module excluded. Both cannot hold** — a terminated process excludes every route.
 
-**Decision: the target answers 409 Conflict. R-b controls.** The three reasons §11.1 records apply
-here, and the first two apply *more strongly* rather than by analogy:
+**Decision: the target answers, and R-b controls. The status is 500, not the 409 two earlier
+revisions of this section specified.** The three reasons §11.1 records apply here, and the first two
+apply *more strongly* rather than by analogy — the status question is settled separately, below them,
+because it is the part that changed:
 
 1. **There is no observable behaviour to preserve, and less of it than in §11.1.** §11.1's baseline
    leaves one request unanswered; this one destroys the process that would have answered every other
@@ -6700,34 +6955,51 @@ here, and the first two apply *more strongly* rather than by analogy:
    prohibition against a validation *target* — the opposite balance, which is why §11.2's reasoning
    does not transfer and this one does.
 
-**Why 409 and not the 500 an earlier revision of the delivered code chose.** The earlier code rejected
-the promise, so the preserved route catch-all mapped it to `Boom.badImplementation` and answered
-`500 {"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}`
-— which made a client-caused name collision indistinguishable from a server fault, and dropped the
-message the branch exists to deliver. That reasoning argued from the sibling `folders.update`, which
-answers 500 for the same collision. It does not carry: `update`'s 500 is **preserved baseline**
-(§9.13's neighbour case — its identical `request.catch` expression sits inside a *returned* promise
-chain, so the chain rejects, the request is answered and the process survives), whereas `create` has
-no baseline response at all. Where a response has to be invented because none exists, the choice is
-not "smallest diff from baseline" — every status is equally new — it is which status states the truth
-about the failure. `E11000` on a user-supplied name is a client conflict.
+**Why 500 and not the 409 two earlier revisions specified — and this is a correction to the delivered
+code as well as to this section.** The 409 was argued on the ground that "`E11000` on a user-supplied
+name is a client conflict" and that the intended message was present in the dead `request.catch`
+expression, so answering with it was "a reconstruction rather than a guess". **Both halves were
+withdrawn as an invented status.** A status this route has never served is exactly what R-d prohibits
+inventing, and the reconstruction argument does not license one: recovering an unreachable *message* is
+not the same act as choosing a *status code*, and 409 appears nowhere in either tree's response
+surface. What the register admits under R-b is that the route must **answer**, and the narrowest answer
+available is the one its own sibling already gives. `create` now **rejects**, so the preserved
+route-level catch-all maps the rejection to `Boom.badImplementation` — which is precisely what
+`folders.update` does for the same collision, and `update`'s 500 is **preserved baseline** (§9.13's
+neighbour case: its identical `request.catch` expression sits inside a *returned* promise chain, so the
+chain rejects, the request is answered and the process survives). So the two duplicate-name paths of
+one controller now answer alike, through one funnel, with no new status anywhere in the file.
+`[T lib/controllers/folders.js:235-286]` carries the same reasoning at the site, including the
+rejected 409.
 
-**Delivered contract, field by field.** This is the shape a verifier must check, and the shape any
-future marker is approved for:
+**Delivered contract, field by field — measured, not specified.** Driven on the delivered tree, one
+booted instance over a seeded isolated database (`test/parity/server.js --port 3219`), user identity:
+
+```text
+POST /api/folders {"name":"dup folder"}     -> 200  225 bytes  {"success":true,"folder":{…"slug":"dup-folder"…}}
+POST /api/folders {"name":"dup folder"}     -> 500  application/json  96 bytes   9.743 ms
+   {"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}
+POST /api/folders {"name":"other folder"}   -> 200  206 bytes
+PUT  /api/folders/{thatId}/name {"name":"dup folder"}  -> 500  application/json  96 bytes  10.874 ms
+cmp of the two 500 bodies                   -> IDENTICAL
+GET  /                                       -> 200   (the process is still serving)
+```
 
 | Field | Value |
 |---|---|
 | Outcome | changes **from** process termination / no response **to** an answered response |
-| Status | **409** |
+| Status | **500** |
 | `content-type` | `application/json; charset=utf-8` |
-| Body | exactly `{"statusCode":409,"error":"Conflict","message":"You already have a folder with this name. Please choose another."}` |
-| Process | **alive** — a subsequent request on the same instance is served |
+| Body | hapi's generic `{"statusCode":500,"error":"Internal Server Error","message":"An internal server error occurred"}` — 96 bytes, **byte-identical to the rename collision's**, measured by `cmp` above |
+| Process | **alive** — measured: a subsequent `GET /` on the same instance answered 200 |
 | Persistence | exactly **one** folder document for that `{_owner, slug}`, unchanged from baseline's own integrity outcome |
 
-The Boom is **returned**, never thrown: a thrown Boom is rewritten by the route catch-all into
-`Boom.badImplementation`, which would collapse the 409 back into a 500. `[T lib/controllers/folders.js]`
-`create` resolves its promise with `errors.conflict(...)` for this reason, `errors` being the module's
-existing `@hapi/boom` binding.
+**The message the dead expression composed does not reach the client, and that is deliberate.** It
+stays on the Boom as internal detail, exactly as clause 2 below records for the unknown-write branch.
+The production client at `public/js/library/components/folders/new-folder-directive.js` reads a
+`message` off this response and will find hapi's generic one; that is the same thing it finds for a
+rename collision today, and preserving the asymmetry the base commit had between the two paths was not
+available, because the base commit's `create` path had no response at all.
 
 #### Clause 2 — the unknown write failure: the branch answers instead of hanging
 
@@ -6763,12 +7035,13 @@ unknown-failure paths of one controller agree rather than inventing a third shap
 #### Gate, stated as what it is rather than as what would be convenient
 
 **Clause 1 is verified at runtime and is not yet in a committed gate.** Driven on the delivered tree:
-`POST /api/folders {name:"dup folder"}` answered `200`, the same request repeated answered **409** with
-the contracted body, and `GET /` answered `200` afterwards, with exactly one folder persisted. What is
+`POST /api/folders {name:"dup folder"}` answered `200`, the same request repeated answered **500** with
+the contracted body — byte-identical to the rename collision's, by `cmp` — and `GET /` answered `200`
+afterwards, with exactly one folder persisted. What is
 **not** available is the paired comparison, and the reason is structural rather than an omission: the
 corpus scenario `client-contract.folder-duplicate-name.post-api-folders` is recorded
 `unreachableByDesign` because driving it on the **baseline** side terminates the baseline process and
-loses every case ordered after it. So there is no recorded baseline response to diff the 409 against,
+loses every case ordered after it. So there is no recorded baseline response to diff that 500 against,
 which is also why [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it)'s
 rule 1 refuses to extend the replay allowlist yet.
 
@@ -6793,7 +7066,7 @@ and `test/parity/replay.js` are owned elsewhere, and this section is the contrac
    `{model: 'folder', method: 'save'}` with any code other than `11000`.
 4. **The scenario's own `unreachableReason` needs correcting in the same pass**, and this is the text
    it needs: the termination is a property of the **baseline** tree, not of the code in general, and
-   the delivered tree answers 409 and survives. As committed the reason reads as though it described
+   the delivered tree answers 500 and survives. As committed the reason reads as though it described
    the delivered handler too, which is untrue of it and was raised as a defect in its own right.
 
 **Why that correction is a handover and not something this revision did — and the same constraint
@@ -6812,6 +7085,30 @@ the tool — is where the approval and the corrected statement live.**
 ---
 
 ### 11.11 Deviation 7: the session cookie's `SameSite` attribute is emitted once, so secure mode no longer serves `SameSite=None`
+
+> **WITHDRAWN. The delivered tree does not do this.** Deviation 7's number is retired rather than
+> reused, and the argument below is kept because it was once approved — but the change it approved is
+> gone from the tree, so nothing in this section describes delivered behaviour.
+>
+> **Measured.** `[T app.js:372]` appends `"; SameSite=None; Secure"` to the serialised session cookie
+> in the secure pass, which is byte-for-byte what `[B app.js:229]` does, and `[T app.js:328-337]`
+> records that append in its own words as *part of the contract*, spelling out that the value
+> "deliberately carries `SameSite` twice: the state definition sets `isSameSite: 'Lax'` and hapi
+> serialises it, and this appends `SameSite=None` after it, which is the occurrence a browser
+> resolves". The delivered corpora carry the same thing: the secure pass records
+> `session=<v>; Secure; HttpOnly; SameSite=Lax; Path=/; Expires=<+1y>; SameSite=None; Secure` on every
+> login response, the non-secure pass records `session=<v>; HttpOnly; SameSite=Lax; Path=/` with no
+> append, and the corpus gate reports **no** `header.set-cookie` difference on any login response —
+> all eight such authorizations belong to order-0 R1's upload routes, where baseline answered 415 and
+> set no cookie at all.
+>
+> **Why it was withdrawn.** Emitting the attribute once is a change to a response header baseline
+> emitted differently, and preservation was possible: the duplication is what the base commit serves
+> and what §12's cookie analysis measures. R-d therefore controls, and no requirement outranked it —
+> the security merit of a single `SameSite=Lax` is exactly the kind of unrequested improvement
+> [§11.0](#110-the-register-and-why-a-tool-cannot-add-to-it) refuses. `test/parity/server.js`'s
+> `--secure` help text was corrected in the same pass, having asserted the withdrawn behaviour.
+
 
 **What was measured, before anything was changed** (**probe**, this tree, the parity launcher with
 `--secure`, one `POST /login` by an account the application itself created):
@@ -6901,6 +7198,31 @@ not restrained by it at all — that is §11.6 row 6, and it is deviation 8, not
 it. Nor does any cookie attribute constrain a non-browser client that attaches the cookie itself.
 
 ### 11.12 Deviation 8: a credentialed cross-origin state-changing request is rejected
+
+> **WITHDRAWN. The delivered tree does not do this.** Deviation 8's number is retired rather than
+> reused. The measurement of the *exposure* below stands — it is a true statement about both trees —
+> but the guard that answered 403 is gone, so a credentialed cross-origin state-changing request is
+> performed on the delivered tree exactly as it is on baseline.
+>
+> **Measured.** `grep -rn trustedOrigins` over `app.js`, `config/` and `lib/` returns nothing, and
+> there is no read of `Origin`, `Referer`, `Sec-Fetch-Site` or any equivalent anywhere in the tree —
+> `grep -rn "sec-fetch-site|headers.origin|crossOrigin"` over the same set is empty. The
+> `app.security.trustedOrigins` key that configured it is gone from `config/default.yaml` with the
+> guard, which is what took that file back to the base commit apart from one retained key
+> ([§11.14](#1114-deviation-10-the-email-share-tokens-key-is-no-longer-derivable-and-an-unset-appmailsecret-fails-closed)'s
+> `app.mail.secret`), and `log.debug.filename` is restored to `/tmp/debug.txt` at
+> `[T config/default.yaml:129]` in the same withdrawal.
+>
+> **Why it was withdrawn, and what that leaves open.** The conflict this section states is real and its
+> resolution is what changed: the security finding behind it was not an instruction from the authority
+> that froze the AAP, and §11.0's own test — "a change that could have preserved baseline is not a
+> candidate at all, however much better it looks" — refuses it on that ground. **The exposure is
+> therefore open and is recorded rather than closed**: all 96 mutating routes authenticate from the
+> session cookie alone, there is no CSRF token anywhere in either tree, and a credentialed
+> cross-origin write succeeds. Closing it needs a separately approved change, and the shape it would
+> take is the one argued below — an origin check rather than a token, for the R-a and R-d reasons
+> given, with the corpus recaptured for whatever it changes.
+
 
 **What was measured, before anything was changed** (**probe**, this tree, both cookie passes, an
 account the application itself created):
@@ -7049,15 +7371,24 @@ BASELINE 2f8712a
 
 DELIVERED TREE, BEFORE THIS DEVIATION
     -> status 000 after 20.002 s (client timeout); no response, ever
-    -> GET / afterwards: 200. The process survives, because
-       lib/models/model.js's model-level 'error' listener - added by this migration for
-       a different edge - logs the event instead of letting EventEmitter rethrow it:
-         Model[Course] callback error: MongoServerError: E11000 duplicate key error
-           collection: …courses index: _owner_1_slug_1
-           dup key: { _owner: ObjectId('…'), slug: "qa-probe-course" }
-         Model[Course] callback error: TypeError: Cannot read properties of undefined (reading 'slug')
+    -> GET / afterwards: 200. The process survives.
     -> courses persisted for that owner: unchanged. The model's FIRST save is what failed.
 ```
+
+**The mechanism named in that block is now false, and correcting it changes what this section credits
+the survival to.** The block used to attribute the survival to a **model-level `'error'` listener in
+`lib/models/model.js`, "added by this migration"**, which logged `Model[Course] callback error: …`
+instead of letting `EventEmitter` rethrow. **That listener was withdrawn as an unregistered behaviour
+change (R-d)** and is not in the delivered tree — measured: `grep -rn "\.on('error'" lib/models/`
+returns nothing, and `[T lib/models/model.js:194-197]` records the withdrawal in its own words, noting
+that the full suite stayed at 120 passing / 10 failing without it and that no test and no measured
+request required it. What remains in that file is the `$handleCallbackError` override and its
+`reDeliveringCallbacks` WeakSet, retained on measurement — withdrawing *those* turned
+`error-edge.not-found.missingExport` from `answered` to `transport-failure` with
+`applicationDied: true` — and the override **deliberately lets a throw from its own re-delivery reach
+Mongoose's `emit` exactly as the base commit did. So the baseline outcome here is the process exit
+itself**, and what prevents it on the delivered tree is entirely in `lib/controllers/courses.js`'s own
+branches, whose comment carries the same statement.
 
 The mechanism is `[B lib/controllers/courses.js:83-98]`, delivered at
 `[T lib/controllers/courses.js:203]`: the callback's `err` was declared and never inspected, and
@@ -7094,7 +7425,8 @@ more strongly than by analogy:
    prohibition against a validation *target* — the opposite balance, which is why §11.2's reasoning
    does not transfer and this one does.
 
-**Why `request.fail` here and not the 409 §11.10 chose.** The two routes are not the same kind of
+**Why `request.fail` here and not a Boom of its own.** (An earlier revision of this paragraph
+contrasted it with "the 409 §11.10 chose"; that status was withdrawn — §11.10 answers 500.) The two routes are not the same kind of
 route, and the register should not pretend they are. `POST /api/folders` is a JSON API route with no
 `fail` declaration, so §11.10 had to choose a status and chose the one that states the truth about a
 client-caused collision. This route is a **page** route that declares `fail.redirect: '/welcome'`, and
@@ -7289,6 +7621,29 @@ named as a handover below.
 
 ### 11.15 Deviation 11: a course invitation token is minted from the CSPRNG, and accepting one requires being the account it names
 
+> **PART WITHDRAWN.** The **token half is gone**; the **accept-side identity requirement is live**.
+> Read the two clauses of this section separately: everything it says about minting the token from the
+> CSPRNG describes a change no longer in the tree, and everything it says about who may accept an
+> invitation is delivered behaviour.
+>
+> **Measured.** `git diff --stat 2f8712a -- lib/models/courseInvitation.js` prints nothing, so the
+> model is byte-identical to the base commit, and `[T lib/models/courseInvitation.js:37]` still mints
+> `crypto.createHash("md5").update(email + course.id).digest("hex").substring(0, 8)` — an eight-hex
+> value derivable by anyone who knows the invited address and the course id. Driven end to end on the
+> delivered tree, `POST /api/courses/{courseId}/invitations` with
+> `{"emailList":["not-an-email","real@example.com"]}` answered 200 with tokens `c02980dd` and
+> `ba23b138`, which are that derivation and not CSPRNG output. **What is live** is in
+> `[T lib/controllers/classes.js]`'s `acceptInvitation`: it lower-cases the invitation's address and
+> the acting account's, refuses on `invitedEmail !== actingEmail` with a flashed warning and a redirect
+> to `/home`, and only then calls `course.addUser`. The baseline has no such comparison.
+>
+> **Why the token half was withdrawn.** The token is a **persisted value** and it is rendered into the
+> acceptance URL, so changing its derivation changes stored data and a rendered field that the parity
+> contract covers, and preservation was possible. R-d controls. The capability the derivable token
+> grants is bounded by the live half rather than by the token: an outsider who derives a real token can
+> still only accept it as the account it names, which is the half that was kept.
+
+
 **What was true.** `lib/models/courseInvitation.js` minted an invitation token as
 `md5(email + course.id).substring(0, 8)`, and `GET /courses/accept/{token}` — unauthenticated,
 non-expiring and unthrottled — resolved the invitation by that token alone and enrolled whoever
@@ -7388,6 +7743,33 @@ outright — and §11.4 and §11.5 exist precisely because unapproved security p
 already. Both remain named follow-ups. Neither was implemented.
 
 ### 11.16 Deviation 12: the login failure response no longer distinguishes account existence or state, and a repeated failure is delayed
+
+> **PART WITHDRAWN — the MESSAGE half is gone, the RATE half is delivered.** Deviation 12 keeps its
+> number and stays in the register, because half of what it approved is live; but the table below
+> overstates it in exactly one column, and this block is what a reader must apply to it.
+>
+> **Measured.** `[T lib/controllers/users.js]` carries the base commit's four strings again:
+> `:549` `request.fail({ message : 'Unknown user ' + requested })`, `:561` `'Account Disabled'`,
+> `:568` `'A password was not found for this account.'` and `:587` `'Invalid password'`. So the
+> `Delivered` column's first three rows — `Invalid email or password` in each — describe a change that
+> is **not in the tree**; every one of the four messages is baseline's, including the one that echoes
+> the caller's submitted identifier back to it. The **timing rows are unchanged and correct**: the
+> backoff is at `[T lib/controllers/users.js:133-399]`, with its constants, its three free attempts,
+> its 250 ms base doubling to a hard `LOGIN_FAILURE_MAX_DELAY_MS = 4000` cap, its 15-minute sliding
+> window and its 10,000-key ceiling all as described below.
+>
+> **Why the message half was withdrawn and the rate half kept.** The three messages are a **response
+> body field**, and one recorded corpus scenario carries them, so collapsing them is a change to
+> compared output that R-d prohibits and R-a's diff categories do not admit; the section below says as
+> much itself, conceding that this half "rests on the directive" and that "a client *can* observe these
+> message strings, and one recorded scenario does". The delay changes **no** response field — it is
+> invisible in the body, the status, the headers and the cookies, and shows only in timing, which no
+> recorded field carries — so it stays inside what R-a permits and needed no message change to work.
+> **The credential oracle is therefore open and recorded rather than closed**: the strings still tell
+> an unauthenticated caller whether an account exists and in what state, the backoff bounds only how
+> fast that can be harvested, and closing it needs a separately approved change with the one scenario
+> recaptured.
+
 
 **What was true.** `lib/controllers/users.js`'s `login` answered four distinguishable failures
 immediately and without limit: `'Unknown user ' + <the identifier the caller submitted>`,
@@ -7497,6 +7879,24 @@ here as a named residual rather than silently absorbed. Nothing in `config/api_r
 per entry, so the control lives inside the handler.
 
 ### 11.17 Deviation 13: a non-string `email` on the login routes is rejected by validation instead of reaching the catch-all as a 500
+
+> **WITHDRAWN. The delivered tree does not do this, and on measurement it never differed from
+> baseline.** Deviation 13's number is retired rather than reused.
+>
+> **Measured.** `[T config/routes.js:59]` declares `email : Joi.string().required()` on `POST /login`
+> and `[T config/api_routes.js:1222]` declares the same on `POST /api/users/login`. Both are
+> byte-identical to the base commit — `[B config/routes.js:58]` — and the entire code diff of
+> `config/api_routes.js` against baseline is **one shim-signature line**, while `config/routes.js`
+> differs only in comments and one `yaml.safeLoad` → `yaml.load` call. `Joi.string()` rejects a
+> non-string on **both** trees, so there is no difference here to approve: this route pair never
+> reached the catch-all as a 500 for a non-string `email` on either side, and the added validation the
+> section below argues for was withdrawn along with the claim.
+>
+> **Why it was withdrawn.** Adding a constraint to a route's `validate` block changes one of the 102
+> declared validation targets AAP §0.6.2 gates and `test/parity/joi-matrix.js` measures, so it is a
+> change to the declared surface and not only to a response. Preservation was possible — indeed
+> required no work at all — so R-d controls.
+
 
 **What was true.** `helpers.lowerUserFields` — a routed pre-handler on both login routes and four
 other declarations — called `request.payload[field].trim().toLowerCase()` with no type check. A
@@ -7669,6 +8069,22 @@ approved as.
 ---
 
 ### 11.19 Deviation 15: two client-side markup sinks render user text inert
+
+> **WITHDRAWN. The delivered tree does not do this.** Deviation 15's number is retired rather than
+> reused.
+>
+> **Measured.** `git diff --stat 2f8712a -- lib/views public/js public/partials static/scss` prints
+> **nothing**: every one of those trees is byte-identical to the base commit, so both markup sinks this
+> section describes render exactly what the base commit renders. The library search typeahead keeps its
+> `<strong>` match emphasis and code-editor file names are interpolated as the base commit
+> interpolates them.
+>
+> **Why it was withdrawn.** Rendered output is the parity contract's own subject, and preservation was
+> possible, so R-d controls whatever the sinks' security merit — which is the same test §11.0 applies
+> to deviations 7 and 8. **The exposure is open and recorded rather than closed**, on the same footing
+> as deviation 8's: the argument below states what each sink does and what closing it would take, and
+> closing it needs a separately approved change with the affected rendered output recaptured.
+
 
 **Why this section exists.** Two client-side templates interpolated user-authored text as live markup,
 and both were changed to render it as text. The change is right and the reasoning was written into the
@@ -7896,6 +8312,183 @@ carries the escaped form, which is the half that had to stay put.
 
 ---
 
+### 11.22 Deviation 16: the payload-less roles update answers where the baseline process exited
+
+**Measured on both trees.** The route is `POST /api/admin/user/{userId}` (`auth: 'session'`,
+`pre: ['isAdmin(user)']`, **no** `validate` block), so a request with no payload and a request with a
+well-formed empty payload both reach the handler.
+
+```text
+BASELINE 2f8712a, admin identity
+  no payload at all      -> request.payload is null; reading `.roles` off it throws a TypeError INSIDE
+                            the findById callback, the finder re-delivers it, `request.fail(Error)`
+                            meets hapi's "Cannot wrap an error" assert and the PROCESS EXITS.
+                            Recorded in test/parity/corpus.json at order 273 as
+                            `ok: false, "transport failure: socket hang up (ECONNRESET)"`.
+                            §10.11 carries the mechanism frame by frame.
+  well-formed empty {}   -> no response, ever; the client times out and the process survives.
+                            §10.12 carries that measurement, 10.002 s on both trees.
+
+DELIVERED, admin identity, one booted instance over a seeded isolated database
+  no payload at all      -> 200  application/json  68 bytes   9.088 ms
+                            {"message":"roles required","flash":{"requested":["administrator"]}}
+  well-formed empty {}   -> 200  application/json  39 bytes   6.416 ms
+                            {"message":"roles required","flash":{}}
+  roles present, not an array -> 500  96 bytes  7.354 ms   the generic Boom, through Layer 1
+  roles a valid array    -> 200  42 bytes 13.005 ms  {"success":true,"flash":{},"context":null}
+  GET / afterwards       -> 200
+```
+
+**The conflict.** **R-d requires the outcome be preserved and R-e requires the error-to-response
+mapping be preserved. R-b requires that the application genuinely run, with no route excluded, and T-1
+requires every function hapi invokes to return its response, return a promise *of one*, or throw. They
+cannot all hold**: one payload shape terminated the process and the other produced a promise that never
+settled, and a promise that never settles is not a promise of a response value.
+
+**Decision: the route answers. R-b and T-1 control**, on the argument
+[§11.1](#111-deviation-1-the-never-settling-file-response) states and
+[§10.7](#107-the-zipcode-branch-that-took-the-process-down-and-the-bounds-that-now-hold-it) states
+again — the absence of a response is not a behaviour a client can depend on, and a process death is
+that argument at its strongest because what it destroys is every other route's behaviour rather than
+this one's. **What R-d still forbids was not done, and the two omissions are the whole of the
+narrowness of this entry**: no validation was added to the route declaration, so the 102 declared
+validation targets AAP §0.6.2 gates and `test/parity/joi-matrix.js` measures are untouched; and no new
+status was invented, which is why the answering shapes are **200** and not the 400 an earlier
+"named follow-up" in §10.12 proposed.
+
+**What the delivered code does.** `[T lib/controllers/admin.js:290]` reads
+`var roles = request.payload && request.payload.roles` **before** entering the `findById` callback —
+which is what stops the payload-less shape throwing off this handler's stack — and adds the missing
+`else` as `if (!roles) return resolve(request.fail({ message : 'roles required' }))`. It answers like
+its two immediate neighbours, `{ message : 'user not found' }` above it and
+`request.success({success: true})` below it, through the same Layer 2 funnel. The third shape reaches
+`mergeRoles`' `roles.forEach` (`lib/models/plugins/roles.js:378`) and the enclosing try/catch routes
+its throw into the lifecycle promise, so it lands on the Layer 1 catch-all as a 500 instead of escaping
+to the process.
+
+**Delivered contract, field by field.** This is the shape `verifyApprovedDeviation` checks:
+
+| Field | Value |
+|---|---|
+| Outcome | changes **from** a transport failure (the process exiting) **to** an answered response |
+| Status | **200** |
+| `content-type` | `application/json` |
+| Body length | **not pinned**, and the reason is measured rather than convenient: the body carries the session flash, and `request.yar.flash()` with no argument reads *and clears* everything (§3), so the length depends on which flash values are unread when the step runs and is not a property of what was approved. The 68- and 39-byte readings above differ for exactly that reason |
+| Absent headers | none required |
+
+**Gate.** `route.post.api-admin-user-userId.json`, in both cookie passes, carrying the approved-change
+marker §11.0 rule 2 requires — **projected from the closed register** in `test/parity/replay.js`
+rather than recorded in the corpus, because a corpus marker would have to be written by an edited
+`test/parity/capture.js` and `replay.js` refuses a corpus whose generator is not the delivered blob.
+§11.0's marker-source table records the same measurement for deviations 9 and 17. `npm run
+verify:corpus` reports **exit 0** with this scenario among its approved deviations in both passes.
+`§10.11` and `§10.12` carry the two baseline measurements and the precedence argument in full; this
+section is the register entry and does not restate them.
+
+### 11.23 Deviation 17: the email-change request settles where the baseline never answered
+
+**Measured on both trees.** `POST /api/users/email` never responded on the base commit and never
+responded on the delivered tree until its root cause was found, which is why
+`test/parity/corpus.json` records the scenario with `intent: "timeout"` — a true statement about the
+baseline half it holds.
+
+```text
+BASELINE 2f8712a, user identity
+  POST /api/users/email  -> no response; the harness closes the step at its budget. The cause is
+                            `Store.set(key, val, cb)` handing a THIRD argument to an arity-2 async
+                            `set`, so the callback never runs and the request hangs. Measured on BOTH
+                            trees before the fix, at ~15 s each.
+
+DELIVERED, user identity
+  POST /api/users/email  -> 200  application/json  65 bytes  13.547 ms
+                            {"success":true,"flash":{"requested":["testing"]},"context":null}
+                            with the confirmation mail sent (the mail fixture records it)
+```
+
+**The conflict.** **R-d requires the outcome be preserved. R-b and T-1 require the route to answer.**
+Both cannot hold, and the baseline outcome is the absence of a response.
+
+**Decision: the request settles. R-b and T-1 control**, on §11.1's argument verbatim — the absence of
+a response is not a behaviour a client can depend on. This is the weakest kind of conflict to resolve
+and the clearest: nothing observable is lost, because nothing was observable. The fix is a call-site
+arity correction at `[T lib/controllers/users.js:1447-1554]`, not a new mapping, so R-e is satisfied
+rather than argued past: the branch reaches the response its own code was written to send.
+
+**Delivered contract, field by field:**
+
+| Field | Value |
+|---|---|
+| Outcome | changes **from** a timeout **to** an answered response |
+| Status | **200** |
+| `content-type` | `application/json` |
+| Body length | **not pinned**, for the flash reason §11.22 records |
+| Absent headers | none required |
+
+**Gate.** `route.post.api-users-email.json`, in both cookie passes, marker projected from the closed
+register for the reason §11.22 gives. `test/parity/error-edges.js` carries the same decision as an
+approved error-edge row keyed on the **baseline** site `users.sendEmailChange.cps.2` — the `Store.set`
+callback that never ran — paired to the target's `users.sendEmailChange.response.3`.
+
+### 11.24 Deviation 18: a control character in an embed view parameter is refused instead of ending the process
+
+**Measured on both trees, live servers, one request each** (`test/parity/server.js --port 3215` for
+the delivered tree and `--port 3216 --app /tmp/trinket-baseline-2f8712a` for the baseline):
+
+```text
+BASELINE 2f8712a
+  curl --path-as-is 'http://127.0.0.1:3216/embed/beta/foo%00bar'
+    -> status 000, 0 bytes, curl exit 52 ("empty reply from server")
+    -> the next request: curl exit 7, connection refused. THE PROCESS IS GONE.
+    -> child stderr: TypeError [ERR_INVALID_ARG_VALUE]: The argument 'path' must be a string,
+       Uint8Array, or URL without null bytes. Received
+       '/tmp/trinket-baseline-2f8712a/lib/views/embed/beta/foo\x00bar.html'
+         at Manager._path (@hapi/vision/lib/manager.js:333:43)
+    -> the launcher records `ERROR: the application exited on its own (exited with code 1)`
+
+DELIVERED
+  curl --path-as-is 'http://127.0.0.1:3215/embed/beta/foo%00bar'
+    -> 500, 1600 bytes, text/html
+    -> `cmp` against /embed/beta/harmless-unknown-slug (also 500, 1600 bytes): BYTE-IDENTICAL
+    -> %01, %7f, %0a and a bare %00 each answer 500 / 1600 bytes as well
+    -> health afterwards: 200
+```
+
+**The mechanism.** The route is `GET /embed/beta/{type}` and its handler interpolates the parameter
+into a view name, which `@hapi/vision` resolves to a filesystem path. A control character in that
+parameter reaches `fs` as a path and Node refuses it with a `TypeError` thrown from vision's own
+frame — off the handler's stack on the baseline, where nothing catches it. `[T
+lib/controllers/trinket.js:254]` declares `var UNSAFE_VIEW_PARAM = /[\x00-\x1f\x7f]/` and `:405-406`
+returns `errors.badImplementation('View file not found')` when the parameter matches.
+
+**The conflict.** **R-d requires the outcome be preserved. R-b requires the application to run.** Both
+cannot hold: the baseline outcome is the process exiting, on an unauthenticated GET.
+
+**Decision: the request is refused. R-b controls**, on the ground AAP §0.7 itself supplies and §11.1
+states — an unsettled or absent response is not a behaviour a client can rely on, and here the
+absence takes every other session on the process with it. **No status was invented, and that is the
+narrowness of this entry**: the guard answers the *same* 500 the route already answers for an unknown
+slug, byte-for-byte, so the response surface gains nothing new. `badImplementation` rather than
+`notFound` is chosen for the same reason — it is what this route's existing missing-view path produces.
+
+**Delivered contract, field by field:**
+
+| Field | Value |
+|---|---|
+| Outcome | changes **from** a transport failure (the process exiting) **to** an answered response |
+| Status | **500** |
+| `content-type` | `text/html` |
+| Body | **1600 bytes, byte-identical** to `GET /embed/beta/harmless-unknown-slug` on the same instance, measured by `cmp` |
+| Process | **alive** — measured: health answered 200 after each of the five payloads |
+| Reach | every character in `[\x00-\x1f\x7f]`, measured at `%00`, `%01`, `%0a`, `%7f` and a bare `%00` |
+
+**Gate.** No corpus scenario sends a percent-encoded control character in a path segment — measured
+across all 392 — so this deviation is **not** replay-visible and takes no marker. It is registered
+instead in `test/parity/error-edges.js`'s approved-deviation register as `trinket.beta.response.1`,
+an ADDED row whose baseline half is null, citing this section and AAP §0.7 rule R-b.
+
+---
+
+
 ## 12. The register of framework-imposed divergences — one entry
 
 **This register is separate from §11 on purpose, and it holds exactly one entry.** §11's two approved
@@ -8116,8 +8709,8 @@ not put it at risk.
 
 **Gate.** `test/parity/replay.js` carries the mechanism, keyed to this section by its own `register`
 field. It is a **rule**, `hapi21-500-clear-only-states`, not a per-scenario marker: the
-approved-deviation marker allowlist stays exactly one scenario id (deviation 1's), and neither kind
-can be minted by a tool. The rule **fails closed** — both sides must have answered 500, the baseline
+approved-deviation marker allowlist stays at the five scenario ids §11.0 rule 1 names (deviations 1, 9,
+16 and 17), and neither kind can be minted by a tool. The rule **fails closed** — both sides must have answered 500, the baseline
 must have set at least one cookie and the target none, no baseline cookie may be a CLEAR, and the
 differences it demotes must be *exactly* the three field kinds the header's absence produces
 (`header.set-cookie`, `cookies.count`, and one `cookie[<name>].present` per baseline cookie), or the
@@ -8333,20 +8926,23 @@ while keeping the `lib/shared/trinket-markdown.js` consequence, which both docum
 same way; that sentence belongs to §11.2 and to §4.2 of the companion document, so it is recorded here
 rather than edited from this subsection.
 
-**Divergence 3, the register count — partly closed at this checkpoint, and the remainder measured
-rather than estimated.** The register is closed at **fifteen** (§11.0). Three of the records that state a
-count were corrected here, and the rest could not be, because they sit in files other units hold at
-this checkpoint. **Measured, by grepping each file for its count claim:**
+**Divergence 3, the register count — re-measured at this checkpoint, and the residue is one file.**
+The register's extent is **eighteen** and **thirteen** of those are live in the delivered tree (§11.0).
+Every count claim in every artifact was re-measured by grepping each file for the figure it states,
+rather than assumed from the last correction; two earlier revisions of this subsection recorded the
+canonical figure as "eight" and then as "fifteen" while its own rows still said "eight", which is the
+stacked-count fault this row exists to close.
 
-| Record | Count it states | Status |
+| Record | Count it stated | Status after this checkpoint |
 |---|---|---|
-| §11.0 and §11 here | **eight** | canonical; the register of record |
-| `docs/baseline-parity.md` §7, its header table and its §9 cross-reference table | **eight** | corrected at this checkpoint, together with a numbering fault: §7.6 had been titled "Deviation 3" for what §11.10 calls deviation **6**, while the same section claimed its numbering follows this one |
-| `docs/conversion-inventory.md`'s ownership cell | **eight** | corrected at this checkpoint **in its generator**, `test/parity/convert-inventory.js`, because the artifact is digest-bound and a hand edit detaches its own provenance — measured: `manifest.js --verify-provenance` reports `content bound body-digest recomputed` on it |
-| `CHANGELOG.md`'s summary, its **Behaviour** register and its **Security** bullet | **eight** | corrected at this checkpoint; all eight are now named there, where only the first two had been |
-| `docs/deferred-dependencies.md` §1, §4 (whose heading is "The two approved deviations"), §2.6 and §1375's alignment note | **two** | held by another unit at this checkpoint; a count update in four sentences plus a heading, needing no new analysis |
-| `docs/error-edge-inventory.md`'s ownership table | **two** | held by other units at this checkpoint; one sentence |
-| `test/parity/replay.js` — a source comment and one **emitted** prose string reading `CLOSED at exactly two approved` | **two** | held by the unit that owns the replay gate. The tool is not *wrong* to keep its allowlist at one scenario id — §11.0 rule 1 requires exactly that — but the sentence explaining why should read "closed at fifteen, four of them replay-visible" |
+| §11.0 and §11 here | **fifteen** | **corrected to eighteen numbered / thirteen live**, with a per-entry `State in the delivered tree` column carrying the measurement for each, and the five withdrawals recorded rather than deleted |
+| `docs/baseline-parity.md` — its opening summary, and two `closed at` sentences | **fifteen** at `:19`, **two** at `:3244`, **fifteen** at `:3698` | **corrected at this checkpoint**, all three, to the eighteen/thirteen pair |
+| `docs/deferred-dependencies.md` — §1, §4's heading "The two approved deviations", §2.6 and two alignment notes | **two**, in five places (measured: `:4`, `:151`, `:577`, `:1046`, `:1532`) | **corrected at this checkpoint.** This is the "exactly two" correction [§10.11](#1011-requestfailerr-with-an-error-argument-terminated-the-process--repaired-and-why) recorded as owed |
+| `docs/conversion-inventory.md`'s ownership cell | **fifteen** | **corrected at this checkpoint in its generator**, `test/parity/convert-inventory.js`, because the artifact is digest-bound and a hand edit detaches its own provenance — measured: `manifest.js --verify-provenance` reports `content bound body-digest recomputed` on it |
+| `docs/error-edge-inventory.md`'s ownership table | **two** (measured: `:369`) | **corrected at this checkpoint in its generator**, `test/parity/error-edges.js:9939`, for the same digest-binding reason |
+| `test/parity/replay.js` — a source comment and one **emitted** prose string that read `CLOSED at exactly two approved` | **two** | **corrected at this checkpoint.** The tool now states five scenario ids across four deviations, which is what §11.0 rule 1 requires, and its register carries the four live replay-visible contracts |
+| `CHANGELOG.md`'s summary, its **Behaviour** register and its **Security** bullet | **two** at `:7`, **eight** at `:34` | **NOT corrected — the only residue.** That file is outside the file set this checkpoint's evidence-and-inventory unit may modify. What it needs is mechanical and is stated here so it need not be re-derived: both figures become "eighteen numbered, thirteen live", and the Behaviour register gains rows for deviations 16, 17 and 18 and a withdrawal note against 7, 8, 11, 13 and 15 |
+
 
 **Two claims earlier revisions of this subsection made about that set are withdrawn as measured false.**
 They asserted that `docs/dependency-inventory.md`'s role table and `test/parity/capture.js`'s scenario
@@ -8375,7 +8971,7 @@ the three that had accumulated. It states none of the deviations, and its owners
 approved deviations to this document — which agrees with the canonical role claimed in §11, though that
 table still says "two" and is one of the count corrections listed above. What that inventory **does**
 owe, and does not yet carry, is the per-edge consequence of §11.10: `folders.create`'s duplicate branch
-as an **answered 409** edge and its unknown-write-failure branch as an **answered 500** edge, in place
+as an **answered 500** edge and its unknown-write-failure branch as an **answered 500** edge, in place
 of rows describing a swallow or a non-response, plus target rows for `folders.update`'s and
 `folders.deleteFolder`'s unbound-`Boom` branches as routed **500** edges, which §9.10 requires and which
 are currently recorded as missing from the target although both constructs are present and measured.
@@ -8444,7 +9040,7 @@ and the same canonical role claimed in §11.
 three, and its ownership table assigns the approved deviations to this document, which agrees with the
 canonical role claimed in §11 — though that table still says "two", and it is one of the count
 corrections listed above. What that inventory **does** owe, and does not yet carry, is the per-edge
-consequence of §11.10: `folders.create`'s duplicate branch as an **answered 409** edge and its
+consequence of §11.10: `folders.create`'s duplicate branch as an **answered 500** edge and its
 unknown-write-failure branch as an **answered 500** edge, in place of rows describing a swallow or a
 non-response, plus target rows for `folders.update`'s and `folders.deleteFolder`'s unbound-`Boom`
 branches as routed **500** edges, which §9.10 requires and which are currently recorded as missing from

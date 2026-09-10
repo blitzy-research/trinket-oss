@@ -6,20 +6,20 @@
     <div class="row">
       <div class="small-12 columns">
         <div class="switch round left">
-          <input id="testsEnabled" type="checkbox" name="testsEnabled" {% if (draft and draft.settings.testsEnabled) or (not draft and trinket.settings.testsEnabled) %}checked="checked"{% endif %} data-trinket-settings data-settings-action="toggleCheckButton" aria-label="Enable Tests">
+          <input id="testsEnabled" type="checkbox" name="testsEnabled" {% if (draft and draft.settings.testsEnabled) or (not draft and trinket.settings.testsEnabled) %}checked="checked"{% endif %} data-trinket-settings data-settings-action="toggleCheckButton">
           <label for="testsEnabled"></label>
         </div>
-        <h5 class="left" aria-level="4">Enable Tests</h5>
+        <h5 class="left">Enable Tests</h5>
       </div>
     </div>
     {% endif %}
     <div class="row">
       <div class="small-12 columns">
         <div class="switch round left">
-          <input id="autofocusEnabled" type="checkbox" name="autofocusEnabled" {% if (draft and draft.settings.autofocusEnabled) or ((not draft and trinket.settings.autofocusEnabled) or not trinket.settings) %}checked="checked"{% endif %} data-trinket-settings aria-label="Enable Editor Autofocus">
+          <input id="autofocusEnabled" type="checkbox" name="autofocusEnabled" {% if (draft and draft.settings.autofocusEnabled) or ((not draft and trinket.settings.autofocusEnabled) or not trinket.settings) %}checked="checked"{% endif %} data-trinket-settings>
           <label for="autofocusEnabled"></label>
         </div>
-        <h5 class="left" aria-level="4">Enable Editor Autofocus</h5>
+        <h5 class="left">Enable Editor Autofocus</h5>
       </div>
     </div>
     {% if not user.settings.disableAceEditor %}
@@ -30,11 +30,10 @@
           <input id="lineWrapping"
                  type="checkbox"
                  name="lineWrapping"
-                 {% if user.settings.lineWrapping %}checked="checked"{% endif %}
-                 aria-label="Enable Line Wrapping">
+                 {% if user.settings.lineWrapping %}checked="checked"{% endif %}>
           <label for="lineWrapping"></label>
         </div>
-        <h5 class="left" aria-level="4">Enable Line Wrapping</h5>
+        <h5 class="left">Enable Line Wrapping</h5>
       </div>
     </div>
     <!--
@@ -50,8 +49,8 @@
     <h3><strong>{{type}} Settings</strong></h3>
     <div class="row">
       <div class="small-12 columns">
-        <h5 aria-level="4" class=>Indentation Amount</h5><h6 aria-level="5">(Doesn't update existing code!)</h6>
-          <select id="indentationAmount" width="20%" aria-label="Indentation Amount">
+        <h5 class=>Indentation Amount</h5><h6>(Doesn't update existing code!)</h6>
+          <select id="indentationAmount" width="20%">
             <option value="2" {% if tab == 2 %}selected{% endif %}>2 spaces</option>
             <option value="4" {% if tab == 4 %}selected{% endif %}>4 spaces</option>
           </select>

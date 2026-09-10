@@ -40,7 +40,7 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 RUN adduser trinket
 USER trinket
 WORKDIR /home/trinket
-ENV HOME /home/trinket
+ENV HOME=/home/trinket
 
 RUN mkdir -p /tmp/sessions && chmod 777 /tmp/sessions
 COPY ./trinket /home/trinket

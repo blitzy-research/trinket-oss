@@ -13,43 +13,7 @@ $yellow: #FFDA00;
 $blue-40: lighten($blue, 40%);
 
 $body-font-family: "Merriweather", Times, Georgia, serif;
-
-// Text contrast of the primary brand colour (a11y, WCAG 2.1 SC 1.4.3).
-//
-// `$primary-color` was `$blue` (#008AFF), which is 3.4543:1 against white -
-// under the 4.5:1 normal-text bar in both directions, and it is used in both:
-// white-on-primary on `input.button.primary` (the Log In submit) and on
-// `a.small.button.primary.dropdown` ("New Trinket"), and primary-as-text on
-// white on `a.button` ("Join Course", "New Course", "View All My Trinkets")
-// and the `Sign Up` link. #0074d6 is 4.6989:1 - the same hue darkened just
-// far enough to clear 4.5:1 with margin. #0077db was rejected at 4.5049:1:
-// it passes only until a browser or a downstream tint rounds a channel.
-//
-// `$blue` itself is deliberately NOT changed. `$blue-40: lighten($blue, 40%)`
-// on the line above feeds background fills in _homepage.scss:350,
-// _materials.scss:46-70 and _profile.scss:24, and `$blue` is consumed
-// directly at _admin.scss:129 and _course-edit.scss:551. Those are decorative
-// surfaces that carry no text against this colour, so darkening them would be
-// a visual change with no accessibility gain. `$primary-color` therefore stops
-// being an alias of `$blue` and becomes an explicit value; the two are now
-// independent tokens - the brand fill and the text-safe brand colour.
-//
-// Everything derived from `$primary-color` improves with it, verified against
-// the compiled stylesheet rather than assumed: `.button:hover`
-// (darken 10% on lighten 40%) 4.0075 -> 4.5994, `.button.primary:hover`
-// (white on darken 10%) 5.0976 -> 7.1515, and the top bar's real hover state,
-// which is white-on-primary because `$topbar-link-color-hover` keeps
-// Foundation's `$white`, 3.4543 -> 4.6989. Of the 40 rules that paint this
-// colour as a background, only four pair it with non-white text, and none of
-// the four regresses in practice: `.pricing-table .title` (#EEE) improves
-// 2.9772 -> 4.0499 and has no markup in any view, and the other three - the
-// two `.top-bar-section ... .active` rules and the `.no-js ... li:active` one,
-// all `#333` - are unreachable: no `.top-bar-section li` in any view or
-// partial carries `.active`, and the `.no-js` variant cannot match because
-// config/default.yaml:60 loads Modernizr, which rewrites the `no-js` class on
-// lib/views/base.html:2 to `js`. `$topbar-link-color-active` is left at #333
-// for exactly that reason: changing it would repaint nothing.
-$primary-color: #0074d6;
+$primary-color: $blue;
 $secondary-color: $green;
 $success-color: $green;
 
@@ -58,35 +22,6 @@ $error-message-color: #FFCCCC;
 $error-message-border: #FF0000;
 $warning-message-color: #f08a24;
 $warning-message-border: #de770f;
-
-// Inline form-validation contrast (a11y, WCAG 2.1 SC 1.4.3).
-//
-// Foundation declares `$alert-color: #f04124 !default`
-// (components/_global.scss:311) and reaches the inline validation message
-// through `$input-error-message-bg-color: $alert-color` with
-// `$input-error-message-font-color: $white` (components/_forms.scss:69-70):
-// white 12px italic text on rgb(240,65,36) is 3.8274744612:1, under the 4.5:1
-// bar, on `small#login-form-error`, `small#course-name-error` and
-// `small#course-description-error`. #dc2c0f is 4.7616:1 against white;
-// #e12d0f was rejected at 4.5814:1 as too tight to survive rounding.
-//
-// The value is set here, in a plain declaration, rather than in the vendored
-// Foundation tree: base.scss imports this file at :4, ahead of the Foundation
-// import at :6, so this assignment wins over the `!default` there. That is the
-// same mechanism `$primary-color` and `$topbar-bg-color` already use, and it
-// keeps public/components/** - a fetched, digest-verified bundle - untouched.
-// The white text is preserved through it: Foundation's `form-error-message`
-// mixin picks white while the background's lightness is under 70%, and this
-// colour is 46.1% where #f04124 was 54.1%.
-//
-// Every consumer improves. All 14 rules that use it as a background pair it
-// with white text (its lightness keeps `button-style`, `label-style`,
-// `alert-style` and `progress-meter` on the same side of their 70% branch),
-// and the six that use it as text sit on white or near-white: `label.error`
-// and `.button.caution` (_shared.scss:64-72) go 3.8275 -> 4.7616 and
-// `_materials.scss:28` (darken 20%) 7.5720 -> 10.4655. Those files consume the
-// token, so none of them needs editing.
-$alert-color: #dc2c0f;
 
 $draft-yellow: #ffb515;
 

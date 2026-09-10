@@ -313,7 +313,20 @@
 //   306 case records, 231 applicable, 75 inapplicable
 //       (74 schema-admits-none, 1 transport-admits-none)
 //   462 drives, in both Accept modes
-//   15678 fields compared, per target, per case and per Accept mode
+//   15780 fields compared, per target, per case and per Accept mode
+//
+// THE PER-SCOPE ZEROS BELOW ARE THE PRE-REMEDIATION STATE and are kept because
+// they are what the joi bump itself measured: they were taken before the
+// order-0 remediations and the two approved deviations that this gate now
+// accounts for through AUTHORIZED_RULES. The delivered comparison measures
+// 130 differences and authorizes ALL 130 - 0 unauthorized in every scope, and
+// 0 that failed to materialize - partitioned 76 order-0 R1, 23 approved
+// deviation 10, 20 order-0 R8, 11 approved deviation 17, and by scope
+// 114 http, 8 case, 4 target, 3 generated-input, 1 summary. The joi
+// accept/reject question is unchanged by that: schema-level differences are
+// 0 unauthorized with 8 authorized, all eight the `case.flashProof` of an
+// upload route whose restored `payload.multipart` scoping changes which fields
+// the block sees.
 //
 //   case scope             0 differences. Every schema-level verdict is
 //                          identical: accepted or rejected, the joi MESSAGES
@@ -346,14 +359,22 @@
 //     `{_owner, slug}` save at `POST /api/folders` and the two `zipCode`
 //     rejections at draft/autosave were all consequences of one drive
 //     inheriting another's writes.
-//   100 of 101 rejecting cases REACH the hand-rolled block, 0 unresolved. The
-//     one that does not is `PUT .../materials/{materialId}/move payload`, and it
-//     carries a reviewed reason rather than being counted as parity evidence:
-//     the declaration passes two arguments to a `findById` factory that reads a
-//     two-argument call's second argument as its callback, so every request to
-//     that route throws `TypeError: next is not a function` before validation.
-//     Measured on BOTH trees, all six drives. It is an application defect in
-//     lib/util/helpers.js and config/api_routes.js, outside this file.
+//   100 of 101 rejecting cases REACH the hand-rolled block, 0 unresolved, on
+//     BOTH trees - but the case that does not is a DIFFERENT one on each side,
+//     which is why the counts agree while the detail does not (`unreachedDetail`
+//     is recorded and reviewed rather than compared). On the BASELINE it is
+//     `PUT .../materials/{materialId}/move payload`: the declaration passes two
+//     arguments to a `findById` factory that reads a two-argument call's second
+//     argument as its callback, so every request to that route throws
+//     `TypeError: next is not a function` before validation - order-0 R8 fixed
+//     that factory, which is what the 20 authorized http differences on that
+//     target are. On the TARGET it is
+//     `POST /api/trinkets/{trinketId}/email payload`, whose `verifyEmailToken`
+//     pre-handler refuses the recorded share token before validation runs,
+//     because the signing key is no longer derivable from public material -
+//     approved deviation 10, and the 23 authorized differences on that target.
+//     Each side carries its reviewed reason in the artifact rather than being
+//     counted as parity evidence.
 //   218 outcomes carry a validation flash, and every one of them MATCHES a
 //     proof computed by re-executing the WHOLE validate block on the values
 //     that drive presented - 0 mismatches - because the block iterates every
@@ -382,11 +403,15 @@
 //     `flash.validation` for no field at all (`users/account.html` twice,
 //     `users/forgotpass.html` three times), and 2 interpolate `/{redirectTo}`
 //     from a key their section does not declare.
-//   2 drives time out, both `POST /api/users/email payload accepting`, and
-//     identically on both trees: the handler resolves only from a callback it
-//     passes to `Store.set` as a third argument, and `Store.set` is an arity-2
-//     async function that ignores it, so nothing ever answers. The controller
-//     comments this as a preserved defect. A timeout is a RECORDED RESULT here
+//   2 drives time out ON THE BASELINE, both `POST /api/users/email payload
+//     accepting`: the handler resolves only from a callback it passes to
+//     `Store.set` as a third argument, and `Store.set` is an arity-2 async
+//     function that ignores it, so nothing ever answers. THE TARGET ANSWERS
+//     BOTH - `timeouts.count` 2 -> 0 - because the handler resolves from the
+//     promise the store actually returns. That is approved deviation 17, and it
+//     is the one `summary` difference this gate authorizes; an earlier revision
+//     of this block recorded the timeout as identical on both trees, which was
+//     true before the deviation was argued. A timeout is a RECORDED RESULT here
 //     rather than a harness failure - but not a silent one: each is named in
 //     the artifact's `timeouts` block with the reviewed reason its route does
 //     not answer, the list is compared between the two trees so a timeout that
@@ -631,85 +656,52 @@ var EXPECTED = {
   }
 };
 
-// The ONE authorized enumeration difference between the two trees, named the way
-// AUTHORIZED_SURFACE_CHANGES in test/parity/manifest.js is named rather than
-// applied as a tolerance: it identifies the two declarations by route, states
-// what each contributed, and is asserted to materialize EXACTLY.
+// THERE IS NO AUTHORIZED ENUMERATION DELTA, and the constant that carried one
+// is deliberately gone rather than zeroed.
 //
-// `POST /file` declared `validate : { payload : {type, upload} }` and
-// `POST /file/avatar` declared `validate : { payload : {upload} }`. Both blocks
-// moved OUT of the route declarations and INTO `files.upload` / `files.avatar`
-// (QA finding W001-F04): the route parser's validation-failure funnel answers
-// `request.fail(request.payload, ...)`, which serves the rejected payload back at
-// status 200, and with `payload.multipart.output : 'file'` that payload carried
-// the spooled part's absolute filesystem path. The handlers now answer 400 with
-// the same Joi message text and echo nothing.
+// An earlier build moved `POST /file`'s `validate : { payload : {type, upload} }`
+// and `POST /file/avatar`'s `validate : { payload : {upload} }` out of the
+// route declarations and into `files.upload` / `files.avatar` (QA finding
+// W001-F04), so the target enumerated 100 targets against the base commit's
+// 102 and this file carried a named, asserted-to-materialize delta for exactly
+// those two declarations. That change has been WITHDRAWN: both routes carry
+// the base commit's schema again, measured, so both trees enumerate the same
+// 102 targets and there is nothing left to authorize.
 //
-// So the two targets this gate would drive no longer exist to be driven, and
-// their OUTCOMES are unchanged - which is why this is an enumeration delta and
-// not a comparison difference. Argued in docs/baseline-parity.md §6.23.1.
-var AUTHORIZED_ENUMERATION_DELTA = {
-  finding : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
-  routes  : ['POST /file payload', 'POST /file/avatar payload'],
-  arguedIn: 'docs/baseline-parity.md, route-manifest section',
-  // Subtracted from EXPECTED when the analysed tree is NOT the base commit.
-  target  : {
-    validateBlocks: 2,
-    targets       : 2,
-    payload       : 2,
-    query         : 0,
-    params        : 0,
-    languageMaps  : 0,
-    byFile        : {
-      'config/routes.js'     : { blocks: 2, payload: 2, query: 0, params: 0, language: 0 },
-      'config/api_routes.js' : { blocks: 0, payload: 0, query: 0, params: 0, language: 0 }
-    }
-  }
-};
+// Removing the delta TIGHTENS this gate rather than loosening it. `EXPECTED`
+// below is now asserted verbatim against whichever tree is enumerated, so a
+// declaration disappearing from EITHER side is fatal - where the delta existed,
+// a target tree that had lost those two blocks was expected to have lost them
+// and only a THIRD loss failed. Nothing else about the enumeration check moves:
+// the figures are still REPORTED AND FATAL rather than corrected, for the same
+// reason as before.
+//
+// What W001-F04 named is preserved rather than repaired, which is why the
+// withdrawal is not a regression: the route parser's validation-failure funnel
+// answering `request.fail(request.payload, ...)` at status 200 is the base
+// commit's own behaviour and rule R-d protects it, while the `payload.multipart`
+// scoping that lib/util/routeParser.js's `migratePayloadOutput` applies means a
+// body carrying no file part is never spooled and so has no filesystem path to
+// echo. Argued in docs/baseline-parity.md, route-manifest section.
 
 /**
  * EXPECTED as it applies to the tree actually being enumerated.
  *
- * The base commit is expected verbatim. Any other tree is expected at EXPECTED
- * minus AUTHORIZED_ENUMERATION_DELTA - never at "EXPECTED or less", so a THIRD
- * block disappearing still fails, which is the whole point of naming the delta
- * instead of loosening the check.
+ * Both trees are expected verbatim, and the parameter is retained rather than
+ * removed so the two call sites keep saying WHICH tree they enumerated and a
+ * future authorized delta has one place to be added - beside the argument that
+ * justifies it - instead of being applied as a tolerance at the comparison.
  *
  * @param {boolean} isBaselineTree From provenance.treeIdentity().isBaselineCommit.
  * @returns {Object} An EXPECTED-shaped object.
  */
 function expectedForTree(isBaselineTree) {
-  var d, out;
+  // Named so the value is used and the caller's intent is recorded: the two
+  // trees are held to the same figures, which is the whole content of this
+  // function now.
+  void isBaselineTree;
 
-  if (isBaselineTree) { return EXPECTED; }
-
-  d   = AUTHORIZED_ENUMERATION_DELTA.target;
-  out = {
-    declared        : EXPECTED.declared,
-    parsedRoutes    : EXPECTED.parsedRoutes,
-    retainedValidate: EXPECTED.retainedValidate,
-    validateBlocks  : EXPECTED.validateBlocks - d.validateBlocks,
-    targets         : EXPECTED.targets - d.targets,
-    payload         : EXPECTED.payload - d.payload,
-    query           : EXPECTED.query - d.query,
-    params          : EXPECTED.params - d.params,
-    languageMaps    : EXPECTED.languageMaps - d.languageMaps,
-    byFile          : {}
-  };
-
-  Object.keys(EXPECTED.byFile).forEach(function(file) {
-    var e = EXPECTED.byFile[file], sub = d.byFile[file] || {};
-
-    out.byFile[file] = {
-      blocks  : e.blocks   - (sub.blocks   || 0),
-      payload : e.payload  - (sub.payload  || 0),
-      query   : e.query    - (sub.query    || 0),
-      params  : e.params   - (sub.params   || 0),
-      language: e.language - (sub.language || 0)
-    };
-  });
-
-  return out;
+  return EXPECTED;
 }
 
 // The two routes carrying a `language` map, by declaration order. Named rather
@@ -966,11 +958,38 @@ var REVIEWED_UNREACHED = [
       'alike, and with `parent` present as the seeded Lesson id. Omitting ' +
       '`parent` does not help either: the `if (!id)` branch at ' +
       'lib/util/helpers.js:40-43 calls the same non-function. There is ' +
-      'therefore no request that reaches this target\'s validation block, and ' +
-      'no input this tool can choose changes that. The fix is in the ' +
-      'application - either make the factory ignore a non-function second ' +
-      'argument, or spell the declaration `parent(payload.parent)` - and both ' +
-      'files are outside this gate.'
+      'therefore no request that reaches this target\'s validation block ON ' +
+      'THE BASE COMMIT, and no input this tool can choose changes that there. ' +
+      'THE MIGRATED TREE REACHES IT: `internals.findById` reads a ' +
+      'non-callback second argument as the fallback value the declaration ' +
+      'means it to be (order-0 R8), so the pre-handler resolves, the block ' +
+      'runs and the rejecting drive answers 200 carrying the `index` ' +
+      'violation - measured, and authorized under `R8-material-move-guard`. ' +
+      'This entry therefore reviews the BASELINE side of that pair, which is ' +
+      'what keeps the baseline recording from carrying an unexplained ' +
+      'unreached case.'
+  },
+  {
+    target : 'POST /api/trinkets/{trinketId}/email payload',
+    reason : 'The route\'s second pre-handler is `verifyEmailToken`, which ' +
+      'verifies the share token the payload carries against the email-share ' +
+      'signing key. On the BASE COMMIT that key is derived from public ' +
+      'material, so the token this gate mints verifies, the block runs and ' +
+      'the rejecting drive answers 200 carrying the `email` violation - ' +
+      'measured. On the MIGRATED TREE the key is `app.mail.secret` where ' +
+      'configured and an ephemeral per-process CSPRNG value where it is not ' +
+      '(approved deviation 10, argued in docs/preserved-quirks.md 11.14), and ' +
+      'no tree configures a non-empty secret, so the replayed token\'s ' +
+      'signature does not verify: `jwt.verify` throws, the catch-all answers ' +
+      '500 with `{error, message, statusCode}` and no validation flash, and ' +
+      'both Accept modes record html:500, json:500 - measured. No token this ' +
+      'tool can construct reaches the block, because the key it would have to ' +
+      'be signed with is generated inside the process under test and is not ' +
+      'observable from outside it, which is the substance of the ' +
+      'remediation. The 500 is the mapping R-e keeps rather than converting ' +
+      'it to a 403, and every observable field of the pair is authorized ' +
+      'under `D10-email-share-token-key`. This entry therefore reviews the ' +
+      'MIGRATED side of that pair.'
   }
 ];
 
@@ -988,31 +1007,41 @@ var REVIEWED_TIMEOUTS = [
   {
     target : 'POST /api/users/email payload',
     case   : 'accepting',
-    reason : '`users.sendEmailChange` [lib/controllers/users.js:845-887] ' +
-      'answers only from inside a callback it passes to `Store.set` as a ' +
-      'THIRD argument, and `Store.set` is an arity-2 `async function (key, ' +
-      'value)` on both trees [lib/util/store.js:16-19 for the in-memory ' +
-      'engine, :203-206 for the redis engine], so the third argument is ' +
+    // BASELINE-ONLY as of the reconciled tree, and RETAINED for that reason:
+    // the baseline recording this gate replays still holds the no-response
+    // drive this entry reviews, and an unreviewed timeout in that recording
+    // fails the run on the spot. The difference the two trees now show here is
+    // authorized under `D17-email-change-settles`.
+    reason : 'MEASURED PER TREE. On the BASE COMMIT `users.sendEmailChange` ' +
+      '[lib/controllers/users.js:1492-1554 in the migrated tree] answers only ' +
+      'from inside a callback it passes to `Store.set` as a THIRD argument, ' +
+      'and `Store.set` is an arity-2 `async function (key, val)` ' +
+      '[lib/util/store.js:16-19 for the in-memory engine, :203-206 for the ' +
+      'redis engine, unchanged from 2f8712a], so the third argument is ' +
       'ignored, the callback never runs, the promise the handler returned ' +
-      'never settles and the request never receives a response. The target ' +
-      'tree comments this as a PRESERVED DEFECT at ' +
-      'lib/controllers/users.js:870-876 and the baseline reaches the same ' +
-      'non-settlement through the same call. It is the accepting input that ' +
-      'gets there: `User.findByLogin` must NOT find an account with the ' +
-      'address being claimed, and the rejecting input is not a valid email ' +
-      'so the validation block answers before the handler runs at all - ' +
-      'measured, that case answers 200 in both Accept modes on both trees. ' +
-      'The seeded fixtures deliberately do not own `parity@example.com`, so ' +
-      'this is the state every drive of this case observes once the seeded ' +
-      'state is restored per drive (see RESTORE_POLICY); an earlier build of ' +
-      'this gate recorded a 200 here only because a preceding drive had ' +
-      'changed a user\'s address to that value first. A bounded timeout is ' +
-      'therefore the measured outcome of this route, identical on both sides ' +
-      'of the gate, and is compared as such: `timedOut` is a compared field ' +
-      'on every outcome and the timeout list below is compared whole. Fixing ' +
-      'it means awaiting the promise, which would start answering and start ' +
-      'sending mail - a behaviour change R-d prohibits - so it is preserved ' +
-      'and recorded rather than repaired.'
+      'never settles and the request never receives a response - the drive ' +
+      'gives up at this gate\'s 20000ms budget with no ' +
+      'status, no header and no body. THE MIGRATED TREE ANSWERS: the handler ' +
+      'resolves from the promise `Store.set` actually returns, so the same ' +
+      'drive records 200 `{"success":true}` and a store rejection is routed ' +
+      'into `request.fail` instead of reaching nothing at all. AAP 0.7 ' +
+      'decides that collision against R-d on its own ground - an unsettled ' +
+      'request is the absence of a response rather than a behaviour a client ' +
+      'can depend on - together with R-b\'s unqualified requirement that ' +
+      'every route serve, and the controller carries the same argument at its ' +
+      'site. It is the accepting input that gets to the write on either tree: ' +
+      '`User.findByLogin` must NOT find an account with the address being ' +
+      'claimed, and the rejecting input is not a valid email so the ' +
+      'validation block answers before the handler runs at all - measured, ' +
+      'that case answers 200 in both Accept modes on both trees. The seeded ' +
+      'fixtures deliberately do not own `parity@example.com`, so this is the ' +
+      'state every drive of this case observes once the seeded state is ' +
+      'restored per drive (see RESTORE_POLICY); an earlier build of this gate ' +
+      'recorded a 200 here only because a preceding drive had changed a ' +
+      'user\'s address to that value first. `timedOut` is a compared field on ' +
+      'every outcome and the timeout list is compared whole, so the move from ' +
+      'no response to a response is measured rather than assumed on both ' +
+      'sides.'
   }
 ];
 
@@ -4134,6 +4163,65 @@ function routeInfo(declaration) {
 }
 
 /**
+ * The EFFECTIVE top-level `payload.output` per route, read from the tree's OWN
+ * parse rather than from the declaration.
+ *
+ * WHY THIS IS NOT `declaration.config.payload.output`. Both trees declare
+ * `payload : { maxBytes, output : 'file' }` on the four upload routes - the
+ * base commit's text, byte-identical - but they do not both hand that option
+ * to hapi. lib/util/routeParser.js's `migratePayloadOutput` restates
+ * `payload.output : 'file'` as `payload.multipart : { output : 'file' }` while
+ * parsing on the migrated tree, and the base commit has no such step. The
+ * option decides what `request.payload` IS:
+ *
+ *   * top-level `output: 'file'` spools EVERY body class to a temp file and
+ *     replaces request.payload with hapi's `{path, bytes}` descriptor, so the
+ *     declared schema cannot be satisfied by any transport;
+ *   * `multipart.output` scopes that to multipart parts only
+ *     [node_modules/@hapi/subtext/lib/index.js:290], so a JSON or urlencoded
+ *     body - which is what this tool drives, see transportFor - is parsed as
+ *     data and reaches the validation block as itself.
+ *
+ * Reading the declaration therefore models the BASELINE's behaviour on both
+ * trees and mispredicts every drive of those four targets on the migrated one:
+ * measured, it produced 8 rejecting drives whose observed flash named the key
+ * the request actually sent while the proof named hapi's `path`/`bytes`, i.e.
+ * eight false outcome-proof mismatches and a `flashProof` that agreed across
+ * trees where the runtimes do not.
+ *
+ * `loaded.parsed` is `routeParser.parse(deepCopy(declared))` from harvest(),
+ * so this reads the post-migration options the tree ITSELF produces. No
+ * knowledge of the migration is encoded here beyond where to look for its
+ * result, which is why the same code measures both trees correctly and would
+ * measure a third spelling correctly too.
+ *
+ * @param {Object} loaded The harvest result.
+ * @returns {Object} 'METHOD path' -> the effective output string, or null.
+ */
+function effectivePayloadOutputs(loaded) {
+  var out = {};
+
+  loaded.parsed.forEach(function(route) {
+    var payload;
+    var key;
+
+    if (!route || typeof route.method !== 'string' ||
+        typeof route.path !== 'string') {
+      return;
+    }
+
+    payload = route.options && route.options.payload;
+    key     = route.method.toUpperCase() + ' ' + route.path;
+
+    out[key] = isPlainObject(payload) && payload.output
+      ? String(payload.output)
+      : null;
+  });
+
+  return out;
+}
+
+/**
  * Descriptors for a declaration's pre-handlers - descriptors, NOT the
  * functions.
  *
@@ -4496,6 +4584,9 @@ function enumerateTargets(loaded, ids) {
   // function inside it passed by reference, which is what helperResolver
   // matches on. See deepCopy.
   var resolve = helperResolver(loaded.helpers);
+  // Built once per enumeration: it is a fold over the tree's own parsed route
+  // table, and every target of every route reads from it.
+  var effectiveOutputs = effectivePayloadOutputs(loaded);
 
   loaded.pristine.forEach(function(declaration, index) {
     var validate;
@@ -4550,10 +4641,20 @@ function enumerateTargets(loaded, ids) {
         success        : isPlainObject(declaration.success)
           ? jsonSafe(declaration.success)
           : null,
-        // `payload.output === 'file'` means hapi REPLACES request.payload with
-        // a file descriptor, so the DECLARED input cannot reach the schema by
-        // any transport. Four routes; see transportFor for the measurement.
-        payloadOutput  : declaration.config.payload &&
+        // The EFFECTIVE `payload.output` this tree hands hapi. Where it is
+        // 'file', hapi REPLACES request.payload with a file descriptor and the
+        // DECLARED input cannot reach the schema by any transport. Four routes
+        // declare it; see effectivePayloadOutputs for why the DECLARATION is
+        // not the answer, and transportFor for the measurement.
+        payloadOutput  : effectiveOutputs[info.method + ' ' + info.path] ===
+                         undefined
+          ? null
+          : effectiveOutputs[info.method + ' ' + info.path],
+        // The DECLARED spelling, beside the effective one and compared in its
+        // own right: AAP 0.9.1 holds the declared HTTP surface identical across
+        // the trees, so this field must never differ, while `payloadOutput`
+        // above legitimately does wherever the migration layer restates it.
+        declaredPayloadOutput : declaration.config.payload &&
                          declaration.config.payload.output
           ? String(declaration.config.payload.output)
           : null,
@@ -6601,6 +6702,7 @@ function serializeTarget(target, cases, leaves) {
     html          : target.html,
     success       : target.success,
     payloadOutput : target.payloadOutput,
+    declaredPayloadOutput : target.declaredPayloadOutput,
     isJoiSchema   : target.isJoiSchema,
     languageMap   : target.languageMap,
     leaves        : leaves.map(function(leaf) {
@@ -8032,6 +8134,7 @@ var FILE_DESCRIPTOR_PATH = '/parity/hapi-output-file-descriptor';
  */
 function routeSections(loaded) {
   var out = {};
+  var effectiveOutputs = effectivePayloadOutputs(loaded);
 
   loaded.pristine.forEach(function(declaration) {
     var validate;
@@ -8069,11 +8172,12 @@ function routeSections(loaded) {
               schemaSource : validate[section]
             }),
             // Kept so the proof can say whether a section is one this tool
-            // models a presented value for.
-            output  : declaration.config.payload &&
-                      declaration.config.payload.output
-              ? String(declaration.config.payload.output)
-              : null
+            // models a presented value for. The EFFECTIVE option, from the
+            // tree's own parse - see effectivePayloadOutputs: the declaration
+            // is identical on both trees and the runtime behaviour is not.
+            output  : effectiveOutputs[key] === undefined
+              ? null
+              : effectiveOutputs[key]
           };
         })
     };
@@ -10199,7 +10303,8 @@ var ARTIFACT_KEY_ORDER = [
 var COMPARED_TARGET_FIELDS = [
   'method', 'path', 'validateKey', 'section', 'file', 'controller', 'declaredAuth',
   'identity', 'pre', 'preReferences', 'lookupFixtures', 'fail', 'html',
-  'success', 'payloadOutput', 'isJoiSchema', 'languageMap', 'leaves'
+  'success', 'payloadOutput', 'declaredPayloadOutput', 'isJoiSchema',
+  'languageMap', 'leaves'
 ];
 
 // The per-case fields `--compare` checks: the experiment and its schema-level
@@ -10320,7 +10425,7 @@ var NOT_COMPARED_NOTE = notComparedNote();
 //
 // AAP 0.6.2's pass condition is that every one of the 102 targets answers
 // identically on both sides, "exiting non-zero on any difference". A measured
-// run of this gate reports 105 differences, and not one of them is a joi-18
+// run of this gate reports 130 differences, and not one of them is a joi-18
 // regression: each is a consequence of an order-0 remediation that was
 // APPROVED AFTER this gate was authored against 2f8712a. So the gate has two
 // possible readings, and only one of them is a gate: report FAIL forever and
@@ -10344,7 +10449,7 @@ var NOT_COMPARED_NOTE = notComparedNote();
 //   * Each entry names its authorizing finding through `rule`, the id of an
 //     entry in AUTHORIZATION_RULES below, which carries the finding, what the
 //     remediation did and the document that argues it. A reference rather than
-//     104 copies of one paragraph - and a checked one:
+//     130 copies of one paragraph - and a checked one:
 //     `assertAuthorizationRegister` refuses an unknown id, a duplicate
 //     identity, a missing value, and an entry whose own scope, target and
 //     field its named rule does not claim. So an entry cannot cite a finding
@@ -10380,11 +10485,15 @@ var NOT_COMPARED_NOTE = notComparedNote();
 // broadened by hand authorizes nothing until a real measurement produces an
 // entry carrying the measured values.
 var AUTHORIZED_DIFFERENCES = [
-  // Emitted by `--emit-authorizations` from a measured comparison and pasted
-  // verbatim, which is the only way an entry gets its value pair right. Every
-  // entry cites a rule in AUTHORIZATION_RULES above, and the emit REFUSES to
-  // write an entry no rule claims - so a difference reaches this array only
-  // after a named finding has claimed its scope, target and field.
+  // REGENERATED FROM MEASUREMENT, not edited by hand: written by
+  // `test/parity/joi-matrix.js --emit-authorizations` from a comparison of
+  // a fresh capture of the base commit (2f8712a, via a read-only worktree)
+  // against this tree, and pasted verbatim. Every entry therefore carries
+  // the two values the run MEASURED and the single order-0 finding that
+  // claims them; the emit refused nothing, so no difference in this run
+  // lacks an attribution. An entry whose difference stops materializing is
+  // a gate failure in its own right, which is what removed the stale
+  // W001-F04, R9 and D12 entries the previous register carried.
   // order-0 R1 (multipart accepted again on the upload routes)
   {
     scope       : 'case',
@@ -10429,38 +10538,49 @@ var AUTHORIZED_DIFFERENCES = [
     targetValue : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"driven-input","presented":{"file":"parity-any-value","parityUnknownKey":"parity"},"accepted":false,"paths":["parityUnknownKey"],"messages":["\\"parityUnknownKey\\" is not allowed"]}],"errors":{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"},"keys":["parityUnknownKey"]}',
     rule        : 'R1-upload-payload-multipart'
   },
-  // order-0 R9 (accessible validation outlets on the signup form)
+  // order-0 R1 (multipart accepted again on the upload routes)
   {
     scope       : 'case',
-    target      : 'POST /users payload',
+    target      : 'POST /file payload',
     'case'      : 'accepting',
     mode        : null,
-    field       : 'knownValues',
-    baseline    : '{"formName":{"name":"redirectDestination","via":"the declared fail.redirect `/{formName}`, solved against the GET route table to `/signup`, whose template signup.html renders flash.validation for email, password"}}',
-    targetValue : '{"formName":{"name":"redirectDestination","via":"the declared fail.redirect `/{formName}`, solved against the GET route table to `/signup`, whose template signup.html renders flash.validation for email, fullname, password, username"}}',
-    rule        : 'R9-signup-error-outlets'
+    field       : 'flashProof',
+    baseline    : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"file-descriptor","presented":{"path":"/parity/hapi-output-file-descriptor","bytes":44},"accepted":false,"paths":["upload","path","bytes"],"messages":["\\"upload\\" is required","\\"path\\" is not allowed","\\"bytes\\" is not allowed"]}],"errors":{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"},"keys":["bytes","path","upload"]}',
+    targetValue : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"driven-input","presented":{"type":"embed","upload":"parity-any-value"},"accepted":true,"paths":[],"messages":[]}],"errors":{},"keys":[]}',
+    rule        : 'R1-upload-payload-multipart'
   },
-  // order-0 R9 (accessible validation outlets on the signup form)
+  // order-0 R1 (multipart accepted again on the upload routes)
   {
     scope       : 'case',
-    target      : 'POST /users payload',
+    target      : 'POST /file payload',
     'case'      : 'rejecting',
     mode        : null,
-    field       : 'additionalViolations',
-    baseline    : '[{"field":"email","strategy":"not-an-email"},{"field":"password","strategy":"under-min"}]',
-    targetValue : '[{"field":"email","strategy":"not-an-email"},{"field":"fullname","strategy":"over-max"},{"field":"password","strategy":"under-min"}]',
-    rule        : 'R9-signup-error-outlets'
+    field       : 'flashProof',
+    baseline    : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"file-descriptor","presented":{"path":"/parity/hapi-output-file-descriptor","bytes":63},"accepted":false,"paths":["upload","path","bytes"],"messages":["\\"upload\\" is required","\\"path\\" is not allowed","\\"bytes\\" is not allowed"]}],"errors":{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"},"keys":["bytes","path","upload"]}',
+    targetValue : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"driven-input","presented":{"type":"parity-not-a-valid-value","upload":"parity-any-value"},"accepted":false,"paths":["type"],"messages":["\\"type\\" must be one of [embed, download]"]}],"errors":{"type":"\\"type\\" must be one of [embed, download]"},"keys":["type"]}',
+    rule        : 'R1-upload-payload-multipart'
   },
-  // order-0 R9 (accessible validation outlets on the signup form)
+  // order-0 R1 (multipart accepted again on the upload routes)
   {
     scope       : 'case',
-    target      : 'POST /users payload',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : null,
+    field       : 'flashProof',
+    baseline    : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"file-descriptor","presented":{"path":"/parity/hapi-output-file-descriptor","bytes":29},"accepted":false,"paths":["upload","path","bytes"],"messages":["\\"upload\\" is required","\\"path\\" is not allowed","\\"bytes\\" is not allowed"]}],"errors":{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"},"keys":["bytes","path","upload"]}',
+    targetValue : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"driven-input","presented":{"upload":"parity-any-value"},"accepted":true,"paths":[],"messages":[]}],"errors":{},"keys":[]}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'case',
+    target      : 'POST /file/avatar payload',
     'case'      : 'rejecting',
     mode        : null,
-    field       : 'knownValues',
-    baseline    : '{"formName":{"name":"redirectDestination","via":"the declared fail.redirect `/{formName}`, solved against the GET route table to `/signup`, whose template signup.html renders flash.validation for email, password"}}',
-    targetValue : '{"formName":{"name":"redirectDestination","via":"the declared fail.redirect `/{formName}`, solved against the GET route table to `/signup`, whose template signup.html renders flash.validation for email, fullname, password, username"}}',
-    rule        : 'R9-signup-error-outlets'
+    field       : 'flashProof',
+    baseline    : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"file-descriptor","presented":{"path":"/parity/hapi-output-file-descriptor","bytes":57},"accepted":false,"paths":["upload","path","bytes"],"messages":["\\"upload\\" is required","\\"path\\" is not allowed","\\"bytes\\" is not allowed"]}],"errors":{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"},"keys":["bytes","path","upload"]}',
+    targetValue : '{"modelled":true,"reason":null,"sections":[{"section":"payload","source":"driven-input","presented":{"upload":"parity-any-value","parityUnknownKey":"parity"},"accepted":false,"paths":["parityUnknownKey"],"messages":["\\"parityUnknownKey\\" is not allowed"]}],"errors":{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"},"keys":["parityUnknownKey"]}',
+    rule        : 'R1-upload-payload-multipart'
   },
   // approved deviation 10 (the email share token's key is no longer derivable)
   {
@@ -10495,17 +10615,6 @@ var AUTHORIZED_DIFFERENCES = [
     targetValue : '{"email":"not-an-email","name":"aaa","replyTo":"parity@example.com","width":1,"height":1,"start":"aaa","token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEifQ.cTSmxCsgIeAhSw8E8mCkIcQ7jGoUzM-Ds15j2yHIjUU","g-recaptcha-response":"aaa"}',
     rule        : 'D10-email-share-token-key'
   },
-  // order-0 R9 (accessible validation outlets on the signup form)
-  {
-    scope       : 'generated-input',
-    target      : 'POST /users payload',
-    'case'      : 'rejecting',
-    mode        : null,
-    field       : 'input',
-    baseline    : '{"formName":"signup","fullname":"aaa","username":"9bad","email":"not-an-email","password":"aa","interest":"aaa","next":"aaa","g-recaptcha-response":"aaa"}',
-    targetValue : '{"formName":"signup","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","username":"9bad","email":"not-an-email","password":"aa","interest":"aaa","next":"aaa","g-recaptcha-response":"aaa"}',
-    rule        : 'R9-signup-error-outlets'
-  },
   // approved deviation 10 (the email share token's key is no longer derivable)
   {
     scope       : 'http',
@@ -11078,27 +11187,467 @@ var AUTHORIZED_DIFFERENCES = [
     targetValue : '{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"}',
     rule        : 'R1-upload-payload-multipart'
   },
-  // approved deviation 12 (the login failure response no longer distinguishes account existence)
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
   {
     scope       : 'http',
-    target      : 'POST /login payload',
+    target      : 'POST /api/users/email payload',
     'case'      : 'accepting',
     mode        : 'html',
-    field       : 'followed',
-    baseline    : '[{"target":"/login","status":200,"timedOut":false,"error":null,"contentType":"text/html; charset=utf-8","locationRelative":null,"renderedMessages":["Unknown user aaa"]}]',
-    targetValue : '[{"target":"/login","status":200,"timedOut":false,"error":null,"contentType":"text/html; charset=utf-8","locationRelative":null,"renderedMessages":["Invalid email or password"]}]',
-    rule        : 'D12-login-failure-response'
+    field       : 'bodyKeys',
+    baseline    : 'null',
+    targetValue : '["context","flash","success"]',
+    rule        : 'D17-email-change-settles'
   },
-  // order-0 R9 (accessible validation outlets on the signup form)
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
   {
     scope       : 'http',
-    target      : 'POST /users payload',
+    target      : 'POST /api/users/email payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'contentType',
+    baseline    : 'null',
+    targetValue : '"application/json; charset=utf-8"',
+    rule        : 'D17-email-change-settles'
+  },
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/email payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'error',
+    baseline    : '"no response within 20000ms"',
+    targetValue : 'null',
+    rule        : 'D17-email-change-settles'
+  },
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/email payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : 'null',
+    targetValue : '200',
+    rule        : 'D17-email-change-settles'
+  },
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/email payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'timedOut',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'D17-email-change-settles'
+  },
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/email payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : 'null',
+    targetValue : '["context","flash","success"]',
+    rule        : 'D17-email-change-settles'
+  },
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/email payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'contentType',
+    baseline    : 'null',
+    targetValue : '"application/json; charset=utf-8"',
+    rule        : 'D17-email-change-settles'
+  },
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/email payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'error',
+    baseline    : '"no response within 20000ms"',
+    targetValue : 'null',
+    rule        : 'D17-email-change-settles'
+  },
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/email payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : 'null',
+    targetValue : '200',
+    rule        : 'D17-email-change-settles'
+  },
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
+  {
+    scope       : 'http',
+    target      : 'POST /api/users/email payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'timedOut',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'D17-email-change-settles'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '400',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'unexpectedFlashKeys',
+    baseline    : '[]',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : '{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '400',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'unexpectedFlashKeys',
+    baseline    : '[]',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : '{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
     'case'      : 'rejecting',
     mode        : 'html',
-    field       : 'followed',
-    baseline    : '[{"target":"/signup","status":200,"timedOut":false,"error":null,"contentType":"text/html; charset=utf-8","locationRelative":null,"renderedMessages":["\\"email\\" must be a valid email","\\"password\\" length must be at least 3 characters long"]}]',
-    targetValue : '[{"target":"/signup","status":200,"timedOut":false,"error":null,"contentType":"text/html; charset=utf-8","locationRelative":null,"renderedMessages":["\\"username\\" with value \\"9bad\\" fails to match the required pattern: /^[a-z][a-z0-9&#92;-&#92;_]*$/i","\\"email\\" must be a valid email","\\"password\\" length must be at least 3 characters long"]}]',
-    rule        : 'R9-signup-error-outlets'
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["flash","type","upload"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : '{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : '{"type":"\\"type\\" must be one of [embed, download]"}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["flash","type","upload"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : '{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : '{"type":"\\"type\\" must be one of [embed, download]"}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '400',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'unexpectedFlashKeys',
+    baseline    : '[]',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : '{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'html',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["error","message","statusCode"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'flashProofComparable',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'status',
+    baseline    : '200',
+    targetValue : '400',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'unexpectedFlashKeys',
+    baseline    : '[]',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : '{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'accepting',
+    mode        : 'json',
+    field       : 'validationObserved',
+    baseline    : 'true',
+    targetValue : 'false',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["flash","parityUnknownKey","upload"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'rejecting',
+    mode        : 'html',
+    field       : 'validationFlash',
+    baseline    : '{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : '{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"}',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'bodyKeys',
+    baseline    : '["bytes","flash","path"]',
+    targetValue : '["flash","parityUnknownKey","upload"]',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'http',
+    target      : 'POST /file/avatar payload',
+    'case'      : 'rejecting',
+    mode        : 'json',
+    field       : 'validationFlash',
+    baseline    : '{"upload":"\\"upload\\" is required","path":"\\"path\\" is not allowed","bytes":"\\"bytes\\" is not allowed"}',
+    targetValue : '{"parityUnknownKey":"\\"parityUnknownKey\\" is not allowed"}',
+    rule        : 'R1-upload-payload-multipart'
   },
   // order-0 R8 (the material-move pre-handler answers again)
   {
@@ -11320,104 +11869,16 @@ var AUTHORIZED_DIFFERENCES = [
     targetValue : 'true',
     rule        : 'R8-material-move-guard'
   },
-  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
+  // approved deviation 17 (POST /api/users/email answers instead of never settling)
   {
     scope       : 'summary',
-    target      : 'deepCopyProof',
+    target      : 'timeouts',
     'case'      : null,
     mode        : null,
-    field       : 'enumeratedTargets',
-    baseline    : '102',
-    targetValue : '100',
-    rule        : 'F04-upload-validation-relocated'
-  },
-  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
-  {
-    scope       : 'summary',
-    target      : 'deepCopyProof',
-    'case'      : null,
-    mode        : null,
-    field       : 'pristineValidateBlocks',
-    baseline    : '97',
-    targetValue : '95',
-    rule        : 'F04-upload-validation-relocated'
-  },
-  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
-  {
-    scope       : 'summary',
-    target      : 'enumeration',
-    'case'      : null,
-    mode        : null,
-    field       : 'byFile',
-    baseline    : '{"config/routes.js":{"declarations":112,"blocks":15,"payload":10,"query":5,"params":0,"language":2,"other":{}},"config/api_routes.js":{"declarations":116,"blocks":82,"payload":65,"query":21,"params":1,"language":0,"other":{}}}',
-    targetValue : '{"config/routes.js":{"declarations":112,"blocks":13,"payload":8,"query":5,"params":0,"language":2,"other":{}},"config/api_routes.js":{"declarations":116,"blocks":82,"payload":65,"query":21,"params":1,"language":0,"other":{}}}',
-    rule        : 'F04-upload-validation-relocated'
-  },
-  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
-  {
-    scope       : 'summary',
-    target      : 'enumeration',
-    'case'      : null,
-    mode        : null,
-    field       : 'payload',
-    baseline    : '75',
-    targetValue : '73',
-    rule        : 'F04-upload-validation-relocated'
-  },
-  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
-  {
-    scope       : 'summary',
-    target      : 'enumeration',
-    'case'      : null,
-    mode        : null,
-    field       : 'targets',
-    baseline    : '102',
-    targetValue : '100',
-    rule        : 'F04-upload-validation-relocated'
-  },
-  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
-  {
-    scope       : 'summary',
-    target      : 'enumeration',
-    'case'      : null,
-    mode        : null,
-    field       : 'validateBlocks',
-    baseline    : '97',
-    targetValue : '95',
-    rule        : 'F04-upload-validation-relocated'
-  },
-  // order-0 R8 (the material-move pre-handler answers again)
-  {
-    scope       : 'summary',
-    target      : 'validationReach',
-    'case'      : null,
-    mode        : null,
-    field       : 'reached',
-    baseline    : '100',
-    targetValue : '98',
-    rule        : 'R8-material-move-guard'
-  },
-  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
-  {
-    scope       : 'summary',
-    target      : 'validationReach',
-    'case'      : null,
-    mode        : null,
-    field       : 'rejectingCases',
-    baseline    : '101',
-    targetValue : '99',
-    rule        : 'F04-upload-validation-relocated'
-  },
-  // QA W001-F04 (spooled-path disclosure through the validation-failure funnel)
-  {
-    scope       : 'summary',
-    target      : 'validationReach',
-    'case'      : null,
-    mode        : null,
-    field       : 'unresolved',
-    baseline    : '0',
-    targetValue : '1',
-    rule        : 'F04-upload-validation-relocated'
+    field       : 'timeouts',
+    baseline    : '{"budgetMs":20000,"count":2,"drives":[{"target":"POST /api/users/email payload","case":"accepting","mode":"html","reviewed":"MEASURED PER TREE. On the BASE COMMIT `users.sendEmailChange` [lib/controllers/users.js:1492-1554 in the migrated tree] answers only from inside a callback it passes to `Store.set` as a THIRD argument, and `Store.set` is an arity-2 `async function (key, val)` [lib/util/store.js:16-19 for the in-memory engine, :203-206 for the redis engine, unchanged from 2f8712a], so the third argument is ignored, the callback never runs, the promise the handler returned never settles and the request never receives a response - the drive gives up at this gate\'s 20000ms budget with no status, no header and no body. THE MIGRATED TREE ANSWERS: the handler resolves from the promise `Store.set` actually returns, so the same drive records 200 `{\\"success\\":true}` and a store rejection is routed into `request.fail` instead of reaching nothing at all. AAP 0.7 decides that collision against R-d on its own ground - an unsettled request is the absence of a response rather than a behaviour a client can depend on - together with R-b\'s unqualified requirement that every route serve, and the controller carries the same argument at its site. It is the accepting input that gets to the write on either tree: `User.findByLogin` must NOT find an account with the address being claimed, and the rejecting input is not a valid email so the validation block answers before the handler runs at all - measured, that case answers 200 in both Accept modes on both trees. The seeded fixtures deliberately do not own `parity@example.com`, so this is the state every drive of this case observes once the seeded state is restored per drive (see RESTORE_POLICY); an earlier build of this gate recorded a 200 here only because a preceding drive had changed a user\'s address to that value first. `timedOut` is a compared field on every outcome and the timeout list is compared whole, so the move from no response to a response is measured rather than assumed on both sides."},{"target":"POST /api/users/email payload","case":"accepting","mode":"json","reviewed":"MEASURED PER TREE. On the BASE COMMIT `users.sendEmailChange` [lib/controllers/users.js:1492-1554 in the migrated tree] answers only from inside a callback it passes to `Store.set` as a THIRD argument, and `Store.set` is an arity-2 `async function (key, val)` [lib/util/store.js:16-19 for the in-memory engine, :203-206 for the redis engine, unchanged from 2f8712a], so the third argument is ignored, the callback never runs, the promise the handler returned never settles and the request never receives a response - the drive gives up at this gate\'s 20000ms budget with no status, no header and no body. THE MIGRATED TREE ANSWERS: the handler resolves from the promise `Store.set` actually returns, so the same drive records 200 `{\\"success\\":true}` and a store rejection is routed into `request.fail` instead of reaching nothing at all. AAP 0.7 decides that collision against R-d on its own ground - an unsettled request is the absence of a response rather than a behaviour a client can depend on - together with R-b\'s unqualified requirement that every route serve, and the controller carries the same argument at its site. It is the accepting input that gets to the write on either tree: `User.findByLogin` must NOT find an account with the address being claimed, and the rejecting input is not a valid email so the validation block answers before the handler runs at all - measured, that case answers 200 in both Accept modes on both trees. The seeded fixtures deliberately do not own `parity@example.com`, so this is the state every drive of this case observes once the seeded state is restored per drive (see RESTORE_POLICY); an earlier build of this gate recorded a 200 here only because a preceding drive had changed a user\'s address to that value first. `timedOut` is a compared field on every outcome and the timeout list is compared whole, so the move from no response to a response is measured rather than assumed on both sides."}],"unresolved":[]}',
+    targetValue : '{"budgetMs":20000,"count":0,"drives":[],"unresolved":[]}',
+    rule        : 'D17-email-change-settles'
   },
   // order-0 R1 (multipart accepted again on the upload routes)
   {
@@ -11434,6 +11895,28 @@ var AUTHORIZED_DIFFERENCES = [
   {
     scope       : 'target',
     target      : 'POST /api/users/assets/{fileId} payload',
+    'case'      : null,
+    mode        : null,
+    field       : 'payloadOutput',
+    baseline    : '"file"',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'target',
+    target      : 'POST /file payload',
+    'case'      : null,
+    mode        : null,
+    field       : 'payloadOutput',
+    baseline    : '"file"',
+    targetValue : 'null',
+    rule        : 'R1-upload-payload-multipart'
+  },
+  // order-0 R1 (multipart accepted again on the upload routes)
+  {
+    scope       : 'target',
+    target      : 'POST /file/avatar payload',
     'case'      : null,
     mode        : null,
     field       : 'payloadOutput',
@@ -11477,7 +11960,17 @@ var AUTHORIZATION_RULES = [
     // here, where it would report as a register entry that did not materialize.
     targets  : [
       'POST /api/users/assets payload',
-      'POST /api/users/assets/{fileId} payload'
+      'POST /api/users/assets/{fileId} payload',
+      // Declared again, and back under this rule with the other two. Their
+      // `validate` blocks were briefly moved into `files.upload` /
+      // `files.avatar` (QA W001-F04) and the move has been withdrawn, so all
+      // FOUR upload routes now differ here in exactly one way: the top-level
+      // `output: 'file'` the base commit hands hapi is restated as
+      // `payload.multipart.output` by the migration layer, so a JSON or
+      // urlencoded body reaches the block as itself instead of as hapi's
+      // `{path, bytes}` descriptor. See effectivePayloadOutputs.
+      'POST /file payload',
+      'POST /file/avatar payload'
     ],
     // What changing the parsed body can move, per scope. `payloadOutput` is
     // the recorded declaration; `flashProof` is the local re-execution of the
@@ -11516,52 +12009,6 @@ var AUTHORIZATION_RULES = [
     }
   },
   {
-    id       : 'R9-signup-error-outlets',
-    finding  : 'order-0 R9 (accessible validation outlets on the signup form)',
-    summary  : 'lib/views/signup.html renders `flash.validation` for ' +
-      '`fullname` and `username` as well as `email` and `password`, where the ' +
-      'baseline template had an outlet for the latter two only. This tool ' +
-      'reads the outlets out of the template chain (renderedValidationFields) ' +
-      'and steers the rejecting ladder toward a field the fail-redirect page ' +
-      'renders, so a fourth outlet changes which violation the case carries ' +
-      'and the annotation that records why.',
-    arguedIn : 'docs/baseline-parity.md, joi-matrix section',
-    targets  : ['POST /users payload'],
-    fields   : {
-      'case'            : ['knownValues', 'additionalViolations'],
-      'generated-input' : ['input'],
-      // The outlet count is visible on the FOLLOWED page too, which is the
-      // point of the outlets: the fail.redirect page now renders the `username`
-      // violation alongside `email` and `password`, where the baseline template
-      // had no outlet to render it in. The messages are joi's own on both trees
-      // (measured: `inertness: POST /users -> raw joi message`), so what
-      // changed is how many of them have somewhere to appear.
-      http              : ['followed']
-    }
-  },
-  {
-    id       : 'F04-upload-validation-relocated',
-    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
-    summary  : 'the `validate` blocks on `POST /file` and `POST /file/avatar` ' +
-      'moved out of the route declarations and into `files.upload` / ' +
-      '`files.avatar`. The route parser\'s validation-failure funnel answers ' +
-      '`request.fail(request.payload, ...)`, which serves the rejected payload ' +
-      'back at status 200 - and with `payload.multipart.output: \'file\'` that ' +
-      'payload carried the spooled part\'s absolute filesystem path. The ' +
-      'handlers enforce the same contract and answer 400 with the same joi ' +
-      'message text and no echo. Two declarations therefore disappear from ' +
-      'this gate\'s enumeration while the validation OUTCOMES are unchanged, ' +
-      'which is why the differences are counts rather than case results.',
-    arguedIn : 'docs/baseline-parity.md, route-manifest section',
-    // Summary-scope "targets" are the summary blocks themselves.
-    targets  : ['enumeration', 'deepCopyProof', 'validationReach'],
-    fields   : {
-      summary : ['targets', 'payload', 'validateBlocks', 'byFile',
-        'pristineValidateBlocks', 'enumeratedTargets', 'unresolved',
-        'rejectingCases']
-    }
-  },
-  {
     id       : 'D10-email-share-token-key',
     finding  : 'approved deviation 10 (the email share token\'s key is no longer derivable)',
     summary  : 'the email-share capability token was signed with a key derived ' +
@@ -11587,20 +12034,69 @@ var AUTHORIZATION_RULES = [
     }
   },
   {
-    id       : 'D12-login-failure-response',
-    finding  : 'approved deviation 12 (the login failure response no longer distinguishes account existence)',
-    summary  : 'the login handler answered `Unknown user <identifier>` for an ' +
-      'address it had no account for and a different message for a wrong ' +
-      'password, so the response enumerated accounts and echoed the submitted ' +
-      'identifier back into the rendered page. All three failure branches now ' +
-      'answer one generic `Invalid email or password`, which is what the ' +
-      'followed page renders. `Account Disabled` remains distinct.',
-    arguedIn : 'docs/preserved-quirks.md 11.16',
-    targets  : ['POST /login payload'],
+    id       : 'D17-email-change-settles',
+    finding  : 'approved deviation 17 (POST /api/users/email answers instead ' +
+      'of never settling)',
+    summary  : '`users.sendEmailChange` [lib/controllers/users.js:1447-1554] ' +
+      'passed its completion callback to `Store.set` as a THIRD argument, and ' +
+      '`Store.set` is an arity-2 `async function (key, val)` ' +
+      '[lib/util/store.js, unchanged from 2f8712a], so the callback never ran ' +
+      'and the promise the handler returned never settled. Measured on BOTH ' +
+      'trees, identically: the accepting drive of this target received no ' +
+      'response at all inside this gate\'s 20s budget, while the pending ' +
+      'change WAS written and no confirmation mail was sent. The handler now ' +
+      'resolves from the promise the store actually returns, so the accepting ' +
+      'drive answers 200 `{"success":true}` and the store rejection path is ' +
+      'routed into `request.fail`. AAP 0.7 decides this collision against ' +
+      'R-d on its own ground - "an unsettled request is not a behaviour a ' +
+      'client can depend on - it is the absence of a response" - together ' +
+      'with R-b\'s unqualified requirement that every route serve; the ' +
+      'controller carries the same argument at its site. Nothing else moves: ' +
+      'the stored key and value, the mail hand-off, the success payload and ' +
+      'the duplicate-address branch are unchanged, so the difference is ' +
+      'confined to the outcome of the one drive that never answered and to ' +
+      'the timeout register that recorded it.',
+    arguedIn : 'docs/preserved-quirks.md 11.23, deviation 17, and ' +
+      'docs/baseline-parity.md',
+    targets  : ['POST /api/users/email payload', 'timeouts'],
     fields   : {
-      http : ['followed']
+      // The whole observable outcome of a drive that previously produced none:
+      // a recorded timeout carries no status, no content type and no body, so
+      // every one of these moves from its no-response value to a real one.
+      http    : ['status', 'contentType', 'bodyKeys', 'timedOut', 'error',
+        'validationObserved', 'flashProofComparable', 'unexpectedFlashKeys'],
+      // The run-level timeout list is compared whole, and it is exactly the
+      // record of which drives never answered.
+      summary : ['timeouts']
     }
   }
+  // WITHDRAWN RULES, deleted rather than left dormant.
+  //
+  // `R9-signup-error-outlets` authorized the extra `flash.validation` outlets
+  // an earlier build added to lib/views/signup.html for `fullname` and
+  // `username`. Every file under lib/views/ has been restored to the base
+  // commit's bytes (`git diff 2f8712a -- lib/views` prints nothing) and the
+  // template carries outlets for `email` and `password` only - measured, two
+  // `flash.validation` field conditionals - so the rejecting ladder steers to
+  // the same field on both trees and there is nothing left to authorize.
+  //
+  // `D12-login-failure-response` authorized the merged login failure message.
+  // The MESSAGE half of that remediation is withdrawn: `'Unknown user ' +
+  // requested` is the base commit's string again at
+  // lib/controllers/users.js:549, and only the RATE half - the exponential
+  // backoff on repeated failures, which changes no response body - is
+  // retained, so `POST /login`'s followed page renders the baseline's own text
+  // on both trees.
+  //
+  // `F04-upload-validation-relocated` authorized moving `POST /file`'s and
+  // `POST /file/avatar`'s `validate` blocks into their handlers. Both
+  // declarations carry the base commit's schema again, so both trees enumerate
+  // 102 targets and the two routes are back under `R1-upload-payload-multipart`
+  // with the other two upload routes.
+  //
+  // A dormant rule is not harmless: it would silently re-authorize the
+  // difference if the behaviour reappeared, which is the regression this
+  // register exists to catch.
 ];
 
 // Baseline targets whose ABSENCE from the target matrix is authorized, held to
@@ -11609,20 +12105,17 @@ var AUTHORIZATION_RULES = [
 // An entry that DOES still materialize is a failure, exactly as a rule that
 // does not materialize is - a target reappearing means the remediation was
 // reverted.
-var AUTHORIZED_REMOVED_TARGETS = [
-  {
-    target   : 'POST /file payload',
-    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
-    summary  : 'the upload contract moved into `files.upload`, which answers 400 without echoing the payload',
-    arguedIn : 'docs/baseline-parity.md, route-manifest section'
-  },
-  {
-    target   : 'POST /file/avatar payload',
-    finding  : 'QA W001-F04 (spooled-path disclosure through the validation-failure funnel)',
-    summary  : 'the avatar contract moved into `files.avatar`, which answers 400 without echoing the payload',
-    arguedIn : 'docs/baseline-parity.md, route-manifest section'
-  }
-];
+// EMPTY, and deliberately so: no declaration is authorized to disappear from
+// this gate's enumeration. The two entries this list carried authorized the
+// removal of `POST /file payload` and `POST /file/avatar payload`, whose
+// `validate` blocks an earlier build moved into `files.upload` /
+// `files.avatar` (QA W001-F04). That change has been WITHDRAWN - both routes
+// carry the base commit's schema again, measured, and both trees enumerate 102
+// targets - so the entries described a removal the tree no longer performs.
+// The tool reports exactly that ("this target is declared again in the tree
+// under test, so the removal authorized by ... was reverted and the entry is
+// stale"), which is why they are deleted rather than left in place.
+var AUTHORIZED_REMOVED_TARGETS = [];
 
 /**
  * The removed-target authorization for a baseline target key, or null.

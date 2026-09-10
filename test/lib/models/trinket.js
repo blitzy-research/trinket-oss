@@ -52,7 +52,28 @@ describe('Trinket model', function(){
 
         Trinket.hooks.pre.save.createHash.call(trinket, function() {
           trinket.hash.should.eql(hash);
-          trinket.shortCode.should.eql(hash.substring(0, 10));
+          // CORRECTED from ten characters to the twelve both trees generate.
+          //
+          // `hashify` truncates the sha1 with `.substring(0, 12)` - at
+          // lib/models/trinket.js:126 on this tree and at
+          // lib/models/trinket.js:120 at 2f8712a, the same statement - so a
+          // ten-character expectation has never described the code that
+          // produces the value. The delivered tree had shortened generation to
+          // ten to make this line pass, which is an unregistered behaviour
+          // change R-d forbids; that shortening was withdrawn (recorded at
+          // docs/preserved-quirks.md 11.21) and the expectation is corrected to
+          // the length the application actually produces instead.
+          //
+          // MEASURED, this case's own fixture and the same two stubs
+          // (crypto.createHash and Date.now) driven against EACH tree's own
+          // `createHash` pre-save hook, each with its own node_modules:
+          // target (this tree) produced shortCode 'abcdefghijkl', length 12,
+          // equal to hash.substring(0, 12) and NOT to hash.substring(0, 10);
+          // baseline (2f8712a) produced 'abcdefghijkl', length 12, the same two
+          // outcomes. IDENTICAL. Still an exact equality against the same
+          // `hash` fixture; only the truncation length moved. Its entry in the
+          // assertion-correction record is in test/lib/api/index.js.
+          trinket.shortCode.should.eql(hash.substring(0, 12));
           update.calledWith(trinket.code + trinket.lang + trinket._owner + trinket._parent).should.be.true;
           update.calledWith(trinket.code + trinket.lang + trinket._owner + trinket._parent + now).should.be.true;
           cryptoStub.restore();

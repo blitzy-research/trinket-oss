@@ -74,15 +74,6 @@
   .button {
     margin-bottom: 0;
     // margin-top: 0.6em;
-
-    // Adjacent-target separation (a11y F128). At <=640px this sub-navigation
-    // wraps onto three rows and the zero bottom margin above left the sort/view
-    // row touching the "New Trinket" / new-folder row with a 0px gap. Restoring
-    // half a rem of bottom margin at $small-only separates the wrapped rows;
-    // the single-row desktop layout never sees it.
-    @media #{$small-only} {
-      margin-bottom: 0.5rem;
-    }
   }
 
   .title {
@@ -93,48 +84,9 @@
     }
   }
 
-  // Mobile-only touch-target sizing for the breadcrumb links (a11y F127).
-  // Foundation's breadcrumb crumbs are 11px line-height floats, measured
-  // 45x16 (home icon) and 92.8x11 ("My Trinkets") at 375px - both under the
-  // 44x44 minimum. min-height grows the hit area and align-items keeps the
-  // glyph and the label optically where they are. Safe here because the rule
-  // above puts .title in normal flow at $small-only, so #listview-options
-  // floats *below* the breadcrumb and is pushed down rather than overlapped.
-  .title.breadcrumbs > a {
-    @media #{$small-only} {
-      display: inline-flex;
-      align-items: center;
-      min-height: 44px;
-      min-width: 44px;
-      // Adjacent-target separation (a11y F128): the two crumbs measured 0px
-      // apart at 375px. Foundation renders the "/" divider as the crumb's own
-      // `:after`, i.e. *inside* this anchor's box, so a padding-right would
-      // only move the slash away from the icon - it takes a margin to put real
-      // space between the two hit areas.
-      margin-right: rem-calc(8);
-    }
-  }
-
   #listview-options {
     float: left;
     position: relative;
-
-    // Adjacent-target separation (a11y F128), $small-only only. The
-    // `.search-input` plate below is `position: absolute`, so it contributes
-    // nothing to this container's width. Opening the search additionally hides
-    // `#listview-menus` (Angular `ng-hide`), which collapsed this container
-    // from ~269px to ~98px and let the right-floated "New Folder" button
-    // re-wrap *up* alongside the open search field, so the two hit areas
-    // overlapped by 9px instead of being separated.
-    //
-    // Reserving the plate's own footprint - its 5.65rem offset plus the 150px
-    // width it is given at this breakpoint - keeps the float wrapping onto the
-    // row below, which is exactly where it sits while the search is closed.
-    // This is inert at every wider viewport, and inert here in the closed
-    // state, because the container already exceeds this width in both cases.
-    @media #{$small-only} {
-      min-width: rem-calc(241);
-    }
 
     label {
       display: none;
@@ -161,48 +113,6 @@
       height: 3rem;
       z-index: 5;
       overflow: hidden;
-
-      // Adjacent-target separation (a11y F128). This element is a clipping and
-      // animation container for the sliding input, not a control - but it is a
-      // fixed 450px wide regardless of viewport, so at 375px it spanned
-      // x 122 -> 572: past the right edge of the screen and straight across the
-      // "New Folder" button below it. `&.focus` then raises it to z-index 20,
-      // so it captured New Folder's centre and a real tap dismissed search
-      // instead of opening the modal.
-      //
-      // The pointer-events pass-through below is therefore NOT breakpoint
-      // specific, and scoping it to $small-only (as an earlier revision did)
-      // left the same capture in place at every wider viewport. Measured at
-      // 768x900 on /library/trinkets: the plate is {x 318.19, y 58, w 450,
-      // h 48} with `pointer-events: auto`, while "New Trinket" is centred at
-      // (689.73, 82) and "new folder" at (598.82, 82) - `elementFromPoint`
-      // returned DIV.search-input at both, and real clicks at both opened
-      // nothing. 768px is $medium-only, where the input itself is only 225px
-      // wide (the `input` rule below), so the transparent remainder of the
-      // 450px plate is what covers the two controls.
-      //
-      // So: pointer events pass through the container at EVERY width, leaving
-      // only the visible input and its results list hit-testable, which also
-      // removes the click capture while the open-state transition is still
-      // running. `&.focus`'s raised z-index needs no companion rule, because
-      // `pointer-events: none` is inherited by descendants unless overridden
-      // and the pair below is the override that keeps the control usable in
-      // every state. None of this participates in layout: the plate still
-      // measures 450x48 at 768px, only its hit-testing changes.
-      pointer-events: none;
-
-      input,
-      .f-dropdown {
-        pointer-events: auto;
-      }
-
-      // The width narrowing stays $small-only: it is the separate geometry
-      // half of the 375px fix, matching the plate to the width the input is
-      // actually given at that breakpoint (the `input` rule below also uses
-      // 150px here), and it must not change the plate at any wider viewport.
-      @media #{$small-only} {
-        width: 150px;
-      }
 
       input {
         display: block;
@@ -254,33 +164,6 @@
       display: inline-block;
       z-index: 10;
       position: relative;
-    }
-  }
-
-  // Touch-target sizing and separation for the dropdown CHOICES (a11y
-  // F127/F128). The toolbar buttons that open these panels are already 48px,
-  // but the options inside them are Foundation's default f-dropdown rows -
-  // measured 34px in the Sort and View panels and 37.5px in the New Trinket
-  // panel at 375px, with zero space between consecutive rows. An option is as
-  // much a touch target as the button that reveals it, so the same 44px
-  // minimum and 8px block-axis gap apply.
-  //
-  // `min-height` alone, deliberately: these rows contain an icon element
-  // followed by a text node, and switching them to flex would make that
-  // whitespace collapse and visibly close the gap between glyph and label.
-  // Growing the block box enlarges the hit area without touching text layout.
-  // Scoped to $small-only - pointer-driven desktop panels keep their density.
-  .f-dropdown > li {
-    @media #{$small-only} {
-      margin-bottom: rem-calc(8);
-
-      &:last-child {
-        margin-bottom: 0;
-      }
-
-      > a {
-        min-height: 44px;
-      }
     }
   }
 

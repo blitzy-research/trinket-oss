@@ -241,7 +241,137 @@ const EDGE_CLASS = Object.freeze({
 // would approve any difference at all. An entry must name the exact edge id
 // and the exact from/to outcome, and a difference that does not match the
 // entry it claims is still a failure.
-const APPROVED_DEVIATIONS = Object.freeze([]);
+//
+// WHY IT IS NO LONGER EMPTY, and what changed to make that correct rather
+// than convenient. The paragraph above is right about AAP §0.7's image
+// deviation and it is left standing. What it did not anticipate is that the
+// register in docs/preserved-quirks.md §11 - the canonical one, which no tool
+// extends - GREW BY MEASUREMENT after the plan was frozen, by the procedure
+// AAP §0.1.2 rule T-6 lays down for exactly that: a conflict is named, the
+// controlling requirement is decided, the argument is written out, and the
+// deviation is registered. Several of those argued deviations ARE error edges,
+// so this list being empty stopped meaning "no error edge deviates" and
+// started meaning "the error edges that deviate are reported as unexplained
+// changes". An entry here does not approve anything: §11 approves, this list
+// only records which row carries an approval already argued there, and every
+// entry names the section that carries the argument so a reader can check it.
+//
+// Each entry is checked the way the paragraph above requires - exact id AND
+// exact from/to outcome text - so a row that changed differently than the
+// section describes is still open. `from: null` is the ADDED-row form: the
+// deviation put a response where the baseline had no site at all, and there is
+// no from-outcome to name. It is not a wildcard: the id must be registered and
+// the to-outcome must match verbatim.
+const APPROVED_DEVIATIONS = Object.freeze([
+  {
+    // Deviation 9, docs/preserved-quirks.md §11.13. The page-level course copy
+    // answers where the baseline process exited. Measured on both trees by
+    // test/parity/replay.js, whose own closed register carries the same
+    // decision for the two scenario ids that drive it: the baseline severs the
+    // connection (recorded outcome `transport-failure`), the target answers -
+    // 302 to the declared failure redirect for HTML, its own failure payload
+    // for JSON.
+    // The id is the BASELINE row's, because a paired row is keyed by the
+    // baseline edge it preserves: this baseline `errparam` site is paired to
+    // the target's `cps` site by the subject they both guard
+    // (`guards:request.pre.course.copy`), and the gate and the document both
+    // print the baseline id for it.
+    id: 'courses.copy.errparam.1',
+    from: 'none / no response / answers nothing / route handler',
+    to: 'Layer 2 / no response / answers / route handler',
+    deviation: 9,
+    approvedIn: 'docs/preserved-quirks.md §11.13 (AAP §0.7 rule R-b)',
+    why: 'R-d requires the outcome to be preserved and R-b requires the ' +
+      'application to run; the baseline outcome here is the termination of ' +
+      'the process, which no client can rely on and no other route consents ' +
+      'to, so R-b controls and the branch answers instead.'
+  },
+  {
+    // Deviation 17. The email-change request settles instead of hanging until
+    // the harness budget. Measured: the base commit never responds - its
+    // `Store.set(key, val, cb)` hands a third argument to an arity-2 async
+    // `set`, so the callback never runs - and the migrated tree answers 200
+    // `{"success":true}` in ~13ms with the confirmation mail sent.
+    // Baseline id again, for the reason given on the entry above: the
+    // baseline's `cps.2` site - the `Store.set` callback that never runs - is
+    // paired to the target's `response.3`.
+    id: 'users.sendEmailChange.cps.2',
+    from: 'none / no response / answers nothing / route handler',
+    to: 'Layer 2 / the route\'s request.fail response / answers / route handler',
+    deviation: 17,
+    approvedIn: 'docs/preserved-quirks.md §11 (AAP §0.7 rule R-b)',
+    why: 'the base commit never settles this request at all, and §11.1 ' +
+      'decided that the absence of a response is not behaviour a client can ' +
+      'depend on; the same argument applies here.'
+  },
+  {
+    // Deviation 18. The embed view parameter guard. Measured on both trees:
+    // `curl --path-as-is /embed/beta/foo%00bar` kills the baseline process
+    // (curl exit 52, then connection refused; stderr carries `TypeError
+    // [ERR_INVALID_ARG_VALUE] ... without null bytes` at
+    // @hapi/vision/lib/manager.js:333), and answers 500 / 1600 bytes on the
+    // migrated tree - byte-identical to `/embed/beta/harmless-unknown-slug`,
+    // with the process still serving afterwards.
+    id: 'trinket.beta.response.1',
+    from: null,
+    to: 'Layer 3 / 500 / answers / route handler',
+    deviation: 18,
+    approvedIn: 'docs/preserved-quirks.md §11 (AAP §0.7 rule R-b)',
+    why: 'a control character in the view path reaches @hapi/vision as a ' +
+      'filesystem path and terminates the process; R-b controls for the ' +
+      'reason §11.9 gives, and the guard answers the same 500 an unknown ' +
+      'slug already answers rather than inventing a status.'
+  },
+  {
+    // Deviation 5, docs/preserved-quirks.md §11.9 with the measurement and the
+    // two bounds at §10.7. The three throws below ARE those bounds: entry
+    // count, total uncompressed bytes, and declared expansion ratio.
+    id: 'trinket.assertZipCodeWithinBounds.response.1',
+    from: null,
+    to: 'Layer 1 / 500 / answers / internal callee',
+    deviation: 5,
+    approvedIn: 'docs/preserved-quirks.md §11.9, measured at §10.7 (AAP §0.7 rule R-b)',
+    why: 'an unbounded `zipCode` expansion exhausts the heap and ends the ' +
+      'process, which R-b forbids; the bound refuses the archive at zero ' +
+      'cost instead, and the 500 it answers is the same status the streamed ' +
+      'read reached by exhaustion.'
+  },
+  {
+    id: 'trinket.assertZipCodeWithinBounds.response.2',
+    from: null,
+    to: 'Layer 1 / 500 / answers / internal callee',
+    deviation: 5,
+    approvedIn: 'docs/preserved-quirks.md §11.9, measured at §10.7 (AAP §0.7 rule R-b)',
+    why: 'the total-uncompressed-bytes bound, argued with the entry-count ' +
+      'bound above and in the same section.'
+  },
+  {
+    id: 'trinket.assertZipCodeWithinBounds.response.3',
+    from: null,
+    to: 'Layer 1 / 500 / answers / internal callee',
+    deviation: 5,
+    approvedIn: 'docs/preserved-quirks.md §11.9, measured at §10.7 (AAP §0.7 rule R-b)',
+    why: 'the declared-expansion-ratio bound, argued with the two above and ' +
+      'in the same section.'
+  },
+  {
+    // Deviation 5's other half: the DETACHED CHAIN IS TERMINATED. §11.9's
+    // decision is "the read is bounded and the chain is terminated", and this
+    // is the terminating handler in `trinket.draft` - a site the baseline does
+    // not have, which is why the row is an added one. It produces no response
+    // a client sees: the request has already been answered when it runs, and
+    // what it prevents is the unhandled rejection that ended the process
+    // under Node 22's `--unhandled-rejections=throw` default.
+    id: 'trinket.draft.handler.1',
+    from: null,
+    to: 'none / no response / answers / route handler',
+    deviation: 5,
+    approvedIn: 'docs/preserved-quirks.md §11.9, measured at §10.7 (AAP §0.7 rule R-b)',
+    why: 'the terminal handler on the detached draft chain. R-b controls for ' +
+      'the reason §11.9 gives: the client has already been answered, and ' +
+      'what the missing handler destroyed was every other request in flight.'
+  }
+]);
 
 const FUNNEL = Object.freeze({
   L1: 'Layer 1',
@@ -2823,6 +2953,48 @@ function carrierExtent(codeOnly, functions, carrier, provisionalEnd, hardEnd) {
     }
   }
 
+  // THE DECLARATION FORM WHOSE VALUE POSITION IS BEHIND ITS NAME.
+  //
+  // `function downloadZip(request, h) { ... }` binds a function to a name with
+  // the keyword BEFORE the name, so there is no value position after the name
+  // for the loop below to read: that loop scans forward from the binding token
+  // for a `function` keyword within six characters (the width of `async `),
+  // and for this form the keyword is nine characters BEHIND `i`. Every
+  // `function NAME` carrier therefore fell through to `provisionalEnd` - the
+  // distance-to-the-next-declaration reading the comment above this function
+  // documents as broken - and the breakage is exactly the one described there:
+  // a nested declaration inside the body becomes the "next" carrier and ends
+  // its parent early, leaving the rest of the parent's body attributed to no
+  // carrier at all.
+  //
+  // MEASURED, on the two trees this generator compares. 56 carriers in the
+  // target tree and 9 in the baseline had an extent that was not their body:
+  // `trinket.downloadZip` ended at line 2436 with its body running to 2618,
+  // because the target extracts a nested `removeZipDir` helper per AAP 0.6.4
+  // and the baseline has none - so 8 edges inside one unchanged function were
+  // attributed to `trinket.downloadZip (module-local)` on the baseline and to
+  // module scope on the target, and the same statements were then reported as
+  // 4 baseline rows "missing from the target" and 4 target rows "new in the
+  // target". `auth.legacyJsonRequest` lost 120 lines the same way, and
+  // `admin.errorResponse` ran 52 lines PAST its body and claimed statements
+  // belonging to the function after it. None of that is a difference between
+  // the trees; all of it is this reading.
+  //
+  // The parameter list is what identifies the function record unambiguously:
+  // `i` sits on the `(` that opens it, and `findFunctions` records
+  // `paramsStart` at that same offset for exactly one record, because two
+  // function keywords cannot share one parameter list. So this resolves the
+  // declared value without guessing, and a form no record matches - a method
+  // shorthand this scanner does not record, say - falls through to the reading
+  // below exactly as before.
+  if (codeOnly[i] === '(') {
+    for (let f = 0; f < functions.length; f++) {
+      if (functions[f].paramsStart === i) {
+        return Math.min(functions[f].bodyEnd + 1, hardEnd);
+      }
+    }
+  }
+
   for (let f = 0; f < functions.length; f++) {
     const fn = functions[f];
     if (fn.keywordAt < i) {
@@ -4605,6 +4777,29 @@ function memberMentions(corpus, declaringFile, member, declStart, declEnd) {
   const escaped = member.replace(/[$]/g, '\\$');
   const qualified = new RegExp('\\.\\s*' + escaped + '\\b', 'g');
   const quoted = new RegExp("['\"]" + escaped + "['\"]", 'g');
+  // THE BARE-IDENTIFIER FORM, and why its absence was a false proof of death.
+  //
+  // A module-local function is referenced by its own name, with nothing in
+  // front of it: `supportedDownloadFormats = { 'json': downloadJSON, 'zip':
+  // downloadZip }` in lib/controllers/trinket.js, indexed and CALLED twelve
+  // hundred lines later as `supportedDownloadFormats[extension](request, h)`.
+  // Neither of the two forms above matches that: it is not `.downloadZip` and
+  // it is not `'downloadZip'`. So the search returned zero mentions for a
+  // function the tree reaches on every `.zip` and `.json` download, and the
+  // caller of this function then read that zero as PROOF of dead code and
+  // excluded the edges inside it from the closure gate entirely - measured, on
+  // the delivered document, as `trinket.downloadJSON.response.1` reported "not
+  // compared - proven unreachable" while `GET /{userSlug}/{trinketSlug}.json`
+  // answers through it.
+  //
+  // A missed mention is the one direction this search must never fail in: a
+  // mention it does not find removes a row from the gate, and a row removed
+  // from the gate is a mapping nobody checked. The bare form is therefore
+  // searched too, over `codeOnly` so that a name inside a comment or a string
+  // body does not count, and with the leading character required to be a
+  // non-identifier and not a dot - `.foo` is the qualified form's business and
+  // `foobar` is a different name.
+  const bare = new RegExp('(^|[^A-Za-z0-9_$.])(' + escaped + ')\\b', 'g');
   const sites = [];
   corpus.forEach(function (file) {
     let m;
@@ -4619,6 +4814,20 @@ function memberMentions(corpus, declaringFile, member, declStart, declEnd) {
     quoted.lastIndex = 0;
     while ((m = quoted.exec(file.src)) !== null) {
       sites.push({ file: file.relPath, line: lineNumberAt(file.src, m.index), form: 'string' });
+    }
+    bare.lastIndex = 0;
+    while ((m = bare.exec(file.codeOnly)) !== null) {
+      const at = m.index + m[1].length;
+      // The declaration itself is not a mention of it, and neither is a
+      // recursive reference from inside its own body: the window excluded here
+      // is the declaration region the caller passed, which for a
+      // `function NAME` carrier is the whole function after the extent fix in
+      // `carrierExtent`. What remains is a reference from somewhere else.
+      if (file.relPath === declaringFile &&
+          at >= declStart - member.length - 16 && at <= declEnd) {
+        continue;
+      }
+      sites.push({ file: file.relPath, line: lineNumberAt(file.src, at), form: 'bare' });
     }
   });
   return { searched: true, mentions: sites.length, sites: sites };
@@ -4710,14 +4919,56 @@ function analyseFile(relPath, src, bindings) {
     // had nothing left to consult and returned `unresolved` - fatal - for
     // code two routed handlers demonstrably call. Whether a route binds it is
     // resolved by measurement here, not assumed from the export.
+    // A LIFECYCLE EXPORT NO ROUTE BINDS is the third case, and it is traced
+    // for the same reason: `surfaceFor` reads a `module.exports.<name> =
+    // function(request, ...)` in lib/util/helpers.js as a pre-handler from its
+    // shape, while route resolution finds no route naming it. Whether hapi can
+    // ever invoke it is then a question about the rest of the tree, and it is
+    // answered by measurement here rather than by the export's shape.
+    //
+    // MEASURED: `helpers.trinketByOwnerAndSlug` is named exactly once in the
+    // analysed corpus on both trees - by its own declaration. No route binds
+    // it, no module calls it and nothing hands it on, so hapi never invokes
+    // it and its five edges have no outcome on either tree. Without this
+    // tracing they were compared anyway, and the comparison reported the two
+    // trees' readings of one byte-identical function as five changed rows -
+    // the shim's `reply(err)` contract against hapi 21's, on code neither
+    // runtime ever reaches.
     if (surface === SURFACE.INTERNAL ||
-        (surface === SURFACE.HANDLER && !(routing.routes || []).length)) {
+        ((surface === SURFACE.HANDLER || surface === SURFACE.PRE) &&
+          !(routing.routes || []).length)) {
       // Traced rather than assumed: see internalCallerSurfaces.
       const traced = internalCallerSurfaces(carrier);
       edge.callerSurfaces = traced.surfaces;
       edge.callers = traced.callers;
       edge.valueReferences = traced.valueReferences;
       edge.reachability = traced.reachability;
+
+      // The proof, and it is the SAME proof the internal-callee branch of
+      // `inheritedSurfaceFunnel` requires: the corpus was searched and holds
+      // no mention of this member outside its own declaration, and nothing
+      // was traced that calls it or hands it on. For a lifecycle export that
+      // means hapi is never handed it either, because the route table is the
+      // only thing that hands hapi a pre-handler and no route names this one.
+      // Recorded on the edge, so the closure comparison excludes the row for
+      // want of an outcome on either tree rather than pairing two readings of
+      // unreachable code.
+      if (surface === SURFACE.PRE &&
+          traced.reachability && traced.reachability.searched &&
+          traced.reachability.mentions === 0 &&
+          !traced.surfaces.length && !traced.callers.length) {
+        edge.unreachableProven = true;
+        edge.notes = (edge.notes || []).concat(
+          'PROVEN UNREACHABLE. This export has the shape of a lifecycle ' +
+          'pre-handler, but no route in either route module names it, the ' +
+          'analysed corpus holds no mention of it outside its own ' +
+          'declaration, and no caller or value reference was traced - so ' +
+          'nothing hands it to hapi and nothing calls it directly. It is ' +
+          'dead code: there is no outcome on either tree for R-e to ' +
+          'preserve, and the row is excluded from the closure gate for that ' +
+          'reason rather than closed.'
+        );
+      }
     }
     Object.keys(spec).forEach(function (key) {
       if (key !== 'notes' && key !== 'endLine') {
@@ -4918,6 +5169,84 @@ function analyseFile(relPath, src, bindings) {
       thrownKind: kind,
       returnedBoom: !unbound,
       propagation: propagationAt(ctx, at)
+    });
+  }
+
+  // -- Pass H2: a Boom factory SETTLED into the promise the carrier awaits --
+  // Pass H asks whether the factory's value is RETURNED, and that question
+  // misses the one position this migration created. Where a converted handler
+  // keeps a callback interface it wraps it as
+  //
+  //   return await new Promise(function (resolve) {
+  //     Export.findById(id, function (err, doc) {
+  //       return resolve(Boom.notFound('Export not found'));
+  //     });
+  //   });
+  //
+  // and the factory's value is an ARGUMENT to `resolve`, not a returned
+  // expression, so `isReturned` says no and Pass H skips the site. It is
+  // nonetheless the response: `resolve` settles the promise the carrier
+  // returns, which is the promise-shaped spelling of the same disposition.
+  //
+  // MEASURED, and the reason this pass exists rather than an argument for it:
+  // nine sites carry the shape on the target tree and none on the baseline,
+  // where no handler had a promise wrapper to settle. Seven of the nine are
+  // the unbound-`Boom` branches of `users.getExportStatus` (lib/controllers/
+  // users.js:1964, :1968, :1999) and `users.downloadExport` (:2035, :2039,
+  // :2043, :2047), and their baseline counterparts - getExportStatus's
+  // `response.2/3/4` and downloadExport's `response.2/3/4/5` - were reported
+  // as SEVEN baseline edges with no target counterpart. They have one; the
+  // scanner could not see it. That is a defect in this tool and not a change
+  // in the application, which is the same conclusion Passes I and J reached
+  // about `return err` and `catch (err) { return err }`, and this pass is
+  // written to their pattern.
+  //
+  // `reject(...)` is deliberately not matched. It hands the value to the
+  // promise's REJECTION, which the carrier's catch-all funnel then maps - the
+  // PROPAGATE disposition the existing passes already record - and rowing it
+  // here would claim the site answers with the Boom when it answers with
+  // whatever Layer 1 makes of a rejection.
+  const settledBoom = /\bresolve\s*\(\s*((?:Boom|errors|Hapi)\.(?:error\.)?[A-Za-z0-9_$]+)/g;
+  while ((m = settledBoom.exec(codeOnly)) !== null) {
+    const factoryAt = m.index + m[0].length - m[1].length;
+    // Pass H owns a factory whose own value is returned; skipping it here is
+    // what keeps one site from being rowed twice with two different shapes.
+    if (isReturned(codeOnly, factoryAt)) {
+      continue;
+    }
+    // The locator sits on `resolve`, and on the `return` keyword when one is
+    // directly in front of it, so the row reads at the statement a person
+    // would point at rather than in the middle of an argument list.
+    let settledLocator = m.index;
+    const settledBack = skipSpaceBack(codeOnly, m.index - 1);
+    if (settledBack >= 0 && isIdentifierChar(codeOnly[settledBack])) {
+      const settledPreceding = readMemberPathBack(codeOnly, settledBack);
+      if (settledPreceding.text === 'return') {
+        settledLocator = settledPreceding.start;
+      }
+    }
+    // Binding-resolved exactly as Pass H does it, and for the same reason.
+    // JavaScript evaluates the argument before `resolve` is called, so an
+    // unbound holder throws while building the argument and the promise is
+    // never settled at all: the site produces no response of its own and the
+    // throw escapes the callback. A bound holder settles the promise with a
+    // real Boom, which the carrier returns and hapi maps by its status.
+    const settledKind = valueKind(m[1], facts.bindings, factoryAt);
+    const settledUnbound = settledKind.kind === 'unbound-reference';
+    terminalOffsets.push(settledLocator);
+    push(settledLocator, {
+      precedence: 10,
+      edgeClass: EDGE_CLASS.RESPONSE,
+      disposition: DISPOSITION.BOOM,
+      shape: settledUnbound
+        ? 'synchronous throw (ReferenceError: ' + settledKind.holder +
+          ' is not defined) evaluating the argument of resolve(' +
+          summarise(src.slice(factoryAt, factoryAt + 60).split('\n')[0]) + ')'
+        : 'resolve(' + summarise(src.slice(factoryAt, factoryAt + 60).split('\n')[0]) +
+          ') - settles the promise the carrier awaits with the Boom as the response',
+      thrownKind: settledKind,
+      returnedBoom: !settledUnbound,
+      propagation: propagationAt(ctx, settledLocator)
     });
   }
 
@@ -5891,6 +6220,51 @@ function inheritedSurfaceFunnel(edge, pre) {
         return FUNNEL.NONE;
       }
       edge.unresolved = true;
+
+      if (reach.searched && reach.mentions > 0) {
+        // REACHED, BUT BY A REFERENCE WITH NO SURFACE, and the two halves of
+        // that sentence are separately load-bearing.
+        //
+        // Reached: the corpus search found this member named outside its own
+        // declaration, at the sites listed below, so "dead code" is refuted
+        // and the branch above must not claim it. Before the bare-identifier
+        // form was searched (see `memberMentions`) this case was
+        // indistinguishable from death, and `trinket.downloadZip` - reached on
+        // every `.zip` download through `supportedDownloadFormats[extension]
+        // (request, h)` - was reported as proven unreachable and its edges
+        // were excluded from the closure gate on both trees.
+        //
+        // No surface: every reference is a VALUE handed into something this
+        // analysis does not follow - a module-scope dispatch table, an export,
+        // an argument - so the caller that ultimately invokes it, and with it
+        // the funnel an error here reaches, is not resolved. That is a limit of
+        // the analysis and not a fact about the tree, so the funnel is not
+        // claimed and the row stays UNRESOLVED: it is compared, and an
+        // agreement between the trees is recorded as PROVISIONAL rather than
+        // as closure. Both trees are read by this same rule, so the comparison
+        // is symmetric.
+        edge.notes = (edge.notes || []).concat(
+          'REACHED, FUNNEL NOT ATTRIBUTED. No caller of this function was ' +
+          'traced to a surface, but the corpus search found it named ' +
+          reach.mentions + ' time(s) outside its own declaration (' +
+          (reach.sites || []).slice(0, 4).map(function (site) {
+            return site.file + ':' + site.line + ' (' + site.form + ')';
+          }).join(', ') +
+          ((reach.sites || []).length > 4
+            ? ', and ' + ((reach.sites || []).length - 4) + ' more'
+            : '') +
+          '), so it is NOT dead code. Every reference hands the function on as ' +
+          'a value - a dispatch table, an export or an argument - rather than ' +
+          'calling it, and this analysis does not follow a value across that ' +
+          'escape, so the funnel an error here reaches is decided by whatever ' +
+          'invokes the value and is not claimed on this row. The row is ' +
+          'compared against the other tree by the same rule and an agreement ' +
+          'is recorded as PROVISIONAL, not as closure. Settle it by naming ' +
+          'the invoking site before ticking the row.'
+        );
+        return FUNNEL.NONE;
+      }
+
       edge.notes = (edge.notes || []).concat(
         'No caller was traced for this function and the corpus search could ' +
         'not be run, so no funnel is claimed for this edge and its ' +
@@ -7155,7 +7529,16 @@ function treeProvenance(dir, toolRoot) {
     dirty: head ? status.length > 0 : false,
     dirtyPaths: status.length
       ? status.split('\n').map(function (line) {
-        return line.slice(3).trim();
+        // The status field is TWO characters and a separator, but the first
+        // of the two is a space for an unstaged modification - and `git()`
+        // trims the output it returns, which eats exactly that space on the
+        // FIRST line and nowhere else. A fixed `slice(3)` therefore took one
+        // character too many from the first path and nothing was wrong with
+        // any other: the delivered document named `pp.js`, a file that does
+        // not exist, where the tree had an unstaged `app.js`. Stripping the
+        // leading whitespace first and then the status letters makes the
+        // parse independent of that trim.
+        return line.replace(/^\s*/, '').replace(/^[MADRCU?!]{1,2}\s+/, '').trim();
       }).filter(Boolean).sort()
       : [],
     isBaselineCommit: isBaseline,
@@ -8159,9 +8542,19 @@ function joinTrees(baselineEdges, targetEdges) {
       targetOutcome: outcome,
       closure: edge.unreachableProven
         ? CLOSURE.UNREACHABLE
-        : (outcome.producesResponse ? CLOSURE.ADDED : CLOSURE.NO_MAPPING),
+        : (outcome.producesResponse
+          // An added site that produces a response is a behaviour change R-d
+          // prohibits - UNLESS docs/preserved-quirks.md §11 argued this exact
+          // site into its register, which is what an `from: null` entry in
+          // APPROVED_DEVIATIONS records. The lookup is by exact id and exact
+          // outcome text, so an added row that produces something other than
+          // what §11 describes is still ADDED and still open.
+          ? (approvedDeviationFor(edge.id, null, outcome)
+            ? CLOSURE.APPROVED
+            : CLOSURE.ADDED)
+          : CLOSURE.NO_MAPPING),
       differences: [],
-      approved: null
+      approved: approvedDeviationFor(edge.id, null, outcome)
     };
   });
 
@@ -8506,6 +8899,18 @@ function approvedDeviationFor(id, baselineOutcome, targetOutcome) {
     const entry = APPROVED_DEVIATIONS[i];
     if (entry.id !== id) {
       continue;
+    }
+    // The ADDED-row form. `from: null` says the deviation put a response
+    // where the baseline had no site, so there is no from-outcome to compare -
+    // and it is checked as strictly as the paired form: the entry must be
+    // null exactly when there is no baseline outcome, so an entry written for
+    // an added row can never approve a change to a PAIRED row's outcome and
+    // an entry written for a paired row can never approve a new site.
+    if (entry.from === null || baselineOutcome === null) {
+      return entry.from === null && baselineOutcome === null &&
+        entry.to === outcomeText(targetOutcome)
+        ? entry
+        : null;
     }
     if (entry.from === outcomeText(baselineOutcome) && entry.to === outcomeText(targetOutcome)) {
       return entry;
@@ -9609,7 +10014,14 @@ function renderHowToRead(model) {
   lines.push('| Document | Owns |');
   lines.push('|---|---|');
   lines.push('| this document | the per-edge status, payload or redirect, side effects and timing, and the funnel each edge must still reach |');
-  lines.push('| `' + SIBLING_DOCS.quirks + '` | why a baseline defect is kept, its measurement, and the two approved deviations |');
+  // The count is stated as the register's two figures rather than as a literal
+  // "two", which is what went stale here: docs/preserved-quirks.md 11.0 has
+  // issued EIGHTEEN numbers, THIRTEEN of which describe the delivered tree,
+  // five having been withdrawn on measurement with their numbers retired. The
+  // approved rows this tool carries in APPROVED_DEVIATIONS cite four of them
+  // (5, 9, 17 and 18), so a stale count here would contradict this file's own
+  // register.
+  lines.push('| `' + SIBLING_DOCS.quirks + '` | why a baseline defect is kept, its measurement, and the approved deviations -- eighteen numbered, thirteen of them live in the delivered tree, of which this document\'s own approved rows cite deviations 5, 9, 17 and 18 |');
   lines.push('| `' + SIBLING_DOCS.conversion + '` | the per-site return/await disposition for every handler body the conversion touches |');
   lines.push('');
   lines.push('So a row states the outcome to preserve and points at the quirk catalogue for');
@@ -9807,10 +10219,25 @@ function closureLine(model, edge, row) {
       ', so neither verdict may be borrowed.' + via;
   }
   if (row.closure === CLOSURE.APPROVED) {
+    // Two forms, because a deviation can change a paired outcome OR put a
+    // response where the baseline had no site at all. The second has no
+    // baseline outcome to name, and naming one anyway is what made this line
+    // read `null` for an added row.
+    const approval = row.approved || approvedDeviationFor(
+      row.id, row.baselineOutcome || null, row.targetOutcome);
+    const cite = approval
+      ? ' Deviation ' + approval.deviation + ', approved in ' +
+        approval.approvedIn + ': ' + approval.why
+      : '';
+    if (!row.baselineOutcome) {
+      return 'CLOSED by approved deviation. The baseline has no site here at ' +
+        'all and the target produces ' + outcomeText(row.targetOutcome) +
+        ', which is the response approved for this exact edge.' + cite + via;
+    }
     return 'CLOSED by approved deviation. Baseline produced ' +
       outcomeText(row.baselineOutcome) + ' and the target produces ' +
       outcomeText(row.targetOutcome) + ', which is the change approved for ' +
-      'this exact edge.' + via;
+      'this exact edge.' + cite + via;
   }
   if (row.closure === CLOSURE.CHANGED) {
     return '**OPEN - the outcome changed.** Baseline produced ' +
@@ -11710,7 +12137,19 @@ function generate(options) {
           const differs = (row.differences || []).length
             ? ' - differs in ' + row.differences.join(', ')
             : '';
-          return '  ' + row.id + ' (' + lineRef(edge) + '): ' + row.closure +
+          // A PROVISIONAL row compared equal and its `closure` therefore reads
+          // "closed", which printed on a not-closed line reads as the gate
+          // contradicting itself. It is not: `isOpenRow` holds such a row open
+          // because the equality rests on a reachability fact this analysis
+          // could not resolve, so the state a reader needs is that one and not
+          // the closure label. Naming it here is the same truthfulness fix the
+          // dimensions above are, and it changes no predicate - the row was
+          // already counted open, by the one function that decides.
+          const label = isProvisionalRow(row)
+            ? 'provisional (compared equal, on a reachability fact this ' +
+              'analysis could not resolve)'
+            : row.closure;
+          return '  ' + row.id + ' (' + lineRef(edge) + '): ' + label +
             differs +
             (row.baselineOutcome && row.targetOutcome
               ? ' - baseline ' + outcomeText(row.baselineOutcome) +

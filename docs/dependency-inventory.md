@@ -112,7 +112,7 @@ applied.
 | Declarations removed | — | **22** (18 production, 4 development) |
 | Declarations added | — | **1** (`mongodb-memory-server`) |
 | Removals withdrawn on measurement | — | **1** (`chokidar` — [§4.5](#45-one-removal-withdrawn--chokidar-has-a-live-consumer-after-all)) |
-| `npm audit --omit=dev` | 15 critical, 28 high, 16 moderate — **59** | 0 critical, **1 high**, 6 moderate — **7** |
+| `npm audit --omit=dev` | 15 critical, 28 high, 16 moderate — **59** | 0 critical, **1 high**, 7 moderate — **8** (re-measured at this checkpoint; the seventh moderate is `adm-zip`'s own residual, row 9, and it is one above AAP §0.9.5's figure) |
 | Node-bearing Dockerfiles on a current runtime | 0 of 9 | **9 of 9** |
 
 Counts verified on the delivered manifest:
@@ -144,7 +144,7 @@ the same fork also reaches browsers inside the fetched component bundle, as
 | `js-yaml` | npm | `~3.0.1` | 3.0.2 | `^4.3.2` | **4.3.2** | security (critical) | 3.0.2 is critical and drags `argparse` 0.1.16 → `underscore` 1.7.0, themselves two further critical nodes. The 4.x line is not automatically safe: **≥ 4.3.1 is required** — see row note 6 | One call-site change: `yaml.safeLoad` → `yaml.load` in `config/routes.js`. The parsed value is the 51-entry reserved-username list, so the same usernames are still rejected. `argparse` measured 0.1.16 → 2.0.1 |
 | `jsonwebtoken` | npm | `^5.0.5` | 5.7.0 | `^9.0.2` | **9.0.3** | security (high) | High over `<= 8.5.1`: unrestricted key type, insecure key retrieval, and a signature-validation bypass from an insecure default algorithm | No code change. `sign`/`verify` round-trip the repository's exact shapes on HS256 with the payload preserved. Application-source call sites unchanged: `jwt.sign` ×3 and `jwt.verify` ×1, plus one `jwt.sign` in a spec. **One observable consequence, measured**: the emitted JWS **header key order** changed — 5.7.0 wrote `{"typ":"JWT","alg":"HS256"}`, 9.0.3 writes `{"alg":"HS256","typ":"JWT"}` — so the token string differs from baseline wherever one is rendered, which is the hidden `input#emailToken` at `[T lib/views/includes/shareModals.html:132]` fed by the three `jwt.sign` sites in `lib/controllers/trinket.js`. The **payload segment is identical**, cross-version `verify` succeeds in **both directions**, and `verifyEmailToken` passes no options and compares only the decoded `shortCode`, so nothing functional turns on it. It is not a parity hole either: `test/parity/replay.js`'s `generated-ids` rule *JWT-shaped token* already collapses both header orders to `<generated-token>`, and two probes — `emailtoken-jwt-9x-header-order-normalized` and `emailtoken-jwt-570-header-order-normalized`, related by `mustMatch` — now pin that, so a future narrowing of the rule fails at startup instead of silently failing every page that renders a token |
 | `bull` | npm | `^0.7.0` | 0.7.2 | `^4.16.5` | **4.16.5** | security (high, over a critical nest) | 0.7.2's nested `lodash@3.10.1` is a node of the lodash **critical**, and it drags `semver@4.3.6` and `redis@2.8.0`. **Requires source changes** — see row note 8 | Nest cleared, measured: baseline `bull/node_modules` held `lodash@3.10.1`, `redis@2.8.0`, `redis-parser@2.6.0`, `semver@4.3.6`; delivered nests only `uuid@8.3.2`. Method-presence checking was **not** accepted as evidence, so functional worker tests are the gate |
-| `adm-zip` | npm | `~0.4.4` | 0.4.16 | `^0.6.0` | **0.6.0** | security (high) | High over `< 0.6.0`: a crafted ZIP triggers a 4 GB allocation | Call site unchanged (`new zip()`), but **archive-read behaviour is a changed surface**, so the storage contract and archive-layout cases cover it rather than a call-site diff. It is also the reader that exposed the writer defect in `archiver` 2.1.1, and therefore one of the two reasons that package moved (row 17, §9.5): 0.6.0 validates the central-directory CRC that 0.4.16 trusted, so it throws where 0.4.16 silently returned an empty buffer. **`adm-zip` is also a writer here, and that is client-visible**: the course archive is built by `new zip()` / `addLocalFolder` / `writeZip` at `[T lib/controllers/courses.js:426-432]`, and 0.6.0's container differs from 0.4.16's on `GET /{userSlug}/courses/{courseSlug}/download.zip` — UTF-8 name flag now set on every entry, `versionNeeded` 10 → 20 on deflated entries, central `versionMadeBy` `0x000a` → `0x0314`, directory external attributes `0x41ed0010` → `0x45ed0010` and file attributes `0x01a40000` → `0x81a40000`, with entry names, order, content, CRCs, sizes and the 538-byte length identical. Registered as approved deviation 3 in [`preserved-quirks.md`](preserved-quirks.md) §11.7 and held by the frozen container register in `test/parity/replay.js` |
+| `adm-zip` | npm | `~0.4.4` | 0.4.16 | `^0.6.0` | **0.6.0** | security (high) | High over `< 0.6.0`: a crafted ZIP triggers a 4 GB allocation | Call site unchanged (`new zip()`), but **archive-read behaviour is a changed surface**, so the storage contract and archive-layout cases cover it rather than a call-site diff. It is also the reader that exposed the writer defect in `archiver` 2.1.1, and therefore one of the two reasons that package moved (row 17, §9.5): 0.6.0 validates the central-directory CRC that 0.4.16 trusted, so it throws where 0.4.16 silently returned an empty buffer. **`adm-zip` is also a writer here, and that is client-visible**: the course archive is built by `new zip()` / `addLocalFolder` / `writeZip` at `[T lib/controllers/courses.js:503-505]` (re-measured at this checkpoint; an earlier revision of this cell said `:426-432`, which the file's later edits moved), and 0.6.0's container differs from 0.4.16's on `GET /{userSlug}/courses/{courseSlug}/download.zip` — UTF-8 name flag now set on every entry, `versionNeeded` 10 → 20 on deflated entries, central `versionMadeBy` `0x000a` → `0x0314`, directory external attributes `0x41ed0010` → `0x45ed0010` and file attributes `0x01a40000` → `0x81a40000`, with entry names, order, content, CRCs, sizes and the 538-byte length identical. Registered as approved deviation 3 in [`preserved-quirks.md`](preserved-quirks.md) §11.7 and held by the frozen container register in `test/parity/replay.js`. **The bump leaves a residual MODERATE, and it is this row's own consequence rather than anyone else's**: GHSA-vwc7-r8mq-g2x9 covers `>=0.5.9 <=0.6.0` and the installed version is 0.6.0, while baseline's 0.4.16 sat below the range floor and carried no moderate at all — so closing the high opened this. **There is no forward fix**: `npm view adm-zip dist-tags` returns `{"latest":"0.6.0"}`, and the only `fixAvailable` npm offers is `0.5.8`, a downgrade below the floor flagged `isSemVerMajor: true` that would re-open the very high this row closes. **It is not request-reachable as delivered** — the advisory needs an extraction API, and `grep -rn "extractAllTo\|extractEntryTo\|extractAllToAsync"` over `lib/`, `app.js`, `config/` and `scripts/` returns nothing; the package is a writer here and nothing else. It is the **seventh** moderate in `npm audit --omit=dev`, one more than AAP §0.9.5's figure, and [`deferred-dependencies.md`](deferred-dependencies.md) §5 reports that deviation with the full eight-row table |
 | `lodash` | npm | `^4.17.21` | 4.17.23 | `^4.18.1` | **4.18.1** | security (critical) | Critical over `<= 4.17.23`, whose newest member is the prototype-pollution array-path bypass in `_.unset` / `_.omit` | Call sites unchanged across both consumers: `_.extend` ×4, `_.find` ×2 and `lodash.escape` ×1 in `lib/controllers/trinket.js` and `lib/util/nunjucks.js`. The nested `lodash@3.10.1` node under `bull` clears with the `bull` row |
 | `validator` | npm | `^5.6.0` | 5.7.0 | `^13.15.35` | **13.15.35** | security (high) | High over `<= 13.15.20` (incomplete filtering of special elements; the underlying advisory range reaches `< 13.15.22`), over earlier ReDoS and `isURL` bypass moderates | `validator.isEmail` ×2 is the whole usage, and **the verdict it returns changed**, so the two call sites now route through `the legacy `isEmail` in `lib/controllers/course.js` (§9.1)` — a port of 5.7.0's `isEmail` that delegates the unchanged `isByteLength` back to the installed package. See §9 |
 | `tmp` | npm | `0.0.25` | 0.0.25 | `^0.2.7` | **0.2.7** | security (high) | High over `<= 0.2.5`: path traversal via an unsanitized prefix/postfix. **This was the baseline's single exact pin** — the one row where the declared value was already a version | `tmp.tmpName` is the only call site and is unchanged |
@@ -152,7 +152,7 @@ the same fork also reaches browsers inside the fetched component bundle, as
 | `diff` | npm | `~1.0.8` | 1.0.8 | `^8.0.4` | **8.0.4** | security (high) | High ReDoS over `<= 3.5.0` on the 1.x line, plus a later `parsePatch`/`applyPatch` denial-of-service | `diff.applyPatch` is the only call site, and **it reads a patch dialect the front end still produces**, so it now routes through the `applyLegacyPatch` port in `lib/controllers/course.js` (§9.2), formerly `lib/util/diff-compat.js` — a port of 1.0.8's `applyPatch`. See §9 |
 | `mime` | npm | `~1.2.11` | 1.2.11 | `^4.1.0` | **4.1.0** | security (high) + maintained major | High ReDoS on MIME lookup of untrusted input. The patch that clears it leaves an unmaintained major, which the request does not permit when a maintained one works — see row note 15 | Node 22 supported and synchronously requireable, verified by loading it. `mime.lookup` ×3 → `mime.getType` ×3 and `mime.extension` ×1 → `mime.getExtension` ×1 — **four call sites across two controllers**, enumerated in full in row note 15, which also records the third consuming file's unused import. The rename is mechanical and the census is static; **runtime parity across those sites is a defined gate, not a result this delivery carries** — [`baseline-parity.md`](baseline-parity.md) §5 holds every parity gate's status |
 | `accepts` | npm | `~1.1.0` | 1.1.4 | `^1.3.8` | **1.3.8** | security (high) | High over `<= 1.3.2` via `negotiator` | No code change: `accepts(request).types(['html', 'json'])` in `lib/util/routeParser.js` is unchanged. The one apparent second call site was a false positive — see row note 16 |
-| `archiver` | npm | `^2.0.0` | 2.1.1 | `^7.0.1` | **7.0.1** | **runtime warning + writer defect** — no advisory on either side | Two measured reasons, neither of them security. 2.1.1 emits `[DEP0005] Buffer()` at **module scope** through `zip-stream` 1.2.0 → `compress-commons` 1.2.2, reached on the `require` in `lib/controllers/trinket.js`, so it breaches the zero-deprecation-warning bar on every boot; and the 2.x writer declares `crc32 = 0` and uncompressed size 0 for every deflated entry, which the `adm-zip` 0.6.0 this migration installs (row 9) cannot read back at all. AAP §0.5.1's triage rule authorizes a change for "a runtime warning", and §0.5.1.1's `archiver keep` row is argued on advisories alone and is silent on warnings — see row note 17 and §9.5 | `engines: {"node": ">= 14"}`, satisfied by 22.23.2. **Import-transparent**: the 25-call surface is unchanged, enumerated in *Import transparency* below. Measured on the delivered tree: `node --pending-deprecation --trace-deprecation -e "require('archiver')"` prints **nothing**; `npm run verify:storage` closes **35 of 35** cases with a passing gate, `archive-layout` among them (34 of 35 before the move); `npm run verify:worker` returns **VERDICT PASS**, **109 of 109** checks over 7 jobs on `bull` 4.16.5 with **0 notices** (a FAIL verdict before it); and `npm audit --omit=dev` is **unchanged at 0 critical, 1 high, 6 moderate** with the same seven advisories. **Import-transparent is not byte-transparent, and the difference is registered rather than normalized away**: on `GET /{lang}/{shortCode}.zip` — the one route this package writes, at `[T lib/controllers/trinket.js:2044-2045]` — 7.0.1 declares the entry's real `crc32` `0xf10614e3` and uncompressed size `61` where 2.1.1 declared `0` and `0`, with every other container field and the 182-byte length identical on both trees. That is approved deviation 3 in [`preserved-quirks.md`](preserved-quirks.md) §11.7, held by the frozen container register in `test/parity/replay.js`. It also carries a throughput cost, accepted — and these figures are the **QA performance measurement**, attributed to it rather than measured by any gate in this tree, because none of them measures throughput: single-entry archives are **+5.7…9.6 %** at 8 B (+0.11 ms) and **+7.7…8.5 %** at 1 MB (+0.97 ms) against ±3.2 % and ±1.2 % environmental envelopes, more than offset by **−18.6…−24.6 %** on multi-entry archives. Accepted rather than tuned: the move is justified on the warning and integrity axes above, and R-a authorizes no performance work |
+| `archiver` | npm | `^2.0.0` | 2.1.1 | `^7.0.1` | **7.0.1** | **runtime warning + writer defect** — no advisory on either side | Two measured reasons, neither of them security. 2.1.1 emits `[DEP0005] Buffer()` at **module scope** through `zip-stream` 1.2.0 → `compress-commons` 1.2.2, reached on the `require` in `lib/controllers/trinket.js`, so it breaches the zero-deprecation-warning bar on every boot; and the 2.x writer declares `crc32 = 0` and uncompressed size 0 for every deflated entry, which the `adm-zip` 0.6.0 this migration installs (row 9) cannot read back at all. AAP §0.5.1's triage rule authorizes a change for "a runtime warning", and §0.5.1.1's `archiver keep` row is argued on advisories alone and is silent on warnings — see row note 17 and §9.5 | `engines: {"node": ">= 14"}`, satisfied by 22.23.2. **Import-transparent**: the 25-call surface is unchanged, enumerated in *Import transparency* below. Measured on the delivered tree: `node --pending-deprecation --trace-deprecation -e "require('archiver')"` prints **nothing**; `npm run verify:storage` closes **35 of 35** cases with a passing gate, `archive-layout` among them (34 of 35 before the move); `npm run verify:worker` returns **VERDICT PASS**, **109 of 109** checks over 7 jobs on `bull` 4.16.5 with **0 notices** (a FAIL verdict before it); and `npm audit --omit=dev` is **unchanged by this move** — re-measured at this checkpoint as 0 critical, 1 high, **7 moderate** over **eight** advisory-bearing packages, the same set before and after it. (An earlier revision of this cell said "6 moderate … the same seven advisories"; the arithmetic was one short, and the missing row is `adm-zip`'s own residual, recorded in row 9 and in [`deferred-dependencies.md`](deferred-dependencies.md) §5. Nothing about `archiver` changed it.) **Import-transparent is not byte-transparent, and the difference is registered rather than normalized away**: on `GET /{lang}/{shortCode}.zip` — the one route this package writes, at `[T lib/controllers/trinket.js:2044-2045]` — 7.0.1 declares the entry's real `crc32` `0xf10614e3` and uncompressed size `61` where 2.1.1 declared `0` and `0`, with every other container field and the 182-byte length identical on both trees. That is approved deviation 3 in [`preserved-quirks.md`](preserved-quirks.md) §11.7, held by the frozen container register in `test/parity/replay.js`. **The same difference reaches the export artifact, and that is the one place where a stored file's bytes differ from baseline**: re-measured at this checkpoint on the shape `lib/workers/exports.js` writes for a single-file trinket, an 8-byte `main.py` entry, 7.0.1 declares `crc32 0xed90a708` and uncompressed size **8** where 2.1.1 declared `0x0` and **0**, with the ZIP length identical at 138 bytes and the compressed size identical at 10 — so the exported `main.py` is **8 bytes on this tree and 0 bytes at baseline**, and baseline's own reader (`adm-zip` 0.4.16) extracted an empty string from it while the delivered reader (0.6.0) refuses it outright with `ADM-ZIP: CRC32 checksum failed`. Both readers read 7.0.1's archive correctly. [`baseline-parity.md`](baseline-parity.md) §6.16 carries the two measurement tables. It also carries a throughput cost, accepted — and these figures are the **QA performance measurement**, attributed to it rather than measured by any gate in this tree, because none of them measures throughput: single-entry archives are **+5.7…9.6 %** at 8 B (+0.11 ms) and **+7.7…8.5 %** at 1 MB (+0.97 ms) against ±3.2 % and ±1.2 % environmental envelopes, more than offset by **−18.6…−24.6 %** on multi-entry archives. Accepted rather than tuned: the move is justified on the warning and integrity axes above, and R-a authorizes no performance work |
 
 ### Row notes
 
@@ -487,7 +487,7 @@ from the delivered lockfile entirely**, along with the four development removals
 | **Baseline** | declared `^3.5.3` in `dependencies`, resolved 3.6.0 |
 | **Removed by** | AAP §0.5.1.3, on the ground "no consumer in retained source" |
 | **Delivered** | declared **`^3.5.3` in `dependencies`** again — byte-identical to the baseline declaration — resolving **3.6.0**, with no `optional` and no `peer` flag in the lockfile |
-| **Finding** | none at either version; `chokidar` 3.6.0 carries no advisory, and `npm audit --omit=dev` is unchanged at 0 critical / 1 high / 6 moderate before and after the declaration |
+| **Finding** | none at either version; `chokidar` 3.6.0 carries no advisory, and `npm audit --omit=dev` is unchanged at 0 critical / 1 high / 7 moderate before and after the declaration |
 | **Reason** | It has a live consumer in retained production source. `[T lib/util/nunjucks.js:8]` configures the shared nunjucks environment with `watch: config.isDev \|\| config.isTest ? true : false`, and nunjucks 3.2.4's `FileSystemLoader` implements watching by `require('chokidar')` (`node_modules/nunjucks/src/node-loaders.js:35-37`), throwing `Error: watch requires chokidar to be installed` when it is absent. `config/app.config.js` loads that module at boot, so every `NODE_ENV=test` and `NODE_ENV=development` process needs the package |
 
 **Why the original removal read as correct, and what it actually measured.** §0.5.1.3's criterion is
@@ -550,6 +550,35 @@ module, which R-d forbids and AAP §0.3.1 excludes. The watcher and its `FSEvent
 therefore unchanged, and they stay recorded — not repaired — in
 [`preserved-quirks.md`](preserved-quirks.md) §10.3.
 
+**The AAP's own removals table (§0.5.1.3) lists `chokidar` for removal, and that row is DECLINED on
+this measurement.** The correction is recorded here rather than argued from, because a removals table
+is a specification and disagreeing with one needs evidence:
+
+- **The declaration is identical on both trees.** `chokidar` is declared **`^3.5.3`** in
+  `dependencies` in **both** `package.json` files, resolving **3.6.0** in both — measured by reading
+  each manifest and each installed `node_modules/chokidar/package.json`. So this is not a dependency
+  the migration introduced; it is one the base commit already declares, in the same section, at the
+  same range.
+- **The watcher counts are 114 / 114 / 0** for `test`, `development` and `production`, **on both
+  trees**, and 114 is not an arbitrary figure: `lib/views` holds **26 directories and 88 files**, and
+  26 + 88 = **114**, measured identically in each tree with `find lib/views -type d | wc -l` and
+  `-type f | wc -l`. So the watcher is watching exactly the template tree, once per entry, and the
+  production zero is the `config.isDev || config.isTest` guard resolving false.
+- **The root cause is one expression, byte-identical to baseline.** `lib/util/nunjucks.js:8` reads
+  `nunjucks.configure(config.app.templates, {watch: config.isDev || config.isTest ? true : false,
+  autoescape: true})` — the same text at the same line number in both trees.
+- **Removing or hiding the package breaks the boot.** Driven both ways in one installed tree by
+  removing `chokidar` from `node_modules`: `config/app.config` **fails to load** under `test` and
+  `development` with `Error: watch requires chokidar to be installed`, and loads under `production`.
+  Every `NODE_ENV=test` process is therefore in scope, so honouring the removal row would break
+  **AAP §0.6.5** — the suite could not start — to satisfy §0.5.1.3.
+
+**So the disposition is: the row is declined, and the reason is that the two AAP requirements collide
+and §0.6.5 is the one with a measured consequence.** Nothing was hidden to make the row look honoured
+either: the declaration is in `dependencies`, where baseline had it, rather than moved to
+`devDependencies` or to an `optionalDependencies` block that would satisfy a grep and fail the same
+boot.
+
 ## 5. Development dependencies
 
 | Package | Registry | Baseline declared | Baseline resolved | Target declared | Target resolved | Disposition | Reason |
@@ -607,7 +636,7 @@ back at the baseline version. **The whole episode is recorded rather than erased
 the multipart question will need it.
 
 Two consequences are recorded precisely rather than rounded off. **The audit result in the gated
-scope is unaffected**, re-measured on the delivered tree: 0 critical, 1 high, 6 moderate (§7) —
+scope is unaffected**, re-measured on the delivered tree: 0 critical, 1 high, 7 moderate (§7) —
 `supertest` and `superagent` are development-only and outside `--omit=dev` in either direction. The
 **dev-inclusive** scope did move, and back: the `supertest` 0.8.3 chain (`supertest`, `superagent`,
 and `mime`, `qs` and `cookiejar` beneath them) is in the graph again, which the note below
@@ -638,7 +667,7 @@ section; this table is the version-and-decision half and that document is the re
 every other package here.
 
 **The dev-side audit, stated so "no qualifying finding" is not read as more than it claims.** The
-stated gate is `npm audit --omit=dev` and §7 reports it: **0 critical, 1 high, 6 moderate**. A
+stated gate is `npm audit --omit=dev` and §7 reports it: **0 critical, 1 high, 7 moderate**. A
 dev-inclusive `npm audit` on the same tree reports **4 critical, 7 high, 9 moderate — 20 findings**,
 which is **13 rows that the gate excludes**, measured: `cookiejar`, `debug`, `diff`, `esbuild`,
 `growl`, `mime`, `minimist`, `mkdirp`, `mocha`, `qs`, `superagent`, `supertest` and `vite`. Their
@@ -1002,6 +1031,19 @@ same two `file-type`/`is-svg` advisories and the one `pm2` advisory, each with a
 in the table above and once in §6.2 because four graphs install the same package, not because four
 advisories exist.
 
+**`pm2` also carries a second, non-advisory consequence, and it is recorded rather than folded into
+the row above.** Under `node --pending-deprecation` the root container emits **exactly two** pending
+deprecations, **both from `pm2` as PID 1 and neither from the application child**: `DEP0169` at
+`pm2-axon/lib/sockets/sock.js:248` and `DEP0005` at `amp/lib/stream.js:25`. **No override can lift
+them** — measured against the registry at this checkpoint, `scripts/pm2/package-lock.json` resolves
+`pm2-axon` **4.0.1** and `amp` **0.3.1**, and `npm view pm2-axon version` and `npm view amp version`
+return exactly those, so each is already the newest published release of its package; and moving `pm2`
+itself to **7.0.4** (its newest published version, likewise confirmed) removes `DEP0169` and leaves
+`DEP0005`. No suppression flag was added. It is a **named deviation** from AAP §0.8's zero-warning bar,
+scoped to the image's PID 1 rather than to the application, and
+[`deferred-dependencies.md`](deferred-dependencies.md) §4.3 owns the full argument, the three-version
+matrix and the residual risk.
+
 ### 6.5 The install and build steps in the root image
 
 | Step | Baseline | Delivered | Why |
@@ -1192,25 +1234,43 @@ above afterwards, because the counts in this subsection are a **measurement with
 | | Critical | High | Moderate | Total |
 |---|---|---|---|---|
 | Baseline `2f8712a` | **15** | **28** | **16** | **59** |
-| Delivered | **0** | **1** | **6** | **7** |
+| Delivered | **0** | **1** | **7** | **8** |
 
-The delivered figure was measured twice and agrees: once against the installed `node_modules` and
-once with `--package-lock-only`, on `node v22.23.2` / `npm 10.9.8`. It matches the figure the frozen
-plan specifies. An interim delivery reported five moderates because lockfile regeneration had floated
-`mongoose` off its deferred 6.13.9, clearing that package's advisory as a side effect; the resolution
-is pinned back and the sixth moderate is listed below.
+**Re-measured at this checkpoint on the installed delivered tree**, `node v22.23.2` / `npm 10.9.9`:
+`metadata.vulnerabilities` reads `{"info":0,"low":0,"moderate":7,"high":1,"critical":0,"total":8}` over
+eight advisory-bearing packages. **It does NOT match the figure the frozen plan specifies, and the
+difference is one moderate.** AAP §0.9.5 states 0 / 1 / **6** and enumerates the six as `aws-sdk`,
+`bull`, `highlight.js`, `jszip`, `mongoose` and transitive `uuid`; the delivered tree carries those six
+and **`adm-zip`**. Two earlier readings are superseded and both are named: one reported **five**,
+because lockfile regeneration had floated `mongoose` off its deferred 6.13.9 and cleared that package's
+advisory as a side effect — the resolution is pinned back and that moderate is listed below — and one
+reported **six** and concluded the figure matched the plan.
+
+**Why the seventh exists, and why it is this document's own doing rather than an unexplained drift.**
+`adm-zip`'s GHSA-vwc7-r8mq-g2x9 covers `>=0.5.9 <=0.6.0`, and row 9 of §3 installs **0.6.0** — an
+authorized bump, taken to close a **high** (a crafted ZIP triggering a 4 GB allocation). Baseline
+declared `~0.4.4` and resolved **0.4.16**, below the advisory's range floor, so the package carried no
+moderate there. There is **no forward fix**: `npm view adm-zip dist-tags` returns
+`{"latest":"0.6.0"}`, and the only `fixAvailable` npm offers is `0.5.8`, a downgrade below the floor
+flagged `isSemVerMajor: true` which would re-open the high. And it is **not request-reachable as
+delivered** — the advisory needs an extraction API, and
+`grep -rn "extractAllTo\|extractEntryTo\|extractAllToAsync"` over `lib/`, `app.js`, `config/` and
+`scripts/` returns nothing; the only consumer is a writer. **AAP §0.9.5 is frozen and is not edited
+here**; the deviation from its figure is reported, with this table and
+[`deferred-dependencies.md`](deferred-dependencies.md) §5's eight-row attribution as its evidence.
 
 **The `archiver` move left this figure untouched**, which is worth stating because a five-major bump
 is exactly the kind of change that quietly adds a row: re-measured after it, the gated result is the
-same 0 critical, 1 high and 6 moderate over the same seven packages listed below, and the 7.x chain
+same 0 critical, 1 high and 7 moderate over the same eight packages listed below, and the 7.x chain
 (`zip-stream` 6.0.1, `compress-commons` 6.0.2, `crc32-stream` 6.0.0, `archiver-utils` 5.0.2)
 contributes no finding of its own.
 
-The seven remaining findings, each attributed:
+The eight remaining findings, each attributed:
 
 | Package | Severity | Direct | Advisory range |
 |---|---|---|---|
 | `marked` | **high** | yes | `<= 4.0.9` |
+| `adm-zip` | moderate | yes | `>= 0.5.9 <= 0.6.0` — no forward fix; not request-reachable here (row 9) |
 | `aws-sdk` | moderate | yes | `>= 2.0.1` |
 | `bull` | moderate | yes | `>= 2.0.0` |
 | `highlight.js` | moderate | yes | `9.0.0 - 10.4.0` |
@@ -1233,7 +1293,7 @@ one class: four highs, all ReDoS at CVSS 7.5, plus four moderates that split one
 `node_modules/marked`, so this figure covers the **server** copy; a byte-identical copy of the same
 fork also ships to browsers from `public/components`, carrying the same advisories where no audit of
 the dependency graph can count it. Neither point changes any figure in this section — the measured
-result is 0 critical, 1 high, 6 moderate either way. Both are enumerated, with every advisory ID and
+result is 0 critical, 1 high, 7 moderate either way. Both are enumerated, with every advisory ID and
 both consumers, in [`deferred-dependencies.md`](deferred-dependencies.md) §4.2, and the image scan
 that sees both copies is [§6.7](#67-the-images-vulnerability-posture).
 
@@ -1270,7 +1330,7 @@ disagreement is logged here rather than quietly reconciled.
 | 5 | `joi` — advisory-driven | `joi` 17.13.3's finding is **moderate-only** (`< 17.13.4`) | Substantive. The qualifying reason is the **request's explicit directive**, not security; §3 records the category as such |
 | 6 | `mime`'s high clears at 1.6.0 | It clears at **1.4.1** | The 1.x fix is earlier than stated; 1.6.0 is simply the last 1.x. The disposition is unaffected — the row moves to 4.1.0 for the maintained-major reason |
 | 7 | `js-yaml` 4.1.0/4.1.1 carry "a later high" | The 4.x high spans **`4.0.0 - 4.3.0`**, plus an `!!omap` high reaching **`< 4.3.1`** | Broader than expected: the floor is 4.3.1, not "above 4.1.1". Verified by auditing a `js-yaml@4.1.1` manifest — 1 high |
-| 8 | 6 moderate findings, including `mongoose` | **6 moderate**, `mongoose` among them | Resolved. An interim delivery measured **5**, because lockfile regeneration had floated `mongoose` 6.13.9 → 6.13.11 inside its unchanged `^6.0.0` declaration and 6.13.11 is outside the `< 6.13.10` advisory range. The float was reverted rather than reported — the resolution is pinned back to 6.13.9 — so the figure agrees with the plan and `mongoose` still correctly does not appear in §3, since nothing about it was chosen |
+| 8 | 6 moderate findings, including `mongoose` | **7 moderate**, `mongoose` among them | **Not resolved — a measured deviation from the plan's figure, reported rather than reconciled.** Two interim readings are superseded: one measured **5**, because lockfile regeneration had floated `mongoose` 6.13.9 → 6.13.11 inside its unchanged `^6.0.0` declaration and 6.13.11 is outside the `< 6.13.10` advisory range (the float was reverted and the resolution pinned back to 6.13.9); the other measured **6** and concluded the figure agreed. Re-measured at this checkpoint it is **7**. The seventh is **`adm-zip`** — row 9 of §3 — whose GHSA-vwc7-r8mq-g2x9 covers `>=0.5.9 <=0.6.0` while baseline's 0.4.16 sat below the floor, so the plan's own authorized bump is what opened it. No forward fix exists (0.6.0 is the newest published) and it is not request-reachable here. `mongoose` still correctly does not appear in §3, since nothing about it was chosen |
 | 9 | `sass` unchanged | **Unchanged in both respects** — declaration `^1.57.0`, resolved 1.98.0 | An interim delivery pinned the declaration exact with no mapped reason; reverted, so the row now records genuinely no change |
 | 10 | One `serverside` manager declares `"type": "module"`; manifests and lockfiles regenerated | **All four** declare `"type": "module"`; the four manifests are **unchanged** and the four lockfiles are **first-time creations** | The baseline tree carried no manager lockfiles at all, so "regenerated" overstated it (§6.4) |
 | 11 | Three legacy three-argument `sinon.stub` calls | **Six** at baseline, across four files; two vanish with the deleted dead helpers, leaving four to convert | Undercount. Does not change the `sinon` disposition, only the size of the call-site work it forces (§5) |
@@ -1635,7 +1695,7 @@ So the only remedy that reaches both defects is the version move, which is the r
 | Boot under `node --pending-deprecation --trace-deprecation` | **zero** warning or deprecation lines, and `GET /` answers **200**. The previously recorded `[DEP0005]` residual is gone **at its source**, not suppressed: no `--no-deprecation`, `--disable-warning` or `NODE_NO_WARNINGS` is in force, which is what `test/parity/warning-policy.js` asserts independently |
 | `npm run verify:storage` | **35 of 35** cases passed, gate PASSED, exit 0 — `archive-layout` among them. It closed **34 of 35** with one captured warning and one emitted finding before the move |
 | `npm run verify:worker` | **VERDICT PASS**, **109 of 109** named checks, 7 jobs driven on real `bull` 4.16.5, **0 notices** under the gate's own flags. It returned a **FAIL** verdict before the move |
-| `npm audit --omit=dev` | **unchanged**: 0 critical, 1 high, 6 moderate, over the same seven **findings** — `aws-sdk`, `bull`, `highlight.js`, `jszip`, `marked`, `mongoose` and transitive `uuid`; a finding is a package, not an advisory, and `marked`'s one finding covers eight advisories (§7). The single high is still `marked` alone (§7) |
+| `npm audit --omit=dev` | **unchanged by the change this row is about**: 0 critical, 1 high, 7 moderate, over the same eight **findings** — `adm-zip`, `aws-sdk`, `bull`, `highlight.js`, `jszip`, `marked`, `mongoose` and transitive `uuid`; a finding is a package, not an advisory, and `marked`'s one finding covers eight advisories (§7). The single high is still `marked` alone (§7) |
 | Call sites | **unchanged** — the 25-call surface enumerated under *Import transparency* in §3 |
 
 **The one consequence for stored output, stated rather than buried.** Newly written archives now carry

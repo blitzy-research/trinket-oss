@@ -7,36 +7,11 @@
       <a class="current"><span editable-text="material.name" onbeforesave="updateMaterial($data)">{{ material.name }}</span></a>
     </nav>
 
-    <!--
-      The live region is declared on this section, not on the spans inside it:
-      each of those is created and destroyed by its own ng-if on every save
-      cycle, and a live region that appears at the same time as its content is
-      not announced. This section already wraps all three states, and it exists
-      for the whole life of the page, so every change of autosave state is
-      announced from it. It is polite rather than an alert because the autosave
-      status is not an interruption, and it is atomic so the whole state - not
-      just the changed words - is read out.
-    -->
-    <section id="autosave-message" role="status" aria-live="polite" aria-atomic="true">
+    <section id="autosave-message">
       <span ng-if="saving" class="autosave-working"><i class="fa fa-circle-o-notch fa-spin"></i> Saving...</span>
       <span ng-if="saved" class="autosave-done"><i class="fa fa-check-circle green"></i> Changes saved.</span>
       <span ng-if="saveError" class="autosave-error"><i class="fa fa-exclamation-circle"></i> Changes not saved. {{ customError }}</span>
     </section>
-    <!--
-      Shown only once automatic retrying has stopped at its cap, and kept
-      outside the live region above so its label is not folded into every
-      autosave announcement by aria-atomic.
-
-      While the retry it started is in flight the control is marked
-      `aria-disabled` rather than given the `disabled` attribute: a disabled
-      button is removed from the tab order, and Chrome moves focus to <body>
-      when the element holding it becomes disabled, which is exactly the
-      keyboard dead end this control exists to avoid. `retryAutoSave` enforces
-      the same window, so activating it again mid-attempt cannot double-send.
-      It stays mounted until a save succeeds - see `autoSave` in
-      public/js/courseEditor/controllers/materialControl.js.
-    -->
-    <button type="button" class="button tiny autosave-retry" ng-if="saveRetryAvailable" ng-click="retryAutoSave()" ng-class="{disabled: saving}" ng-attr-aria-disabled="{{ saving ? 'true' : undefined }}"><i class="fa fa-refresh" aria-hidden="true"></i> Retry save</button>
   </section>
   <div class="options-right">
     <a href="{{classPageUrl}}#/{{lesson.slug}}/{{material.slug}}" class="button small" ng-hide="material.isDraft">view page</a>

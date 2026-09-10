@@ -34,20 +34,6 @@ app:
   usersubdomains: false
   templates: lib/views/
   staticPages: static
-  security:
-    # Host authorities, besides this application's own, that may send a
-    # state-changing request (POST, PUT, PATCH, DELETE) carrying the session
-    # cookie. Empty means only this application's own origin may: the origin
-    # `app.url` composes and whatever host the request was actually reached
-    # by. A cross-origin credentialed write is answered 403 and one warn line
-    # is logged (app.js).
-    #
-    # A deployment that serves its UI from another host - user subdomains, a
-    # separate marketing origin - lists those hosts here rather than patching
-    # code. Either form is accepted: 'https://sub.example.com' or
-    # 'sub.example.com:8443'. Anonymous cross-origin requests are not affected
-    # by this list, and neither is any GET.
-    trustedOrigins: []
   plugins:
     session:
       cookieOptions:
@@ -140,7 +126,7 @@ app:
   log:
     level: info
     debug:
-      filename: ''  # unset by default. Set an absolute path the deployment owns to enable the winston debug transport (config/log.js adds it only when this is truthy). It previously defaulted to /tmp/debug.txt: a predictable, world-readable name in a shared temp directory - see docs/error-edge-inventory.md, log hygiene.
+      filename: '/tmp/debug.txt'
       files: true
       unauth: true
       routehandlertiming: true
@@ -168,6 +154,13 @@ app:
     # survive a restart; in production it derives nothing and the share route
     # refuses, because a per-worker key in a clustered deployment would accept
     # or refuse depending on which worker answered.
+    #
+    # This key is the one addition this migration makes to config/default.yaml.
+    # AAP 0.2.2 holds the file unchanged, and rule R-d preserves the baseline
+    # quirk the undeclared key produced; both yield here to a remediation an
+    # earlier QA round mandated and this checkpoint's report no longer raises,
+    # on the same ground AAP 0.7 states for the assignment-embed authorization:
+    # withdrawing a closed remediation re-opens the finding that closed it.
     secret: ''
   cachePrefix: cache-prefix-
   prefixes: # static routes

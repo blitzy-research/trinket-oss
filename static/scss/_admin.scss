@@ -5,26 +5,6 @@
     height: 60px;
     padding: 0;
     margin-bottom: 0;
-
-    // Wrapped tab strip (responsive F42). The three user tabs fit one 60px
-    // line from 640px up, but at 375px "JSON" wraps onto a second line: the
-    // fixed height above then clipped the strip's own box while the floated
-    // `li`s kept painting, and the overflowing line displaced the first
-    // profile row - measured with the "Name" label drawn at x=160.094 on the
-    // tab line while "test user" wrapped below it at x=102.172. Below 640px
-    // the strip takes its own height and clears its floats, so the wrapped
-    // line stays inside it. Clearing is done with a pseudo-element rather
-    // than `overflow: hidden` because the active tab's 3px top border sits at
-    // margin-top: -3px and would otherwise be clipped away.
-    @media #{$small-only} {
-      height: auto;
-
-      &:after {
-        content: " ";
-        display: block;
-        clear: both;
-      }
-    }
   }
 
   .tabs li {
@@ -73,48 +53,6 @@
     border: solid 0 #dddddd;
     border-width: 0 1px 1px 1px;
     padding: 20px;
-  }
-
-  // Label/value collision in the user pane (responsive F42). The profile rows
-  // are built as a `.small-2` label column beside a `.small-10` value column,
-  // which at 375px leaves the label a 50.156px content box while the labels
-  // themselves need 82px ("Username"), 70px ("Trinkets"), 64px ("Courses")
-  // and 52px ("Avatar"). The column boxes never overlapped - the text
-  // overflowed its own box and printed over the value, measured at 31.437px
-  // of glyph overlap on "Username" ("Usernaesting"), 9.578px on "Trinkets"
-  // and 7.141px on "Courses". Below 640px the pair stacks instead: each
-  // column takes the full width, so the label sits above its value with the
-  // whole card width to render in, and anything still too long for one line
-  // breaks rather than spilling out of the card. From 640px up both columns
-  // have room side by side and the two-column layout is left exactly as it is.
-  @media #{$small-only} {
-    .tabs-content > li > .row {
-      margin-bottom: 0.5rem;
-
-      > .columns {
-        float: none;
-        width: 100%;
-        overflow-wrap: break-word;
-        word-wrap: break-word;
-      }
-    }
-  }
-
-  // JSON tab overflow (responsive F42). The user pane's JSON dump renders in a
-  // `<pre>`, which the global stylesheet keeps at `white-space: pre` with no
-  // overflow of its own: at 375px it measured scrollWidth 750px against
-  // clientWidth 269px - 481px of overflow that took the document to
-  // scrollWidth 803px inside a 375px viewport and drew the dump out over the
-  // content card. Below 640px the block scrolls horizontally inside its own
-  // card instead, which keeps the JSON unwrapped and byte-for-byte readable -
-  // wrapping it would re-flow the very indentation that makes a dump legible -
-  // while the page itself stops overflowing.
-  #json pre {
-    @media #{$small-only} {
-      max-width: 100%;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-    }
   }
 
   .avatar-medium {

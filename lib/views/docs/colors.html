@@ -5,100 +5,10 @@
 
 {% block body_id %}colors{% endblock %}
 
-{% block extra_css %}
-  {#
-    The colour swatches are the page's only interactive controls, so each one is a native
-    <button>: that is what makes them keyboard reachable (Tab) and activatable (Enter/Space)
-    and what gives them a role and an accessible name for assistive technology. Foundation's
-    dropdown plugin binds its click handler by delegation on '[data-dropdown]'
-    (public/components/foundation/js/foundation/foundation.dropdown.js), so the element type is
-    irrelevant to it and it keeps managing aria-expanded / aria-hidden and panel focus itself.
-
-    Foundation's generic `button` rules would otherwise restyle the swatches (blue fill,
-    padding, margins, white text and — most visibly — a blue border, because
-    `body#colors .color-swatch` sets border-style/width but no border-colour and therefore
-    relies on `currentColor` inheriting the body's #222). The declarations below pin the
-    swatch box back to the values it renders with as a plain block element, so the page looks
-    exactly as it did before. base.html emits this block after the config.app.assets.css
-    links, so these declarations sit last in the cascade.
-  #}
-  <style type="text/css">
-    body#colors button.color-swatch {
-      /* Restated from body#colors .color-swatch so this rule is self-contained. */
-      width: 100%;
-      padding-bottom: 100%;
-      border-style: solid;
-      border-width: 1px;
-      /* `body#colors .color-swatch` declares no border-colour, so as a block element the
-         swatch resolved it to currentColor (the inherited body colour). A button does not
-         inherit that, so both are pinned here to keep the 1px #222 outline the swatches
-         have always painted. */
-      border-color: rgb(34, 34, 34);
-      color: rgb(34, 34, 34);
-      /* Two of the 141 entries in includes/colors.html carry X11-only names -
-         VioletRed and LightSlateBlue - which are not valid CSS colour keywords,
-         so the browser discards their inline background-color declaration. As
-         divs those two therefore resolved to transparent and painted as blank
-         squares; as buttons they would instead inherit Foundation's
-         `button{background-color:#008aff}` and paint bright blue. Restating
-         transparent here reproduces exactly what they rendered before. The 139
-         valid inline declarations still win, because an element's style
-         attribute outranks any stylesheet rule. */
-      background-color: transparent;
-      /* Undo Foundation's button box model: it makes buttons inline-block, relative,
-         bottom-margined and generously padded. */
-      display: block;
-      position: static;
-      margin: 0;
-      padding-top: 0;
-      padding-right: 0;
-      padding-left: 0;
-      /* Undo Foundation's button typography and its background-colour transition, none of
-         which the swatches had. The background colour itself stays on the element's inline
-         style attribute, which outranks every stylesheet rule here. */
-      line-height: 24px;
-      text-align: start;
-      transition: none;
-    }
-
-    /* The swatches are keyboard reachable for the first time, so they need a
-       focus indicator that reads against all 141 fills. The browser default
-       paints a near-black ring inward over the fill, which measures about
-       1.07:1 on the black swatch - invisible. Offsetting the ring outward puts
-       it on the white page gutter instead, where it is high contrast whatever
-       the swatch colour is. Neither `outline` nor `outline-offset` takes part
-       in layout, so the resting geometry above is untouched, and 4px of total
-       offset fits inside the 5px padding of the enclosing .swatch column. */
-    body#colors button.color-swatch:focus-visible {
-      outline: 3px solid rgb(34, 34, 34);
-      outline-offset: 1px;
-    }
-
-    /* The page's title is now the `h1` it always should have been - the page
-       previously opened at `h2`, leaving it with no top-level heading at all.
-       Only its level changed, not its appearance: Foundation gives h1 and h2
-       the same family, weight, colour, margins and 1.4 header line-height
-       ratio and differs solely in font-size, so pinning font-size alone
-       reproduces the h2's measured rendering exactly - 37px (and therefore
-       37 x 1.4 = 51.8px line-height) from the medium breakpoint up, and 27px
-       (37.8px line-height) on small screens. Nothing else is restated,
-       because nothing else differed. */
-    body#colors h1 {
-      font-size: 2.3125rem;
-    }
-
-    @media only screen and (max-width: 40em) {
-      body#colors h1 {
-        font-size: 1.6875rem;
-      }
-    }
-  </style>
-{% endblock %}
-
 {% block content %}
 <div class="row">
   <div class="small-12 columns">
-    <h1>Colors</h1>
+    <h2>Colors</h2>
     <h3 class="subheader">Click on a color below to see its turtle name, CSS name, hex code, or RGB values.</h3>
   </div>
 </div>
@@ -107,7 +17,7 @@
 {% set num = 0 %}
 {% for color in colors.colors %}
   <div class="small-2 medium-1 columns end swatch">
-    <button type="button" class="color-swatch" data-dropdown="drop{{num}}" aria-controls="drop{{num}}" aria-expanded="false" style="background-color:{{ color.cssname }}" aria-label="{{ color.tkname }} ({{ color.hex }})" title="{{ color.tkname }} ({{ color.hex }})"></button>
+    <div class="color-swatch" data-dropdown="drop{{num}}" aria-controls="drop{{num}}" aria-expanded="false" style="background-color:{{ color.cssname }}"></div>
   </div>
   <div id="drop{{num}}" data-dropdown-content class="f-dropdown content" aria-hidden="true" tabindex="-1">
     <table class="show-for-medium-up">

@@ -109,8 +109,6 @@
       $('#downloadCourseModal').foundation('reveal', 'open');
     }
     this.$scope.openArchiveCourseModal = function() {
-      // A freshly opened dialog carries no error from a previous attempt.
-      self.$scope.archiveError = null;
       $('#archiveCourseModal').foundation('reveal', 'open');
     }
 
@@ -240,21 +238,14 @@
 
       self.$scope.nextMaterial       = angular.bind(self, self.nextMaterial);
       self.$scope.previousMaterial   = angular.bind(self, self.previousMaterial);
-      self.$scope.haveNextMaterial     = angular.bind(self, self.haveNextMaterial);
-      self.$scope.havePreviousMaterial = angular.bind(self, self.havePreviousMaterial);
       self.$scope.editContent        = angular.bind(self, self.editContent);
       self.$scope.toggleDraft        = angular.bind(self, self.toggleDraft);
 
       self.$scope.copyCourse         = angular.bind(self, self.copyCourse);
       self.$scope.downloadMarkdown   = angular.bind(self, self.downloadMarkdown);
       self.$scope.downloadHTML       = angular.bind(self, self.downloadHTML);
-      self.$scope.closeDownloadModalOnKey     = angular.bind(self, self.closeDownloadModalOnKey);
-      self.$scope.closeDownloadModalOnPointer = angular.bind(self, self.closeDownloadModalOnPointer);
 
       self.$scope.savingCourse = false;
-      // Re-entry guard for archiveCourse. Held on the controller rather than
-      // the scope because it guards a dispatch rather than driving a binding.
-      self.archivingCourse     = false;
 
       self.$scope.updateCourse            = angular.bind(self, self.updateCourse);
       self.$scope.openNewTopicDialog      = angular.bind(self, self.openNewTopicDialog);
@@ -347,17 +338,6 @@
         , self = this
         , blobData, zipFile;
 
-      // One activation, one export. Without this the button's ng-click fires
-      // once per click, so an ordinary double-click issued two identical
-      // requests and handed FileSaver two identical blobs, prompting the browser
-      // to save the same archive twice. The flag is already the template's
-      // spinner condition, so it is the honest record of "this format is being
-      // built", and it is cleared on both the success and the failure path
-      // below - a failed export therefore leaves the button usable again.
-      if (self.$scope.generatingDownload[type]) {
-        return;
-      }
-
       self.$scope.generatingDownload[type] = true;
 
       var getParams = {
@@ -377,56 +357,6 @@
           blobData = new self.Blob([result.data], { type : "application/octet-stream" });
           zipFile  = "Trinket Course-" + self.$scope.courseSlug + "-" + type + ".zip";
           self.FileSaver.saveAs(blobData, zipFile);
-        }, function(err) {
-          // The rejection path. Without it, the flag set above is never cleared
-          // on a failure, so the button keeps the fa-spin spinner the template
-          // binds to generatingDownload[type] for the life of the page and the
-          // author is told nothing at all - the export looks like it is still
-          // running when it has already failed.
-          //
-          // `err` is the $http response object, so `err.status` carries the real
-          // HTTP status of the failed export. A request that never reached the
-          // server has no status: $http reports 0, and older Angular builds
-          // report -1, so anything that is not a positive number is treated as a
-          // connection failure and is the only case in which the connection is a
-          // fair thing to point the author at.
-          var label   = type === "html" ? "HTML pages" : "source files"
-            , status  = err && err.status > 0 ? err.status : null
-            , modal   = $('#downloadCourseModal')
-            , focused = document.activeElement
-            , message;
-
-          self.$scope.generatingDownload[type] = false;
-
-          // Focus is taken off the download button that was just activated
-          // before the dialog goes away. Foundation's reveal marks the dialog
-          // aria-hidden as it closes, and a browser will not hide a subtree that
-          // still holds the focused element - it refuses the attribute and warns
-          // - besides which leaving focus there strands whoever is driving the
-          // page by keyboard on a control that is no longer displayed. Blurring
-          // is what moves focus out, and it lands focus where the dialog's own
-          // close control already lands it. Handing focus back to the control
-          // that opened the dialog is not an option from here:
-          // #course-actions-button is an anchor carrying neither href nor
-          // tabindex, so focus() on it does nothing at all.
-          if (focused && focused.blur && modal.length && modal[0].contains(focused)) {
-            focused.blur();
-          }
-
-          // Closed before the notification is raised, not after: this reveal
-          // modal's overlay paints above #course-notifications, so a message
-          // raised while the dialog is still open is not visible to the person
-          // who needs to read it.
-          modal.foundation('reveal', 'close');
-
-          message = status
-            ? "We couldn't build the " + label + " for this course (HTTP " + status + "). Nothing was downloaded - please try again."
-            : "We couldn't build the " + label + " for this course: the request didn't reach the server. Check your connection and try again.";
-
-          $('#course-notifications').notify(
-            message
-            , { className : 'alert' }
-          );
         });
     },
 
@@ -440,25 +370,6 @@
       if (this.currentSlideIndex === 0) return;
       this.switchingMaterial = true;
       this.viewMaterial(this.currentSlideIndex - 1);
-    },
-
-    /**
-     * Whether previousMaterial/nextMaterial have anywhere to go. These are the
-     * same boundary conditions those two handlers already refuse to cross;
-     * exposing them lets the prev/next controls declare the refusal in the DOM
-     * instead of looking operable and silently doing nothing.
-     *
-     * currentSlideIndex is only assigned once viewMaterial has run, so before
-     * the first page is shown it is undefined and both comparisons below are
-     * false -- which is correct: with no current page there is no neighbour to
-     * move to in either direction.
-     */
-    havePreviousMaterial : function() {
-      return this.slides.length > 0 && this.currentSlideIndex > 0;
-    },
-
-    haveNextMaterial : function() {
-      return this.slides.length > 0 && this.currentSlideIndex < this.slides.length - 1;
     },
 
     compileSlides : function(materialToSelect, orSelectFirst) {
@@ -886,23 +797,6 @@
     deleteCourse : function($event) {
       $event.preventDefault();
 
-      // The confirmation gate. removeMaterial and removeLesson refuse to act
-      // until the typed name matches; deleting the whole course is the most
-      // destructive of the three and must not be the one without a guard.
-      //
-      // The match is re-derived here rather than trusted from the scope flag.
-      // Both of this handler's callers are activation paths a user can reach
-      // with an empty field -- the button's ng-click and the dialog form's
-      // ng-submit -- and the dialog is opened declaratively (data-reveal-id),
-      // so no open handler resets state between sessions. Re-deriving from the
-      // live ng-model means a flag left over from an earlier, cancelled dialog
-      // can never authorize a delete.
-      this.compareCourseNames();
-
-      if (!this.$scope.courseNamesMatchForDelete) {
-        return;
-      }
-
       var self = this;
 
       self.$scope.course.remove().then(function() {
@@ -912,42 +806,17 @@
 
     cancelCourseDelete : function() {
       this.$scope.confirmCourseName = '';
-      this.$scope.courseNamesMatchForDelete = false;
       $('#deleteCourseDialog').foundation('reveal', 'close');
     },
 
     archiveCourse : function() {
       var self = this;
 
-      // One activation, one PATCH. An ordinary double-click on Archive Course
-      // otherwise issued two concurrent PATCHes about two milliseconds apart,
-      // whose handlers interleaved on the server and whose success
-      // notifications stacked two deep.
-      //
-      // The guard is this controller's own flag rather than `savingCourse`,
-      // even though `savingCourse` is this action's in-flight state, because
-      // `savingCourse` is shared with the Course Edit form's save
-      // (`updateCourse`, above) - and that save clears it only on success. A
-      // failed course-details update therefore leaves `savingCourse` set for
-      // the life of the page, and guarding on it would have made a stranded
-      // flag from an unrelated form silently swallow every later archive.
-      if (self.archivingCourse) {
-        return;
-      }
-
-      self.archivingCourse     = true;
-      // Set as it always has been: the dialog has no spinner of its own, and
-      // this flag is what the template's save icon binds to.
       self.$scope.savingCourse = true;
-      // Any error shown from a previous attempt describes that attempt, not
-      // this one.
-      self.$scope.archiveError = null;
 
       var archived = !!self.$scope.course.archived;
       return self.$scope.course.patch({ archived: !archived })
         .then(function(result) {
-          self.archivingCourse = false;
-
           self.$timeout(function() {
             self.$scope.savingCourse = false;
             if (result && result.course) {
@@ -961,151 +830,10 @@
               );
             }
           });
-        }, function(response) {
-          // The rejection path. Without it `savingCourse` stayed true for the
-          // life of the page: the dialog sat open with no error and no way
-          // forward, and because the Course Edit form's save button binds its
-          // spinner to this same flag, that unrelated control spun too. A
-          // request that fails - the session expired, the connection dropped -
-          // has to give the flag back and say what happened.
-          //
-          // `response` is the $http response Restangular rejects with, so
-          // `status` is the outcome that actually occurred. It is read
-          // defensively for the same reason the autosave handler in
-          // materialControl.js reads it defensively: a request that never
-          // reached the server rejects with a status of 0 or -1, and an aborted
-          // request can reject with no response object at all. That is the only
-          // case where blaming the connection is honest, so it is the only case
-          // that does.
-          //
-          // The dialog is deliberately left OPEN. The author asked to archive
-          // and it did not happen, so the confirmation stays on screen with its
-          // buttons live and the action is simply retryable.
-          var status        = response && response.status
-            , serverMessage = response && response.data && response.data.message
-            , verb          = self.$scope.course && self.$scope.course.archived ? 'restore' : 'archive'
-            , message;
-
-          self.archivingCourse = false;
-
-          self.$timeout(function() {
-            self.$scope.savingCourse = false;
-          });
-
-          if (!status || status < 0) {
-            message = "We couldn't " + verb + " this course: the request didn't reach the server."
-                    + " Check your connection and try again.";
-          }
-          else {
-            message = "We couldn't " + verb + " this course (HTTP " + status + ")";
-            message += serverMessage ? ": " + serverMessage + "." : ".";
-            message += " Nothing was changed - please try again.";
-          }
-
-          // Reported wherever the user can actually see it. Archiving is
-          // confirmed through a dialog that this handler leaves open, and the
-          // dialog covers the page region notify.js anchors to - a notification
-          // raised there renders inside the dialog's own rectangle, behind it,
-          // because the reveal carries a higher stacking order. So while that
-          // dialog is open the message goes into it, bound to `archiveError`.
-          //
-          // Restoring has no dialog: "Restore Archived Course" calls this
-          // function straight from the cog menu. There is nothing to render
-          // into and nothing covering the page, so that failure goes to
-          // notify.js exactly as the success notification does.
-          if ($('#archiveCourseModal').hasClass('open')) {
-            self.$timeout(function() {
-              self.$scope.archiveError = message;
-            });
-          }
-          else {
-            $('#course-notifications').notify(
-              message
-              , { className : 'alert' }
-            );
-          }
         });
     },
 
-    // Takes focus out of a dialog, if it is in there, ahead of closing it.
-    //
-    // Foundation marks the dialog aria-hidden as it hides it, and a browser
-    // will not hide a subtree that still holds the focused element - it refuses
-    // the attribute and logs a warning. Measured in the vendored reveal
-    // (public/components/foundation/js/foundation/foundation.reveal.js), the
-    // attribute is set at line 267 and the `close` event is not fired until
-    // line 280, so a close-event handler is too late to help: this has to run
-    // before the close is triggered, which is what every call site below does.
-    //
-    // The stranded focus matters in its own right, not only in the ARIA tree: a
-    // control that is no longer displayed but still focused leaves whoever is
-    // driving the page by keyboard resuming their next Tab from nothing they
-    // can see.
-    blurModalFocus : function(selector) {
-      var modal   = $(selector)
-        , focused = document.activeElement;
-
-      if (focused && focused.blur && modal.length && modal[0].contains(focused)) {
-        focused.blur();
-      }
-    },
-
-    // Pointer press on the dialog's close control.
-    //
-    // Two jobs, both about focus, and mousedown is where they belong because it
-    // precedes the click that Foundation closes the dialog on. First, cancelling
-    // the press default stops focus MOVING to the close control - being tabbable
-    // made it mouse-focusable, which it was not before, and the warning above is
-    // what that produced. Second, focus may already be on another control in the
-    // dialog because the user clicked it: pressing "Source Files" focuses it, so
-    // dismissing afterwards used to hide the dialog around a focused button.
-    // Clearing it here covers that too. The click still fires, so Foundation
-    // still closes the dialog.
-    closeDownloadModalOnPointer : function($event) {
-      $event.preventDefault();
-      this.blurModalFocus('#downloadCourseModal');
-    },
-
-    // Keyboard activation for the download dialog's close control. That control
-    // is an anchor without an href so that it keeps the appearance the other
-    // dialogs in this template use, which leaves it outside the tab order and
-    // deaf to Enter and Space on its own; the template supplies role="button"
-    // and tabindex="0", and this supplies the activation behaviour a real button
-    // would have given for free.
-    closeDownloadModalOnKey : function($event) {
-      // Enter and Space are the two keys a button answers to. `key` and
-      // `keyCode` are both consulted because both spellings reach here: jQuery
-      // copies `key` onto its event for keydown, jqLite hands the native event
-      // straight through, and `keyCode` is the reading that predates either.
-      // 'Spacebar' is the older name for the space key's `key` value.
-      var key     = $event.key
-        , keyCode = $event.keyCode
-        , isEnter = key === 'Enter' || keyCode === 13
-        , isSpace = key === ' ' || key === 'Spacebar' || keyCode === 32;
-
-      if (!isEnter && !isSpace) {
-        return;
-      }
-
-      // Space scrolls the page and Enter can submit an enclosing form; neither
-      // is wanted from a dismiss control.
-      $event.preventDefault();
-
-      this.blurModalFocus('#downloadCourseModal');
-
-      $('#downloadCourseModal').foundation('reveal', 'close');
-    },
-
     cancelCourseArchive : function() {
-      // Dismissing is a click on an anchor that ngAria has made focusable, so
-      // by the time this runs the focus is usually sitting on the very control
-      // inside the dialog that is about to be hidden - the same situation the
-      // download dialog's close control is in. Clearing it first is what lets
-      // the browser apply aria-hidden without complaint, and it matters more on
-      // this dialog than most: a failed archive deliberately stays open so its
-      // error can be read, which makes this button the last step of that flow.
-      this.blurModalFocus('#archiveCourseModal');
-
       $('#archiveCourseModal').foundation('reveal', 'close');
     },
 

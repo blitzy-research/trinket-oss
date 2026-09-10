@@ -215,76 +215,6 @@ $('document').ready(function() {
     return deferred;
   }
 
-  /**
-   * Name the instructions editor for assistive technology and give it a way out.
-   *
-   * `onEditInstructionsClick` creates a SECOND Ace instance for the markdown
-   * description, and Ace routes every keystroke through a 1px transparent
-   * textarea that it creates with no id, no name and no accessible name. TAB
-   * is bound to Ace's `indent` command and Ace 1.4.14 ships no blur/exit
-   * command, so left alone the pane is a keyboard trap in which TAB silently
-   * rewrites the author's instructions and neither ESCAPE nor F6 gets out.
-   *
-   * This is the same treatment the code editor gets in
-   * public/js/plugins/code-editor.js: name the region, name the input, state
-   * the escape route inside that name, and bind ESCAPE and F6 to leave. Focus
-   * lands on #save-instructions -- the visible toolbar control beside the
-   * editor, revealed by the same handler that creates the editor -- so the
-   * user leaves at the action they are most likely to want and can carry on
-   * tabbing to Cancel from there.
-   */
-  function nameInstructionsEditor(editor) {
-    var el    = document.getElementById('embedded-instructions')
-      , input = editor.textInput && editor.textInput.getElement ? editor.textInput.getElement() : null
-      , label = 'Instructions editor';
-
-    function exitInstructionsEditor(ed) {
-      var landing = document.getElementById('save-instructions');
-
-      ed.blur();
-
-      if (landing && typeof landing.focus === 'function') {
-        landing.focus();
-      }
-    }
-
-    if (input) {
-      // Deliberately outside the code editor's `ace-editor-input-<n>` scheme:
-      // both editors can be alive at the same time and their ids must not
-      // collide. Only one instructions editor exists per page.
-      if (!input.id) {
-        input.id = 'instructions-editor-input';
-      }
-      if (!input.name) {
-        input.name = input.id;
-      }
-      input.setAttribute('aria-label', label
-        + '. Press Escape or F6 to leave the editor and reach Save instructions.'
-        + ' Tab inserts indentation.');
-    }
-
-    if (el) {
-      // `role=group` names the visible editor region without claiming to be
-      // the input itself, which remains the textarea above.
-      el.setAttribute('role', 'group');
-      el.setAttribute('aria-label', label);
-    }
-
-    editor.commands.addCommand({
-        name    : 'exitEditor'
-      , bindKey : { win : 'Esc', mac : 'Esc' }
-      , exec    : exitInstructionsEditor
-      , readOnly: true
-    });
-
-    editor.commands.addCommand({
-        name    : 'exitEditorRegion'
-      , bindKey : { win : 'F6', mac : 'F6' }
-      , exec    : exitInstructionsEditor
-      , readOnly: true
-    });
-  }
-
   function TrinketApp(trinketObject, draftObject) {
     var self           = this,
         eventDelegates = ['on', 'off', 'trigger', 'once'],
@@ -532,14 +462,7 @@ $('document').ready(function() {
     if (!this._queryString.noStorage && !this._queryString.outputOnly) {
       this.generateGUID();
 
-      // A view-only surface shows the trinket as it was submitted. Restoring a
-      // cached buffer over it makes a stale, locally-held edit look like the
-      // stored work, so the restore is skipped there. The GUID is still
-      // generated, because the rest of the app keys its storage on it.
-      if (viewOnly) {
-        // nothing to restore on a read-only surface
-      }
-      else if (this._queryString.autoRestore !== false && window.sessionStorage && window.sessionStorage.getItem(this.guid)) {
+      if (this._queryString.autoRestore !== false && window.sessionStorage && window.sessionStorage.getItem(this.guid)) {
         this._trinket.code = window.sessionStorage.getItem(this.guid);
         if (window.parent) {
           window.parent.postMessage("autorestored", "*");
@@ -906,19 +829,9 @@ $('document').ready(function() {
     },
     toggleUI : function(type) {
       var self = this,
-          markup = template(type+'MenuTemplate'),
-          $menu  = $('#userMenu'),
-          active = document.activeElement,
-          // The account panel is re-rendered in place, so anything focused
-          // inside it is about to be destroyed. After an in-panel sign-in that
-          // is the "Log In" control itself, and losing it drops focus to
-          // <body> while the panel is still open - so note it before emptying
-          // and put focus back on the replacement menu below.
-          hadFocus = !!($menu.length && active && $menu.get(0) !== active
-                      && $.contains($menu.get(0), active));
+          markup = template(type+'MenuTemplate');
 
-      $menu.empty().append(markup).foundation();
-
+      $('#userMenu').empty().append(markup).foundation();
       if (type === 'guest') {
         $('#login').click(makeAccountCall('/api/users/login', self));
         //$('#register').click(makeAccountCall('/api/users',    self));
@@ -928,49 +841,6 @@ $('document').ready(function() {
         .addClass('hide')
         .filter('.' + type + '-option')
         .removeClass('hide');
-
-      // Focus is restored only after the pass above, never before it: the new
-      // markup carries the options for every audience and this pass is what
-      // decides which of them this one may see. Choosing a target while they
-      // are all still showing picks a control that is about to be hidden -
-      // measured after an in-panel sign-in, where focus landed on "View on
-      // trinket" and was dropped to <body> a moment later when that option was
-      // hidden again. Asking for `:visible` here asks the question of the menu
-      // the user is actually left looking at.
-      if (hadFocus) {
-        // The panel is open (focus was inside it), so keep the user in it
-        // rather than sending them back to the toggle: the first control of
-        // the new menu is where they would tab to next anyway.
-        //
-        // The tab-order pass that promotes these controls runs from a
-        // MutationObserver, so it has not run yet at this point. Make the
-        // target a tab stop here too: an href-less anchor with no tabindex
-        // attribute cannot take focus even though its `tabIndex` property
-        // reads 0, and focus() on it would no-op and leave the user on <body>.
-        $menu.find('a, button, input, select, textarea')
-             .filter(':visible')
-             .each(function() {
-               if (this.getAttribute('tabindex') === null) {
-                 this.setAttribute('tabindex', '0');
-               }
-               this.focus();
-
-               // Stop at the first one that actually took focus. A control can
-               // be visible and still refuse it, so this is settled by asking
-               // where focus ended up rather than by trusting the attribute.
-               return document.activeElement !== this;
-             });
-
-        // Last resort if the replacement menu has nothing that will take focus:
-        // put focus on a toggle rather than leaving it on <body>.
-        if (document.activeElement === document.body) {
-          $('.right-off-canvas-toggle').filter(':visible').each(function() {
-            this.focus();
-
-            return document.activeElement !== this;
-          });
-        }
-      }
     },
     getUIType : function() {
       return this._ui;
@@ -1495,25 +1365,6 @@ $('document').ready(function() {
       var self      = this,
           startTime = (new Date()).getTime();
 
-      // Single choke point for the write. Every caller (onUpdateClick, the
-      // remix branch of onSaveClick, restore) ends up issuing this PUT, so a
-      // view-only surface is refused once here rather than at each caller.
-      // `done` is still invoked, in the same shape the .fail branch uses, so a
-      // caller that chains off it does not stall.
-      if (this.isWriteSuppressed()) {
-        console.warn('trinket: refusing to save from a view-only surface');
-
-        if (typeof done === 'function') {
-          done({
-            responseText : '',
-            status       : 'error',
-            error        : 'view-only surface: writes are disabled'
-          });
-        }
-
-        return;
-      }
-
       if (!data) data = this.serialize();
 
       self.$overlay.removeClass('hide');
@@ -1608,26 +1459,7 @@ $('document').ready(function() {
     goToStart : function() {
       // stub - each trinket type should implement if needed
     },
-    /**
-     * True when this surface must never write back to the stored trinket.
-     *
-     * The assignment view-only surface shows a submission exactly as it was
-     * submitted, so no control on it may update the stored document. The body
-     * attribute is re-read instead of being trusted from the constructor
-     * alone, so the guard still holds if a handler is reached by a direct
-     * call or a synthetic event rather than through the rendered UI.
-     */
-    isWriteSuppressed : function() {
-      return this.assignmentViewOnly === true || $('body').data('view-only') === true;
-    },
     onUpdateClick : function() {
-      // Defence in depth. The "Update Original" control is not rendered on a
-      // view-only surface at all, but it is keyboard reachable wherever it IS
-      // rendered and the handler is bound on document, so refuse here too.
-      if (this.isWriteSuppressed()) {
-        return;
-      }
-
       this.save(this.serialize());
     },
     onShareClick : function(event) {
@@ -2308,13 +2140,6 @@ $('document').ready(function() {
       if (self._trinket.description !== null && self._trinket.description.length) {
         instructionsEditor.getSession().setValue(self._trinket.description, -1);
       }
-
-      nameInstructionsEditor(instructionsEditor);
-
-      // Edit was activated deliberately and the pencil that had focus is now
-      // hidden, so put the caret where the user is expected to type instead of
-      // dropping focus to <body>. The editor announces its own escape route.
-      instructionsEditor.focus();
     },
     onCancelEditInstructionsClick : function() {
       var self = this;
@@ -2329,26 +2154,6 @@ $('document').ready(function() {
       $('#embedded-instructions').remove();
 
       self.displayInstructions();
-
-      // The editor that held focus has just been removed from the document, so
-      // hand focus back to the control that opened it rather than leaving it
-      // on <body>. displayInstructions has re-revealed #instructionsActions.
-      self.focusEditInstructionsLink();
-    },
-    /**
-     * Return focus to the pencil that opens the instructions editor.
-     *
-     * Called on every route that dismisses the editor. Guarded on visibility
-     * because displayInstructions leaves #instructionsActions hidden when no
-     * markdown parser is available, and focusing a hidden control would be a
-     * silent no-op that still reads as a dropped focus.
-     */
-    focusEditInstructionsLink : function() {
-      var $link = $('#edit-instructions-link');
-
-      if ($link.length && $link.is(':visible') && typeof $link[0].focus === 'function') {
-        $link[0].focus();
-      }
     },
     onSaveInstructionsClick : function(event) {
       var self = this
@@ -2378,10 +2183,6 @@ $('document').ready(function() {
           $('#embedded-instructions').remove();
 
           self.displayInstructions();
-
-          // Same reasoning as the cancel route: the editor holding focus is
-          // gone, so focus returns to the control that opened it.
-          self.focusEditInstructionsLink();
         }, 500);
       })
       .fail(function(xhr, textStatus, errorThrown) {
@@ -2396,245 +2197,6 @@ $('document').ready(function() {
     onKeyboardToggle : function() {
     }
   }, window.TrinketAPI);
-
-  /**
-   * Keep the off-canvas panels out of the tab order while they are closed.
-   *
-   * Both panels are laid out off-screen with a transform rather than being
-   * hidden, so every control inside them stays focusable: a keyboard user
-   * walks eleven invisible menu items and the off-screen sign-in fields
-   * before reaching the editor. The markup now ships them with
-   * `tabindex="-1"`, and this restores focusability for whichever panel is
-   * open.
-   *
-   * Deliberately registered at module scope rather than from the TrinketApp
-   * constructor: the panels exist and are reachable by TAB whether or not the
-   * app finishes initialising, so their tab order must be correct either way.
-   */
-  (function manageOffCanvasTabOrder() {
-    var $wrapper = $('[data-offcanvas]').first()
-      , FOCUSABLE = 'a, button, input, select, textarea, [tabindex]'
-      , panels = [
-          {
-              selector  : '.left-off-canvas-menu'
-            , openClass : 'move-right'
-            , toggle    : '.left-off-canvas-toggle'
-            , opener    : null
-            , wasOpen   : null
-          }
-        , {
-              selector  : '.right-off-canvas-menu'
-            , openClass : 'move-left'
-            , toggle    : '.right-off-canvas-toggle'
-            , opener    : null
-            , wasOpen   : null
-          }
-        ]
-      , observer;
-
-    if (!$wrapper.length) {
-      return;
-    }
-
-    /**
-     * Move focus to the control that should own it once `panel` has closed.
-     *
-     * The recorded opener is preferred, but it cannot be trusted blindly: more
-     * than one control can open the same panel (the guest "Remix" button is
-     * also a `.right-off-canvas-toggle`), a pointer close can happen before
-     * any opener was recorded, and the menu may have been re-rendered in
-     * between. So the recorded opener is tried first and every toggle for the
-     * panel after it.
-     *
-     * Focusability is decided by attempting the focus and checking whether it
-     * took, never by a predicate: `tabIndex` reads 0 for an href-less anchor
-     * with no tabindex attribute, so a property test accepts controls that
-     * cannot actually hold focus - the guest "Remix" control being exactly
-     * that shape - and `focus()` then no-ops silently, stranding the user.
-     * A failed focus() has no other effect, so trying is free.
-     */
-    function returnFocusTo(panel) {
-      var candidates = panel.opener ? [panel.opener] : [];
-
-      $(panel.toggle).each(function() {
-        candidates.push(this);
-      });
-
-      for (var i = 0; i < candidates.length; i++) {
-        var el = candidates[i];
-
-        if (!document.body.contains(el)
-          || !$(el).is(':visible')
-          || typeof el.focus !== 'function') {
-          continue;
-        }
-
-        el.focus();
-
-        if (document.activeElement === el) {
-          return true;
-        }
-      }
-
-      // Nothing on this surface can take focus - the output-only variant
-      // renders its menu toggle without a tab stop, and the account toggle is
-      // configuration-gated. Blurring is then the least bad outcome: focus
-      // moves to <body> rather than staying inside a panel that is about to
-      // be marked aria-hidden, which the browser would refuse to honour.
-      if (document.activeElement && typeof document.activeElement.blur === 'function') {
-        document.activeElement.blur();
-      }
-
-      return false;
-    }
-
-    function holdsFocus(panelEl) {
-      var active = document.activeElement;
-
-      return !!(active && panelEl && panelEl !== active && panelEl.contains(active));
-    }
-
-    function applyState() {
-      for (var i = 0; i < panels.length; i++) {
-        var panel  = panels[i]
-          , open   = $wrapper.hasClass(panel.openClass)
-          , $panel = $(panel.selector)
-          , stranded = false;
-
-        // On the open -> closed transition, take focus out of the panel BEFORE
-        // it is hidden and marked aria-hidden, and put it back on the control
-        // that opened it.
-        //
-        // Two distinct failures are being prevented. Leaving focus inside the
-        // panel strands the user on an off-screen control and makes Chrome
-        // refuse the aria-hidden entirely ("Blocked aria-hidden on an element
-        // because its descendant retained focus"), so the panel stays exposed
-        // to assistive technology. Leaving it on <body> - what a pointer close
-        // through the overlay produces - loses the user's place completely.
-        // Both are recovered here, which covers every close route: the toggle
-        // again, the .exit-off-canvas overlay, a link inside the panel, and a
-        // bare class change made programmatically.
-        if (panel.wasOpen === true && !open) {
-          $panel.each(function() {
-            if (holdsFocus(this)) {
-              stranded = true;
-            }
-          });
-
-          if (stranded || !document.activeElement || document.activeElement === document.body) {
-            returnFocusTo(panel);
-          }
-        }
-
-        $panel.each(function() {
-          $(this).attr('aria-hidden', open ? 'false' : 'true');
-          $(this).find(FOCUSABLE).each(function() {
-            // Anything the markup deliberately keeps unreachable (a hidden
-            // dropdown container, for instance) is left alone.
-            if (this.getAttribute('data-keep-untabbable') !== null) {
-              return;
-            }
-            this.setAttribute('tabindex', open ? '0' : '-1');
-          });
-        });
-
-        // Derive aria-expanded from the panel's real state in the same pass,
-        // so the toggle and the panel can never disagree. Foundation writes
-        // 'true' on every toggle click including the one that closes, and one
-        // of its two .exit-off-canvas handlers writes 'true' to the right
-        // toggle while closing, so left to itself the attribute sticks at
-        // 'true' for the rest of the page's life.
-        $(panel.toggle).attr('aria-expanded', open ? 'true' : 'false');
-
-        panel.wasOpen = open;
-      }
-    }
-
-    // Remember which control opened which panel, so focus can be returned to
-    // it rather than to whichever toggle happens to come first in the DOM.
-    // Registered on document like the rest of the delegates; it only records,
-    // so its order relative to Foundation's own handler does not matter.
-    $(document).on('click', '.left-off-canvas-toggle, .right-off-canvas-toggle', function() {
-      for (var i = 0; i < panels.length; i++) {
-        if ($(this).is(panels[i].toggle)) {
-          panels[i].opener = this;
-        }
-      }
-    });
-
-    // Establishes the initial closed state. wasOpen starts null, so this first
-    // pass records the state without treating it as a transition and cannot
-    // move focus on load - which matters because these surfaces decide for
-    // themselves whether to focus the editor.
-    applyState();
-
-    // Foundation toggles the open class on the wrapper, and the account panel
-    // is populated from a template after load, so watch for both.
-    if (window.MutationObserver) {
-      observer = new window.MutationObserver(applyState);
-      observer.observe($wrapper.get(0), { attributes : true, attributeFilter : ['class'] });
-
-      for (var p = 0; p < panels.length; p++) {
-        var panel = $(panels[p].selector).get(0);
-        if (panel) {
-          observer.observe(panel, { childList : true, subtree : true });
-        }
-      }
-    }
-    else {
-      // Older engines: re-apply whenever a toggle is used.
-      $(document).on('click', '.left-off-canvas-toggle, .right-off-canvas-toggle, .exit-off-canvas', function() {
-        window.setTimeout(applyState, 0);
-      });
-    }
-  })();
-
-  /**
-   * Keyboard activation for the chrome's non-native controls.
-   *
-   * Every selector below is an href-less anchor or a div driven by a click
-   * handler. The browser synthesises no click for ENTER or SPACE on those, so
-   * they focus and announce correctly and then do nothing; this forwards both
-   * keys to the same handler the pointer uses. The markup supplies their names
-   * and tab stops.
-   *
-   * Covered here, and why each one matters:
-   *   - the instructions pane's pencil / save / cancel controls;
-   *   - #instructionsTab, without which the instructions pane cannot be opened
-   *     by keyboard at all;
-   *   - the off-canvas toggles and the overlay, one of which is the only route
-   *     to the sign-in panel, so a keyboard-only guest is otherwise locked out;
-   *   - #login inside that panel, which is the panel's whole purpose.
-   *
-   * NATIVE ELEMENTS ARE SKIPPED. The left menu toggle is a real <button>, so
-   * it already fires its own click on ENTER and SPACE; triggering a second one
-   * here would toggle the panel twice and cancel itself out. Form controls are
-   * skipped for the same reason plus their own key semantics (SPACE toggles a
-   * checkbox, ENTER submits a form).
-   */
-  $(document).on('keydown',
-    '#edit-instructions-link, #save-instructions, #cancel-edit-instructions,'
-    + ' #instructionsTab,'
-    + ' .left-off-canvas-toggle, .right-off-canvas-toggle, .exit-off-canvas,'
-    + ' #login',
-    function(event) {
-      var tag = this.tagName;
-
-      // 13 = ENTER, 32 = SPACE
-      if (event.which !== 13 && event.which !== 32) {
-        return;
-      }
-
-      if (tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
-        return;
-      }
-
-      // preventDefault also suppresses the keypress event, which keeps the
-      // `.menu-button` keypress handler above from firing a second time for
-      // ENTER, and stops SPACE from scrolling the page.
-      event.preventDefault();
-      $(this).trigger('click');
-    });
 
   window.TrinketApp = new TrinketApp(window.trinketObject, window.draftObject);
   if (window.parent) {

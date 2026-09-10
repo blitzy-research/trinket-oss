@@ -96,6 +96,7 @@
         "html",
         "success",
         "payloadOutput",
+        "declaredPayloadOutput",
         "isJoiSchema",
         "languageMap",
         "leaves"
@@ -188,7 +189,7 @@
   "notes": {
     "proves": "Every case in this artifact was DRIVEN against a running application at the joi named in `joiVersion`, in both Accept modes, and the response was recorded as measured. A `targetComparison` block, when present, carries the completed comparison against the other side of the gate; when it is null this artifact is one side only.",
     "reproduce": {
-      "thisRun": "node test/parity/joi-matrix.js --capture --app ephemeral:trinket-baseline-2f8712a --port 3262 --overlay tool:test/parity/server-overlay.json --overwrite --out tool:test/parity/joi-baseline.json >/dev/null 2>/dev/null",
+      "thisRun": "node test/parity/joi-matrix.js --capture --app ephemeral:trinket-baseline-2f8712a --port 3211 --overlay tool:test/parity/server-overlay.json --overwrite --out tool:test/parity/joi-baseline.json >/dev/null 2>/dev/null",
       "paths": "Every path in `thisRun` is a symbolic label: `tool:<relative>` is relative to the repository root and `ephemeral:<basename>` was a scratch location whose directory is this run's own machine state - substitute your own. The tree that was MEASURED is named by commit in `provenance.analysedTree`, which is the reproducible form of it; `baselineCapture` below is how that tree is created.",
       "credentials": "Any credential a `--mongo-uri` carried is REDACTED as \"[redacted-by-joi-matrix]\" here, in `databaseAlignment.seederUri` and in every diagnostic; supply your own. Host, port, database and the non-secret parameters are recorded in full.",
       "baselineCapture": "node test/parity/joi-matrix.js --capture --app <baseline worktree at the base commit, with its OWN npm ci> --port <free port> --database <isolated name> --out <baseline.json> >/dev/null 2>/dev/null",
@@ -234,8 +235,8 @@
     "fieldCoverage": {
       "target": {
         "populated": true,
-        "present": 20,
-        "compared": 18,
+        "present": 21,
+        "compared": 19,
         "joinFields": [
           "key"
         ],
@@ -347,9 +348,9 @@
   "databaseAlignment": {
     "source": "provisioned mongodb-memory-server",
     "host": "127.0.0.1",
-    "port": 37391,
-    "database": "parity_291286_mtstory5_8de1c4",
-    "seederUri": "mongodb://127.0.0.1:37391/parity_291286_mtstory5_8de1c4",
+    "port": 44927,
+    "database": "parity_310724_mtvygens_1dfd48",
+    "seederUri": "mongodb://127.0.0.1:44927/parity_310724_mtvygens_1dfd48",
     "agreedAcross": [
       "this process's composed NODE_CONFIG db.mongo.{host,port,database}",
       "the address handed to the application under test",
@@ -455,7 +456,7 @@
         ],
         "knownValues": [],
         "unseeded": [],
-        "reviewed": "The declaration spells the last pre-handler `parent(payload.parent,pre.lesson)` [config/api_routes.js:241], and `parent` is registered as `findById(Lesson)` [lib/util/helpers.js:286-303]. That factory returns `function (id, optional, next)` and, when it is called with exactly two arguments and the second is not a boolean, treats the second as the CALLBACK [lib/util/helpers.js:35-38] - so `next` becomes the Lesson DOCUMENT `pre.lesson` resolves to, and the `next(result)` at lib/util/helpers.js:50 throws `TypeError: next is not a function`. The parser's string dispatcher applies exactly the declared arguments [lib/util/routeParser.js:173], so the arity is two on every request. Measured on BOTH trees: all six drives of this target answer 500 with `{error, message, statusCode}` and no validation flash, for the accepting, rejecting and coercion inputs alike, and with `parent` present as the seeded Lesson id. Omitting `parent` does not help either: the `if (!id)` branch at lib/util/helpers.js:40-43 calls the same non-function. There is therefore no request that reaches this target's validation block, and no input this tool can choose changes that. The fix is in the application - either make the factory ignore a non-function second argument, or spell the declaration `parent(payload.parent)` - and both files are outside this gate."
+        "reviewed": "The declaration spells the last pre-handler `parent(payload.parent,pre.lesson)` [config/api_routes.js:241], and `parent` is registered as `findById(Lesson)` [lib/util/helpers.js:286-303]. That factory returns `function (id, optional, next)` and, when it is called with exactly two arguments and the second is not a boolean, treats the second as the CALLBACK [lib/util/helpers.js:35-38] - so `next` becomes the Lesson DOCUMENT `pre.lesson` resolves to, and the `next(result)` at lib/util/helpers.js:50 throws `TypeError: next is not a function`. The parser's string dispatcher applies exactly the declared arguments [lib/util/routeParser.js:173], so the arity is two on every request. Measured on BOTH trees: all six drives of this target answer 500 with `{error, message, statusCode}` and no validation flash, for the accepting, rejecting and coercion inputs alike, and with `parent` present as the seeded Lesson id. Omitting `parent` does not help either: the `if (!id)` branch at lib/util/helpers.js:40-43 calls the same non-function. There is therefore no request that reaches this target's validation block ON THE BASE COMMIT, and no input this tool can choose changes that there. THE MIGRATED TREE REACHES IT: `internals.findById` reads a non-callback second argument as the fallback value the declaration means it to be (order-0 R8), so the pre-handler resolves, the block runs and the rejecting drive answers 200 carrying the `index` violation - measured, and authorized under `R8-material-move-guard`. This entry therefore reviews the BASELINE side of that pair, which is what keeps the baseline recording from carrying an unexplained unreached case."
       }
     ]
   },
@@ -468,13 +469,13 @@
         "target": "POST /api/users/email payload",
         "case": "accepting",
         "mode": "html",
-        "reviewed": "`users.sendEmailChange` [lib/controllers/users.js:845-887] answers only from inside a callback it passes to `Store.set` as a THIRD argument, and `Store.set` is an arity-2 `async function (key, value)` on both trees [lib/util/store.js:16-19 for the in-memory engine, :203-206 for the redis engine], so the third argument is ignored, the callback never runs, the promise the handler returned never settles and the request never receives a response. The target tree comments this as a PRESERVED DEFECT at lib/controllers/users.js:870-876 and the baseline reaches the same non-settlement through the same call. It is the accepting input that gets there: `User.findByLogin` must NOT find an account with the address being claimed, and the rejecting input is not a valid email so the validation block answers before the handler runs at all - measured, that case answers 200 in both Accept modes on both trees. The seeded fixtures deliberately do not own `parity@example.com`, so this is the state every drive of this case observes once the seeded state is restored per drive (see RESTORE_POLICY); an earlier build of this gate recorded a 200 here only because a preceding drive had changed a user's address to that value first. A bounded timeout is therefore the measured outcome of this route, identical on both sides of the gate, and is compared as such: `timedOut` is a compared field on every outcome and the timeout list below is compared whole. Fixing it means awaiting the promise, which would start answering and start sending mail - a behaviour change R-d prohibits - so it is preserved and recorded rather than repaired."
+        "reviewed": "MEASURED PER TREE. On the BASE COMMIT `users.sendEmailChange` [lib/controllers/users.js:1492-1554 in the migrated tree] answers only from inside a callback it passes to `Store.set` as a THIRD argument, and `Store.set` is an arity-2 `async function (key, val)` [lib/util/store.js:16-19 for the in-memory engine, :203-206 for the redis engine, unchanged from 2f8712a], so the third argument is ignored, the callback never runs, the promise the handler returned never settles and the request never receives a response - the drive gives up at this gate's 20000ms budget with no status, no header and no body. THE MIGRATED TREE ANSWERS: the handler resolves from the promise `Store.set` actually returns, so the same drive records 200 `{\"success\":true}` and a store rejection is routed into `request.fail` instead of reaching nothing at all. AAP 0.7 decides that collision against R-d on its own ground - an unsettled request is the absence of a response rather than a behaviour a client can depend on - together with R-b's unqualified requirement that every route serve, and the controller carries the same argument at its site. It is the accepting input that gets to the write on either tree: `User.findByLogin` must NOT find an account with the address being claimed, and the rejecting input is not a valid email so the validation block answers before the handler runs at all - measured, that case answers 200 in both Accept modes on both trees. The seeded fixtures deliberately do not own `parity@example.com`, so this is the state every drive of this case observes once the seeded state is restored per drive (see RESTORE_POLICY); an earlier build of this gate recorded a 200 here only because a preceding drive had changed a user's address to that value first. `timedOut` is a compared field on every outcome and the timeout list is compared whole, so the move from no response to a response is measured rather than assumed on both sides."
       },
       {
         "target": "POST /api/users/email payload",
         "case": "accepting",
         "mode": "json",
-        "reviewed": "`users.sendEmailChange` [lib/controllers/users.js:845-887] answers only from inside a callback it passes to `Store.set` as a THIRD argument, and `Store.set` is an arity-2 `async function (key, value)` on both trees [lib/util/store.js:16-19 for the in-memory engine, :203-206 for the redis engine], so the third argument is ignored, the callback never runs, the promise the handler returned never settles and the request never receives a response. The target tree comments this as a PRESERVED DEFECT at lib/controllers/users.js:870-876 and the baseline reaches the same non-settlement through the same call. It is the accepting input that gets there: `User.findByLogin` must NOT find an account with the address being claimed, and the rejecting input is not a valid email so the validation block answers before the handler runs at all - measured, that case answers 200 in both Accept modes on both trees. The seeded fixtures deliberately do not own `parity@example.com`, so this is the state every drive of this case observes once the seeded state is restored per drive (see RESTORE_POLICY); an earlier build of this gate recorded a 200 here only because a preceding drive had changed a user's address to that value first. A bounded timeout is therefore the measured outcome of this route, identical on both sides of the gate, and is compared as such: `timedOut` is a compared field on every outcome and the timeout list below is compared whole. Fixing it means awaiting the promise, which would start answering and start sending mail - a behaviour change R-d prohibits - so it is preserved and recorded rather than repaired."
+        "reviewed": "MEASURED PER TREE. On the BASE COMMIT `users.sendEmailChange` [lib/controllers/users.js:1492-1554 in the migrated tree] answers only from inside a callback it passes to `Store.set` as a THIRD argument, and `Store.set` is an arity-2 `async function (key, val)` [lib/util/store.js:16-19 for the in-memory engine, :203-206 for the redis engine, unchanged from 2f8712a], so the third argument is ignored, the callback never runs, the promise the handler returned never settles and the request never receives a response - the drive gives up at this gate's 20000ms budget with no status, no header and no body. THE MIGRATED TREE ANSWERS: the handler resolves from the promise `Store.set` actually returns, so the same drive records 200 `{\"success\":true}` and a store rejection is routed into `request.fail` instead of reaching nothing at all. AAP 0.7 decides that collision against R-d on its own ground - an unsettled request is the absence of a response rather than a behaviour a client can depend on - together with R-b's unqualified requirement that every route serve, and the controller carries the same argument at its site. It is the accepting input that gets to the write on either tree: `User.findByLogin` must NOT find an account with the address being claimed, and the rejecting input is not a valid email so the validation block answers before the handler runs at all - measured, that case answers 200 in both Accept modes on both trees. The seeded fixtures deliberately do not own `parity@example.com`, so this is the state every drive of this case observes once the seeded state is restored per drive (see RESTORE_POLICY); an earlier build of this gate recorded a 200 here only because a preceding drive had changed a user's address to that value first. `timedOut` is a compared field on every outcome and the timeout list is compared whole, so the move from no response to a response is measured rather than assumed on both sides."
       }
     ],
     "unresolved": []
@@ -928,6 +929,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -1269,6 +1271,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -1725,6 +1728,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -2058,6 +2062,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -2328,6 +2333,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -2678,6 +2684,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -3088,6 +3095,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -3388,6 +3396,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -3764,6 +3773,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -4054,6 +4064,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -4432,6 +4443,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -4856,6 +4868,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -5533,6 +5546,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -5936,6 +5950,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -6240,6 +6255,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -6632,6 +6648,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -7260,6 +7277,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -7549,6 +7567,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -7840,6 +7859,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -8124,6 +8144,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -8392,6 +8413,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -8660,6 +8682,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -8950,6 +8973,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -9259,6 +9283,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -9520,6 +9545,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -9789,6 +9815,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -10048,6 +10075,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -10357,6 +10385,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -10655,6 +10684,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -10923,6 +10953,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -11309,6 +11340,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -11599,6 +11631,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -11875,6 +11908,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -12325,6 +12359,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -12599,6 +12634,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -12866,6 +12902,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -13151,6 +13188,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -13431,6 +13469,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -13825,6 +13864,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -14222,6 +14262,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -14549,6 +14590,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -14832,6 +14874,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -15114,6 +15157,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -15628,6 +15672,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -15985,6 +16030,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -16244,6 +16290,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -16645,6 +16692,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -17220,6 +17268,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -17630,6 +17679,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -18174,6 +18224,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -18573,6 +18624,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": true,
       "languageMap": null,
       "leaves": [
@@ -18920,6 +18972,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -19284,6 +19337,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -19602,6 +19656,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -19894,6 +19949,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -20184,6 +20240,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -20457,6 +20514,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -20798,6 +20856,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -21095,6 +21154,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -21381,6 +21441,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -21688,6 +21749,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -21960,6 +22022,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -22229,6 +22292,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -22502,6 +22566,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -22766,6 +22831,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -23451,6 +23517,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -23901,6 +23968,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -24201,6 +24269,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -24486,6 +24555,7 @@
       "html": null,
       "success": null,
       "payloadOutput": "file",
+      "declaredPayloadOutput": "file",
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -24804,6 +24874,7 @@
       "html": null,
       "success": null,
       "payloadOutput": "file",
+      "declaredPayloadOutput": "file",
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -25124,6 +25195,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -25396,6 +25468,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -25660,6 +25733,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -25937,6 +26011,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -26242,6 +26317,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -26505,6 +26581,7 @@
         "redirect": "account/email"
       },
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -26688,7 +26765,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/account/email",
+              "location": "http://127.0.0.1:3211/account/email",
               "locationRelative": "/account/email",
               "renderedMessages": [],
               "validationFlash": null,
@@ -26791,6 +26868,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -27068,6 +27146,7 @@
         "redirect": "account/email"
       },
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -27251,7 +27330,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/account/email",
+              "location": "http://127.0.0.1:3211/account/email",
               "locationRelative": "/account/email",
               "renderedMessages": [],
               "validationFlash": null,
@@ -27361,6 +27440,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -27629,6 +27709,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -27936,6 +28017,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -28120,6 +28202,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -28413,6 +28496,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -28819,6 +28903,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -29160,6 +29245,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -29501,6 +29587,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -29922,6 +30009,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -30275,6 +30363,7 @@
       "html": "login.html",
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -30548,6 +30637,7 @@
         "redirect": "/home"
       },
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -30627,7 +30717,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/login",
+              "location": "http://127.0.0.1:3211/login",
               "locationRelative": "/login",
               "renderedMessages": [],
               "validationFlash": null,
@@ -30746,7 +30836,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/login",
+              "location": "http://127.0.0.1:3211/login",
               "locationRelative": "/login",
               "renderedMessages": [],
               "validationFlash": null,
@@ -30854,6 +30944,7 @@
         "redirect": "/welcome"
       },
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": {
         "username": {
@@ -31026,7 +31117,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/aaa",
+              "location": "http://127.0.0.1:3211/aaa",
               "locationRelative": "/aaa",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31059,7 +31150,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/aaa",
+              "location": "http://127.0.0.1:3211/aaa",
               "locationRelative": "/aaa",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31197,7 +31288,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/signup",
+              "location": "http://127.0.0.1:3211/signup",
               "locationRelative": "/signup",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31304,6 +31395,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": {
         "username": {
@@ -31626,6 +31718,7 @@
       },
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -31733,7 +31826,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/testing/courses/aaa",
+              "location": "http://127.0.0.1:3211/testing/courses/aaa",
               "locationRelative": "/testing/courses/aaa",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31860,7 +31953,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/courses/new",
+              "location": "http://127.0.0.1:3211/courses/new",
               "locationRelative": "/courses/new",
               "renderedMessages": [],
               "validationFlash": null,
@@ -31981,6 +32074,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -32247,6 +32341,7 @@
       "html": "users/sendpassreset.html",
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -32326,7 +32421,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/forgot-pass",
+              "location": "http://127.0.0.1:3211/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32446,7 +32541,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/forgot-pass",
+              "location": "http://127.0.0.1:3211/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32544,6 +32639,7 @@
       "html": "users/resetpass.html",
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -32609,7 +32705,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/forgot-pass",
+              "location": "http://127.0.0.1:3211/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32720,7 +32816,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/forgot-pass",
+              "location": "http://127.0.0.1:3211/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -32816,6 +32912,7 @@
       "html": "users/savepass.html",
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -32909,7 +33006,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/forgot-pass",
+              "location": "http://127.0.0.1:3211/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33029,7 +33126,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/forgot-pass",
+              "location": "http://127.0.0.1:3211/forgot-pass",
               "locationRelative": "/forgot-pass",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33127,6 +33224,7 @@
       "html": "users/activateaccount.html",
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -33303,7 +33401,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/{redirectTo}",
+              "location": "http://127.0.0.1:3211/{redirectTo}",
               "locationRelative": "/%7BredirectTo%7D",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33401,6 +33499,7 @@
         "redirect": "/welcome"
       },
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -33480,7 +33579,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/activate-account",
+              "location": "http://127.0.0.1:3211/activate-account",
               "locationRelative": "/activate-account",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33597,7 +33696,7 @@
               "timedOut": false,
               "error": null,
               "contentType": "text/html; charset=utf-8",
-              "location": "http://127.0.0.1:3262/{redirectTo}",
+              "location": "http://127.0.0.1:3211/{redirectTo}",
               "locationRelative": "/%7BredirectTo%7D",
               "renderedMessages": [],
               "validationFlash": null,
@@ -33692,6 +33791,7 @@
       "html": null,
       "success": null,
       "payloadOutput": "file",
+      "declaredPayloadOutput": "file",
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -34014,6 +34114,7 @@
       "html": null,
       "success": null,
       "payloadOutput": "file",
+      "declaredPayloadOutput": "file",
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -34323,6 +34424,7 @@
       "html": null,
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -34589,6 +34691,7 @@
       "html": "trinket/library.html",
       "success": null,
       "payloadOutput": null,
+      "declaredPayloadOutput": null,
       "isJoiSchema": false,
       "languageMap": null,
       "leaves": [
@@ -34922,13 +35025,13 @@
     "role": "baseline",
     "generator": {
       "path": "test/parity/joi-matrix.js",
-      "blob": "4a97e207255d87bbca8dc5d6c074faa19c640227",
-      "commit": "461cd0f16b6db206c997db9fee9ea86569da6fcc",
-      "commitState": "contains-this-exact-source",
-      "verified": true,
-      "deliveredHead": "461cd0f16b6db206c997db9fee9ea86569da6fcc",
-      "deliveredHeadShort": "461cd0f",
-      "matchesDeliveredHead": true
+      "blob": "491828f1bf16ddc842c9ebb5f36915437a8159ad",
+      "commit": null,
+      "commitState": "uncommitted-source",
+      "verified": false,
+      "deliveredHead": "dd0d99879efe08da55a0ae7151b132115ed2c016",
+      "deliveredHeadShort": "dd0d998",
+      "matchesDeliveredHead": false
     },
     "analysedTree": {
       "head": "2f8712a112db46f923918c4507c75abc732d83d0",
@@ -34938,11 +35041,11 @@
       "worktreeState": "clean"
     },
     "delivered": {
-      "head": "461cd0f16b6db206c997db9fee9ea86569da6fcc",
-      "headShort": "461cd0f",
-      "subject": "Record the measured authorization pairs for the joi parity register",
+      "head": "dd0d99879efe08da55a0ae7151b132115ed2c016",
+      "headShort": "dd0d998",
+      "subject": "Close the security, accessibility and validation findings across the request path, admin pane, uploads and delivery records",
       "isBaselineCommit": false,
-      "worktreeState": "clean"
+      "worktreeState": "dirty"
     },
     "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
     "runtime": {
@@ -35017,7 +35120,7 @@
     "payloadDigest": {
       "algorithm": "sha256",
       "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
-      "value": "0b402ea6037e86f2f849cb7a4e4f9ff74eeb31cb063c846ace753ad06c217122"
+      "value": "4a933fd745033004bed71f3a2acd46e90ff97a50513636b3fdadd98baccad797"
     }
   }
 }

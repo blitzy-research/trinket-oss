@@ -2,17 +2,17 @@
   <section class="page-menu">
     <div class="editable-error alert-box warning" ng-show="$error" ng-bind="$error" data-alert></div>
     <section class="options-right">
-      <a class="button small" ng-if="isAdmin" ng-click="smile()" aria-label="Take Snapshot" role="button"><i ng-class="{'fa fa-spinner fa-spin':isSnapping, 'fa fa-camera':!isSnapping}"></i></a>
-      <a class="button small" ng-if="isOwner" data-reveal-id="addToFolderModal" aria-label="Add To Folder" role="button"><i class='fa fa-folder'></i></a>
-      <a class="button small" ng-if="isOwner && canCopy" ng-click="copy()" aria-label="Copy Trinket" role="button"><span class="label-container"><i class='fa fa-files-o label-icon'></i> <span class='show-for-large-up label-text'>copy</span></span></a>
+      <a class="button small" ng-if="isAdmin" ng-click="smile()"><i ng-class="{'fa fa-spinner fa-spin':isSnapping, 'fa fa-camera':!isSnapping}"></i></a>
+      <a class="button small" ng-if="isOwner" data-reveal-id="addToFolderModal"><i class='fa fa-folder'></i></a>
+      <a class="button small" ng-if="isOwner && canCopy" ng-click="copy()"><span class="label-container"><i class='fa fa-files-o label-icon'></i> <span class='show-for-large-up label-text'>copy</span></span></a>
 
-      <a data-dropdown="shareDropdown" aria-controls="shareDropdown" aria-expanded="false" class="button small" aria-label="Share Trinket" role="button"><span class="label-container"><i class='fa fa-share-alt label-icon'></i> <span class='show-for-large-up label-text'>Share</span></span></a>
-      <ul id="shareDropdown" data-dropdown-content class="f-dropdown" aria-hidden="true" role="menu">
-        <li ng-if="emailEnabled" role="presentation"><a ng-click="emailModal()" aria-label="Email" role="menuitem"><i class="fa fa-envelope fa-fw"></i> Email</a></li>
-        <li role="presentation"><a ng-click="linkModal()" aria-label="Link" role="menuitem"><i class="fa fa-link fa-fw"></i> Link</a></li>
-        <li role="presentation"><a ng-click="embedModal()" aria-label="Embed" role="menuitem"><i class="fa fa-code fa-fw"></i> Embed</a></li>
-        <li role="presentation"><a ng-click="publishModal()" aria-label="Publish" role="menuitem"><i class="fa fa-book fa-fw"></i> Publish</a></li>
-        <li ng-if="downloadable" role="presentation"><a ng-click="downloadTrinket()" aria-label="Download" role="menuitem"><i class="fa fa-download fa-fw"></i> Download</a></li>
+      <a data-dropdown="shareDropdown" aria-controls="shareDropdown" aria-expanded="false" class="button small"><span class="label-container"><i class='fa fa-share-alt label-icon'></i> <span class='show-for-large-up label-text'>Share</span></span></a>
+      <ul id="shareDropdown" data-dropdown-content class="f-dropdown" aria-hidden="true">
+        <li ng-if="emailEnabled"><a ng-click="emailModal()"><i class="fa fa-envelope fa-fw"></i> Email</a></li>
+        <li><a ng-click="linkModal()"><i class="fa fa-link fa-fw"></i> Link</a></li>
+        <li><a ng-click="embedModal()"><i class="fa fa-code fa-fw"></i> Embed</a></li>
+        <li><a ng-click="publishModal()"><i class="fa fa-book fa-fw"></i> Publish</a></li>
+        <li ng-if="downloadable"><a ng-click="downloadTrinket()"><i class="fa fa-download fa-fw"></i> Download</a></li>
       </ul>
 
       <a class="button small" ng-if="!isOwner && canCopy" ng-click="addToLibrary()" ng-class="{disabled:addingToLibrary, primary:!addingToLibrary}"><i class='fa fa-plus'></i> save a copy</a>
@@ -29,7 +29,7 @@
       </a>
       <!--Small save button-->
       <a class="button small show-for-small" ng-if="canSave && isOwner" ng-click="save()"
-         ng-class="{disabled:!apiReady, warning:saveError, primary:isModified && !saveError}" aria-label="Save Trinket" role="button">
+         ng-class="{disabled:!apiReady, warning:saveError, primary:isModified && !saveError}">
         <span class="label-container">
           <i ng-class="{'fa fa-spinner fa-spin':isSaving,
                         'fa fa-ban':!apiReady,
@@ -37,14 +37,14 @@
                         'fa fa-save':apiReady && !saveError && !isSaving}" class="label-icon"></i>
         </span>
       </a>
-      <a class="button small caution" ng-if="isOwner" data-reveal-id="trinketDeleteModal" aria-label="Delete Trinket" role="button"><i class="fa fa-trash-o"></i></a>
+      <a class="button small caution" ng-if="isOwner" data-reveal-id="trinketDeleteModal"><i class="fa fa-trash-o"></i></a>
       <div class="label info last-saved">last saved {{timeSinceSave}}</div>
     </section>
     <div class="spacer"></div>
     <nav class="breadcrumbs">
-      <a href="/home" aria-label="Go Home"><i class="fa fa-home"></i></a>
+      <a href="/home"><i class="fa fa-home"></i></a>
       <a ui-sref="list">My Trinkets</a>
-      <a ng-if="trinketInFolder" ui-sref="folderList({slug: trinket.folder.folderSlug})" title="{{ trinket.folder.name }}" aria-label="Folder: {{ trinket.folder.name }}"><i class="fa fa-folder"></i></a>
+      <a ng-if="trinketInFolder" ui-sref="folderList({slug: trinket.folder.folderSlug})" title="{{ trinket.folder.name }}"><i class="fa fa-folder"></i></a>
       <a class="current">
         <span ng-if="isOwner" editable-text="trinket.name"
               e-maxlength="50"
@@ -57,8 +57,8 @@
   </section>
 
   <section id="embed-code" ng-class="{edit:isEditing, 'medium':trinket.lang == 'music', 'large':trinket.lang != 'music'}">
-    <iframe ng-src="{{iframeUrl}}" title="Trinket preview" width="100%" height="100%" frameborder="0" marginwidth="0" marginheight="0" allowfullscreen embed-api run-mode="runMode" is-modified="isModified" api="trinketApi"></iframe>
-    <a class="exit-edit-view" ng-click="edit(false)" aria-label="Close Embed Code View" role="button"><i class="fa fa-times"></i></a>
+    <iframe ng-src="{{iframeUrl}}" width="100%" height="100%" frameborder="0" marginwidth="0" marginheight="0" allowfullscreen embed-api run-mode="runMode" is-modified="isModified" api="trinketApi"></iframe>
+    <a class="exit-edit-view" ng-click="edit(false)"><i class="fa fa-times"></i></a>
   </section>
 
   <section id="metrics">
@@ -99,29 +99,29 @@
   -->
 </div>
 
-<div id="trinketDeleteModal" class="reveal-modal medium" data-reveal close="closeDeleteModal" role="dialog" aria-labelledby="trinketDeleteModalTitle">
-  <h2 id="trinketDeleteModalTitle">Delete this Trinket</h2>
+<div id="trinketDeleteModal" class="reveal-modal medium" data-reveal close="closeDeleteModal">
+  <h2>Delete this Trinket</h2>
   <h3 class="subheader">Are you sure you want to delete this trinket?</h3>
   <hr>
   <p ng-if="trinket.metrics.embedViews">It looks like this trinket has been embedded on a website. If you delete it, it will no longer be visible there.</p>
   <p ng-if="!trinket.metrics.embedViews">If this trinket has been embedded on a website, it will no longer be visible there.</p>
   <a class="button caution close-modal">Nevermind, do not delete this trinket</a>
   <a class="button danger" ng-click="remove()">Yes, delete this trinket</a>
-  <a class="close-reveal-modal" aria-label="Close" role="button">&#215;</a>
+  <a class="close-reveal-modal">&#215;</a>
 </div>
 
-<div id="trinketSaveErrorModal" class="reveal-modal medium" data-reveal close="closeSaveErrorModal" role="dialog" aria-labelledby="trinketSaveErrorModalTitle">
-  <h3 id="trinketSaveErrorModalTitle" class="subheader">We had a problem saving your trinket!</h3>
+<div id="trinketSaveErrorModal" class="reveal-modal medium" data-reveal close="closeSaveErrorModal">
+  <h3 class="subheader">We had a problem saving your trinket!</h3>
   <p>Please try again but if you're still unable to save, please make a copy of your code. We don't want you to lose any work!</p>
   <p>Hopefully this is just a temporary issue but if not please <a ng-click="messageUs()">let us know</a>.</p>
   <a class="button small close-modal">Close</a>
-  <a class="close-reveal-modal" aria-label="Close" role="button">&#215;</a>
+  <a class="close-reveal-modal">&#215;</a>
 </div>
 
-<div id="addToFolderModal" class="shared-modal reveal-modal medium" data-reveal close="closeFolderModal" role="dialog" aria-labelledby="addToFolderModalTitle">
+<div id="addToFolderModal" class="shared-modal reveal-modal medium" data-reveal close="closeFolderModal">
   <div class="row">
     <div id="add-to-folder-messages"></div>
-    <h2 id="addToFolderModalTitle">Add to Folder</h2>
+    <h2>Add to Folder</h2>
   </div>
   <div class="row">
     <div class="medium-12 large-6 columns">
@@ -133,9 +133,9 @@
         <ul id="my-folders-list">
           <li class="folder-item" ng-repeat="folder in folders | orderBy:'name'">
             <i ng-if="trinket.folder.folderId == folder.id" class="trinket-added fa fa-check-circle fa-lg success"></i>
-            <a ng-if="!trinket.folder.folderId || trinket.folder.folderId != folder.id" ng-click="addToFolder(folder)" class="add-to-folder" aria-label="Add trinket to this folder" role="button"><i class="fa fa-plus-circle fa-lg neutral"></i></a>
+            <a ng-if="!trinket.folder.folderId || trinket.folder.folderId != folder.id" ng-click="addToFolder(folder)" class="add-to-folder"><i class="fa fa-plus-circle fa-lg neutral"></i></a>
             <span>{{ folder.name }}</span>
-            <a ng-if="trinket.folder.folderId == folder.id" ng-click="removeFromFolder(folder)" class="remove-from-folder right" aria-label="Remove trinket from this folder" role="button"><i class="fa fa-times-circle fa-lg alert"></i></a>
+            <a ng-if="trinket.folder.folderId == folder.id" ng-click="removeFromFolder(folder)" class="remove-from-folder right"><i class="fa fa-times-circle fa-lg alert"></i></a>
           </li>
         </ul>
       </section>
@@ -146,12 +146,12 @@
         <div class="row">
           <div class="small-12 columns">
             <label>New Folder Name</label>
-            <input id="detail-new-folder-name" type="text" name="name" ng-model="name" required aria-label="New Folder Name" />
+            <input id="detail-new-folder-name" type="text" name="name" ng-model="name" required />
             <button class="button small primary"><i ng-class="{'fa fa-circle-o-notch fa-lg fa-spin':isSubmitting}"></i> Create</button>
           </div>
         </div>
       </form>
     </div>
   </div>
-  <a class="close-reveal-modal" aria-label="Close" role="button">&#215;</a>
+  <a class="close-reveal-modal">&#215;</a>
 </div>

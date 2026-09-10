@@ -12,11 +12,11 @@
 {% if outputOnly %}
   {% include "embed/default-toolbar.html" %}
 {% else %}
-<a class="edit-it menu-button item allow-original {{'' if toggleCode else 'show-for-small-only'}}" data-action="code.edit" title="Edit the code." aria-label="Code" role="button">
+<a class="edit-it menu-button item allow-original {{'' if toggleCode else 'show-for-small-only'}}" data-action="code.edit" title="Edit the code.">
   <i class="fa fa-pencil"></i>
   <label class="show-for-medium-up">Code</label>
 </a>
-<a class="run-it menu-button item allow-original" data-action="code.run" data-tooltip aria-haspopup="true" title="View the result." data-options="disable_for_touch:true" aria-label="Run" role="button">
+<a class="run-it menu-button item allow-original" data-action="code.run" data-tooltip aria-haspopup="true" title="View the result." data-options="disable_for_touch:true">
   <i class="fa fa-play"></i>
   <label class="show-for-medium-up">Run</label>
 </a>
@@ -28,7 +28,7 @@
 {% endblock %}
 
 {% block embed_content %}
-  <input id="honeypot" type='text' tabindex="-1" aria-hidden="true"/>
+  <input id="honeypot" type='text' tabindex="-1"/>
   <input id="start-value" type='hidden' value='{{start if start else "code"}}'/>
 
   <div id="editor" class="code-editor hide" data-interface="editor"></div>
@@ -51,14 +51,13 @@
 
     <div id="outputTabs" class="{% if hideInstructions or (not isOwner and not trinket.description) %}hideInstructions{% endif %}">
       <div class="{% if not showInstructions %}active {% endif %}menu-button" id="codeOutputTab" data-action="output.view">Result</div>
-      {# A bare div is announced as static text and cannot be focused, so the tab carries a button role, a tab stop and a name; public/js/embed/embed.js forwards ENTER and SPACE to the same click handler. #}
-      <div class="{% if showInstructions %}active {% endif %}menu-button highlight-on-focus" id="instructionsTab" data-action="instructions.view" role="button" tabindex="0" aria-label="View instructions"><i class="fa fa-list"></i> Instructions</div>
+      <div class="{% if showInstructions %}active {% endif %}menu-button" id="instructionsTab" data-action="instructions.view"><i class="fa fa-list"></i> Instructions</div>
     </div>
 
     <div id="outputContainer" class="{% if hideInstructions or (not isOwner and not trinket.description) %}withoutTabs{% else %}withTabs{% endif %}">
       <div id="console-wrap">
         <div id="java-console-output" aria-live="polite" aria-label="Code Output"></div>
-        <a id="reset-output" class="hide" title="clear output" aria-label="Clear Output" role="button"><i class="fa fa-ban"></i></a>
+        <a id="reset-output" class="hide" title="clear output"><i class="fa fa-ban"></i></a>
       </div>
     </div>
 

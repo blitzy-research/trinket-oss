@@ -69,7 +69,7 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 RUN useradd -m trinket
 USER trinket
 WORKDIR /home/trinket
-ENV HOME /home/trinket
+ENV HOME=/home/trinket
 
 SHELL ["/bin/bash", "-c"]
 
@@ -84,8 +84,8 @@ COPY ./trinket /home/trinket
 # audited.
 RUN npm ci --omit=dev
 
-ENV R_DEFAULT_DEVICE png
-ENV R_LIBS_USER /usr/local/lib/R/site-library
+ENV R_DEFAULT_DEVICE=png
+ENV R_LIBS_USER=/usr/local/lib/R/site-library
 
 # pm2 writes its logs and pid state under PM2_HOME, which defaults to
 # $HOME/.pm2. The hardened deployment runs this container with a read-only root

@@ -1355,8 +1355,11 @@ module.exports = [
     config : {
       auth: 'session',
       /*
-       * `output : 'file'` belongs on `multipart`, as it does on the two upload
-       * routes in config/routes.js, which carry the full reasoning.
+       * The base commit's declaration, unchanged. `output : 'file'` is the
+       * pre-hapi-17 spelling of `payload.multipart.output`, and
+       * lib/util/routeParser.js's `migratePayloadOutput` restates it while
+       * parsing -- the same translation the two upload routes in
+       * config/routes.js get, which carry the full reasoning.
        *
        * In short: `payload.multipart` defaults to FALSE in hapi
        * [node_modules/@hapi/hapi/lib/config.js:144-149] and @hapi/subtext then
@@ -1364,16 +1367,14 @@ module.exports = [
        * [node_modules/@hapi/subtext/lib/index.js:92-96], so the asset Dropzone
        * at public/js/plugins/asset-browser.js:270-271 -- whose default
        * paramName 'file' matches the key validated below -- could never upload
-       * anything. And with `output` at the payload level, a non-multipart body
-       * is spooled to a temp file and its absolute path echoed back at status
-       * 200 by the hand-rolled validation's `request.fail(request.payload, ...)`.
-       * Subtext reads the part output from `options.multipart.output`
-       * [node_modules/@hapi/subtext/lib/index.js:290], so file parts still land
-       * on disk exactly as before.
+       * anything. Subtext reads the part output from
+       * `options.multipart.output` [node_modules/@hapi/subtext/lib/index.js:290],
+       * so file parts still land on disk exactly as before, while a
+       * non-multipart body is parsed as data rather than spooled.
        */
       payload : {
         maxBytes  : 1048576 * 5, // 5MB
-        multipart : { output : 'file' }
+        output : 'file'
       },
       validate : {
         payload : {
@@ -1387,14 +1388,15 @@ module.exports = [
     config : {
       auth: 'session',
       pre : ['file(params.fileId)'],
-      // Same declaration as `POST /api/users/assets` above. This is the
-      // asset-replace half of the same flow, driven by the same Dropzone at
-      // public/js/plugins/asset-browser.js:528-530, so leaving it on the
-      // payload-level `output` would keep the replace path answering 415 while
-      // the upload path worked.
+      // Same declaration as `POST /api/users/assets` above, and likewise the
+      // base commit's text. This is the asset-replace half of the same flow,
+      // driven by the same Dropzone at
+      // public/js/plugins/asset-browser.js:528-530, so it needs the same
+      // `migratePayloadOutput` translation: untranslated, the replace path
+      // would answer 415 while the upload path worked.
       payload : {
         maxBytes : 1048576 * 5, // 5MB
-        multipart : { output : 'file' }
+        output : 'file'
       },
       validate : {
         payload : {

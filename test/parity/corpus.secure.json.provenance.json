@@ -5,11 +5,11 @@
   "generator": {
     "path": "test/parity/capture.js",
     "blob": "93266288728d9a059fe3f95a2d1cd3ab6756f134",
-    "commit": "0dd0f7d27affe560cb7028dc1b860063d799a080",
+    "commit": "dd0d99879efe08da55a0ae7151b132115ed2c016",
     "commitState": "contains-this-exact-source",
     "verified": true,
-    "deliveredHead": "0dd0f7d27affe560cb7028dc1b860063d799a080",
-    "deliveredHeadShort": "0dd0f7d",
+    "deliveredHead": "dd0d99879efe08da55a0ae7151b132115ed2c016",
+    "deliveredHeadShort": "dd0d998",
     "matchesDeliveredHead": true
   },
   "analysedTree": {
@@ -20,9 +20,9 @@
     "worktreeState": "clean"
   },
   "delivered": {
-    "head": "0dd0f7d27affe560cb7028dc1b860063d799a080",
-    "headShort": "0dd0f7d",
-    "subject": "Harden the request path and finish the accessibility and delivery work",
+    "head": "dd0d99879efe08da55a0ae7151b132115ed2c016",
+    "headShort": "dd0d998",
+    "subject": "Close the security, accessibility and validation findings across the request path, admin pane, uploads and delivery records",
     "isBaselineCommit": false,
     "worktreeState": "dirty"
   },
@@ -154,7 +154,7 @@
       "none"
     ],
     "routeManifest": {
-      "artifact": "ephemeral:route-manifest.baseline.json",
+      "artifact": "ephemeral:route-manifest.json",
       "routes": 233,
       "expected": 233
     }
@@ -162,12 +162,12 @@
   "payloadDigest": {
     "algorithm": "sha256",
     "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
-    "value": "9013e4ad09d79d51c8df78ecd1ca024a011b47456fd2466f0d679025c9debd8e"
+    "value": "dfe55a85b029060c52eef3adae8fcfab8e995838ba7a88ac551a066a1514a9e6"
   },
   "artifactDigest": {
     "algorithm": "sha256",
     "canonicalization": "the artifact bytes as written, verbatim",
-    "value": "361dc8898f991038e7891ebe628ef513a97aa73cf5a4b3c6fa78ab8d6b14909d"
+    "value": "13fa998efd74b3503b54dcb1d11f202049c18e52dc1b5becb4216908ee38d0b1"
   },
   "note": "RUN OUTPUT - not a delivery artifact, and not to be committed. Every field above except artifactDigest is also embedded in corpus.secure.json under its own `provenance` key, which is the committed record; this file adds only a digest of the exact bytes written, for a scratch run that compares two artifacts byte for byte and needs the provenance outside the compared region."
 }

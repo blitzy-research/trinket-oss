@@ -4882,6 +4882,157 @@ the reason the gates in this delivery are re-run after every commit rather than 
 run, and the reason [§8.2](#82-four-evidence-artifacts-regenerated-after-the-delivery-commit-done--strict-verdict-below)
 records the ordering constraint as a working procedure rather than a note.
 
+### 8.5 Three findings reported as blocked, and what re-attempting them measured
+
+Three findings at this checkpoint were recorded as unresolvable for want of a tool: an image
+vulnerability scanner, an authoritative advisory source, and the prior report a disputed total came
+from. Re-attempting each one settled it. Two of the three were blocked by the **probe that had been
+tried** rather than by the environment, which is why they are written up here rather than carried
+forward as blocked.
+
+**A scanner was obtainable all along; the conclusion rested on the wrong probe.**
+
+The earlier attempt tested `command -v trivy grype syft osv-scanner dockle`, `docker scout`, the apt
+candidates and an offline database, and concluded from five empty answers that no scanner could be
+had. Every one of those probes asks about a *package manager*; none asks about the host's network.
+The host has outbound egress — `api.github.com` answers 200 — and both scanners publish
+self-contained release binaries that need no package manager and no installation:
+
+| Tool | Version obtained | Bytes | Route |
+|---|---|---|---|
+| `trivy` | 0.74.0 | 50,419,107 | static release tarball |
+| `osv-scanner` | 2.5.1 (`osv-scalibr` 0.5.2) | 57,725,090 | static release binary |
+
+`trivy` then scanned **all ten images this delivery builds**, against their digests, with an advisory
+database fetched at scan time:
+
+| Image | Digest | CRITICAL | HIGH | MEDIUM | LOW | UNKNOWN |
+|---|---|---|---|---|---|---|
+| `root` | `sha256:2dbae524f503` | 32 | 446 | 1426 | 1164 | 53 |
+| `java-manager` | `sha256:4cb3c58eba17` | 1 | 12 | 14 | 13 | 0 |
+| `java-shell` | `sha256:44dd0212fd64` | 1 | 12 | 10 | 2 | 0 |
+| `python-manager` | `sha256:fc0d67fe6d80` | 1 | 12 | 15 | 13 | 0 |
+| `python-shell` | `sha256:687aba09f512` | 33 | 541 | 1976 | 1326 | 82 |
+| `pygame-manager` | `sha256:0d6c98b48054` | 5 | 62 | 97 | 73 | 6 |
+| `pygame-worker` | `sha256:f4d88e59bdfa` | 7 | 211 | 2878 | 372 | 0 |
+| `r-manager` | `sha256:a3ba2c99c92e` | 1 | 12 | 14 | 13 | 0 |
+| `r-shell` | `sha256:1bdfd4ded642` | 1 | 10 | 7 | 2 | 0 |
+| `nginx` | `sha256:eb8aed723402` | 0 | 7 | 0 | 0 | 0 |
+
+**The raw count is not the actionable one, and reading it as one would misdirect the remedy.** Read
+with `--ignore-unfixed` — advisories for which a fixed version actually exists — the same images
+decompose very differently:
+
+| Image | CRITICAL+HIGH | of which **fixable** | where the fixable ones sit |
+|---|---|---|---|
+| `root` | 478 | **16** | all 16 in the Node.js class; **not one in an OS package** |
+| `nginx` | 7 | **7** | `libuuid` 2.42.1-r0, every one of them |
+| `python-shell` | 574 | **88** | `linux-libc-dev` 63, `libaom3` 4, `tar` 3, then npm tooling |
+| `pygame-worker` | 218 | **15** | npm tooling, plus `CairoSVG` 2 |
+
+So **462 of the root image's 478 critical-and-high findings are Debian 12.15 advisories with no
+published fix**, and that is not a maintenance step this delivery skipped: the shipped stage already
+runs `apt-get update && apt-get upgrade -y` [Dockerfile:363-365], and the comment above it records
+that `apt-get -s upgrade` offers nine packages against the pinned digest. The image takes everything
+Debian has published. What is left is upstream lag — `linux-libc-dev` alone accounts for 144 of them,
+a header package Debian does not patch per-CVE.
+
+The 16 that *are* fixable split cleanly in two, and the split is the finding:
+
+- **Eight are `marked@0.3.2`** — four distinct advisories counted twice, because the image carries two
+  copies of the package. These are approved deviation 2
+  ([§7.2](#72-deviation-2--the-marked-fork-is-retained)); there is nothing here this delivery has not
+  already argued.
+- **Eight belong to the image's own tooling, not to the application** — `brace-expansion` 2.0.2 ×3,
+  `pacote` 19.0.2 and 20.0.1, `sigstore` 3.1.0, `ip-address` 10.1.0, `picomatch` 4.0.3. These are the
+  bundled trees of the `npm` CLI that ships inside `node:22-bookworm` and of the pinned `pm2-docker`.
+  None of them appears in the application's production closure, which is both why
+  `npm audit --omit=dev` does not see them and why the audit gate is not understating anything.
+
+**That second group is blocked by a frozen requirement rather than by effort.** `pacote`'s fix is
+21.5.1, which ships with an npm far beyond the `npm >=10.0.0 <11.0.0` that AAP §0.9.5 pins in
+`engines` and that the image asserts at build time [Dockerfile:68]. Clearing it means breaking that
+assertion or replacing the base image's npm — a change to a frozen requirement, not to this delivery.
+
+**What a human must decide.** The one free action is `nginx`: its Dockerfile is `FROM nginx:alpine`,
+an unpinned floating tag, and all seven of its highs are `libuuid` 2.42.1-r0 with fixes published at
+2.42.3-r0 and -r1, so a rebuild is the **candidate** remedy — candidate rather than proven, because
+no rebuild was performed here. Beyond that the choice is between accepting the base-distribution
+posture as outside this migration's scope, which R-a supports since rebasing a distribution is none of
+its four admitted categories, and commissioning a base-image refresh as separate work with its own
+parity review. `python-shell` at 88 fixable is where that work would start.
+
+**Provenance, stated because it bounds the claim.** The ten images are the `trinket-setup-0:*` images
+built during environment setup, at an earlier commit than the tree this file describes; their digests
+are in the table above. OS-package findings are properties of the base layers and are unaffected by
+later application commits, but the Node.js-class findings describe that earlier application layer.
+The `marked` and tooling results are corroborated independently against the delivered tree's own
+lockfile below, which is what lets them be relied on here.
+
+**The advisory sources: `web_search` answers nothing, the official APIs answer everything.**
+
+The second finding asked for current official advisory results sufficient to show that `marked` is the
+only residual high and that nothing else is open. `web_search` was attempted at this checkpoint and
+returned no results, corroborating the original report — and it is not the only route to an
+authoritative source. Two official services answer directly over the host's egress: **OSV.dev**, the
+service `osv-scanner` itself queries, and the **GitHub Advisory Database REST API**, the database
+`npm audit` derives from. Queried independently, the two agree on `marked`: five high-severity
+advisories exist for the package, of which **four apply to 0.3.2**, the fifth
+(`GHSA-6v9c-7cg6-27q7` / CVE-2026-41680, `>= 18.0.0, <= 18.0.1`) not reaching it.
+
+The decisive measurement is the closure rather than the package. The **entire production dependency
+tree of the delivered lockfile — 341 packages at their resolved versions**, enumerated with
+`npm ls --omit=dev --all` — was queried against OSV.dev by name and exact version:
+
+| Measure | Value |
+|---|---|
+| Packages queried | **341** |
+| Packages carrying at least one advisory | **8** |
+| CRITICAL records | **0** |
+| HIGH records | **4 — every one of them `marked@0.3.2`** |
+| MODERATE records | **11**, over `adm-zip` 0.6.0, `highlight.js` 9.18.5, `jszip` 3.6.0 (×2), `marked` 0.3.2 (×4), `mongoose` 6.13.9, `uuid` 8.0.0, `uuid` 8.3.2 |
+
+The four highs are `GHSA-5v2h-r2cx-5xgj` (CVE-2022-21681), `GHSA-rrrm-qjm4-v8hf` (CVE-2022-21680),
+`GHSA-x5pg-88wf-qq4p` (CVE-2017-16114) and `GHSA-hjcp-j389-59ff` (CVE-2015-8854). **The proposition
+holds: `marked` is the only production package in this tree carrying a high-severity advisory, and no
+production package carries a critical one.** The moderate set is the same seven packages the audit row
+in [§5](#5-the-gate-register-and-what-each-gate-proves) and `deferred-dependencies.md` §5 already
+carry, reached here by an independent source rather than restated from `npm audit`.
+
+**One refinement this forces, which no figure in this delivery had stated precisely.** Every audit
+claim in these documents reads "0 critical, 1 high, 7 moderate", and that is correct: `npm audit`
+reports one *finding per package*, at its highest severity. The authoritative data shows that single
+finding stands for **four distinct high advisories**, and that two of them — CVE-2015-8854, fixed in
+0.3.4, and CVE-2017-16114, fixed in 0.3.9 — were published against versions *below* the 0.3.2 the
+fork is based on. The fork is therefore behind its own upstream line by considerably more than the
+4.0.10 boundary AAP §0.5.1.4 names. This changes no gate result and no deviation decision — the
+exposure argument in [§7.2](#72-deviation-2--the-marked-fork-is-retained), authored course content
+through a single consumer, does not turn on the count — but **"one high" should be read as one
+high-severity package rather than one advisory**, and a reader comparing these documents against a
+scanner's per-advisory output would otherwise see 4 where we say 1 and suspect a discrepancy.
+
+The runtime was checked from nodejs.org's own release index at the same time: of 35 published v22
+releases, **8 are security releases and the newest of them is v22.23.2** — the version this delivery
+runs. The runtime is current against its own security line.
+
+**The disputed prior total is arithmetically short by one, and the report exists.**
+
+The third finding is that a prior QA report's issue total cannot be reconciled with its contents, and
+it offers two remedies: restore an omitted issue, or formally correct the total. The report is present
+on disk (191,409 bytes, 954 lines) and was read end to end:
+
+| Measure | Value |
+|---|---|
+| Distinct `F<n>` identifiers present | **192** |
+| Total the report states | **193** (CRITICAL 7, HIGH 46, MEDIUM 89, LOW 51) |
+| Identifier absent from the sequence | **F40** — the ids run `… F37 F38 F39 F41 F42 …` |
+
+`F38`, `F39` and `F41` are ordinary rows carrying nothing that reads as a split, a merge or a
+continuation, so there is no evidence of a finding having been folded into a neighbour and no content
+to restore. What the arithmetic supports is the second remedy: the stated total is one high and the
+identifier sequence skips one. Nothing in the delivered tree depends on either number; it is recorded
+here so the discrepancy is not rediscovered later as a defect in this work.
+
 
 ## 9. Cross-references
 

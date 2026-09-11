@@ -1,4 +1,4 @@
-<!-- provenance-json: {"analysedTree":{"head":"2094d037ec4d86e7edcdc5478d31e386a2cc55e6","headShort":"2094d03","isBaselineCommit":false,"subject":"QA o002: F10, F11 - make the user-facing docs executable and their figures true","worktreeState":"clean"},"artifact":"conversion-inventory.md","baselineCommit":"2f8712a112db46f923918c4507c75abc732d83d0","bodyDigest":{"algorithm":"sha256","canonicalization":"the document with its provenance-json line removed and trailing whitespace stripped per line, hashed as utf8","value":"a1ab207c4f48da57ef7c372eae0c6c87a27900f118d6764c56fe74c934309dad"},"delivered":{"head":"2094d037ec4d86e7edcdc5478d31e386a2cc55e6","headShort":"2094d03","isBaselineCommit":false,"subject":"QA o002: F10, F11 - make the user-facing docs executable and their figures true","worktreeState":"clean"},"detail":{"analysedFiles":13,"analysedSourceDigest":"sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe","analysedTreeLabel":"the repository containing the generator (no --app given)","artifactLabel":"tool:docs/conversion-inventory.md","atBaseline":false,"evidenceAvailable":true,"evidenceCaptured":false,"invocation":"node test/parity/convert-inventory.js --replay \"$REPLAY_RESULT\" --out docs/conversion-inventory.md"},"generator":{"blob":"1d39ab4c14d91af3bde9784e8133490850dacbf6","commit":"2094d037ec4d86e7edcdc5478d31e386a2cc55e6","commitState":"contains-this-exact-source","deliveredHead":"2094d037ec4d86e7edcdc5478d31e386a2cc55e6","deliveredHeadShort":"2094d03","matchesDeliveredHead":true,"path":"test/parity/convert-inventory.js","verified":true},"provenanceSchema":2,"role":"analysis","runtime":{"node":"v22.23.2","platform":"linux"}} -->
+<!-- provenance-json: {"analysedTree":{"head":"05ad203871307e7d12ecb67ffceb2ff4810d4009","headShort":"05ad203","isBaselineCommit":false,"subject":"docs(baseline-parity): add 8.5 settling the three findings reported as blocked","worktreeState":"dirty"},"artifact":"conversion-inventory.md","baselineCommit":"2f8712a112db46f923918c4507c75abc732d83d0","bodyDigest":{"algorithm":"sha256","canonicalization":"the document with its provenance-json line removed and trailing whitespace stripped per line, hashed as utf8","value":"64fe6ccf3d9b06544ad9c7624f27bc0fc2fc0998bc8431d8eadcc6f773f7dff6"},"delivered":{"head":"05ad203871307e7d12ecb67ffceb2ff4810d4009","headShort":"05ad203","isBaselineCommit":false,"subject":"docs(baseline-parity): add 8.5 settling the three findings reported as blocked","worktreeState":"dirty"},"detail":{"analysedFiles":13,"analysedSourceDigest":"sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe","analysedTreeLabel":"the repository containing the generator (no --app given)","artifactLabel":"tool:docs/conversion-inventory.md","atBaseline":false,"evidenceAvailable":true,"evidenceCaptured":false,"invocation":"node test/parity/convert-inventory.js --replay \"$REPLAY_RESULT\" --out docs/conversion-inventory.md"},"generator":{"blob":"1d39ab4c14d91af3bde9784e8133490850dacbf6","commit":"05ad203871307e7d12ecb67ffceb2ff4810d4009","commitState":"contains-this-exact-source","deliveredHead":"05ad203871307e7d12ecb67ffceb2ff4810d4009","deliveredHeadShort":"05ad203","matchesDeliveredHead":true,"path":"test/parity/convert-inventory.js","verified":true},"provenanceSchema":2,"role":"analysis","runtime":{"node":"v22.23.2","platform":"linux"}} -->
 <!--
   GENERATED FILE -- do not hand-edit it. Every line below this block is written
   by the generator named here from the analysed tree named here. An edit made by
@@ -10,10 +10,10 @@
   generator sha256     : sha256:6ec1da793d0cb6c53a4204d46dfed6aae8c1d8f2c5a1807374e49545bd951ecf
   generator blob       : 1d39ab4c14d91af3bde9784e8133490850dacbf6
                          `git cat-file blob 1d39ab4c14d9` retrieves the exact source that ran
-  generator commit     : 2094d037ec4d86e7edcdc5478d31e386a2cc55e6  <-- verified: this commit's tree holds the blob above at that path
+  generator commit     : 05ad203871307e7d12ecb67ffceb2ff4810d4009  <-- verified: this commit's tree holds the blob above at that path
   exact command        : node test/parity/convert-inventory.js --replay "$REPLAY_RESULT" --out docs/conversion-inventory.md
   analysed tree        : the repository containing the generator (no --app given)
-  analysed tree HEAD   : 2094d037ec4d86e7edcdc5478d31e386a2cc55e6
+  analysed tree HEAD   : 05ad203871307e7d12ecb67ffceb2ff4810d4009
   analysed source      : 13 files, sha256:3ff94f8cbda442102f9386c20ae3e0abe95ce4b94fc0408fcce1d2ce0dc0c0fe
   analysed source state: clean -- every analysed file matches that revision
   parity evidence      : test/parity/corpus.json, sha256:bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798, captured: no
@@ -464,7 +464,7 @@ the comparison exists on one side. Each open row below names the scenario whose
 verdict would close it, or states that no scenario is pinned to its branch.
 
 **The replay artifact this run was given.** `replay-result.json`, written by
-`test/parity/replay.js`, digest `sha256:65b836c824e86d41...`, verdict "PASS". It carries 392 scenario
+`test/parity/replay.js`, digest `sha256:52a29d21008c4002...`, verdict "PASS". It carries 392 scenario
 verdicts, 380 of them confirming, of which 392 matched a scenario in the corpus.
 
 
